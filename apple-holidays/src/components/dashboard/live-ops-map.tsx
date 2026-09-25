@@ -149,10 +149,10 @@ function bearingAt(path: LatLng[], t: number): number {
 }
 
 const DIRECTION_HEX: Record<LiveFlight['direction'], string> = {
-  arrival:   '#34d399',
-  departure: '#fbbf24',
-  internal:  '#a78bfa',
-  other:     '#60a5fa',
+  arrival:   '#10b981',
+  departure: '#f59e0b',
+  internal:  '#8b5cf6',
+  other:     '#3b82f6',
 }
 
 const VEHICLE_GLYPH: Record<string, string> = {
@@ -171,10 +171,12 @@ const MAP_CSS = `
    (z-40) and the header, so the box is isolated here rather than trusted to
    sit still. */
 .lom-wrap{isolation:isolate}
-.lom-wrap .leaflet-container{background:#070c1a;font-family:inherit}
-.lom-wrap .leaflet-control-attribution{font-size:9px;background:rgba(2,6,23,.6);color:#94a3b8;border-radius:6px 0 0 0;padding:1px 6px}
-.lom-wrap .leaflet-control-attribution a{color:#cbd5e1}
-.lom-wrap .leaflet-tile-pane{filter:saturate(0.85) brightness(1.05)}
+.lom-wrap .leaflet-container{background:#e8f1f8;font-family:inherit}
+.lom-wrap .leaflet-control-attribution{font-size:9px;background:rgba(255,255,255,.8);color:#64748b;border-radius:6px 0 0 0;padding:1px 6px}
+.lom-wrap .leaflet-control-attribution a{color:#475569}
+.lom-wrap .leaflet-control-zoom a{background:rgba(255,255,255,.92);color:#334155;border-color:#e2e8f0}
+.lom-wrap .leaflet-control-zoom a:hover{background:#fff;color:#0f172a}
+.lom-wrap .leaflet-control-zoom{border:1px solid #e2e8f0 !important;border-radius:10px;overflow:hidden;box-shadow:0 6px 16px -8px rgba(15,23,42,.25)}
 
 @keyframes lomDash{to{stroke-dashoffset:-1000}}
 .lom-air{stroke-dasharray:1 9;stroke-linecap:round;animation:lomDash 9s linear infinite}
@@ -185,21 +187,21 @@ const MAP_CSS = `
 .lom-pin-ring{position:absolute;inset:0;border-radius:9999px;border:2px solid currentColor;animation:lomPulse 2.8s ease-out infinite}
 .lom-pin-ring.d2{animation-delay:.9s}
 .lom-pin-core{position:relative;border-radius:9999px;display:grid;place-items:center;
-  font-weight:800;color:#04121f;box-shadow:0 0 0 2px rgba(255,255,255,.55),0 6px 18px rgba(0,0,0,.45)}
+  font-weight:800;color:#0f172a;box-shadow:0 0 0 2.5px #fff,0 6px 16px rgba(15,23,42,.28)}
 
-.lom-plane{display:grid;place-items:center;filter:drop-shadow(0 0 6px rgba(255,255,255,.55))}
+.lom-plane{display:grid;place-items:center;filter:drop-shadow(0 0 1.5px #fff) drop-shadow(0 2px 4px rgba(15,23,42,.35))}
 @keyframes lomBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
 .lom-plane svg{animation:lomBob 2.4s ease-in-out infinite}
 
-.lom-apt{width:8px;height:8px;border-radius:9999px;background:#0ea5e9;box-shadow:0 0 0 2px rgba(255,255,255,.4),0 0 10px 2px rgba(14,165,233,.85)}
-.lom-apt-label{font-size:9px;font-weight:800;letter-spacing:.08em;color:#e2e8f0;text-shadow:0 1px 3px #000;white-space:nowrap;transform:translate(10px,-8px)}
+.lom-apt{width:8px;height:8px;border-radius:9999px;background:#0284c7;box-shadow:0 0 0 2px #fff,0 0 8px 1px rgba(2,132,199,.55)}
+.lom-apt-label{font-size:9px;font-weight:800;letter-spacing:.08em;color:#0f172a;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 2px #fff;white-space:nowrap;transform:translate(10px,-8px)}
 
-.lom-veh{font-size:15px;line-height:1;filter:drop-shadow(0 2px 4px rgba(0,0,0,.6))}
+.lom-veh{font-size:15px;line-height:1;filter:drop-shadow(0 2px 3px rgba(15,23,42,.35))}
 @keyframes lomDrive{0%{transform:translateX(-1px)}50%{transform:translateX(1px)}100%{transform:translateX(-1px)}}
 .lom-veh span{display:block;animation:lomDrive 1.1s ease-in-out infinite}
 
-.lom-wrap .leaflet-tooltip{background:rgba(2,6,23,.92);border:1px solid rgba(148,163,184,.35);color:#e2e8f0;
-  font-size:11px;border-radius:8px;box-shadow:0 8px 22px rgba(0,0,0,.5);padding:5px 8px}
+.lom-wrap .leaflet-tooltip{background:rgba(255,255,255,.97);border:1px solid #e2e8f0;color:#1e293b;
+  font-size:11px;border-radius:10px;box-shadow:0 10px 24px -8px rgba(15,23,42,.3);padding:6px 9px}
 .lom-wrap .leaflet-tooltip::before{display:none}
 `
 
@@ -207,28 +209,28 @@ const MAP_CSS = `
  * Keyless OSM tiles only.
  *
  * CARTO's basemap CDN now watermarks anonymous traffic with "API KEY
- * REQUIRED", so Night is the plain OSM raster inverted in CSS instead of a
- * hosted dark style.
+ * REQUIRED", so every style is the plain OSM raster re-toned in CSS. Day is
+ * the default — the dashboard is a light page and the map sits in it.
  */
 const BASEMAPS = [
+  {
+    id: 'day',
+    label: 'Day',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    filter: 'saturate(.9) brightness(1.03) contrast(.97)',
+  },
   {
     id: 'night',
     label: 'Night',
     url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     filter: 'invert(1) hue-rotate(180deg) brightness(.9) contrast(1.06) saturate(.6)',
   },
-  {
-    id: 'terrain',
-    label: 'Terrain',
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    filter: 'saturate(.85) brightness(1.02)',
-  },
 ] as const
 
 const OSM_ATTR =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
-/** Night is a CSS inversion, so the filter rides on the tile pane. */
+/** Each style is a CSS filter, so it rides on the tile pane. */
 function paintTiles(map: LeafletMap, filter: string) {
   const pane = map.getPane('tilePane')
   if (pane) pane.style.filter = filter
@@ -243,7 +245,7 @@ export default function LiveOpsMap({
   const tileRef = useRef<LeafletLayer | null>(null)
   const drawnRef = useRef<LeafletLayer[]>([])
   const [ready, setReady] = useState(false)
-  const [basemap, setBasemap] = useState<(typeof BASEMAPS)[number]['id']>('night')
+  const [basemap, setBasemap] = useState<(typeof BASEMAPS)[number]['id']>('day')
   const [expanded, setExpanded] = useState(false)
 
   const focus = useMemo(() => countryFocus(country), [country])
@@ -386,7 +388,7 @@ export default function LiveOpsMap({
           className: '',
           html: `<div class="lom-plane" style="color:${hex}">
             <svg width="20" height="20" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"
-              fill="${f.phase === 'airborne' ? hex : 'rgba(148,163,184,.85)'}">
+              fill="${f.phase === 'airborne' ? hex : '#94a3b8'}">
               <path d="M21 16v-2l-8-5V3.5A1.5 1.5 0 0 0 11.5 2 1.5 1.5 0 0 0 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z"/>
             </svg></div>`,
           iconSize: [20, 20], iconAnchor: [10, 10],
@@ -416,7 +418,7 @@ export default function LiveOpsMap({
       if (!g.leg || !g.movement || g.movement.leisure) continue
       const path = arc([g.leg.from.lat, g.leg.from.lng], [g.leg.to.lat, g.leg.to.lng], 0.10)
       keep(L.polyline(path, {
-        className: 'lom-road', color: '#38bdf8', weight: 2, opacity: 0.55,
+        className: 'lom-road', color: '#0284c7', weight: 2.5, opacity: 0.7,
       }).addTo(map))
 
       const glyph = VEHICLE_GLYPH[g.movement.vehicleKind] ?? '🚐'
@@ -443,7 +445,7 @@ export default function LiveOpsMap({
       // Dot area tracks headcount, so a 40-pax town reads bigger than a 4-pax one
       // without the biggest pin swallowing the map.
       const size = Math.round(Math.max(26, Math.min(52, 22 + Math.sqrt(c.pax) * 5)))
-      const hex = c.arriving > 0 ? '#34d399' : c.departing > 0 ? '#fbbf24' : '#facc15'
+      const hex = c.arriving > 0 ? '#10b981' : c.departing > 0 ? '#f59e0b' : '#facc15'
       const pin = L.marker([c.lat, c.lng], {
         icon: L.divIcon({
           className: '',
@@ -460,8 +462,8 @@ export default function LiveOpsMap({
 
       const lines = c.refs.slice(0, 6).map(r =>
         `<div style="opacity:.85">${r.bookingRef} · ${r.pax} pax · Day ${r.dayNo}/${r.totalDays}` +
-        `${r.arrivingToday ? ' · <span style="color:#34d399">arrives today</span>' : ''}` +
-        `${r.departingToday ? ' · <span style="color:#fbbf24">departs today</span>' : ''}</div>`,
+        `${r.arrivingToday ? ' · <span style="color:#059669">arrives today</span>' : ''}` +
+        `${r.departingToday ? ' · <span style="color:#d97706">departs today</span>' : ''}</div>`,
       ).join('')
       pin.bindTooltip(
         `<b>${c.name}</b> — ${c.pax} pax · ${c.refs.length} file${c.refs.length === 1 ? '' : 's'}<br/>${lines}` +
@@ -490,7 +492,7 @@ export default function LiveOpsMap({
   return (
     <div
       className={cn(
-        'lom-wrap relative rounded-2xl overflow-hidden border border-white/10 bg-[#070c1a] transition-[height] duration-300',
+        'lom-wrap relative rounded-2xl overflow-hidden border border-slate-200 bg-[#e8f1f8] shadow-sm transition-[height] duration-300',
         expanded ? 'h-[560px]' : 'h-[360px]',
         className,
       )}
@@ -499,8 +501,8 @@ export default function LiveOpsMap({
       <div ref={wrapRef} className="absolute inset-0" />
 
       {(!ready || loading) && (
-        <div className="absolute inset-0 z-[500] grid place-items-center bg-[#070c1a]/80 backdrop-blur-sm">
-          <div className="flex items-center gap-2 text-slate-300 text-xs font-semibold">
+        <div className="absolute inset-0 z-[500] grid place-items-center bg-white/70 backdrop-blur-sm">
+          <div className="flex items-center gap-2 text-slate-600 text-xs font-semibold">
             <Loader2 className="w-4 h-4 animate-spin" /> Plotting live operations…
           </div>
         </div>
@@ -509,8 +511,8 @@ export default function LiveOpsMap({
       {/* Controls float above the tiles — Leaflet's own panes stop at z-index 400. */}
       <div className="absolute top-3 right-3 z-[500] flex items-center gap-1.5">
         <button
-          onClick={() => setBasemap(b => (b === 'night' ? 'terrain' : 'night'))}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-white/10 text-[11px] font-semibold text-slate-200 backdrop-blur transition-colors"
+          onClick={() => setBasemap(b => (b === 'day' ? 'night' : 'day'))}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/90 hover:bg-white border border-slate-200 shadow-sm text-[11px] font-semibold text-slate-700 backdrop-blur transition-colors"
           title="Switch basemap"
         >
           <Layers className="w-3.5 h-3.5" />
@@ -518,14 +520,14 @@ export default function LiveOpsMap({
         </button>
         <button
           onClick={recenter}
-          className="p-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-white/10 text-slate-200 backdrop-blur transition-colors"
+          className="p-1.5 rounded-lg bg-white/90 hover:bg-white border border-slate-200 shadow-sm text-slate-700 backdrop-blur transition-colors"
           title="Recentre"
         >
           <Locate className="w-3.5 h-3.5" />
         </button>
         <button
           onClick={() => setExpanded(e => !e)}
-          className="p-1.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 border border-white/10 text-slate-200 backdrop-blur transition-colors"
+          className="p-1.5 rounded-lg bg-white/90 hover:bg-white border border-slate-200 shadow-sm text-slate-700 backdrop-blur transition-colors"
           title={expanded ? 'Shrink map' : 'Expand map'}
         >
           {expanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
@@ -533,7 +535,7 @@ export default function LiveOpsMap({
       </div>
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-3 z-[500] flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 rounded-xl bg-slate-900/70 border border-white/10 backdrop-blur text-[10px] font-semibold text-slate-300">
+      <div className="absolute bottom-3 left-3 z-[500] flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 rounded-xl bg-white/90 border border-slate-200 shadow-sm backdrop-blur text-[10px] font-semibold text-slate-600">
         <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-yellow-400" /> Pax on ground</span>
         <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-emerald-400" /> Arrival</span>
         <span className="flex items-center gap-1.5"><i className="w-2 h-2 rounded-full bg-amber-400" /> Departure</span>

@@ -24,8 +24,7 @@ import {
   MapPin, UserCheck, AlertTriangle, ArrowRight, Briefcase, Globe2, Clock,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
-import VehicleArt from '@/components/dashboard/vehicle-art'
-import { VEHICLE_LABEL, VEHICLE_SEATS, type VehicleKind } from '@/lib/ops-geo'
+import type { VehicleKind } from '@/lib/ops-geo'
 import { cn } from '@/lib/utils'
 import type { LiveFlight, LiveOnGround } from '@/components/dashboard/live-ops-map'
 
@@ -33,7 +32,7 @@ import type { LiveFlight, LiveOnGround } from '@/components/dashboard/live-ops-m
 // chunk — pulled in after paint so the hero's numbers are never waiting on it.
 const LiveOpsMap = dynamic(() => import('@/components/dashboard/live-ops-map'), {
   ssr: false,
-  loading: () => <div className="h-[360px] rounded-2xl bg-slate-900/60 border border-white/10 animate-pulse" />,
+  loading: () => <div className="h-[360px] rounded-2xl bg-slate-100 border border-slate-200 animate-pulse" />,
 })
 
 // ─── Shape ────────────────────────────────────────────────────────────────
@@ -167,19 +166,19 @@ export default function LiveOpsHero({
     : '—'
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-slate-950 text-white shadow-[0_24px_60px_-24px_rgba(2,6,23,0.75)]">
+    <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-gradient-to-br from-white via-sky-50/60 to-amber-50/50 text-slate-900 shadow-[0_20px_50px_-28px_rgba(15,23,42,0.35)]">
       {/* ── Backdrop ──
-          Three drifting colour fields and a faint grid. Pure CSS, no canvas and
-          no library: the hero must not cost the dashboard a frame budget. */}
+          Morning-light colour fields and a faint dot grid. Pure CSS, no canvas
+          and no library: the hero must not cost the dashboard a frame budget. */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-32 -left-24 w-[36rem] h-[36rem] rounded-full bg-brand-500/20 blur-[110px] loh-drift" />
-        <div className="absolute -bottom-40 right-0 w-[34rem] h-[34rem] rounded-full bg-indigo-500/20 blur-[110px] loh-drift loh-drift-2" />
-        <div className="absolute top-1/3 left-1/2 w-[26rem] h-[26rem] rounded-full bg-emerald-500/10 blur-[110px] loh-drift loh-drift-3" />
-        <div className="absolute inset-0 opacity-[0.16]"
+        <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 via-violet-400 to-amber-400" />
+        <div className="absolute -top-32 -left-24 w-[36rem] h-[36rem] rounded-full bg-sky-300/25 blur-[110px] loh-drift" />
+        <div className="absolute -bottom-40 right-0 w-[34rem] h-[34rem] rounded-full bg-amber-200/35 blur-[110px] loh-drift loh-drift-2" />
+        <div className="absolute top-1/3 left-1/2 w-[26rem] h-[26rem] rounded-full bg-violet-200/30 blur-[110px] loh-drift loh-drift-3" />
+        <div className="absolute inset-0 opacity-[0.5]"
           style={{
-            backgroundImage:
-              'linear-gradient(rgba(148,163,184,.5) 1px, transparent 1px),linear-gradient(90deg, rgba(148,163,184,.5) 1px, transparent 1px)',
-            backgroundSize: '48px 48px',
+            backgroundImage: 'radial-gradient(rgba(100,116,139,.22) 1px, transparent 1px)',
+            backgroundSize: '22px 22px',
             maskImage: 'radial-gradient(ellipse at 50% 0%, #000 35%, transparent 78%)',
             WebkitMaskImage: 'radial-gradient(ellipse at 50% 0%, #000 35%, transparent 78%)',
           }}
@@ -191,12 +190,10 @@ export default function LiveOpsHero({
         .loh-drift{animation:lohDrift 17s ease-in-out infinite}
         .loh-drift-2{animation-duration:23s;animation-delay:-6s}
         .loh-drift-3{animation-duration:29s;animation-delay:-12s}
-        @keyframes lohScan{0%{transform:translateX(-110%)}100%{transform:translateX(220%)}}
-        .loh-scan{animation:lohScan 6s ease-in-out infinite}
         @keyframes lohPing{0%{transform:scale(.7);opacity:.9}75%,100%{transform:scale(2.4);opacity:0}}
         .loh-ping{animation:lohPing 2s cubic-bezier(0,0,.2,1) infinite}
         @media (prefers-reduced-motion: reduce){
-          .loh-drift,.loh-scan,.loh-ping{animation:none}
+          .loh-drift,.loh-ping{animation:none}
         }
       `}</style>
 
@@ -209,18 +206,18 @@ export default function LiveOpsHero({
                 <span className="loh-ping absolute inline-flex w-full h-full rounded-full bg-emerald-400" />
                 <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-emerald-400" />
               </span>
-              <span className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-300">Live Operations</span>
-              <span className="text-[10px] text-slate-400 font-semibold inline-flex items-center gap-1">
+              <span className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-600">Live Operations</span>
+              <span className="text-[10px] text-slate-500 font-semibold inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/80 border border-slate-200">
                 <Clock className="w-3 h-3" /> {stamp}
               </span>
             </div>
 
             <h2 className="mt-2 text-2xl sm:text-4xl font-black tracking-tight leading-tight">
-              <span className="bg-gradient-to-r from-white via-brand-200 to-indigo-200 bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-slate-900 via-sky-700 to-violet-600 bg-clip-text text-transparent">
                 {t ? `${t.paxOnGround.toLocaleString()} guests on the ground` : 'Reading the ground…'}
               </span>
             </h2>
-            <p className="mt-1 text-sm text-slate-400">
+            <p className="mt-1 text-sm text-slate-500">
               {userName ? `${userName}, ` : ''}
               {t
                 ? <>
@@ -235,18 +232,18 @@ export default function LiveOpsHero({
           <div className="flex items-center gap-2">
             {/* Country scope. A locked user sees their own country stated, not a
                 control they cannot use. */}
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10 backdrop-blur">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/80 border border-slate-200 shadow-sm backdrop-blur">
               {country && country !== 'ALL'
                 ? <><CountryFlag country={country} className="w-5 h-auto" />
-                    <span className="text-xs font-bold text-slate-200">{data?.countries[0]?.label ?? country}</span></>
-                : <><Globe2 className="w-4 h-4 text-indigo-300" />
-                    <span className="text-xs font-bold text-slate-200">All Countries</span></>}
-              {!canFilter && <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">locked</span>}
+                    <span className="text-xs font-bold text-slate-700">{data?.countries[0]?.label ?? country}</span></>
+                : <><Globe2 className="w-4 h-4 text-indigo-500" />
+                    <span className="text-xs font-bold text-slate-700">All Countries</span></>}
+              {!canFilter && <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400">locked</span>}
             </div>
             <button
               onClick={() => load(true)}
               disabled={refreshing}
-              className="p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 transition-colors disabled:opacity-50"
+              className="p-2.5 rounded-xl bg-white/80 hover:bg-white border border-slate-200 shadow-sm text-slate-600 hover:text-slate-900 transition-colors disabled:opacity-50"
               title="Refresh live operations"
             >
               <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
@@ -255,7 +252,7 @@ export default function LiveOpsHero({
         </div>
 
         {error && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-500/10 border border-red-400/20 text-sm text-red-200">
+          <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-red-700">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
           </div>
         )}
@@ -265,35 +262,35 @@ export default function LiveOpsHero({
           <PulseTile
             label="Pax On Ground" value={t?.paxOnGround ?? 0} icon={<Users className="w-4 h-4" />}
             hint={t ? `${t.adultsOnGround} ad · ${t.childrenOnGround} ch` : undefined}
-            accent="from-yellow-400/25 to-amber-500/5" ring="ring-yellow-400/30" text="text-yellow-300"
+            accent="from-yellow-100 to-white" ring="ring-yellow-300/60" text="text-amber-600 bg-yellow-100"
             loading={loading}
           />
           <PulseTile
             label="Files On Ground" value={t?.bookingsOnGround ?? 0} icon={<Briefcase className="w-4 h-4" />}
             hint={t ? `${t.movementsToday} movements today` : undefined}
-            accent="from-sky-400/25 to-sky-500/5" ring="ring-sky-400/30" text="text-sky-300"
+            accent="from-sky-100 to-white" ring="ring-sky-300/60" text="text-sky-600 bg-sky-100"
             loading={loading}
           />
           <PulseTile
             label="Vehicles On Road" value={t?.vehiclesOnGround ?? 0} icon={<Car className="w-4 h-4" />}
             hint={t ? `${t.driversOnGround} drivers · ${t.guidesOnGround} guides` : undefined}
-            accent="from-emerald-400/25 to-emerald-500/5" ring="ring-emerald-400/30" text="text-emerald-300"
+            accent="from-emerald-100 to-white" ring="ring-emerald-300/60" text="text-emerald-600 bg-emerald-100"
             loading={loading}
           />
           <PulseTile
             label="Arrivals Today" value={t?.arrivalsToday ?? 0} icon={<PlaneLanding className="w-4 h-4" />}
-            accent="from-teal-400/25 to-teal-500/5" ring="ring-teal-400/30" text="text-teal-300"
+            accent="from-teal-100 to-white" ring="ring-teal-300/60" text="text-teal-600 bg-teal-100"
             loading={loading}
           />
           <PulseTile
             label="Departures Today" value={t?.departuresToday ?? 0} icon={<PlaneTakeoff className="w-4 h-4" />}
-            accent="from-orange-400/25 to-orange-500/5" ring="ring-orange-400/30" text="text-orange-300"
+            accent="from-orange-100 to-white" ring="ring-orange-300/60" text="text-orange-600 bg-orange-100"
             loading={loading}
           />
           <PulseTile
             label="Airborne Now" value={t?.airborneNow ?? 0} icon={<Plane className="w-4 h-4" />}
             hint={t ? `of ${t.flightsToday} sectors` : undefined}
-            accent="from-violet-400/25 to-violet-500/5" ring="ring-violet-400/30" text="text-violet-300"
+            accent="from-violet-100 to-white" ring="ring-violet-300/60" text="text-violet-600 bg-violet-100"
             loading={loading} live={(t?.airborneNow ?? 0) > 0}
           />
         </div>
@@ -303,13 +300,13 @@ export default function LiveOpsHero({
         {(t?.unassignedMovements ?? 0) > 0 && (
           <Link
             href="/dashboard/mc-report"
-            className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-400/10 hover:bg-amber-400/15 border border-amber-300/25 transition-colors group"
+            className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors group"
           >
-            <AlertTriangle className="w-4 h-4 text-amber-300 flex-shrink-0" />
-            <p className="text-sm text-amber-100 font-semibold">
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm text-amber-800 font-semibold">
               {t!.unassignedMovements} movement{t!.unassignedMovements === 1 ? '' : 's'} today with no driver assigned
             </p>
-            <ArrowRight className="w-4 h-4 text-amber-300 ml-auto group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight className="w-4 h-4 text-amber-600 ml-auto group-hover:translate-x-0.5 transition-transform" />
           </Link>
         )}
 
@@ -321,16 +318,17 @@ export default function LiveOpsHero({
                 key={c.country}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/5 border border-white/10 backdrop-blur"
+                whileHover={{ y: -2 }}
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/80 border border-slate-200 shadow-sm backdrop-blur"
               >
                 <span className="w-1.5 h-8 rounded-full" style={{ background: c.hex }} />
                 {c.country !== 'UNASSIGNED' && <CountryFlag country={c.country} className="w-5 h-auto" />}
                 <div className="leading-tight">
-                  <p className="text-xs font-bold text-slate-100">{c.label}</p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-xs font-bold text-slate-800">{c.label}</p>
+                  <p className="text-[10px] text-slate-500">
                     {c.pax} pax · {c.bookings} file{c.bookings === 1 ? '' : 's'}
-                    {c.arrivals > 0 && <span className="text-emerald-300"> · {c.arrivals} in</span>}
-                    {c.departures > 0 && <span className="text-amber-300"> · {c.departures} out</span>}
+                    {c.arrivals > 0 && <span className="text-emerald-600 font-semibold"> · {c.arrivals} in</span>}
+                    {c.departures > 0 && <span className="text-amber-600 font-semibold"> · {c.departures} out</span>}
                   </p>
                 </div>
               </motion.div>
@@ -350,8 +348,8 @@ export default function LiveOpsHero({
             />
           </div>
 
-          <div className="xl:col-span-2 rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur overflow-hidden flex flex-col">
-            <div className="flex items-center gap-1 p-1.5 border-b border-white/10">
+          <div className="xl:col-span-2 rounded-2xl bg-white/85 border border-slate-200 shadow-sm backdrop-blur overflow-hidden flex flex-col">
+            <div className="flex items-center gap-1 p-1.5 m-1.5 rounded-xl bg-slate-100/80">
               {([
                 ['arrivals', 'Arrivals', arrivals.length],
                 ['departures', 'Departures', departures.length],
@@ -362,7 +360,7 @@ export default function LiveOpsHero({
                   onClick={() => setBoard(key)}
                   className={cn(
                     'flex-1 px-2 py-2 rounded-lg text-[11px] font-bold transition-colors',
-                    board === key ? 'bg-white/12 text-white' : 'text-slate-400 hover:text-slate-200',
+                    board === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-800',
                   )}
                 >
                   {label} <span className="opacity-60">{count}</span>
@@ -370,7 +368,7 @@ export default function LiveOpsHero({
               ))}
             </div>
 
-            <div className="flex-1 overflow-y-auto max-h-[420px] divide-y divide-white/5">
+            <div className="flex-1 overflow-y-auto max-h-[420px] divide-y divide-slate-100">
               <AnimatePresence initial={false} mode="wait">
                 <motion.div
                   key={board}
@@ -388,42 +386,6 @@ export default function LiveOpsHero({
           </div>
         </div>
 
-        {/* ── Fleet on the road ─────────────────────────────────────────── */}
-        {(data?.fleet.length ?? 0) > 0 && (
-          <div className="rounded-2xl bg-white/[0.04] border border-white/10 backdrop-blur p-4">
-            <div className="flex items-center justify-between gap-3 mb-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-                Fleet on the road right now
-              </p>
-              <Link href="/dashboard/ground/vehicles" className="text-[11px] font-bold text-brand-300 hover:text-brand-200 inline-flex items-center gap-1">
-                Fleet <ArrowRight className="w-3 h-3" />
-              </Link>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-              {data!.fleet.map((f, i) => (
-                <motion.div
-                  key={f.kind}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.06 }}
-                  className="relative overflow-hidden rounded-xl bg-slate-900/50 border border-white/10 p-3"
-                >
-                  {/* A light sweeping across the body — the cheapest way to make a
-                      static illustration read as "in motion". */}
-                  <div className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 loh-scan bg-gradient-to-r from-transparent via-white/8 to-transparent" />
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-2xl font-black text-white"><Counter value={f.count} /></span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{VEHICLE_LABEL[f.kind] ?? f.kind}</span>
-                  </div>
-                  <div className="text-slate-500 mt-1">
-                    <VehicleArt kind={f.kind} moving hex="#facc15" />
-                  </div>
-                  <p className="text-[10px] text-slate-500 font-semibold mt-1">{VEHICLE_SEATS[f.kind] ?? ''}</p>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </section>
   )
@@ -443,24 +405,24 @@ function PulseTile({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br p-3.5 ring-1 ring-inset backdrop-blur',
+        'group relative overflow-hidden rounded-2xl border border-white bg-gradient-to-br p-3.5 ring-1 ring-inset shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md',
         accent, ring,
       )}
     >
       <div className="flex items-center justify-between">
-        <span className={cn('opacity-90', text)}>{icon}</span>
+        <span className={cn('grid place-items-center w-8 h-8 rounded-xl', text)}>{icon}</span>
         {live && (
           <span className="relative flex w-1.5 h-1.5">
-            <span className="loh-ping absolute inline-flex w-full h-full rounded-full bg-current opacity-70" />
-            <span className={cn('relative inline-flex w-1.5 h-1.5 rounded-full bg-current', text)} />
+            <span className="loh-ping absolute inline-flex w-full h-full rounded-full bg-violet-500 opacity-70" />
+            <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-violet-500" />
           </span>
         )}
       </div>
-      <p className={cn('mt-2 text-3xl font-black tabular-nums leading-none', loading ? 'text-slate-600' : 'text-white')}>
+      <p className={cn('mt-2 text-3xl font-black tabular-nums leading-none', loading ? 'text-slate-300' : 'text-slate-900')}>
         {loading ? '—' : <Counter value={value} />}
       </p>
-      <p className="mt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
-      {hint && <p className="text-[10px] text-slate-500 mt-0.5 truncate">{hint}</p>}
+      <p className="mt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</p>
+      {hint && <p className="text-[10px] text-slate-400 mt-0.5 truncate">{hint}</p>}
     </motion.div>
   )
 }
@@ -468,20 +430,20 @@ function PulseTile({
 // ─── Flight board ─────────────────────────────────────────────────────────
 
 const PHASE_STYLE: Record<LiveFlight['phase'], { label: string; cls: string }> = {
-  scheduled: { label: 'Scheduled', cls: 'bg-slate-500/20 text-slate-300 border-slate-400/25' },
-  airborne:  { label: 'In the air', cls: 'bg-violet-500/20 text-violet-200 border-violet-400/30' },
-  landed:    { label: 'Landed',    cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/25' },
-  unknown:   { label: '—',          cls: 'bg-slate-500/15 text-slate-400 border-slate-400/20' },
+  scheduled: { label: 'Scheduled', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+  airborne:  { label: 'In the air', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
+  landed:    { label: 'Landed',    cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  unknown:   { label: '—',          cls: 'bg-slate-50 text-slate-400 border-slate-200' },
 }
 
 function FlightBoard({ rows, nowMinutes, loading }: { rows: LiveFlight[]; nowMinutes: number; loading?: boolean }) {
   if (loading) {
     return <div className="p-6 space-y-3">
-      {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />)}
+      {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded-lg bg-slate-100 animate-pulse" />)}
     </div>
   }
   if (rows.length === 0) {
-    return <p className="p-8 text-center text-xs text-slate-500">No sectors on this side today</p>
+    return <p className="p-8 text-center text-xs text-slate-400">No sectors on this side today</p>
   }
 
   return (
@@ -499,30 +461,30 @@ function FlightBoard({ rows, nowMinutes, loading }: { rows: LiveFlight[]; nowMin
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: Math.min(i * 0.04, 0.4) }}
-            className={cn('px-3.5 py-3 hover:bg-white/5 transition-colors', f.cancelled && 'opacity-45')}
+            className={cn('px-3.5 py-3 hover:bg-sky-50/60 transition-colors', f.cancelled && 'opacity-45')}
           >
             <div className="flex items-center gap-2">
-              <span className="text-xs font-black text-white tracking-tight">{f.flightNo}</span>
-              {f.airline && <span className="text-[10px] text-slate-500 truncate max-w-[7rem]">{f.airline}</span>}
+              <span className="text-xs font-black text-slate-900 tracking-tight">{f.flightNo}</span>
+              {f.airline && <span className="text-[10px] text-slate-400 truncate max-w-[7rem]">{f.airline}</span>}
               <span className={cn('ml-auto px-1.5 py-0.5 rounded-md border text-[9px] font-bold uppercase tracking-wide', phase.cls)}>
                 {phase.label}
               </span>
             </div>
 
-            <div className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-slate-300">
+            <div className="mt-1.5 flex items-center gap-2 text-[11px] font-bold text-slate-700">
               <span className="tabular-nums text-slate-400">{f.depTime ?? '--:--'}</span>
               <span>{f.from.iata}</span>
 
               {/* The sector as a rail the aircraft actually sits on. */}
-              <span className="relative flex-1 h-[3px] rounded-full bg-white/10 overflow-visible">
+              <span className="relative flex-1 h-[3px] rounded-full bg-slate-200 overflow-visible">
                 <span
-                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-brand-400 to-emerald-300 transition-[width] duration-1000"
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-[width] duration-1000"
                   style={{ width: `${progress * 100}%` }}
                 />
                 <Plane
                   className={cn(
                     'absolute -top-[7px] w-3.5 h-3.5 rotate-90 transition-[left] duration-1000',
-                    f.phase === 'airborne' ? 'text-emerald-300' : 'text-slate-500',
+                    f.phase === 'airborne' ? 'text-emerald-500' : 'text-slate-400',
                   )}
                   style={{ left: `calc(${progress * 100}% - 7px)` }}
                 />
@@ -532,10 +494,10 @@ function FlightBoard({ rows, nowMinutes, loading }: { rows: LiveFlight[]; nowMin
               <span className="tabular-nums text-slate-400">{f.arrTime ?? '--:--'}</span>
             </div>
 
-            <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-500">
+            <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-400">
               <Users className="w-3 h-3" /> {f.pax} pax
               {f.from.city && f.to.city && <span className="truncate">· {f.from.city} → {f.to.city}</span>}
-              {f.bookingRef && <span className="ml-auto font-bold text-brand-300">{f.bookingRef}</span>}
+              {f.bookingRef && <span className="ml-auto font-bold text-sky-600">{f.bookingRef}</span>}
             </div>
           </motion.div>
         )
@@ -557,11 +519,11 @@ function FlightBoard({ rows, nowMinutes, loading }: { rows: LiveFlight[]; nowMin
 function GroundList({ rows, loading }: { rows: LiveOnGround[]; loading?: boolean }) {
   if (loading) {
     return <div className="p-6 space-y-3">
-      {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />)}
+      {[0, 1, 2, 3].map(i => <div key={i} className="h-12 rounded-lg bg-slate-100 animate-pulse" />)}
     </div>
   }
   if (rows.length === 0) {
-    return <p className="p-8 text-center text-xs text-slate-500">Nobody on the ground right now</p>
+    return <p className="p-8 text-center text-xs text-slate-400">Nobody on the ground right now</p>
   }
 
   return (
@@ -573,22 +535,22 @@ function GroundList({ rows, loading }: { rows: LiveOnGround[]; loading?: boolean
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: Math.min(i * 0.03, 0.4) }}
-              className="px-3.5 py-3 hover:bg-white/5 transition-colors"
+              className="px-3.5 py-3 hover:bg-sky-50/60 transition-colors"
             >
               <div className="flex items-center gap-2">
-                <span className="text-xs font-black text-white">{g.bookingRef}</span>
-                <span className="text-[10px] text-slate-500 truncate">{g.lead ?? g.countryLabel ?? ''}</span>
-                <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-white/8 text-slate-300 border border-white/10">
+                <span className="text-xs font-black text-slate-900">{g.bookingRef}</span>
+                <span className="text-[10px] text-slate-400 truncate">{g.lead ?? g.countryLabel ?? ''}</span>
+                <span className="ml-auto text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
                   Day {g.dayNo}/{g.totalDays}
                 </span>
               </div>
 
-              <div className="mt-1.5 flex items-center gap-2 text-[11px] text-slate-400">
-                <MapPin className="w-3 h-3 text-brand-300 flex-shrink-0" />
+              <div className="mt-1.5 flex items-center gap-2 text-[11px] text-slate-500">
+                <MapPin className="w-3 h-3 text-sky-500 flex-shrink-0" />
                 <span className="truncate">
                   {g.leg ? `${g.leg.from.name} → ${g.leg.to.name}` : g.pin?.name ?? g.movement?.to ?? 'No movement charted today'}
                 </span>
-                <span className="ml-auto flex items-center gap-1 text-slate-300 font-bold flex-shrink-0">
+                <span className="ml-auto flex items-center gap-1 text-slate-700 font-bold flex-shrink-0">
                   <Users className="w-3 h-3" />{g.pax}
                 </span>
               </div>
@@ -603,7 +565,7 @@ function GroundList({ rows, loading }: { rows: LiveOnGround[]; loading?: boolean
                     ? <Badge tone="red"><AlertTriangle className="w-2.5 h-2.5" /> No driver</Badge>
                     : null}
                 {g.movement?.vehicleType && (
-                  <span className="text-slate-500 truncate">{g.movement.vehicleType}</span>
+                  <span className="text-slate-400 truncate">{g.movement.vehicleType}</span>
                 )}
               </div>
             </motion.div>
@@ -615,11 +577,11 @@ function GroundList({ rows, loading }: { rows: LiveOnGround[]; loading?: boolean
 }
 
 const BADGE_TONE = {
-  emerald: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/25',
-  amber:   'bg-amber-500/15 text-amber-200 border-amber-400/25',
-  sky:     'bg-sky-500/15 text-sky-200 border-sky-400/25',
-  red:     'bg-red-500/15 text-red-200 border-red-400/25',
-  slate:   'bg-white/8 text-slate-300 border-white/10',
+  emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  amber:   'bg-amber-50 text-amber-700 border-amber-200',
+  sky:     'bg-sky-50 text-sky-700 border-sky-200',
+  red:     'bg-red-50 text-red-700 border-red-200',
+  slate:   'bg-slate-100 text-slate-600 border-slate-200',
 }
 
 function Badge({ tone, children }: { tone: keyof typeof BADGE_TONE; children: React.ReactNode }) {
