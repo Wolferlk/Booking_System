@@ -40,6 +40,7 @@ import TravellerExperiencePanel from '@/components/bookings/traveller-experience
 import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
+import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
@@ -261,6 +262,7 @@ export default function BookingDetailPage() {
   const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
   const [savingMealPrefs, setSavingMealPrefs] = useState(false)
   const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
+  const passengerNotes = usePassengerNotes(ref)
 
   // Version switching (V1 / V2 …)
   const [versionMenuOpen, setVersionMenuOpen] = useState(false)
@@ -2390,6 +2392,7 @@ Wishing you a wonderful trip! ✈️
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-slate-400" /> Passengers
+                <SpecialCountChip count={passengerNotes.count} />
               </h3>
             </CardHeader>
             <CardBody className="p-0">
@@ -2423,6 +2426,7 @@ Wishing you a wonderful trip! ✈️
                   const pref = mealPrefs[pid] ?? ''
                   const selected = pref.split(',').map(s => s.trim()).filter(Boolean)
                   const isOpen = expandedMeal.has(pid)
+                  const specialNote = passengerNotes.noteFor(p.name as string)
 
                   function toggleOpen() {
                     setExpandedMeal(prev => {
@@ -2436,13 +2440,14 @@ Wishing you a wonderful trip! ✈️
                     <div key={pid} className="border-b border-slate-100 last:border-0">
                       {/* Passenger name row */}
                       <div className="flex items-center gap-3 px-4 py-3">
-                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
+                        <div className={`w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0 ${specialNote ? 'ring-2 ring-offset-1 ring-amber-400' : ''}`}>
                           {(p.name as string).slice(0, 1)}
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-900">
                             {p.name as string}
                             {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
+                            {specialNote && <SpecialChip />}
                           </p>
                           <p className="text-xs text-slate-500">{p.type as string}{p.age ? ` · Age ${p.age}` : ''}</p>
                         </div>
@@ -2473,6 +2478,17 @@ Wishing you a wonderful trip! ✈️
                             : <ChevronRight className="w-3.5 h-3.5 text-slate-300" />}
                         </button>
                       </div>
+
+                      {/* Special note — always visible when set, so nobody misses it */}
+                      {specialNote && (
+                        <div className="px-4 pb-3 ml-11">
+                          <SpecialNoteBlock
+                            note={specialNote}
+                            canEdit={canEditPassengers}
+                            onSave={text => passengerNotes.save(pid, p.name as string, text)}
+                          />
+                        </div>
+                      )}
 
                       {/* Expandable meal preference chips */}
                       {isOpen && (
@@ -2507,6 +2523,15 @@ Wishing you a wonderful trip! ✈️
                             </div>
                           ) : (
                             <span className="text-[11px] text-slate-300 italic">Not specified</span>
+                          )}
+                          {!specialNote && canEditPassengers && (
+                            <div className="mt-3">
+                              <SpecialNoteBlock
+                                note={null}
+                                canEdit
+                                onSave={text => passengerNotes.save(pid, p.name as string, text)}
+                              />
+                            </div>
                           )}
                         </div>
                       )}

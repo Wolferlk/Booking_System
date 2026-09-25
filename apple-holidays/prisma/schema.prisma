@@ -232,6 +232,23 @@ model Passenger {
   @@map("passengers")
 }
 
+/// Booking page "Special Note" per passenger. Keyed by booking ref + normalised
+/// name, not passenger id — passenger rows are recreated on every edit/re-import.
+/// No relation by design — see the SQL file.
+/// Created by prisma/sql/2026-09-25-passenger-special-notes.sql — never `db push`.
+model PassengerSpecialNote {
+  bookingRef    String
+  nameKey       String
+  passengerName String
+  note          String   @db.VarChar(1000)
+  updatedById   String?
+  updatedByName String?
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@id([bookingRef, nameKey])
+  @@map("passenger_special_notes")
+}
+
 model EmergencyContact {
   id        String  @id @default(cuid())
   bookingId String
