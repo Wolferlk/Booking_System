@@ -93,3 +93,32 @@ export function isSicType(value: string | null | undefined): boolean {
   const v = String(value ?? '')
   return v === 'SIC_TRANSFER' || v === 'SIC_TOUR' || v === 'PVT_TRANSFER_SIC_TOUR'
 }
+
+/**
+ * Custom service types — anything typed into the agenda's Service Type box that
+ * is not one of the built-in values is stored as the typed text itself (the
+ * column is VARCHAR since prisma/sql/2026-09-25-agenda-custom-service-types.sql).
+ * Every label lookup above already falls back to the raw value, so a custom
+ * type reads as typed everywhere it is shown.
+ */
+export const CUSTOM_SERVICE_TYPE_MAX = 64
+
+export function isBuiltInServiceType(value: string | null | undefined): boolean {
+  return (SERVICE_TYPE_VALUES as readonly string[]).includes(String(value ?? ''))
+}
+
+/**
+ * Map what an operator typed (or an API sent) to the value we store: a built-in
+ * code when the text is one of the codes or its label (any case), otherwise the
+ * tidied text itself. Empty → null, so callers pick their own default.
+ */
+export function normaliseServiceType(raw: unknown): string | null {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return null
+  if (isBuiltInServiceType(text)) return text
+  const lower = text.toLowerCase()
+  for (const code of SERVICE_TYPE_VALUES) {
+    if (code.toLowerCase() === lower || SERVICE_TYPE_LABELS[code]?.toLowerCase() === lower) return code
+  }
+  return text.slice(0, CUSTOM_SERVICE_TYPE_MAX)
+}

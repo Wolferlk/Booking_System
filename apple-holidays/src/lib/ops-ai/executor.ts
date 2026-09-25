@@ -13,7 +13,8 @@ import { importMappedBooking, AlreadyImportedError } from '@/lib/as-booking-impo
 import { getCancellationDeadline } from '@/lib/utils'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { runReadonlySql } from './sql'
-import type { ServiceType, PassengerType } from '@prisma/client'
+import type { PassengerType } from '@prisma/client'
+import type { ServiceTypeValue as ServiceType } from '@/lib/service-types'
 
 /**
  * The single choke point where an agent-proposed action becomes a real change.

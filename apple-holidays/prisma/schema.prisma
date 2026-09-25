@@ -318,7 +318,10 @@ model AgendaItem {
   details     String?     @db.Text
   mealPlan    String?
   meetingTime String?
-  serviceType ServiceType @default(OWN_ARRANGEMENT)
+  /// A `ServiceType` code (see src/lib/service-types.ts) or, for a type the
+  /// desk typed in themselves, the typed text. VARCHAR rather than the enum
+  /// since prisma/sql/2026-09-25-agenda-custom-service-types.sql.
+  serviceType String      @default("OWN_ARRANGEMENT") @db.VarChar(64)
   sortOrder   Int         @default(0)
   timeFrom    String?
   timeTo      String?
@@ -1572,6 +1575,9 @@ enum BookingStatus {
   AMENDED
 }
 
+/// No longer a column type — agenda_items.serviceType is VARCHAR so the desk
+/// can add their own types. Kept as the record of the built-in codes; the app's
+/// list is SERVICE_TYPE_VALUES in src/lib/service-types.ts.
 enum ServiceType {
   PVT_TRANSFER
   SIC_TRANSFER

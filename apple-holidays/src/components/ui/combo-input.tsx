@@ -50,6 +50,11 @@ interface ComboInputProps {
   disabled?: boolean
   /** Cap on the rows rendered at once; the list scrolls beyond it. */
   limit?: number
+  /**
+   * Behave like a searchable select: focusing selects the current text and
+   * opens the full list, so typing replaces the value and filters from scratch.
+   */
+  selectOnFocus?: boolean
 }
 
 /**
@@ -63,7 +68,7 @@ interface ComboInputProps {
  */
 export function ComboInput({
   value, onChange, options, multiline = false,
-  placeholder, className = '', disabled = false, limit = 50,
+  placeholder, className = '', disabled = false, limit = 50, selectOnFocus = false,
 }: ComboInputProps) {
   const [open,      setOpen]      = useState(false)
   /** Set by the chevron: show everything rather than filtering on the value. */
@@ -150,7 +155,10 @@ export function ComboInput({
     placeholder,
     disabled,
     onKeyDown,
-    onFocus: () => { if (options.length) { setOpen(true); setShowAll(false) } },
+    onFocus: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (selectOnFocus) e.currentTarget.select()
+      if (options.length) { setOpen(true); setShowAll(selectOnFocus) }
+    },
     className: fieldClass,
   }
 

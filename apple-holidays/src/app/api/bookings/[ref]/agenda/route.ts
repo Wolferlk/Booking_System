@@ -20,7 +20,8 @@ import {
 import { upsertManualPartner } from '@/lib/partner-directory-server'
 import { loadIncludes, saveIncludes } from '@/lib/vn-includes/includes'
 import type { AgendaInclude } from '@/lib/vn-includes/shared'
-import type { UserRole, ServiceType } from '@prisma/client'
+import { normaliseServiceType } from '@/lib/service-types'
+import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,6 +39,18 @@ function normaliseClock(raw: unknown): string | undefined {
   const text = String(raw).trim()
   if (!text) return undefined
   return parse12h(text) ?? text
+}
+
+/**
+ * Until prisma/sql/2026-09-25-agenda-custom-service-types.sql runs, the column
+ * is still an ENUM and MySQL refuses a typed-in service type ("Data truncated
+ * for column 'serviceType'", 1265). Built-in types are unaffected.
+ */
+const CUSTOM_SERVICE_TYPE_NOT_READY =
+  'Custom service types are not set up on this database yet — pick one from the list, or run prisma/sql/apply-agenda-custom-service-types.sh. Nothing was changed.'
+
+function isCustomServiceTypeRejected(msg: string): boolean {
+  return /serviceType/.test(msg) && /truncated|1265|invalid.*enum|not found in enum|Value '.*' not found/i.test(msg)
 }
 
 /**
@@ -197,7 +210,7 @@ export async function POST(
               meetingTime: normaliseClock(item.meetingTime),
               timeFrom: normaliseClock(item.timeFrom),
               timeTo: normaliseClock(item.timeTo),
-              serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
+              serviceType: normaliseServiceType(item.serviceType) ?? 'OWN_ARRANGEMENT',
               isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
               isHotelOnly: typeof item.isHotelOnly === 'boolean' ? item.isHotelOnly : null,
               sortOrder: index,
@@ -218,6 +231,9 @@ export async function POST(
     // empty body, which the client's res.json() reports as "Unexpected end of
     // JSON input" and hides the real cause. Nothing was saved: the transaction
     // above rolled back, so the previous chart is still intact.
+    if (isCustomServiceTypeRejected(msg)) {
+      return buildApiError(CUSTOM_SERVICE_TYPE_NOT_READY, 400)
+    }
     if (/too long|1406/i.test(msg)) {
       return buildApiError(
         'One of the movement fields is too long for the database. Run the pending agenda_items TEXT migration, then save again.',
@@ -609,6 +625,8 @@ export async function PUT(
     await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
   }
 
+  const editedServiceType = normaliseServiceType(body.serviceType)
+
   const updated = await prisma.agendaItem.update({
     where: { id: itemId },
     data: {
@@ -623,10 +641,14 @@ export async function PUT(
       ...(body.details !== undefined && { details: body.details }),
       ...(body.mealPlan !== undefined && { mealPlan: body.mealPlan }),
       ...(body.meetingTime !== undefined && { meetingTime: normaliseClock(body.meetingTime) ?? null }),
-      ...(body.serviceType && { serviceType: body.serviceType }),
+      ...(editedServiceType && { serviceType: editedServiceType }),
     },
     include: { assignment: { include: ASSIGNMENT_INCLUDE } },
+  }).catch((err: unknown) => {
+    if (isCustomServiceTypeRejected(err instanceof Error ? err.message : String(err))) return null
+    throw err
   })
+  if (!updated) return buildApiError(CUSTOM_SERVICE_TYPE_NOT_READY, 400)
 
   // A Hotel Only change on one movement can complete (or reopen) the whole file
   // on the Sri Lanka Driver Allocation board. Non-fatal.

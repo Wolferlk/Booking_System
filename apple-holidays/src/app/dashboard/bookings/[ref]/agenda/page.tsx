@@ -24,7 +24,7 @@ import PartnerAssignPicker, { EMPTY_SELECTION, type PartnerSelection } from '@/c
 import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
 import { formatDate } from '@/lib/utils'
 import { resolveIsLeisure } from '@/lib/leisure-day'
-import { SERVICE_TYPE_LABELS, isSicType } from '@/lib/service-types'
+import { SERVICE_TYPE_LABELS, isSicType, isBuiltInServiceType, normaliseServiceType } from '@/lib/service-types'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
@@ -406,6 +406,19 @@ export default function AgendaPage() {
   const [routeOptions, setRouteOptions] = useState<{ location: string[]; fromPoint: string[]; toPoint: string[] }>({
     location: [], fromPoint: [], toPoint: [],
   })
+  /** Service types the desk has typed in on past agendas (any country). */
+  const [savedCustomServiceTypes, setSavedCustomServiceTypes] = useState<string[]>([])
+
+  /**
+   * Service Type dropdown: the built-in list, then custom types saved on past
+   * agendas, then ones typed on this chart but not saved yet — so a new type
+   * typed on one movement can be picked on the next straight away.
+   */
+  const serviceTypeOptions = Array.from(new Set([
+    ...SERVICE_TYPES.map(s => s.label),
+    ...savedCustomServiceTypes,
+    ...items.map(x => (x.serviceType ?? '').trim()).filter(v => v && !isBuiltInServiceType(v)),
+  ]))
 
   useEffect(() => {
     const country = booking?.operationCountry
@@ -421,6 +434,7 @@ export default function AgendaPage() {
       .then(r => r.json())
       .then(json => {
         if (!live || !json.success) return
+        setSavedCustomServiceTypes(Array.isArray(json.data.serviceTypes) ? json.data.serviceTypes : [])
         setRouteOptions(o => ({
           location:  mergeSuggestions(json.data.location,  o.location),
           fromPoint: mergeSuggestions(json.data.fromPoint, o.fromPoint),
@@ -1570,7 +1584,11 @@ export default function AgendaPage() {
 
         {/* ── MOVEMENT ITEMS ── */}
         {!generating && items.map((item, i) => {
+          // A custom (typed-in) type has no entry of its own — show it as a plain badge.
           const svcType    = SERVICE_TYPES.find(s => s.value === item.serviceType)
+            ?? (item.serviceType.trim()
+              ? { value: item.serviceType, label: item.serviceType, color: 'gray' as const, icon: MapPin }
+              : undefined)
           const isAssigning = assigningIdx === i
           const detailsOpen = expandedDetails.has(i)
 
@@ -1643,10 +1661,27 @@ export default function AgendaPage() {
                         </div>
                         <div>
                           <label className="form-label text-xs">Service Type</label>
-                          <select className="form-select text-sm py-1.5" value={item.serviceType}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, serviceType: e.target.value } : x))}>
-                            {SERVICE_TYPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                          </select>
+                          {/* Type to search, or type a new one — a type that is not
+                              in the list is saved as typed and offered to the whole
+                              desk from then on (see lib/service-types). */}
+                          <ComboInput
+                            className="form-input text-sm py-1.5"
+                            selectOnFocus
+                            placeholder="Type or pick a service type"
+                            value={SERVICE_TYPE_LABELS[item.serviceType] ?? item.serviceType}
+                            // This row's own half-typed text is not a suggestion.
+                            options={serviceTypeOptions.filter(o => o !== item.serviceType.trim() || savedCustomServiceTypes.includes(o))}
+                            onChange={text => {
+                              // A built-in label (any case) becomes its code; anything
+                              // else is kept exactly as typed — the server tidies it.
+                              const code = normaliseServiceType(text)
+                              const next = code && isBuiltInServiceType(code) ? code : text
+                              setItems(is => is.map((x, j) => j === i ? { ...x, serviceType: next } : x))
+                            }}
+                          />
+                          {item.serviceType.trim() && !isBuiltInServiceType(item.serviceType) && (
+                            <p className="mt-0.5 text-[10px] text-amber-600">Custom type — saved as typed and added to the list</p>
+                          )}
                         </div>
                         {isSicType(item.serviceType) && (
                           <>

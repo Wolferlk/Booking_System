@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { mergeSuggestions, seedSuggestions, isVietnamCountry } from '@/lib/agenda-suggestions'
+import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,7 +65,27 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Service types the desk typed in themselves — every country, most used first.
+  // Built-in codes are left out; the page lists those itself.
+  let serviceTypes: string[] = []
+  try {
+    const rows = await prisma.$queryRawUnsafe<Row[]>(
+      `SELECT TRIM(serviceType) AS value
+         FROM agenda_items
+        WHERE TRIM(serviceType) <> ''
+        GROUP BY value
+        ORDER BY COUNT(*) DESC
+        LIMIT ?`,
+      PER_FIELD,
+    )
+    const builtIn = new Set<string>(SERVICE_TYPE_VALUES)
+    serviceTypes = rows.map(r => String(r.value)).filter(v => v && !builtIn.has(v))
+  } catch {
+    // Convenience only — the built-in list still works.
+  }
+
   return buildApiSuccess({
+    serviceTypes,
     location:  mergeSuggestions(past.location,  seedSuggestions('location',  country)),
     fromPoint: mergeSuggestions(past.fromPoint, seedSuggestions('fromPoint', country)),
     toPoint:   mergeSuggestions(past.toPoint,   seedSuggestions('toPoint',   country)),
