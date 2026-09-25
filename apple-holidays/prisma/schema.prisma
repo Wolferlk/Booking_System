@@ -376,6 +376,28 @@ model AgendaTicketsControl {
   @@map("agenda_tickets_control")
 }
 
+/// MC Report desk figures per movement: Sri Lanka package cost / budget KM /
+/// actual KM, Singapore–Malaysia budget transfer, and a movement-level special
+/// request. Keyed by agenda item id and carried to the new id on every chart
+/// save, like AgendaTicketsControl. No relation by design — see the SQL file.
+/// Created by prisma/sql/2026-09-25-agenda-mc-details.sql — never `db push`.
+model AgendaMcDetail {
+  agendaItemId   String   @id
+  bookingRef     String
+  packageCost    Decimal? @db.Decimal(12, 2)
+  budgetKm       Decimal? @db.Decimal(10, 1)
+  actualKm       Decimal? @db.Decimal(10, 1)
+  budgetTransfer Decimal? @db.Decimal(12, 2)
+  currency       String?  @db.VarChar(8)
+  specialRequest String?  @db.VarChar(500)
+  updatedById    String?
+  updatedByName  String?
+  updatedAt      DateTime @default(now()) @updatedAt
+
+  @@index([bookingRef], map: "agenda_mc_details_bookingRef_idx")
+  @@map("agenda_mc_details")
+}
+
 /// The Vietnam product sheet, cached — what an agenda include is picked from.
 /// SHEET rows are refreshed by a sync and never deleted (a product that leaves
 /// the sheet goes inactive); MANUAL rows are typed in by an operator and pushed

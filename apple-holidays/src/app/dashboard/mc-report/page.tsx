@@ -8,6 +8,8 @@ import {
   ClipboardList, RefreshCw, Table2, Globe, FileText,
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
+  PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
+  Columns3, Check,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -24,6 +26,10 @@ import {
 } from '@/lib/service-types'
 import { to12h } from '@/lib/clock-time'
 import { hasPermission } from '@/lib/rbac'
+import {
+  MC_FIELD_META, SPECIAL_REQUEST_MAX, isSriLanka, isSgMy, mcCurrencyFor, mealPrefsText, bookingRequestsText,
+  type McDetails, type McFieldKey, type McFlight, type McMealPref, type McBookingRequest,
+} from '@/lib/mc-report-fields'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,6 +87,20 @@ type MCRow = {
   operationCountry: string | null
   /** Vietnam only — the desk's short "Tickets Control" note on this movement. */
   ticketsControl?: string | null
+  /** Desk figures typed on this report — see src/lib/mc-report-fields.ts. */
+  mcDetails?: McDetails | null
+  /** Vehicle to show when the movement has none of its own (driver's / allocation board). */
+  vehicleTypeHint?: { value: string; source: 'driver' | 'allocation' } | null
+  /** Sri Lanka: the file's arrival / departure flights plus any on this row's date. */
+  flights?: McFlight[]
+  arrivalDate?:   string | null
+  departureDate?: string | null
+  /** Passengers' meal preferences, grouped. Every destination. */
+  mealPrefs?: McMealPref[]
+  /** Booking-level special requests (client request, occasion, passenger notes). */
+  bookingRequests?: McBookingRequest[]
+  /** Sri Lanka: whole-tour figures from the saved transport settlement sheet. */
+  tourFigures?: { packageCost: number | null; budgetKm: number | null; actualKm: number | null } | null
   agent:          string | null
   bookingStatus:  string
   /** Cancellation-approval trail — set once a cancellation has been requested. */
@@ -233,6 +253,11 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.guideName, row.tourVendorName,
     row.vehicleType, row.vehiclePlate, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
+    row.vehicleTypeHint?.value,
+    (row.flights ?? []).map(f => `${f.flightNo} ${f.fromApt} ${f.toApt} ${f.airline ?? ''}`).join(' ') || null,
+    mealPrefsText(row.mealPrefs) || null,
+    bookingRequestsText(row.bookingRequests) || null,
+    row.mcDetails?.specialRequest != null ? String(row.mcDetails.specialRequest) : null,
     // Searchable by name: typing "hotel only" pulls up every accommodation-only
     // file, which is the fastest way to answer "who has no tour this week?"
     row.isHotelOnlyBooking ? 'hotel only booking accommodation only' : null,
@@ -273,6 +298,9 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'IS No',     value: row.isNumber },
     { label: 'Agent ID',  value: row.agentBookingId },
     { label: 'Cancel Reason', value: row.cancelReason },
+    { label: 'Flights',         value: (row.flights ?? []).map(f => `${f.direction} ${f.flightNo} ${f.fromApt}→${f.toApt}`).join(', ') },
+    { label: 'Meal Preference', value: mealPrefsText(row.mealPrefs) },
+    { label: 'Special Request', value: [row.mcDetails?.specialRequest, bookingRequestsText(row.bookingRequests)].filter(Boolean).join(' | ') },
   ]
   return fields
     .filter(f => f.value?.toLowerCase().includes(q))
@@ -394,6 +422,9 @@ function TicketsControlCell({
 }) {
   const [draft,  setDraft]  = useState(value ?? '')
   const [saving, setSaving] = useState(false)
+  // Escape blurs the field, and the blur handler still sees the typed draft —
+  // this flag is what stops Escape from saving the edit it means to undo.
+  const cancelRef = useRef(false)
   useEffect(() => { setDraft(value ?? '') }, [value])
 
   if (!canEdit) {
@@ -403,6 +434,7 @@ function TicketsControlCell({
   }
 
   async function save() {
+    if (cancelRef.current) { cancelRef.current = false; setDraft(value ?? ''); return }
     const next = draft.trim()
     if (next === (value ?? '')) { setDraft(next); return }
     setSaving(true)
@@ -431,7 +463,7 @@ function TicketsControlCell({
         onBlur={save}
         onKeyDown={e => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-          if (e.key === 'Escape') { setDraft(value ?? ''); (e.target as HTMLInputElement).blur() }
+          if (e.key === 'Escape') { cancelRef.current = true; (e.target as HTMLInputElement).blur() }
         }}
         maxLength={255}
         disabled={saving}
@@ -440,6 +472,281 @@ function TicketsControlCell({
         className="w-full min-w-[120px] rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-slate-700 placeholder:text-slate-300 hover:border-slate-200 focus:border-brand-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-brand-200 disabled:opacity-60"
       />
       {saving && <Loader2 className="absolute right-1 top-1.5 w-3 h-3 animate-spin text-slate-400" />}
+    </div>
+  )
+}
+
+
+// ─── MC columns: flights, vehicle, desk figures, requests, meal preferences ───
+
+/** Optional columns the viewer can hide; remembered per browser. */
+const OPTIONAL_COLS = [
+  { key: 'flights',        label: 'Flight Details',  scope: 'Sri Lanka' },
+  { key: 'vehicle',        label: 'Vehicle Type',    scope: 'Sri Lanka' },
+  { key: 'budgetKm',       label: 'Budget KM',       scope: 'Sri Lanka' },
+  { key: 'actualKm',       label: 'Actual KM',       scope: 'Sri Lanka' },
+  { key: 'packageCost',    label: 'Package Cost',    scope: 'Sri Lanka' },
+  { key: 'budgetTransfer', label: 'Budget Transfer', scope: 'Singapore / Malaysia' },
+  { key: 'mealPref',       label: 'Meal Preference', scope: 'All destinations' },
+  { key: 'specialRequest', label: 'Special Request', scope: 'All destinations' },
+] as const
+type OptionalCol = typeof OPTIONAL_COLS[number]['key']
+const HIDDEN_COLS_KEY = 'mc-report.hidden-cols'
+
+function fmtNum(n: number, digits = 2) {
+  return n.toLocaleString('en-US', { maximumFractionDigits: digits })
+}
+
+function mcNumber(row: MCRow, field: McFieldKey): number | null {
+  const v = row.mcDetails?.[field]
+  return typeof v === 'number' ? v : null
+}
+
+/** Actual − budget, only when both are typed. */
+function kmVariance(row: MCRow): number | null {
+  const b = mcNumber(row, 'budgetKm'), a = mcNumber(row, 'actualKm')
+  return a != null && b != null ? Math.round((a - b) * 10) / 10 : null
+}
+
+function flightTime(f: McFlight) {
+  // Arrivals are met at the arrival time, departures dropped for the departure.
+  const t = f.direction === 'DEP' ? f.depTime : f.direction === 'ARR' ? f.arrTime : f.depTime
+  return t ? to12h(t) ?? t : ''
+}
+
+const FLIGHT_TONE: Record<McFlight['direction'], { chip: string; Icon: typeof Plane; word: string }> = {
+  ARR: { chip: 'bg-emerald-50 text-emerald-800 ring-emerald-200', Icon: PlaneLanding, word: 'Arrival' },
+  DEP: { chip: 'bg-sky-50 text-sky-800 ring-sky-200',             Icon: PlaneTakeoff, word: 'Departure' },
+  INT: { chip: 'bg-slate-50 text-slate-700 ring-slate-200',       Icon: Plane,        word: 'Flight' },
+}
+
+/**
+ * Flight Details (Sri Lanka). A flight on this row's date is the headline:
+ * a bold chip with the time the driver has to work to. The file's arrival and
+ * departure on other days ride underneath, muted, so every row still answers
+ * "when did they land / when do they leave" without opening the booking.
+ */
+function FlightCell({ row }: { row: MCRow }) {
+  const flights = row.flights ?? []
+  if (!flights.length) return <span className="text-slate-300 text-[10px]" title="No flights on this booking">No flights</span>
+  const today = flights.filter(f => f.date === row.date)
+  const other = flights.filter(f => f.date !== row.date && f.direction !== 'INT')
+  const title = flights.map(f =>
+    `${FLIGHT_TONE[f.direction].word}: ${f.flightNo} · ${formatDate(f.date)} · ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}${f.airline ? ` · ${f.airline}` : ''}`,
+  ).join('\n')
+  return (
+    <div className="space-y-1 min-w-[150px]" title={title}>
+      {today.map((f, i) => {
+        const t = FLIGHT_TONE[f.direction]
+        return (
+          <div key={`t${i}`} className={cn('flex items-center gap-1.5 rounded-md px-1.5 py-1 ring-1', t.chip)}>
+            <t.Icon className="w-3.5 h-3.5 flex-shrink-0" />
+            <div className="leading-tight min-w-0">
+              <div className="font-bold font-mono text-[11px] whitespace-nowrap">
+                {f.flightNo} <span className="font-sans font-semibold">{flightTime(f)}</span>
+              </div>
+              <div className="text-[10px] opacity-80 whitespace-nowrap">{f.fromApt} → {f.toApt}</div>
+            </div>
+          </div>
+        )
+      })}
+      {other.map((f, i) => {
+        const t = FLIGHT_TONE[f.direction]
+        return (
+          <div key={`o${i}`} className="flex items-center gap-1 text-[10px] text-slate-500 whitespace-nowrap">
+            <t.Icon className="w-3 h-3 text-slate-400 flex-shrink-0" />
+            <span className="font-semibold">{f.direction === 'ARR' ? 'In' : 'Out'}</span>
+            {formatDate(f.date).replace(/ \d{4}$/, '')}
+            <span className="font-mono">{f.flightNo}</span>
+            <span className="text-slate-400">{flightTime(f)}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Vehicle Type (Sri Lanka): the movement's own, else the best-known one, marked as such. */
+function VehicleCell({ row }: { row: MCRow }) {
+  if (row.vehicleType) {
+    return (
+      <span className="inline-flex items-center gap-1 font-medium text-slate-700 whitespace-nowrap">
+        <Car className="w-3 h-3 text-slate-400" />{row.vehicleType}
+      </span>
+    )
+  }
+  if (row.vehicleTypeHint) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 italic text-slate-500 whitespace-nowrap"
+        title={row.vehicleTypeHint.source === 'driver'
+          ? "The assigned driver's registered vehicle — not set on this movement"
+          : "From the Sri Lanka driver allocation board — not set on this movement"}
+      >
+        <Car className="w-3 h-3 text-slate-300" />{row.vehicleTypeHint.value}
+      </span>
+    )
+  }
+  return <span className="text-slate-300 text-[10px]">—</span>
+}
+
+async function saveMcField(rowId: string, field: McFieldKey, value: string): Promise<McDetails> {
+  const res  = await fetch('/api/mc-report/details', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agendaItemId: rowId, field, value }),
+  })
+  const json = await res.json()
+  if (!json.success) throw new Error(json.error)
+  return json.data.details as McDetails
+}
+
+/**
+ * One desk figure, edited in place — same behaviour as Tickets Control: Enter
+ * or click away saves, Escape puts it back. Numbers are shown formatted and
+ * edited raw.
+ */
+function McEditCell({
+  row, field, canEdit, onSaved, prefix, suffix, hint,
+}: {
+  row: MCRow
+  field: McFieldKey
+  canEdit: boolean
+  onSaved: (rowId: string, details: McDetails) => void
+  prefix?: string
+  suffix?: string
+  /** Shown as the placeholder and tooltip, e.g. the whole-tour figure. */
+  hint?: string
+}) {
+  const meta   = MC_FIELD_META[field]
+  const isText = meta.kind === 'text'
+  const value  = row.mcDetails?.[field] ?? null
+  const raw    = value == null ? '' : String(value)
+  const [draft, setDraft]   = useState(raw)
+  const [focus, setFocus]   = useState(false)
+  const [saving, setSaving] = useState(false)
+  const cancelRef = useRef(false) // see TicketsControlCell
+  useEffect(() => { if (!focus) setDraft(raw) }, [raw, focus])
+
+  const shown = !focus && !isText && value != null
+    ? `${prefix ? prefix + ' ' : ''}${fmtNum(Number(value), meta.kind === 'km' ? 1 : 2)}${suffix ? ' ' + suffix : ''}`
+    : draft
+  const who = row.mcDetails?.updatedByName ? `\nLast updated by ${row.mcDetails.updatedByName}` : ''
+
+  if (!canEdit) {
+    return value != null
+      ? <span className={cn('text-slate-700', !isText && 'font-semibold tabular-nums whitespace-nowrap')} title={(hint ?? '') + who}>{shown}</span>
+      : <span className="text-slate-300 text-[10px]" title={hint}>—</span>
+  }
+
+  async function save() {
+    setFocus(false)
+    if (cancelRef.current) { cancelRef.current = false; setDraft(raw); return }
+    const next = draft.trim()
+    if (next === raw) { setDraft(raw); return }
+    setSaving(true)
+    try {
+      const details = await saveMcField(row.id, field, next)
+      onSaved(row.id, details)
+      toast.success(details[field] != null ? `${meta.label} saved` : `${meta.label} cleared`)
+    } catch (err: unknown) {
+      setDraft(raw)
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <input
+        value={shown}
+        onChange={e => setDraft(e.target.value)}
+        onFocus={() => { setFocus(true); setDraft(raw) }}
+        onBlur={save}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') { cancelRef.current = true; (e.target as HTMLInputElement).blur() }
+        }}
+        inputMode={isText ? 'text' : 'decimal'}
+        maxLength={isText ? SPECIAL_REQUEST_MAX : 16}
+        disabled={saving}
+        placeholder={hint ? hint : 'Add…'}
+        title={(isText ? draft || meta.label : hint ?? meta.label) + who}
+        className={cn(
+          'w-full rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-slate-700 placeholder:text-slate-300 hover:border-slate-200 focus:border-brand-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-brand-200 disabled:opacity-60',
+          isText ? 'min-w-[140px]' : 'min-w-[88px] text-right tabular-nums font-semibold',
+        )}
+      />
+      {saving && <Loader2 className="absolute right-1 top-1.5 w-3 h-3 animate-spin text-slate-400" />}
+    </div>
+  )
+}
+
+/** Actual vs budget at a glance: over budget in rose, within it in emerald. */
+function KmVarianceChip({ row }: { row: MCRow }) {
+  const v = kmVariance(row)
+  if (v == null) return null
+  const over = v > 0
+  return (
+    <span className={cn(
+      'mt-0.5 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap',
+      over ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700',
+    )} title={`Actual ${fmtNum(mcNumber(row, 'actualKm')!, 1)} km against a budget of ${fmtNum(mcNumber(row, 'budgetKm')!, 1)} km`}>
+      {over ? `+${fmtNum(v, 1)} km over` : v === 0 ? 'on budget' : `${fmtNum(-v, 1)} km under`}
+    </span>
+  )
+}
+
+/** Meal Preference — passengers grouped by what they asked for. */
+function MealPrefCell({ prefs }: { prefs: McMealPref[] | undefined }) {
+  if (!prefs?.length) return <span className="text-slate-300 text-[10px]">—</span>
+  return (
+    <div className="flex flex-wrap gap-1 max-w-[170px]">
+      {prefs.map(m => (
+        <span key={m.label}
+          className="inline-flex items-center gap-1 rounded-full bg-lime-50 px-2 py-0.5 text-[10px] font-semibold text-lime-800 ring-1 ring-lime-200"
+          title={`${m.label}: ${m.names.join(', ')}`}>
+          <Utensils className="w-2.5 h-2.5" />
+          <span className="truncate max-w-[110px]">{m.label}</span>
+          {m.count > 1 && <span className="text-lime-600">×{m.count}</span>}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Special Request — two layers. The booking's own requests (client request,
+ * occasion, passenger special notes) come from the file and show as a chip on
+ * every movement; below it, a request that applies to this movement only can
+ * be typed straight into the report.
+ */
+function SpecialRequestCell({
+  row, canEdit, onSaved,
+}: {
+  row: MCRow
+  canEdit: boolean
+  onSaved: (rowId: string, details: McDetails) => void
+}) {
+  const reqs = row.bookingRequests ?? []
+  return (
+    <div className="space-y-1 min-w-[160px] max-w-[230px]">
+      {reqs.length > 0 && (
+        <div
+          className="flex items-start gap-1 rounded-md bg-amber-50 px-1.5 py-1 text-[10px] leading-snug text-amber-900 ring-1 ring-amber-200"
+          title={reqs.map(r => `${r.source}: ${r.text}`).join('\n')}
+        >
+          <MessageSquareText className="w-3 h-3 mt-px flex-shrink-0 text-amber-600" />
+          <span className="line-clamp-2">
+            <span className="font-bold">{reqs[0].source}:</span> {reqs[0].text}
+            {reqs.length > 1 && <span className="font-bold text-amber-700"> +{reqs.length - 1} more</span>}
+          </span>
+        </div>
+      )}
+      {row.isHotelOnlyBooking
+        ? (reqs.length ? null : <span className="text-slate-300 text-[10px]">—</span>)
+        : <McEditCell row={row} field="specialRequest" canEdit={canEdit} onSaved={onSaved}
+            hint={reqs.length ? 'For this movement…' : undefined} />}
     </div>
   )
 }
@@ -558,6 +865,26 @@ export default function MCReportPage() {
   // guide / tour-vendor columns only appear where they are actually used.
   const [partnerCountries, setPartnerCountries] = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
   const exportMenuRef = useRef<HTMLDivElement>(null)
+  // Optional MC columns the viewer switched off — a per-browser convenience.
+  const [hiddenCols, setHiddenCols] = useState<Set<OptionalCol>>(new Set())
+  const [showColMenu, setShowColMenu] = useState(false)
+  const colMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(HIDDEN_COLS_KEY) ?? '[]')
+      if (Array.isArray(saved)) setHiddenCols(new Set(saved as OptionalCol[]))
+    } catch { /* private window / blocked storage — show everything */ }
+  }, [])
+
+  function toggleCol(key: OptionalCol) {
+    setHiddenCols(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify(Array.from(next))) } catch { /* ignore */ }
+      return next
+    })
+  }
 
   useEffect(() => {
     fetch('/api/public/partner-settings')
@@ -571,6 +898,8 @@ export default function MCReportPage() {
     function handle(e: MouseEvent) {
       if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node))
         setShowExportMenu(false)
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target as Node))
+        setShowColMenu(false)
     }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
@@ -694,6 +1023,29 @@ export default function MCReportPage() {
   )
   const canEditTicketsControl = hasPermission(session?.user?.role as UserRole, 'agenda:edit')
 
+  // Country-scoped MC columns: Sri Lanka's flight / vehicle / KM / package cost,
+  // Singapore–Malaysia's budget transfer. Shown when such a movement is in view
+  // (a Hotel Only stay is not a movement), and not switched off in Columns.
+  const hasSlRows   = useMemo(() => displayedRows.some(r => isSriLanka(r.operationCountry) && !r.isHotelOnlyBooking), [displayedRows])
+  const hasSgMyRows = useMemo(() => displayedRows.some(r => isSgMy(r.operationCountry) && !r.isHotelOnlyBooking), [displayedRows])
+  const colOn = (key: OptionalCol) => !hiddenCols.has(key)
+  const showFlightsCol     = hasSlRows && colOn('flights')
+  const showVehicleCol     = hasSlRows && colOn('vehicle')
+  const showBudgetKmCol    = hasSlRows && colOn('budgetKm')
+  const showActualKmCol    = hasSlRows && colOn('actualKm')
+  const showPackageCostCol = hasSlRows && colOn('packageCost')
+  const showBudgetTransferCol = hasSgMyRows && colOn('budgetTransfer')
+  const showMealPrefCol    = colOn('mealPref')
+  const showSpecialReqCol  = colOn('specialRequest')
+  const columnCount = 13
+    + [showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
+       showBudgetKmCol, showActualKmCol, showPackageCostCol, showBudgetTransferCol,
+       showMealPrefCol, showSpecialReqCol].filter(Boolean).length
+
+  function applyMcDetails(rowId: string, details: McDetails) {
+    setRows(rs => rs.map(r => r.id === rowId ? { ...r, mcDetails: Object.keys(details).length ? details : null } : r))
+  }
+
   function applyTicketsControl(rowId: string, value: string) {
     setRows(rs => rs.map(r => r.id === rowId ? { ...r, ticketsControl: value || null } : r))
   }
@@ -803,6 +1155,76 @@ export default function MCReportPage() {
   )
   const hotelOnlyStayCount = displayedRows.filter(r => r.isHotelOnlyBooking).length
 
+  // ── MC figures ──────────────────────────────────────────────────────────────
+  // Live movements only, like every other total: a cancelled file's KM and
+  // costs are not work we are running.
+  const mcStats = useMemo(() => {
+    const sl = liveRows.filter(r => isSriLanka(r.operationCountry) && !r.isHotelOnlyBooking)
+    let budgetKm = 0, actualKm = 0, pairedBudget = 0, pairedActual = 0, kmRows = 0, overRows = 0, packageCost = 0, costRows = 0
+    for (const r of sl) {
+      const b = mcNumber(r, 'budgetKm'), a = mcNumber(r, 'actualKm'), c = mcNumber(r, 'packageCost')
+      if (b != null) budgetKm += b
+      if (a != null) actualKm += a
+      if (a != null && b != null) { pairedBudget += b; pairedActual += a; kmRows += 1; if (a > b) overRows += 1 }
+      if (c != null) { packageCost += c; costRows += 1 }
+    }
+    // Budget transfer can mix SGD and MYR, so it is summed per currency.
+    const transfer = new Map<string, number>()
+    let transferRows = 0
+    for (const r of liveRows) {
+      const v = mcNumber(r, 'budgetTransfer')
+      if (v == null || !isSgMy(r.operationCountry)) continue
+      const cur = r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)
+      transfer.set(cur, (transfer.get(cur) ?? 0) + v)
+      transferRows += 1
+    }
+    // Arrivals / departures landing inside the dates on screen, each flight once.
+    const dates = new Set(liveRows.map(r => r.date))
+    const seen  = new Set<string>()
+    let arrivals = 0, departures = 0
+    for (const r of liveRows) for (const f of r.flights ?? []) {
+      const k = `${r.vnCode}|${f.flightNo}|${f.date}`
+      if (seen.has(k) || !dates.has(f.date)) continue
+      seen.add(k)
+      if (f.direction === 'ARR') arrivals += 1
+      if (f.direction === 'DEP') departures += 1
+    }
+    const requestFiles = new Set(liveRows.filter(r => r.bookingRequests?.length).map(r => r.vnCode)).size
+    const requestMoves = liveRows.filter(r => r.mcDetails?.specialRequest).length
+    const mealFiles    = new Set(liveRows.filter(r => r.mealPrefs?.length).map(r => r.vnCode)).size
+    return {
+      slRows: sl.length, budgetKm, actualKm, pairedBudget, pairedActual, kmRows, overRows, packageCost, costRows,
+      transfer, transferRows, arrivals, departures, requestFiles, requestMoves, mealFiles,
+    }
+  }, [liveRows])
+  const transferText = Array.from(mcStats.transfer.entries()).map(([c, v]) => `${c} ${fmtNum(v)}`).join(' · ')
+
+  // ── MC export columns (shared by CSV and Excel) ──────────────────────────────
+
+  const MC_EXPORT_HEADERS = [
+    'Arrival Flight', 'Departure Flight', 'Vehicle Type (resolved)',
+    'Budget KM', 'Actual KM', 'KM Variance', 'Package Cost (LKR)',
+    'Budget Transfer', 'Budget Transfer Currency',
+    'Special Request (movement)', 'Special Requests (booking)', 'Meal Preference',
+  ]
+  function mcExportCells(r: MCRow): (string | number)[] {
+    const flight = (dir: 'ARR' | 'DEP') => (r.flights ?? []).filter(f => f.direction === dir)
+      .map(f => `${f.flightNo} ${f.date} ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`).join('; ')
+    const sl = isSriLanka(r.operationCountry), sgmy = isSgMy(r.operationCountry)
+    const n  = (f: McFieldKey) => mcNumber(r, f) ?? ''
+    return [
+      sl ? flight('ARR') : '', sl ? flight('DEP') : '',
+      sl ? (r.vehicleType ?? r.vehicleTypeHint?.value ?? '') : '',
+      sl ? n('budgetKm') : '', sl ? n('actualKm') : '', sl ? kmVariance(r) ?? '' : '',
+      sl ? n('packageCost') : '',
+      sgmy ? n('budgetTransfer') : '',
+      sgmy && mcNumber(r, 'budgetTransfer') != null ? (r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)) : '',
+      r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
+      bookingRequestsText(r.bookingRequests),
+      mealPrefsText(r.mealPrefs),
+    ]
+  }
+
   // ── CSV Export ────────────────────────────────────────────────────────────────
 
   function downloadCSV() {
@@ -817,6 +1239,7 @@ export default function MCReportPage() {
       'Vendor', 'Driver', 'Vehicle Type', 'Plate',
       'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
       'Tickets Control',
+      ...MC_EXPORT_HEADERS,
     ]
 
     const csvRows = displayedRows.map(r => [
@@ -844,6 +1267,7 @@ export default function MCReportPage() {
       r.tourVendorName ?? '', r.tourVendorPhone ?? '',
       r.agent ?? '',
       r.ticketsControl ?? '',
+      ...mcExportCells(r),
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
 
     const csv  = [headers.join(','), ...csvRows].join('\n')
@@ -881,6 +1305,7 @@ export default function MCReportPage() {
         'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
         'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
         'Tickets Control',
+        ...MC_EXPORT_HEADERS,
       ]
 
       const dataRows = displayedRows.map(r => [
@@ -905,6 +1330,7 @@ export default function MCReportPage() {
         r.cancelReason ?? '',
         r.cancelFeeTotal ?? '',
         r.ticketsControl ?? '',
+        ...mcExportCells(r),
       ])
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
@@ -918,6 +1344,8 @@ export default function MCReportPage() {
         { wch: 18 }, { wch: 16 },
         { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 40 }, { wch: 14 },
         { wch: 24 },
+        { wch: 34 }, { wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 16 },
+        { wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 50 }, { wch: 28 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
 
@@ -942,6 +1370,15 @@ export default function MCReportPage() {
         ['Cancelled Movements', cancelledRowCount],
         ['Cancellations Awaiting Accounts Approval', cancelQueue.length],
         ['Movements On Files Awaiting Approval',     cancelQueueMovements],
+        [''],
+        ['Sri Lanka Arrivals / Departures', `${mcStats.arrivals} / ${mcStats.departures}`],
+        ['Sri Lanka Budget KM',  mcStats.budgetKm],
+        ['Sri Lanka Actual KM',  mcStats.actualKm],
+        ['Sri Lanka Package Cost (LKR)', mcStats.packageCost],
+        ['SG / MY Budget Transfer', transferText || 0],
+        ['Bookings With Special Requests', mcStats.requestFiles],
+        ['Movements With Their Own Special Request', mcStats.requestMoves],
+        ['Bookings With Meal Preferences', mcStats.mealFiles],
       ].filter(r => r.length > 0)
 
       const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
@@ -1348,6 +1785,34 @@ export default function MCReportPage() {
               // Counted over the whole loaded chart, like the panel above it —
               // the tile and the alert must never disagree about how many files
               // are waiting on accounts.
+              // MC figures — each tile only when the chart has something for it.
+              ...(mcStats.arrivals + mcStats.departures > 0
+                ? [{ icon: <Plane className="w-4 h-4" />, label: 'Flights (SL)', value: `${mcStats.arrivals} / ${mcStats.departures}`, sub: 'arrivals / departures', color: 'text-sky-700', bg: 'bg-sky-50' }]
+                : []),
+              ...(mcStats.kmRows > 0 || mcStats.budgetKm > 0 || mcStats.actualKm > 0
+                ? [{
+                    icon: <Gauge className="w-4 h-4" />, label: 'KM Actual / Budget',
+                    value: `${fmtNum(mcStats.actualKm, 1)} / ${fmtNum(mcStats.budgetKm, 1)}`,
+                    sub: mcStats.kmRows === 0 ? 'no movement has both yet'
+                      : mcStats.pairedActual > mcStats.pairedBudget
+                        ? `+${fmtNum(mcStats.pairedActual - mcStats.pairedBudget, 1)} km over · ${mcStats.overRows} movement${mcStats.overRows === 1 ? '' : 's'}`
+                        : `within budget on ${mcStats.kmRows} movement${mcStats.kmRows === 1 ? '' : 's'}`,
+                    color: mcStats.pairedActual > mcStats.pairedBudget ? 'text-rose-700' : 'text-teal-700',
+                    bg: mcStats.pairedActual > mcStats.pairedBudget ? 'bg-rose-50' : 'bg-teal-50',
+                  }]
+                : []),
+              ...(mcStats.costRows > 0
+                ? [{ icon: <Wallet className="w-4 h-4" />, label: 'Package Cost', value: `LKR ${fmtNum(mcStats.packageCost)}`, sub: `${mcStats.costRows} of ${mcStats.slRows} SL movements`, color: 'text-emerald-800', bg: 'bg-emerald-50' }]
+                : []),
+              ...(mcStats.transferRows > 0
+                ? [{ icon: <Wallet className="w-4 h-4" />, label: 'Budget Transfer', value: transferText, sub: `${mcStats.transferRows} SG / MY movement${mcStats.transferRows === 1 ? '' : 's'}`, color: 'text-indigo-700', bg: 'bg-indigo-50' }]
+                : []),
+              ...(mcStats.requestFiles + mcStats.requestMoves > 0
+                ? [{ icon: <MessageSquareText className="w-4 h-4" />, label: 'Special Requests', value: mcStats.requestFiles, sub: `bookings${mcStats.requestMoves ? ` · ${mcStats.requestMoves} on movements` : ''}`, color: 'text-amber-800', bg: 'bg-amber-50' }]
+                : []),
+              ...(mcStats.mealFiles > 0
+                ? [{ icon: <Utensils className="w-4 h-4" />, label: 'Meal Preferences', value: mcStats.mealFiles, sub: 'bookings with a preference', color: 'text-lime-800', bg: 'bg-lime-50' }]
+                : []),
               ...(cancelQueue.length > 0
                 ? [{ icon: <Ban className="w-4 h-4" />, label: 'Cancel Pending', value: cancelQueue.length, sub: `${cancelQueueMovements} movement${cancelQueueMovements === 1 ? '' : 's'} · awaiting accounts`, color: 'text-orange-700', bg: 'bg-orange-50' }]
                 : []),
@@ -1371,6 +1836,39 @@ export default function MCReportPage() {
           <CardHeader
             action={
               <div className="flex items-center gap-2 text-xs text-slate-400">
+                <div className="relative" ref={colMenuRef}>
+                  <button
+                    onClick={() => setShowColMenu(v => !v)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                      hiddenCols.size ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+                    )}
+                  >
+                    <Columns3 className="w-3.5 h-3.5" />
+                    Columns{hiddenCols.size ? ` · ${hiddenCols.size} hidden` : ''}
+                  </button>
+                  {showColMenu && (
+                    <div className="absolute right-0 top-8 z-30 w-64 rounded-xl border border-slate-200 bg-white py-2 shadow-lg">
+                      <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">MC columns</p>
+                      {OPTIONAL_COLS.map(c => (
+                        <button key={c.key} onClick={() => toggleCol(c.key)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50">
+                          <span className={cn(
+                            'flex h-4 w-4 items-center justify-center rounded border',
+                            colOn(c.key) ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300',
+                          )}>
+                            {colOn(c.key) && <Check className="h-3 w-3" />}
+                          </span>
+                          <span className="flex-1 font-medium">{c.label}</span>
+                          <span className="text-[10px] text-slate-400">{c.scope}</span>
+                        </button>
+                      ))}
+                      <p className="px-3 pt-1.5 text-[10px] leading-snug text-slate-400">
+                        Country columns only appear when that country&apos;s movements are in view.
+                      </p>
+                    </div>
+                  )}
+                </div>
                 <ClipboardList className="w-3.5 h-3.5" />
                 {loading ? 'Loading…' : `${displayedRows.length} row${displayedRows.length !== 1 ? 's' : ''}`}
                 {deepSearch && rows.length !== displayedRows.length && (
@@ -1406,12 +1904,14 @@ export default function MCReportPage() {
                       <SortTh field="vnCode"      label="VN Code"   sort={sort} onSort={handleSort} />
                       <SortTh field="agent"       label="Agent"     sort={sort} onSort={handleSort} />
                       <SortTh field="location"    label="Location"  sort={sort} onSort={handleSort} />
+                      {showFlightsCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Flight Details</th>}
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Adults</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Child</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">From</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">To</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Details</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal</th>
+                      {showMealPrefCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal Pref</th>}
                       <SortTh field="meetingTime" label="Meet Time" sort={sort} onSort={handleSort} />
                       <SortTh field="serviceType" label="Service"   sort={sort} onSort={handleSort} />
                       {showGuideCol && (
@@ -1425,6 +1925,12 @@ export default function MCReportPage() {
                         </th>
                       )}
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
+                      {showVehicleCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Vehicle Type</th>}
+                      {showBudgetKmCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Budget KM</th>}
+                      {showActualKmCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Actual KM</th>}
+                      {showPackageCostCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Package Cost <span className="normal-case text-slate-400">(LKR)</span></th>}
+                      {showBudgetTransferCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Budget Transfer</th>}
+                      {showSpecialReqCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Special Request</th>}
                       {showTicketsControlCol && (
                         <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Tickets Control</th>
                       )}
@@ -1440,6 +1946,9 @@ export default function MCReportPage() {
                       const showDetailSnippet = q && detailsText && detailsText.toLowerCase().includes(q)
                       const fromText  = row.fromPoint ?? null
                       const toText    = row.toPoint   ?? null
+                      // Which country columns this row fills in; the rest read "—".
+                      const slRow   = isSriLanka(row.operationCountry) && !row.isHotelOnlyBooking
+                      const sgMyRow = isSgMy(row.operationCountry) && !row.isHotelOnlyBooking
 
                       return (
                         <>
@@ -1555,6 +2064,13 @@ export default function MCReportPage() {
                               </div>
                             </td>
 
+                            {/* Flight Details — Sri Lanka */}
+                            {showFlightsCol && (
+                              <td className="px-3 py-2">
+                                {slRow ? <FlightCell row={row} /> : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
                             {/* Adults / Children */}
                             <td className="px-3 py-2.5 text-center">
                               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-[11px]">
@@ -1613,6 +2129,11 @@ export default function MCReportPage() {
                                 ? <MealBadge plan={row.mealPlan} />
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
+
+                            {/* Meal Preference — every destination */}
+                            {showMealPrefCol && (
+                              <td className="px-3 py-2.5"><MealPrefCell prefs={row.mealPrefs} /></td>
+                            )}
 
                             {/* Meeting Time */}
                             <td className="px-3 py-2.5">
@@ -1739,6 +2260,61 @@ export default function MCReportPage() {
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
 
+                            {/* Vehicle Type — Sri Lanka */}
+                            {showVehicleCol && (
+                              <td className="px-3 py-2.5 text-slate-600">
+                                {slRow ? <VehicleCell row={row} /> : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
+                            {/* Budget / Actual KM — Sri Lanka */}
+                            {showBudgetKmCol && (
+                              <td className="px-2 py-2 text-right">
+                                {slRow ? (
+                                  <McEditCell row={row} field="budgetKm" canEdit={canEditTicketsControl} onSaved={applyMcDetails} suffix="km"
+                                    hint={row.tourFigures?.budgetKm != null ? `Tour ${fmtNum(row.tourFigures.budgetKm, 1)}` : undefined} />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+                            {showActualKmCol && (
+                              <td className="px-2 py-2 text-right">
+                                {slRow ? (
+                                  <>
+                                    <McEditCell row={row} field="actualKm" canEdit={canEditTicketsControl} onSaved={applyMcDetails} suffix="km"
+                                      hint={row.tourFigures?.actualKm != null ? `Tour ${fmtNum(row.tourFigures.actualKm, 1)}` : undefined} />
+                                    <KmVarianceChip row={row} />
+                                  </>
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
+                            {/* Package Cost — Sri Lanka */}
+                            {showPackageCostCol && (
+                              <td className="px-2 py-2 text-right">
+                                {slRow ? (
+                                  <McEditCell row={row} field="packageCost" canEdit={canEditTicketsControl} onSaved={applyMcDetails}
+                                    hint={row.tourFigures?.packageCost != null ? `Tour ${fmtNum(row.tourFigures.packageCost)}` : undefined} />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
+                            {/* Budget Transfer — Singapore / Malaysia */}
+                            {showBudgetTransferCol && (
+                              <td className="px-2 py-2 text-right">
+                                {sgMyRow ? (
+                                  <McEditCell row={row} field="budgetTransfer" canEdit={canEditTicketsControl} onSaved={applyMcDetails}
+                                    prefix={row.mcDetails?.currency ?? mcCurrencyFor(row.operationCountry, row.vnCode)} />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
+                            {/* Special Request — every destination */}
+                            {showSpecialReqCol && (
+                              <td className="px-3 py-2 text-slate-600">
+                                <SpecialRequestCell row={row} canEdit={canEditTicketsControl} onSaved={applyMcDetails} />
+                              </td>
+                            )}
+
                             {/* Tickets Control — Vietnam movements only */}
                             {showTicketsControlCol && (
                               <td className="px-3 py-2 text-slate-600 max-w-[200px]">
@@ -1757,7 +2333,7 @@ export default function MCReportPage() {
                           {/* Expanded detail row */}
                           {isExpanded && (
                             <tr key={`${row.id}-detail`} className="bg-brand-50/40 border-l-2 border-l-brand-400">
-                              <td colSpan={13 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0) + (showTicketsControlCol ? 1 : 0)} className="px-4 py-3">
+                              <td colSpan={columnCount} className="px-4 py-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                                   {[
                                     { label: 'Tour Ref',       value: row.vnCode },
@@ -1786,6 +2362,84 @@ export default function MCReportPage() {
                                     ) : null
                                   )}
                                 </div>
+
+                                {/* Booking context — everything the MC columns
+                                    summarise, in full. */}
+                                {((row.flights?.length ?? 0) > 0 || (row.mealPrefs?.length ?? 0) > 0
+                                  || (row.bookingRequests?.length ?? 0) > 0 || row.tourFigures || row.mcDetails) && (
+                                  <div className="mt-3 grid grid-cols-1 gap-3 border-t border-brand-100 pt-3 md:grid-cols-3">
+                                    {(row.flights?.length ?? 0) > 0 && (
+                                      <div>
+                                        <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+                                          <Plane className="h-3 w-3" /> Flights
+                                        </p>
+                                        <div className="space-y-1">
+                                          {row.flights!.map((f, i) => {
+                                            const t = FLIGHT_TONE[f.direction]
+                                            return (
+                                              <div key={i} className={cn('flex items-center gap-2 rounded-md px-2 py-1 text-[11px] ring-1', t.chip)}>
+                                                <t.Icon className="h-3.5 w-3.5 flex-shrink-0" />
+                                                <span className="font-bold font-mono">{f.flightNo}</span>
+                                                <span>{formatDate(f.date)}</span>
+                                                <span className="opacity-80">{f.fromApt} {f.depTime} → {f.toApt} {f.arrTime}</span>
+                                                {f.airline && <span className="ml-auto truncate opacity-70">{f.airline}</span>}
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {((row.bookingRequests?.length ?? 0) > 0 || row.mcDetails?.specialRequest) && (
+                                      <div>
+                                        <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                                          <MessageSquareText className="h-3 w-3" /> Special requests
+                                        </p>
+                                        <ul className="space-y-1 text-[11px] text-slate-700">
+                                          {row.mcDetails?.specialRequest && (
+                                            <li><span className="font-bold text-amber-800">This movement:</span> {String(row.mcDetails.specialRequest)}</li>
+                                          )}
+                                          {row.bookingRequests?.map((r, i) => (
+                                            <li key={i} className="whitespace-pre-wrap"><span className="font-bold">{r.source}:</span> {r.text}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                    {((row.mealPrefs?.length ?? 0) > 0 || row.tourFigures || row.mcDetails) && (
+                                      <div className="space-y-3">
+                                        {(row.mealPrefs?.length ?? 0) > 0 && (
+                                          <div>
+                                            <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-lime-700">
+                                              <Utensils className="h-3 w-3" /> Meal preferences
+                                            </p>
+                                            <ul className="space-y-0.5 text-[11px] text-slate-700">
+                                              {row.mealPrefs!.map(m => (
+                                                <li key={m.label}><span className="font-bold">{m.label}</span> — {m.names.join(', ')}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {row.tourFigures && (
+                                          <div>
+                                            <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                                              <Wallet className="h-3 w-3" /> Whole tour — transport settlement sheet
+                                            </p>
+                                            <p className="text-[11px] text-slate-700">
+                                              Package {row.tourFigures.packageCost != null ? `LKR ${fmtNum(row.tourFigures.packageCost)}` : '—'}
+                                              {' · '}Max mileage {row.tourFigures.budgetKm != null ? `${fmtNum(row.tourFigures.budgetKm, 1)} km` : '—'}
+                                              {' · '}Km run {row.tourFigures.actualKm != null ? `${fmtNum(row.tourFigures.actualKm, 1)} km` : '—'}
+                                            </p>
+                                          </div>
+                                        )}
+                                        {row.mcDetails?.updatedByName && (
+                                          <p className="text-[10px] text-slate-400">
+                                            MC figures last updated by {row.mcDetails.updatedByName}
+                                            {row.mcDetails.updatedAt ? ` · ${new Date(row.mcDetails.updatedAt).toLocaleString('en-GB')}` : ''}
+                                          </p>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
 
                                 {/* The request in full, for the row somebody opened
                                     because of the badge on it. */}

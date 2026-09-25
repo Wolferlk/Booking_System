@@ -8,6 +8,7 @@ import { countryScope } from '@/lib/country-detection'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { loadTicketsControl } from '@/lib/tickets-control'
+import { loadMcDetails, loadBookingContext, type McBookingContext } from '@/lib/mc-details'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -37,6 +38,24 @@ const CANCELLATION_SELECT = {
   cancelPrevStatus:     true,
   currency:             true,
 } as const
+
+/**
+ * The booking-level context a row carries (flights, meal preferences, special
+ * requests, tour-level settlement figures) — see `loadBookingContext`. Flights
+ * are narrowed to the row's own date plus the file's arrival and departure, so
+ * a ten-day tour does not ship its whole flight list on every row.
+ */
+function contextFields(ctx: McBookingContext | undefined, date: string) {
+  if (!ctx) return { flights: [], arrivalDate: null, departureDate: null, mealPrefs: [], bookingRequests: [], tourFigures: null }
+  return {
+    flights: ctx.flights.filter(f => f.date === date || f.direction !== 'INT'),
+    arrivalDate:   ctx.arrivalDate,
+    departureDate: ctx.departureDate,
+    mealPrefs:       ctx.mealPrefs,
+    bookingRequests: ctx.requests,
+    tourFigures:     ctx.tour,
+  }
+}
 
 /** Flattens that trail into the plain fields the chart rows carry. */
 function cancellationFields(b: {
@@ -114,6 +133,7 @@ async function hotelOnlyRows(
     include: {
       booking: {
         select: {
+          id: true,
           bookingRef: true, isNumber: true, agentBookingId: true,
           paxAdults: true, paxChildren: true, agent: true, status: true,
           ...CANCELLATION_SELECT,
@@ -122,6 +142,12 @@ async function hotelOnlyRows(
     },
     orderBy: [{ checkIn: 'asc' }, { city: 'asc' }],
   })
+
+  // Meal preferences and special requests apply to every destination — a
+  // guest on a Hotel Only file still eats. Flights are waived on these files.
+  const context = await loadBookingContext(
+    Array.from(new Map(stays.map(s => [s.booking.id, { ...s.booking, operationCountry: null }])).values()),
+  )
 
   return stays.map(s => {
     const nights = s.nights || Math.max(
@@ -176,6 +202,11 @@ async function hotelOnlyRows(
       tourVendorName:  null,
       tourVendorPhone: null,
       operationCountry: null,
+      vehicleTypeHint: null,
+      mcDetails:      null,
+      ...contextFields(context.get(s.booking.id), s.checkIn.toISOString().slice(0, 10)),
+      flights:        [],
+      tourFigures:    null,
       agent:          s.booking.agent ?? null,
       bookingStatus:  s.booking.status,
       ...cancellationFields(s.booking),
@@ -249,6 +280,7 @@ export async function GET(req: NextRequest) {
         include: {
           booking: {
             select: {
+              id:             true,
               bookingRef:     true,
               isNumber:       true,
               agentBookingId: true,
@@ -289,6 +321,12 @@ export async function GET(req: NextRequest) {
   const ticketsControl = await loadTicketsControl(
     items.filter(i => i.agenda.booking.operationCountry === 'VIETNAM').map(i => i.id),
   )
+
+  // MC Report desk figures (every country) and the booking-level context.
+  const [mcDetails, context] = await Promise.all([
+    loadMcDetails(items.map(i => i.id)),
+    loadBookingContext(Array.from(new Map(items.map(i => [i.agenda.booking.id, i.agenda.booking])).values())),
+  ])
 
   const data: Record<string, unknown>[] = items.map(item => ({
     id:             item.id,
@@ -344,6 +382,17 @@ export async function GET(req: NextRequest) {
     // question the page answers per row, so it needs the booking's country.
     operationCountry: item.agenda.booking.operationCountry ?? null,
     ticketsControl: ticketsControl[item.id] ?? null,
+    mcDetails:      mcDetails[item.id] ?? null,
+    // What the Vehicle Type column shows when the movement itself carries none:
+    // the assigned driver's registered vehicle, then (Sri Lanka) the booking's
+    // allocation-board vehicle. Kept apart from `vehicleType`, which the assign
+    // dialog edits and must stay the movement's own value.
+    vehicleTypeHint: item.assignment?.driver?.vehicle?.type
+                       ? { value: item.assignment.driver.vehicle.type, source: 'driver' }
+                       : context.get(item.agenda.booking.id)?.allocationVehicleType
+                         ? { value: context.get(item.agenda.booking.id)!.allocationVehicleType, source: 'allocation' }
+                         : null,
+    ...contextFields(context.get(item.agenda.booking.id), item.date.toISOString().slice(0, 10)),
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
     ...cancellationFields(item.agenda.booking),
