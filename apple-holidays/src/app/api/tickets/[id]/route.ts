@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolvePortalSelection } from '@/lib/portals'
 import { withdrawApproval } from '@/lib/ticket-approvals'
+import { deleteTicketFiles } from '@/lib/ticket-files'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -70,6 +71,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
 
   await prisma.ticket.delete({ where: { id } })
+  await deleteTicketFiles(id)
   return buildApiSuccess(null, 'Ticket deleted')
 }
 

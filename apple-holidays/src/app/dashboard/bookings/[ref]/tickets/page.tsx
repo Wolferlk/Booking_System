@@ -24,6 +24,7 @@ import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-
 import PasteDropzone from '@/components/shared/paste-dropzone'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import TicketApprovalPanel from '@/components/tickets/ticket-approval-panel'
+import TicketFilesPanel, { type TicketExtraFile } from '@/components/tickets/ticket-files-panel'
 import { NO_TICKETS_LABEL, NO_TICKETS_DONE } from '@/lib/no-tickets'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -58,6 +59,8 @@ interface Ticket {
   fileUrl: string | null
   fileName: string | null
   fileType: string | null
+  /** Files beside the receipt — one per guest on a group ticket. */
+  extraFiles?: TicketExtraFile[]
   // Manual category override
   category: string | null
   // Transfer fields
@@ -1492,6 +1495,14 @@ export default function TicketsPage() {
                             ) : <p className="text-xs text-slate-400">No P&L link</p>}
                           </div>
                         </div>
+
+                        {/* Several files under this one ticket (e.g. 10 guests' tickets). */}
+                        <TicketFilesPanel
+                          ticketId={t.id}
+                          files={t.extraFiles ?? []}
+                          canEdit={canUpload}
+                          onChanged={load}
+                        />
 
                         {/* Where it was bought — the field Accounts pays on.
                             Shown on every ticket of a portal country, filled or

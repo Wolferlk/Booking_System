@@ -704,6 +704,26 @@ model Ticket {
   @@map("tickets")
 }
 
+/// A file under a ticket, beside `Ticket.fileUrl` — e.g. one per guest on a
+/// group ticket. No relation by design (see the SQL file).
+/// Created by prisma/sql/2026-09-25-ticket-files.sql — never `db push`.
+model TicketFile {
+  id             String   @id @default(cuid())
+  ticketId       String
+  fileUrl        String   @db.Text
+  fileName       String?  @db.VarChar(255)
+  /// 'image' | 'pdf'
+  fileType       String?  @db.VarChar(16)
+  label          String?
+  position       Int      @default(0)
+  uploadedById   String?
+  uploadedByName String?
+  createdAt      DateTime @default(now())
+
+  @@index([ticketId], map: "ticket_files_ticketId_idx")
+  @@map("ticket_files")
+}
+
 model PNL {
   id           String        @id @default(cuid())
   bookingId    String        @unique

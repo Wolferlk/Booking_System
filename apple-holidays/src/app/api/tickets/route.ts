@@ -9,6 +9,7 @@ import { resolvePortalSelection } from '@/lib/portals'
 import { syncApprovalMirror } from '@/lib/ticket-approvals'
 import type { UserRole, OperationCountry, Prisma } from '@prisma/client'
 import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
+import { loadTicketFiles } from '@/lib/ticket-files'
 import {
   parseTicketFilters, buildTicketWhere, applyStatusFilter,
   buildOrderBy, STATUS_CLAUSE, TICKET_LIST_INCLUDE,
@@ -49,7 +50,10 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
     })
     await refreshApprovals(tickets)
-    return buildApiSuccess(tickets)
+    // Files beside each ticket's receipt (one per guest on a group ticket).
+    // Empty until prisma/sql/2026-09-25-ticket-files.sql has been run.
+    const files = await loadTicketFiles(tickets.map(t => t.id))
+    return buildApiSuccess(tickets.map(t => ({ ...t, extraFiles: files[t.id] ?? [] })))
   }
 
   // ── filtered, paged list ─────────────────────────────────────────────────
