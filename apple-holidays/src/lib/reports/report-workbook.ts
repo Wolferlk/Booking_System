@@ -398,7 +398,7 @@ export function renderReportWorkbook(d: ReportData): Buffer {
   addSheet(wb, {
     name: 'Arrivals 3 Days',
     title: `ARRIVALS ${d.readiness.fromDate} TO ${d.readiness.toDate} — READINESS`,
-    description: 'The live chase list, as at the morning after the period closed. "Ready" means nothing on the checklist is outstanding; a Hotel Only file waives the itinerary rungs, which is why its checks read N/A rather than failing.',
+    description: 'The live chase list, as at the morning after the period closed. "Ready" means nothing on the checklist is outstanding. Operating tours only: cancelled files (including a cancellation awaiting accounts) and accommodation-only bookings are left out.',
     headers: [
       'Booking ref', 'Channel', 'Country', 'Lead guest', 'Booking type', 'Arrival', 'Days away', 'Total pax', 'Status',
       'Ready', 'Blocking', 'Client confirmed', 'Drivers', 'Tickets', 'QC', 'Outstanding', 'D-10 reason recorded',

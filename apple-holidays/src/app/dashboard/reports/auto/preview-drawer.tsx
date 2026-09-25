@@ -99,8 +99,14 @@ interface OpsPreviewData {
   window: PreviewWindow
   created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
   onGround: { total: number; pax: number }
-  readiness: { total: number; notReady: number; tomorrow: number; hotelOnly: number }
-  reconfirm: { total: number; breached: number; explained: number; unexplained: number }
+  readiness: {
+    total: number; notReady: number; tomorrow: number; hotelOnly: number
+    drivers: { tours: number; allocated: number; partial: number; pending: number }
+  }
+  reconfirm: {
+    total: number; breached: number; explained: number; unexplained: number
+    status: { completed: number; pending: number; overdue: number }
+  }
   complaints: { total: number; open: number; available: boolean }
   upcoming: { total: number; next7: number }
 }
@@ -132,21 +138,25 @@ function opsStats(d: OpsPreviewData): StatTile[] {
     {
       label: 'Next 3 days',
       value: d.readiness.total,
-      // Hotel Only arrivals are counted as ready, so the tile names them: "0 not
-      // ready" on a morning of room-only files is true but easy to misread.
+      // Cancelled and accommodation-only arrivals are left out of the count, so
+      // the tile names them: a smaller number than yesterday is not lost data.
       sub: [
         `${d.readiness.notReady} not ready`,
-        d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only` : null,
+        d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only left out` : null,
       ].filter(Boolean).join(' · '),
     },
     {
-      label: 'D-10 late',
-      value: d.reconfirm.breached,
-      // The split matters more than the total: a late booking with a reason on
-      // file is a known problem, an unexplained one is not yet anybody's.
-      sub: d.reconfirm.breached
-        ? `${d.reconfirm.unexplained} unexplained · ${d.reconfirm.explained} with reason`
-        : 'all reconfirmed on time',
+      label: 'D-3 drivers',
+      value: d.readiness.drivers.allocated,
+      sub: `of ${d.readiness.drivers.tours} allocated · ${d.readiness.drivers.partial + d.readiness.drivers.pending} need a driver`,
+    },
+    {
+      label: 'Reconfirmed',
+      value: d.reconfirm.status.completed,
+      // Pending is the work; overdue is the part of it that has already missed D-10.
+      sub: d.reconfirm.status.pending
+        ? `${d.reconfirm.status.pending} pending · ${d.reconfirm.status.overdue} past D-10`
+        : 'none pending',
     },
     { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
     { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },

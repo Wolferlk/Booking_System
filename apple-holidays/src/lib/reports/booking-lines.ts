@@ -61,6 +61,22 @@ export const LEGACY_SG_MY = 'SINGAPORE_MALAYSIA'
 /** Statuses that mean "this booking is not happening" — excluded from operational counts. */
 export const DEAD_STATUSES = ['CANCELLED'] as const
 
+/**
+ * Every status that means the guest is not travelling on this file: cancelled
+ * outright, or a cancellation already requested and waiting on accounts.
+ *
+ * Wider than `DEAD_STATUSES` on purpose. Intake counts keep a pending
+ * cancellation because the accounts decision is still open, but a work list
+ * must not: a file at PENDING_CANCELLATION never reaches "Client Confirmed", so
+ * it used to sit on the reconfirmation and driver lists as permanently pending
+ * — chasing a guest who has already cancelled.
+ */
+export const CANCELLED_STATUSES = ['CANCELLED', 'PENDING_CANCELLATION'] as const
+
+export function isCancelledStatus(status: string): boolean {
+  return (CANCELLED_STATUSES as readonly string[]).includes(status)
+}
+
 // ─── Country ──────────────────────────────────────────────────────────────────
 
 export function labelFor(country: string): string {

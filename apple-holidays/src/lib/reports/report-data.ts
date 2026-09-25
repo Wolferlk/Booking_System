@@ -24,10 +24,11 @@ import { prisma } from '@/lib/prisma'
 import type { BookingSource } from '@/lib/booking-source'
 import {
   BOOKING_SELECT, DEAD_STATUSES, UNASSIGNED, channelSplit, countryWhere, daysBetween,
-  inSelectedCountries, isoDate, labelFor, resolveCountry, rollUpByCountry, sumByCurrency, toLine,
+  inSelectedCountries, isCancelledStatus, isoDate, labelFor, resolveCountry, rollUpByCountry, sumByCurrency, toLine,
   type BookingLine, type ChannelSplit, type CountryRow, type MoneyByCurrency,
 } from './booking-lines'
 import { computeReadiness, type BookingReadiness } from '@/lib/booking-readiness'
+import { HOTEL_ONLY_VEHICLE, resolveIsHotelOnly } from '@/lib/driver-requirement'
 import {
   RECONFIRM_DUE_DAYS, REASON_META, classifyReconfirm, loadReconfirmDelays,
   type ReconfirmDelay,
@@ -288,12 +289,20 @@ export interface ReadinessSection {
   pendingTickets: number
   pendingQc: number
   /**
-   * Arrivals that are Hotel Only. They are counted in `ready` because nothing is
-   * outstanding on them, so the mail states the number separately — a morning
-   * that looks 100% ready reads differently when four of the six arrivals are
-   * room-only files with no operation to prepare.
+   * Accommodation-only arrivals in the window, left out of every figure and list
+   * in this section. There is no operation to prepare on them — no driver, no
+   * ticket — so counting them as "ready" made a room-only morning read as a
+   * prepared one. The number is kept only so the mail can say they were removed.
    */
   hotelOnly: number
+  /**
+   * Arrivals in the window that are cancelled, or waiting on accounts to
+   * approve a cancellation. Left out of everything else here, for the same
+   * reason: nobody is travelling.
+   */
+  cancelled: number
+  /** The D-3 driver allocation picture for the operating tours above. */
+  drivers: DriverAllocationSection
   byDay: ReadinessDay[]
   byCountry: CountryRow[]
   /** Arrivals split by trade channel — the two are worked by different desks. */
@@ -307,6 +316,97 @@ export interface ReadinessSection {
    * desk has one day left to fix.
    */
   tomorrowOutstanding: ReadinessLine[]
+}
+
+/** One day of the D-3 driver allocation strip. */
+export interface DriverAllocationDay {
+  date: string
+  /** "D-1" for tomorrow through "D-3". */
+  tag: string
+  label: string
+  /** Tours on this day that carry at least one transfer. */
+  tours: number
+  allocated: number
+  partial: number
+  pending: number
+  transfersRequired: number
+  transfersCovered: number
+}
+
+/**
+ * Driver allocation for the tours landing in the next three days.
+ *
+ * Only tours that actually operate are in it: cancelled files and
+ * accommodation-only bookings are removed before anything is counted, and a tour
+ * whose agenda carries no transfer at all (every movement leisure or own
+ * arrangement) is counted in `noTransfers` rather than as allocated — there was
+ * nothing to allocate, and calling it "done" would flatter the figure.
+ */
+export interface DriverAllocationSection {
+  /** Tours needing at least one driver, or still missing the agenda that says. */
+  tours: number
+  allocated: number
+  partial: number
+  pending: number
+  /** Operating tours whose agenda has no transfer to cover. */
+  noTransfers: number
+  /** Movements needing a driver across the window, and how many have one. */
+  transfersRequired: number
+  transfersCovered: number
+  byDay: DriverAllocationDay[]
+  /** Not fully allocated — soonest arrival first, then fewest covered. */
+  outstanding: ReadinessLine[]
+  /** Fully allocated — for the record, soonest first. */
+  done: ReadinessLine[]
+}
+
+/** How a guest reconfirmation stands in the Completed / Pending view. */
+export type ReconfirmStage = 'OVERDUE' | 'DUE_TODAY' | 'UPCOMING'
+
+/** One tour in the reconfirmation status lists. */
+export interface ReconfirmStatusLine extends BookingLine {
+  leadPassenger: string | null
+  daysToArrival: number
+  /** `yyyy-mm-dd` of the D-10 deadline. */
+  dueAt: string
+  /** Days from today to the deadline — negative once it has passed. */
+  daysToDue: number
+  clientConfirmed: boolean
+  preTourCalled: boolean
+  completed: boolean
+  /** Only meaningful while pending. */
+  stage: ReconfirmStage
+  delay: ReconfirmDelay | null
+}
+
+/**
+ * Reconfirmation status — **Completed** or **Pending** — for every tour
+ * travelling inside the D-10 window.
+ *
+ * Completed means the client has confirmed or the pre-tour call has been logged,
+ * the same rule as the ops board. Cancelled files (including those waiting on a
+ * cancellation approval) and Hotel Only files are removed before counting, so
+ * `completed + pending` is exactly the set of guests who still need to hear
+ * from us.
+ */
+export interface ReconfirmStatus {
+  completed: number
+  pending: number
+  /** Pending and already past D-10. Equal to `ReconfirmSection.breached`. */
+  overdue: number
+  /** Pending with the D-10 deadline today. */
+  dueToday: number
+  /** Pending with time still left before D-10. */
+  upcoming: number
+  /** Completed by client confirmation, by the call, or both. */
+  viaClient: number
+  viaCall: number
+  viaBoth: number
+  /** Share completed, 0–100, one decimal. Null when nothing is in scope. */
+  completedPct: number | null
+  excluded: { cancelled: number; hotelOnly: number }
+  pendingLines: ReconfirmStatusLine[]
+  completedLines: ReconfirmStatusLine[]
 }
 
 /** One booking that has blown its D-10 guest reconfirmation deadline. */
@@ -339,8 +439,14 @@ export interface ReconfirmSection {
   /** First and last arrival date covered — today through today + D-10. */
   fromDate: string
   toDate: string
-  /** Bookings arriving inside the window at all. */
+  /**
+   * Tours inside the window that need a guest reconfirmation at all — cancelled
+   * and Hotel Only files are not counted, so this is `status.completed +
+   * status.pending`.
+   */
   total: number
+  /** Completed / Pending, with both lists. */
+  status: ReconfirmStatus
   /** Past the deadline with the guest still unreconfirmed. */
   breached: number
   /** Breaches with a recorded reason. */
@@ -659,6 +765,23 @@ async function collectOnGround(w: ReportWindow, countries: string[], maxRows: nu
 }
 
 /**
+ * Accommodation only, however the desk recorded it: the booking-level Hotel Only
+ * flag, Sri Lanka's `hotel_only` chauffeur allocation, or an agenda where every
+ * movement is marked hotel-only. Any one of the three means no transport was
+ * sold, so the file has no place on a driver list.
+ */
+function isAccommodationOnly(r: {
+  hotelOnly: boolean
+  slDriverAllocation: { vehicleType: string | null } | null
+  tourAgenda: { items: { isHotelOnly: boolean | null }[] } | null
+}): boolean {
+  if (r.hotelOnly) return true
+  if (r.slDriverAllocation?.vehicleType === HOTEL_ONLY_VEHICLE) return true
+  const items = r.tourAgenda?.items ?? []
+  return items.length > 0 && items.every(resolveIsHotelOnly)
+}
+
+/**
  * Tours arriving tomorrow and the two days after — each with its readiness
  * checklist (client confirmation, driver allocation, tickets, QC).
  *
@@ -668,6 +791,11 @@ async function collectOnGround(w: ReportWindow, countries: string[], maxRows: nu
  *
  * The checklist itself is `computeReadiness()` — the same rules the booking QC
  * panel shows on screen, so the mail and the dashboard cannot disagree.
+ *
+ * Only tours that operate are counted. Cancelled files (including a
+ * cancellation waiting on accounts) and accommodation-only bookings are removed
+ * first and reported as a count, so every figure and list below — the D-3
+ * driver allocation above all — is about guests we are actually moving.
  */
 async function collectReadiness(w: ReportWindow, countries: string[], maxRows: number): Promise<ReadinessSection> {
   const scope = countryWhere(countries)
@@ -676,10 +804,11 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
   const start = zonedDayStart(fromDate, w.timezone)
   const end = zonedDayStart(shiftDate(toDate, 1), w.timezone)
 
+  // No status filter in the query: cancelled files are read so they can be
+  // counted as left out, then dropped below with every other non-operating file.
   const rows = await prisma.booking.findMany({
     where: {
       arrivalDate: { gte: start, lt: end },
-      status: { notIn: [...DEAD_STATUSES] },
       ...(scope ?? {}),
     },
     select: {
@@ -704,47 +833,51 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     orderBy: { arrivalDate: 'asc' },
   })
 
+  // Country is settled on the built line (that is where SG/MY is split), so the
+  // scope filter runs before anything is counted — including what is left out.
+  const inScope = rows.filter(r => inSelectedCountries(toLine(r).country, countries))
+  const cancelled = inScope.filter(r => isCancelledStatus(r.status))
+  const accommodationOnly = inScope.filter(r => !isCancelledStatus(r.status) && isAccommodationOnly(r))
+  const operating = inScope.filter(r => !isCancelledStatus(r.status) && !isAccommodationOnly(r))
+
   // Any arrival inside this three-day window is already well past its D-10
   // deadline, so a recorded reason is fetched for all of them in one query and
   // attached to the ones it is still true of.
-  const delays = await loadReconfirmDelays(rows.map(r => r.bookingRef))
+  const delays = await loadReconfirmDelays(operating.map(r => r.bookingRef))
 
-  const lines: ReadinessLine[] = rows
-    .map(r => {
-      const line = toLine(r)
-      const readiness = computeReadiness({
-        status: r.status,
-        qcPassedAt: r.qcPassedAt,
-        hotelOnly: r.hotelOnly,
-        noTickets: r.noTickets,
-        tourAgenda: r.tourAgenda,
-        slDriverAllocation: r.slDriverAllocation,
-        tickets: r.tickets,
-      })
-      // Only carried while the reconfirmation is genuinely still outstanding: an
-      // explanation for a booking that has since been confirmed is history, and
-      // printing it on the chase list would read as a live blocker.
-      const stillOutstanding = !r.hotelOnly && readiness.client.state !== 'DONE'
-      return {
-        ...line,
-        leadPassenger: r.passengers[0]?.name ?? null,
-        daysToArrival: daysBetween(w.today, line.arrivalDate),
-        readiness,
-        delay: stillOutstanding ? delays.get(r.bookingRef) ?? null : null,
-      }
+  const lines: ReadinessLine[] = operating.map(r => {
+    const line = toLine(r)
+    const readiness = computeReadiness({
+      status: r.status,
+      qcPassedAt: r.qcPassedAt,
+      hotelOnly: r.hotelOnly,
+      noTickets: r.noTickets,
+      tourAgenda: r.tourAgenda,
+      slDriverAllocation: r.slDriverAllocation,
+      tickets: r.tickets,
     })
-    .filter(l => inSelectedCountries(l.country, countries))
+    // Only carried while the reconfirmation is genuinely still outstanding: an
+    // explanation for a booking that has since been confirmed is history, and
+    // printing it on the chase list would read as a live blocker.
+    const stillOutstanding = readiness.client.state !== 'DONE'
+    return {
+      ...line,
+      leadPassenger: r.passengers[0]?.name ?? null,
+      daysToArrival: daysBetween(w.today, line.arrivalDate),
+      readiness,
+      delay: stillOutstanding ? delays.get(r.bookingRef) ?? null : null,
+    }
+  })
 
   const dayMap = new Map<string, ReadinessDay>()
+  const driverDays = new Map<string, DriverAllocationDay>()
   for (let i = 1; i <= READINESS_DAYS; i++) {
     const date = shiftDate(w.today, i)
-    dayMap.set(date, {
-      date,
-      label: i === 1 ? 'Tomorrow' : formatReportDate(date, { weekday: true }),
-      bookings: 0,
-      pax: 0,
-      ready: 0,
-      notReady: 0,
+    const label = i === 1 ? 'Tomorrow' : formatReportDate(date, { weekday: true })
+    dayMap.set(date, { date, label, bookings: 0, pax: 0, ready: 0, notReady: 0 })
+    driverDays.set(date, {
+      date, tag: `D-${i}`, label, tours: 0, allocated: 0, partial: 0, pending: 0,
+      transfersRequired: 0, transfersCovered: 0,
     })
   }
   for (const l of lines) {
@@ -754,6 +887,46 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     day.pax += l.pax
     if (l.readiness.ready) day.ready += 1
     else day.notReady += 1
+  }
+
+  // ── D-3 driver allocation ────────────────────────────────────────────────
+  // `NA` on an operating tour means the agenda has no transfer to cover; it is
+  // counted apart rather than as allocated. A tour with no agenda at all reads
+  // PENDING in `computeReadiness`, which is right — nobody can allocate a
+  // driver to movements that have not been written down yet.
+  const needsDriver = lines.filter(l => l.readiness.driver.state !== 'NA')
+  for (const l of needsDriver) {
+    const day = driverDays.get(l.arrivalDate)
+    if (!day) continue
+    const d = l.readiness.driver
+    day.tours += 1
+    if (d.state === 'DONE') day.allocated += 1
+    else if (d.state === 'PARTIAL') day.partial += 1
+    else day.pending += 1
+    day.transfersRequired += d.required
+    day.transfersCovered += d.done
+  }
+  const driverOrder = (a: ReadinessLine, b: ReadinessLine) =>
+    a.arrivalDate.localeCompare(b.arrivalDate) ||
+    (a.readiness.driver.state === 'PENDING' ? 0 : 1) - (b.readiness.driver.state === 'PENDING' ? 0 : 1) ||
+    a.readiness.driver.done / Math.max(1, a.readiness.driver.required) -
+      b.readiness.driver.done / Math.max(1, b.readiness.driver.required) ||
+    a.bookingRef.localeCompare(b.bookingRef)
+  const driverOutstanding = needsDriver.filter(l => l.readiness.driver.state !== 'DONE').sort(driverOrder)
+  const driverDone = needsDriver.filter(l => l.readiness.driver.state === 'DONE').sort(driverOrder)
+
+  const drivers: DriverAllocationSection = {
+    tours: needsDriver.length,
+    allocated: driverDone.length,
+    partial: needsDriver.filter(l => l.readiness.driver.state === 'PARTIAL').length,
+    pending: needsDriver.filter(l => l.readiness.driver.state === 'PENDING').length,
+    noTransfers: lines.length - needsDriver.length,
+    transfersRequired: needsDriver.reduce((s, l) => s + l.readiness.driver.required, 0),
+    transfersCovered: needsDriver.reduce((s, l) => s + l.readiness.driver.done, 0),
+    byDay: Array.from(driverDays.values()),
+    // Outstanding is the work list, so it gets the larger share of the cap.
+    outstanding: driverOutstanding.slice(0, maxRows),
+    done: driverDone.slice(0, maxRows),
   }
 
   const tomorrow = lines.filter(l => l.arrivalDate === fromDate)
@@ -792,7 +965,9 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     pendingDriver: lines.filter(l => l.readiness.outstanding.includes('driver allocation')).length,
     pendingTickets: lines.filter(l => l.readiness.outstanding.includes('tickets')).length,
     pendingQc: lines.filter(l => l.readiness.outstanding.includes('QC')).length,
-    hotelOnly: lines.filter(l => l.hotelOnly).length,
+    hotelOnly: accommodationOnly.length,
+    cancelled: cancelled.length,
+    drivers,
     byDay: Array.from(dayMap.values()),
     byCountry: rollUpByCountry(lines),
     channel: channelSplit(lines),
@@ -829,10 +1004,11 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
   const start = zonedDayStart(fromDate, w.timezone)
   const end = zonedDayStart(shiftDate(toDate, 1), w.timezone)
 
+  // Every status is read, cancelled included, so the section can say how many
+  // cancelled files it left out rather than silently shrinking.
   const rows = await prisma.booking.findMany({
     where: {
       arrivalDate: { gte: start, lt: end },
-      status: { notIn: [...DEAD_STATUSES] },
       ...(scope ?? {}),
     },
     select: {
@@ -846,9 +1022,16 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
   // Country is resolved on the built line, not the raw row — `toLine` is where
   // the legacy SG/MY bucket gets split, and filtering before that would keep
   // rows the rest of the report has already decided belong elsewhere.
-  const inScope = rows
+  const countryScoped = rows
     .map(r => ({ raw: r, line: toLine(r) }))
     .filter(x => inSelectedCountries(x.line.country, countries))
+  // A cancelled file — or one whose cancellation is waiting on accounts — has
+  // no guest to reconfirm. PENDING_CANCELLATION never reaches "Client
+  // Confirmed", so leaving it in would park it on the pending list for good.
+  // Hotel Only files waive guest reconfirmation by design.
+  const cancelledCount = countryScoped.filter(x => isCancelledStatus(x.raw.status)).length
+  const hotelOnlyCount = countryScoped.filter(x => !isCancelledStatus(x.raw.status) && x.raw.hotelOnly).length
+  const inScope = countryScoped.filter(x => !isCancelledStatus(x.raw.status) && !x.raw.hotelOnly)
   const refs = inScope.map(x => x.line.bookingRef)
 
   // Which of these have a written-up pre-tour call, and which carry a reason.
@@ -863,6 +1046,7 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
   ])
 
   const lines: ReconfirmLine[] = []
+  const statusLines: ReconfirmStatusLine[] = []
   for (const { raw: r, line } of inScope) {
     const clientConfirmed = computeReadiness({
       status: r.status,
@@ -877,8 +1061,22 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
       preTourCalled,
       hotelOnly: r.hotelOnly,
     })
-    // Only breaches make the list. A booking still inside its window is counted
-    // in `total` and nowhere else — the section reports failures, not workload.
+    const completed = standing.state === 'DONE'
+    statusLines.push({
+      ...line,
+      leadPassenger: r.passengers[0]?.name ?? null,
+      daysToArrival: standing.daysToArrival,
+      dueAt: standing.dueAt,
+      daysToDue: standing.daysToDue,
+      clientConfirmed,
+      preTourCalled,
+      completed,
+      stage: standing.daysToDue < 0 ? 'OVERDUE' : standing.daysToDue === 0 ? 'DUE_TODAY' : 'UPCOMING',
+      delay: completed ? null : delays.get(r.bookingRef) ?? null,
+    })
+
+    // Only breaches make the late list below. Everything else is carried by the
+    // Completed / Pending status above.
     if (!standing.breached) continue
 
     lines.push({
@@ -917,10 +1115,34 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
     b.daysLate - a.daysLate ||
     a.bookingRef.localeCompare(b.bookingRef))
 
+  // Pending: overdue first (most late at the top), then due today, then by how
+  // soon the deadline falls. Completed: soonest arrival first.
+  const pendingLines = statusLines.filter(l => !l.completed).sort((a, b) =>
+    a.daysToDue - b.daysToDue || a.arrivalDate.localeCompare(b.arrivalDate) || a.bookingRef.localeCompare(b.bookingRef))
+  const completedLines = statusLines.filter(l => l.completed).sort((a, b) =>
+    a.arrivalDate.localeCompare(b.arrivalDate) || a.bookingRef.localeCompare(b.bookingRef))
+  const done = completedLines.length
+
+  const status: ReconfirmStatus = {
+    completed: done,
+    pending: pendingLines.length,
+    overdue: pendingLines.filter(l => l.stage === 'OVERDUE').length,
+    dueToday: pendingLines.filter(l => l.stage === 'DUE_TODAY').length,
+    upcoming: pendingLines.filter(l => l.stage === 'UPCOMING').length,
+    viaClient: completedLines.filter(l => l.clientConfirmed && !l.preTourCalled).length,
+    viaCall: completedLines.filter(l => !l.clientConfirmed && l.preTourCalled).length,
+    viaBoth: completedLines.filter(l => l.clientConfirmed && l.preTourCalled).length,
+    completedPct: statusLines.length ? Math.round((done / statusLines.length) * 1000) / 10 : null,
+    excluded: { cancelled: cancelledCount, hotelOnly: hotelOnlyCount },
+    pendingLines: pendingLines.slice(0, maxRows),
+    completedLines: completedLines.slice(0, maxRows),
+  }
+
   return {
     fromDate,
     toDate,
-    total: inScope.length,
+    total: statusLines.length,
+    status,
     breached: lines.length,
     explained: lines.filter(l => l.delay).length,
     unexplained: lines.filter(l => !l.delay).length,

@@ -24,7 +24,7 @@ import {
   td, trend, truncate,
 } from './email-kit'
 import type {
-  BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmLine, ReportData, TourLine,
+  BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmStatusLine, ReportData, TourLine,
 } from './report-data'
 import type { CountCheckSection, CountCheckTally } from './count-check'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
@@ -654,15 +654,200 @@ function tomorrowGapTable(lines: ReadinessLine[]): string {
   </div>`
 }
 
+// ─── Shared visual pieces for the D-3 and reconfirmation sections ─────────────
+
+/**
+ * A stacked progress bar — one segment per part, widths proportional to value.
+ * Tables rather than divs, so Outlook keeps the segments side by side.
+ */
+function segBar(parts: { value: number; color: string }[], height = 10): string {
+  const total = parts.reduce((s, p) => s + p.value, 0)
+  const cell = (width: number, color: string) =>
+    `<td width="${width}%" style="background:${color};height:${height}px;line-height:${height}px;font-size:0;">&nbsp;</td>`
+  const cells = total
+    ? parts.filter(p => p.value > 0).map(p => cell(Math.max(2, Math.round((p.value / total) * 100)), p.color)).join('')
+    : cell(100, C.line)
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;border-radius:999px;overflow:hidden;"><tr>${cells}</tr></table>`
+}
+
+/** A coloured dot and a label, for the legend under a `segBar`. */
+function legendDot(color: string, label: string, value: number): string {
+  return `<span style="display:inline-block;padding:0 14px 0 0;font:400 11px/1.8 ${FONT};color:${C.muted};white-space:nowrap;"><span style="color:${color};font-size:13px;">&#9679;</span> ${esc(label)} <strong style="color:${C.ink};">${num(value)}</strong></span>`
+}
+
+/** "D-1" / "D-2" / "D-3" — red for tomorrow, amber the day after, blue beyond. */
+function dayTag(days: number): string {
+  const [bg, fg] = days <= 1 ? ['#fef2f2', '#991b1b'] : days === 2 ? ['#fffbeb', '#92400e'] : ['#eff6ff', '#1e40af']
+  return `<span class="pill" style="background:${bg};color:${fg};">D-${Math.max(0, days)}</span>`
+}
+
+/** The ref with the lead guest under it — the first cell of every booking row. */
+function refCell(ref: string, guest: string | null | undefined): string {
+  return `<strong style="color:${C.ink};">${esc(ref)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`
+}
+
+/**
+ * "Left out: 2 cancelled · 1 accommodation only". Says what was removed from a
+ * section and why, so a smaller number than yesterday is not read as lost data.
+ */
+function leftOutNote(parts: { n: number; what: string }[]): string {
+  const shown = parts.filter(p => p.n > 0)
+  if (!shown.length) return ''
+  return `<div class="more">Left out of this section: ${shown.map(p => `<strong>${num(p.n)}</strong> ${esc(p.what)}`).join(' · ')}.</div>`
+}
+
+/**
+ * The hero card: one big "X of Y" with a stacked bar and legend under it.
+ * Used by both the D-3 driver and the reconfirmation sections so they read as
+ * one family.
+ */
+function heroMeter(opts: {
+  label: string
+  value: number
+  of: number
+  unit: string
+  color: string
+  side?: { label: string; value: string; color?: string }
+  parts: { value: number; color: string; label: string }[]
+}): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="margin-bottom:14px;">
+    <tr><td style="padding:16px 18px 14px 18px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+        <td valign="bottom">
+          <div class="kpi-l">${esc(opts.label)}</div>
+          <div style="font:800 34px/1.1 ${FONT};color:${opts.color};letter-spacing:-.02em;padding-top:6px;">${num(opts.value)}<span style="font:700 15px/1 ${FONT};color:${C.faint};"> / ${num(opts.of)} ${esc(opts.unit)}</span></div>
+        </td>
+        ${opts.side ? `<td valign="bottom" align="right">
+          <div class="kpi-l">${esc(opts.side.label)}</div>
+          <div style="font:800 22px/1.2 ${FONT};color:${opts.side.color ?? C.ink};padding-top:6px;">${opts.side.value}</div>
+        </td>` : ''}
+      </tr></table>
+      <div style="padding-top:12px;">${segBar(opts.parts)}</div>
+      <div style="padding-top:8px;">${opts.parts.map(p => legendDot(p.color, p.label, p.value)).join('')}</div>
+    </td></tr>
+  </table>`
+}
+
+// ─── D-3 driver allocation ────────────────────────────────────────────────────
+
+/**
+ * D-3 Driver Allocation — who has a driver for the next three days of arrivals.
+ *
+ * Only tours we actually move are on it. Cancelled files (a cancellation still
+ * waiting on accounts included) and accommodation-only bookings are removed in
+ * `collectReadiness`, and a tour whose agenda has no transfer at all is counted
+ * apart instead of being called "allocated". The section ends by saying how many
+ * of each were left out, so the smaller number is never mistaken for lost data.
+ */
+function driverAllocationSection(d: ReportData): string {
+  const r = d.readiness
+  const a = r.drivers
+  const open = a.partial + a.pending
+
+  const hero = heroMeter({
+    label: 'Tours fully allocated',
+    value: a.allocated,
+    of: a.tours,
+    unit: a.tours === 1 ? 'tour' : 'tours',
+    color: open ? (a.allocated ? C.warn : C.bad) : C.good,
+    side: {
+      label: 'Transfers covered',
+      value: `${num(a.transfersCovered)}<span style="font:700 13px/1 ${FONT};color:${C.faint};"> / ${num(a.transfersRequired)}</span>`,
+      color: a.transfersCovered === a.transfersRequired ? C.good : C.ink,
+    },
+    parts: [
+      { value: a.allocated, color: C.good, label: 'Allocated' },
+      { value: a.partial, color: C.warn, label: 'Part-allocated' },
+      { value: a.pending, color: C.bad, label: 'No driver yet' },
+    ],
+  })
+
+  // One card per day. Tomorrow is the one with no slack, so it gets the red edge
+  // whenever anything on it is still open.
+  const dayCards = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -5px 6px -5px;"><tr>${
+    a.byDay.map(day => {
+      const dayOpen = day.partial + day.pending
+      const edge = !day.tours ? C.line : dayOpen ? (day.tag === 'D-1' ? C.bad : C.warn) : C.good
+      return `<td width="${Math.floor(100 / a.byDay.length)}%" valign="top" style="padding:0 5px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="border-top:3px solid ${edge};">
+          <tr><td style="padding:11px 12px;">
+            <div class="kpi-l">${esc(day.tag)} · ${esc(day.label === 'Tomorrow' ? `Tomorrow ${formatReportDate(day.date)}` : day.label)}</div>
+            <div style="font:800 22px/1.2 ${FONT};color:${C.ink};padding-top:6px;">${num(day.allocated)}<span style="font:700 12px/1 ${FONT};color:${C.faint};"> / ${num(day.tours)} allocated</span></div>
+            <div style="padding-top:8px;">${segBar([
+              { value: day.allocated, color: C.good },
+              { value: day.partial, color: C.warn },
+              { value: day.pending, color: C.bad },
+            ], 6)}</div>
+            <div class="kpi-n">${day.tours
+              ? (dayOpen ? `<strong style="color:${C.bad};">${num(dayOpen)} need a driver</strong> · ${num(day.transfersCovered)}/${num(day.transfersRequired)} transfers` : `All ${num(day.transfersRequired)} transfers covered`)
+              : 'No tours with transfers'}</div>
+          </td></tr>
+        </table>
+      </td>`
+    }).join('')
+  }</tr></table>`
+
+  const coverage = (b: ReadinessLine) => {
+    const c = b.readiness.driver
+    if (!c.required) return `<span class="pill bd">${esc(c.short)}</span>`
+    return `<table role="presentation" width="110" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td width="70" style="padding-right:8px;">${segBar([
+        { value: c.done, color: c.state === 'DONE' ? C.good : C.warn },
+        { value: c.required - c.done, color: '#fecaca' },
+      ], 6)}</td>
+      <td class="nw" style="font:700 12px/1 ${FONT};color:${c.state === 'DONE' ? C.good : c.state === 'PARTIAL' ? C.warn : C.bad};">${num(c.done)}/${num(c.required)}</td>
+    </tr></table>`
+  }
+
+  const outstandingTable = a.outstanding.length
+    ? `<div style="padding-top:16px;"><div class="h3">Needs a driver — ${num(open)} tour${open === 1 ? '' : 's'}</div>` +
+      tableOpen([
+        { text: 'Ref' }, { text: 'Day', align: 'center', width: '48' }, { text: 'Channel', width: '56' },
+        { text: 'Country' }, { text: 'Pax', align: 'right', width: '36' },
+        { text: 'Coverage', width: '110' }, { text: 'What is missing' },
+      ]) + a.outstanding.map(b => `<tr>
+        ${td(refCell(b.bookingRef, b.leadPassenger ?? b.destination), { nowrap: true })}
+        ${td(dayTag(b.daysToArrival), { align: 'center' })}
+        ${td(sourcePill(b.source))}
+        ${td(esc(b.countryLabel), { nowrap: true })}
+        ${td(num(b.pax), { align: 'right' })}
+        ${td(coverage(b))}
+        ${td(esc(b.readiness.driver.detail))}
+      </tr>`).join('') + TABLE_CLOSE +
+      moreNote(a.outstanding.length, open, 'tours still needing a driver') + '</div>'
+    : ''
+
+  // Allocated tours as compact chips — the record that they were checked,
+  // without a second full table competing with the work list for attention.
+  const doneChips = a.done.length
+    ? `<div style="padding-top:16px;"><div class="h3">Fully allocated — ${num(a.allocated)} tour${a.allocated === 1 ? '' : 's'}</div><div>${
+        a.done.map(b => `<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 9px;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;font:400 11px/1.5 ${FONT};color:#065f46;white-space:nowrap;"><strong>${esc(b.bookingRef)}</strong> · D-${num(b.daysToArrival)} · ${num(b.readiness.driver.done)}/${num(b.readiness.driver.required)}</span>`).join('')
+      }</div>${moreNote(a.done.length, a.allocated, 'allocated tours')}</div>`
+    : ''
+
+  const body = a.tours
+    ? hero + dayCards + outstandingTable + doneChips
+    : emptyNote('No tour with a transfer arrives in the next three days.')
+
+  return section(
+    'D-3 Driver Allocation',
+    `${formatReportDate(r.fromDate, { weekday: true })} to ${formatReportDate(r.toDate, { weekday: true })} · operating tours only — cancelled and accommodation-only files are not included`,
+    open ? (a.pending ? C.bad : C.warn) : C.good,
+    body + leftOutNote([
+      { n: r.cancelled, what: 'cancelled' },
+      { n: r.hotelOnly, what: 'accommodation only' },
+      { n: a.noTransfers, what: 'with no transfers in the agenda' },
+    ]),
+  )
+}
+
 function readinessSection(d: ReportData): string {
   const r = d.readiness
 
   const kpis = kpiRow([
     { label: 'Arriving in 3 days', value: num(r.total), note: `${num(r.pax)} guests`, color: C.brand },
     { label: 'Tomorrow', value: num(r.tomorrow), note: r.tomorrowNotReady ? `${num(r.tomorrowNotReady)} not ready` : 'all ready', color: r.tomorrowNotReady ? C.bad : C.good },
-    // Hotel Only arrivals are inside `ready` — nothing is outstanding on them —
-    // so the note says how many, or a room-only morning reads as a prepared one.
-    { label: 'Fully ready', value: num(r.ready), note: r.hotelOnly ? `${num(r.hotelOnly)} hotel only` : undefined, color: C.good },
+    { label: 'Fully ready', value: num(r.ready), color: C.good },
     { label: 'Needs action', value: num(r.notReady), color: r.notReady ? C.bad : C.ink },
   ])
 
@@ -739,7 +924,7 @@ function readinessSection(d: ReportData): string {
     : emptyNote('No tours arrive in the next three days.')
 
   const legend = r.bookings.length
-    ? `<div class="more">Driver and ticket cells read “done / total”. Red is nothing done, amber is part-done, green is complete; “—” or “None” means the check does not apply — no transfers, or no tickets on the booking. A row marked <strong>HOTEL ONLY</strong> is accommodation only: every check is waived by design, and the hotel is reconfirmed on the Pre-checking queue instead.</div>`
+    ? `<div class="more">Driver and ticket cells read “done / total”. Red is nothing done, amber is part-done, green is complete; “—” or “None” means the check does not apply — no transfers, or no tickets on the booking.</div>`
     : ''
 
   return section(
@@ -748,56 +933,137 @@ function readinessSection(d: ReportData): string {
     C.warn,
     banner + kpis + tomorrowGapTable(r.tomorrowOutstanding) + gapTable + dayTable +
       `<div style="padding-top:18px;"><div class="h3">Booking-by-booking checklist</div>${list}${legend}</div>` +
-      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
+      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : '') +
+      leftOutNote([
+        { n: r.cancelled, what: 'cancelled' },
+        { n: r.hotelOnly, what: 'accommodation only' },
+      ]),
   )
 }
 
 /**
- * The D-10 reconfirmation section — who is late, and why.
+ * Reconfirmation Status — **Completed** or **Pending** for every tour travelling
+ * in the next ten days, with the D-10 reasons folded into the pending list.
  *
- * The one number this section is built around is `unexplained`: bookings past
- * their deadline that nobody has written a word about. Everything else on the
- * page is context for it, which is why it leads the banner and sorts to the top
- * of the table rather than being averaged into a single "late" count.
+ * Completed means the client confirmed or the pre-tour call was logged, the same
+ * rule the ops board uses. Cancelled files (a cancellation still waiting on
+ * accounts included) and Hotel Only files are removed before anything is
+ * counted, so the two numbers add up to exactly the guests still owed a call.
  *
- * Recorded reasons are printed verbatim and attributed. An explanation that has
- * gone unrefreshed is marked, because a reason from nine days ago is a stale
- * fact being used as a live excuse, and the mail is the only place that
- * distinction reliably gets noticed.
+ * Pending is ordered the way the desk works it: overdue first, most late at the
+ * top, then due today, then by how soon D-10 falls. An overdue row carries the
+ * recorded reason verbatim and attributed — or says plainly that there is none,
+ * because an unexplained breach is the one the desk most needs to see.
  */
 function reconfirmSection(d: ReportData): string {
   const r = d.reconfirm
-
-  const kpis = kpiRow([
-    { label: `Past D-${RECONFIRM_DUE_DAYS}`, value: num(r.breached), note: `of ${num(r.total)} travelling within ${RECONFIRM_DUE_DAYS} days`, color: r.breached ? C.warn : C.good },
-    { label: 'No reason given', value: num(r.unexplained), color: r.unexplained ? C.bad : C.good },
-    { label: 'Reason on file', value: num(r.explained), note: r.stale ? `${num(r.stale)} not refreshed` : undefined, color: r.explained ? C.warn : C.ink },
-    { label: 'Reconfirmed on time', value: num(Math.max(0, r.total - r.breached)), color: C.good },
+  const st = r.status
+  const window = `Arrivals ${formatReportDate(r.fromDate)} to ${formatReportDate(r.toDate)}`
+  const leftOut = leftOutNote([
+    { n: st.excluded.cancelled, what: 'cancelled' },
+    { n: st.excluded.hotelOnly, what: 'hotel only' },
   ])
 
-  if (!r.breached) {
-    return section(
-      `Guest reconfirmation — D-${RECONFIRM_DUE_DAYS}`,
-      `Arrivals ${formatReportDate(r.fromDate)} to ${formatReportDate(r.toDate)} · every tour reconfirmed with the guest ten days before travel`,
-      C.good,
-      kpis + emptyNote(`Every tour travelling in the next ${RECONFIRM_DUE_DAYS} days has been reconfirmed on time.`),
-    )
+  if (!r.total) {
+    return section('Reconfirmation Status', `${window} · Completed and Pending`, C.good,
+      emptyNote(`No tour needing a guest reconfirmation travels in the next ${RECONFIRM_DUE_DAYS} days.`) + leftOut)
   }
+
+  const hero = heroMeter({
+    label: 'Reconfirmation completed',
+    value: st.completed,
+    of: r.total,
+    unit: r.total === 1 ? 'tour' : 'tours',
+    color: st.pending ? (st.overdue ? C.bad : C.warn) : C.good,
+    side: { label: 'Completion', value: st.completedPct == null ? '—' : `${st.completedPct}%`, color: st.pending ? C.ink : C.good },
+    parts: [
+      { value: st.completed, color: C.good, label: 'Completed' },
+      { value: st.upcoming + st.dueToday, color: C.warn, label: 'Pending — on time' },
+      { value: st.overdue, color: C.bad, label: `Pending — past D-${RECONFIRM_DUE_DAYS}` },
+    ],
+  })
+
+  const kpis = kpiRow([
+    {
+      label: 'Completed', value: num(st.completed), color: C.good,
+      note: [st.viaBoth && `${num(st.viaBoth)} client + call`, st.viaClient && `${num(st.viaClient)} client only`, st.viaCall && `${num(st.viaCall)} call only`].filter(Boolean).join(' · ') || '&nbsp;',
+    },
+    { label: 'Pending', value: num(st.pending), color: st.pending ? C.warn : C.good, note: st.pending ? `${num(st.dueToday)} due today · ${num(st.upcoming)} not yet due` : 'nothing outstanding' },
+    { label: `Past D-${RECONFIRM_DUE_DAYS}`, value: num(st.overdue), color: st.overdue ? C.bad : C.good, note: st.overdue ? `${num(r.unexplained)} with no reason` : 'none late' },
+  ])
 
   const banner = r.unexplained
     ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
          ${num(r.unexplained)} booking${r.unexplained === 1 ? '' : 's'} missed D-${RECONFIRM_DUE_DAYS} with no reason recorded.
          <div style="font-weight:400;padding-top:3px;">Open the booking and record why on the Guest reconfirmation panel — it appears here and on the ops board from the next run.</div>
        </div>`
-    : `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#92400e;">
-         Every one of the ${num(r.breached)} late booking${r.breached === 1 ? '' : 's'} has a recorded reason.
-         <div style="font-weight:400;padding-top:3px;">They are still late — accounted for is not the same as reconfirmed.</div>
-       </div>`
+    : ''
 
-  // Where the delays are coming from. Sorted by volume, with the desk that owns
-  // each reason named, so the section routes work rather than only reporting it.
+  const stagePill = (l: ReconfirmStatusLine) =>
+    l.stage === 'OVERDUE'
+      ? `<span class="pill bd">${esc(`${Math.abs(l.daysToDue)}d overdue`)}</span>`
+      : l.stage === 'DUE_TODAY'
+        ? '<span class="pill wn">Due today</span>'
+        : `<span class="pill" style="background:#eff6ff;color:#1e40af;">${esc(`Due in ${l.daysToDue}d`)}</span>`
+
+  // What is missing, or — once past D-10 — why, in the desk's own words.
+  const pendingDetail = (l: ReconfirmStatusLine) => {
+    const missing = `<div style="color:${C.faint};font-size:11px;padding-top:2px;">${esc(
+      [l.clientConfirmed ? 'client confirmed' : 'client not confirmed',
+        l.preTourCalled ? 'pre-tour call logged' : 'no pre-tour call'].join(' · '),
+    )}</div>`
+    if (l.stage !== 'OVERDUE') return `<span style="color:${C.body};">Awaiting client confirmation or pre-tour call</span>${missing}`
+    if (!l.delay) return `<strong style="color:${C.bad};">No reason recorded</strong>${missing}`
+    return `<div><strong style="color:${C.ink};">${esc(l.delay.reasonLabel)}</strong>
+        ${l.delay.stale ? `<span class="pill bd" style="margin-left:6px;">${esc(`${l.delay.ageDays}d old`)}</span>` : ''}</div>
+      ${l.delay.note ? `<div style="color:${C.body};padding-top:2px;">${truncate(l.delay.note, 150)}</div>` : ''}
+      <div style="color:${C.faint};font-size:11px;padding-top:2px;">recorded ${esc(formatReportDate(l.delay.recordedAt.slice(0, 10)))}${l.delay.recordedBy ? ` by ${esc(l.delay.recordedBy)}` : ''}</div>`
+  }
+
+  const pendingTable = st.pendingLines.length
+    ? `<div style="padding-top:4px;"><div class="h3"><span class="pill wn">PENDING</span> &nbsp;${num(st.pending)} tour${st.pending === 1 ? '' : 's'} still to reconfirm</div>` +
+      tableOpen([
+        { text: 'Ref' }, { text: 'Channel', width: '56' }, { text: 'Arrives' },
+        { text: `D-${RECONFIRM_DUE_DAYS}`, align: 'center', width: '96' },
+        { text: 'Country' }, { text: 'Pax', align: 'right', width: '36' },
+        { text: 'Status / reason' },
+      ]) + st.pendingLines.map(l => `<tr>
+        ${td(refCell(l.bookingRef, l.leadPassenger ?? l.destination), { nowrap: true })}
+        ${td(sourcePill(l.source))}
+        ${td(`${esc(formatReportDate(l.arrivalDate, { weekday: true }))}<div style="color:${C.faint};font-size:11px;">in ${num(l.daysToArrival)}d</div>`, { nowrap: true })}
+        ${td(stagePill(l), { align: 'center', nowrap: true })}
+        ${td(esc(l.countryLabel), { nowrap: true })}
+        ${td(num(l.pax), { align: 'right' })}
+        ${td(pendingDetail(l))}
+      </tr>`).join('') + TABLE_CLOSE +
+      moreNote(st.pendingLines.length, st.pending, 'pending reconfirmations') + '</div>'
+    : `<div class="note" style="background:#ecfdf5;color:#065f46;">Every tour travelling in the next ${RECONFIRM_DUE_DAYS} days is reconfirmed.</div>`
+
+  const how = (l: ReconfirmStatusLine) =>
+    [l.clientConfirmed ? '<span class="pill ok">Client ✓</span>' : '', l.preTourCalled ? '<span class="pill ok">Call ✓</span>' : '']
+      .filter(Boolean).join(' ')
+
+  const completedTable = st.completedLines.length
+    ? `<div style="padding-top:18px;"><div class="h3"><span class="pill ok">COMPLETED</span> &nbsp;${num(st.completed)} tour${st.completed === 1 ? '' : 's'} reconfirmed</div>` +
+      tableOpen([
+        { text: 'Ref' }, { text: 'Channel', width: '56' }, { text: 'Arrives' },
+        { text: 'Country' }, { text: 'Pax', align: 'right', width: '36' },
+        { text: 'Reconfirmed by' },
+      ]) + st.completedLines.map(l => `<tr>
+        ${td(refCell(l.bookingRef, l.leadPassenger ?? l.destination), { nowrap: true })}
+        ${td(sourcePill(l.source))}
+        ${td(esc(formatReportDate(l.arrivalDate, { weekday: true })), { nowrap: true })}
+        ${td(esc(l.countryLabel), { nowrap: true })}
+        ${td(num(l.pax), { align: 'right' })}
+        ${td(how(l), { nowrap: true })}
+      </tr>`).join('') + TABLE_CLOSE +
+      moreNote(st.completedLines.length, st.completed, 'completed reconfirmations') + '</div>'
+    : ''
+
+  // Where the delays come from, with the desk that owns each reason — routes the
+  // work rather than only reporting it. Only when something is late.
   const reasonTable = r.byReason.length
-    ? `<div class="h3">Why they are late</div>` +
+    ? `<div style="padding-top:18px;"><div class="h3">Why the late ones are late</div>` +
       tableOpen([
         { text: 'Reason' }, { text: 'Owner' },
         { text: 'Bookings', align: 'right', width: '80' }, { text: '', width: '120' },
@@ -816,51 +1082,17 @@ function reconfirmSection(d: ReportData): string {
              ${td(bar(r.unexplained, r.breached, C.bad))}
            </tr>`
         : '') +
-      TABLE_CLOSE
+      TABLE_CLOSE + '</div>'
     : ''
 
-  const rowsTable = (rows: ReconfirmLine[], source: 'B2B' | 'B2C') =>
-    tableOpen([
-      { text: 'Ref' }, { text: 'Arrives' },
-      { text: `D-${RECONFIRM_DUE_DAYS}`, align: 'center', width: '90' },
-      { text: 'Country' }, { text: 'Pax', align: 'right', width: '40' },
-      { text: 'Reason not reconfirmed' },
-    ]) + rows.map(b => {
-      const guest = b.leadPassenger ?? b.destination
-      const late = `<span class="pill ${b.delay ? 'wn' : 'bd'}">${esc(`${b.daysLate}d late`)}</span>`
-      // The reason cell is the whole point of the row, so it carries the desk's
-      // own sentence, who wrote it, and — when it has gone stale — that it is
-      // being quoted back from a week ago.
-      const why = b.delay
-        ? `<div><strong style="color:${C.ink};">${esc(b.delay.reasonLabel)}</strong>
-             ${b.delay.stale ? `<span class="pill bd" style="margin-left:6px;">${esc(`${b.delay.ageDays}d old`)}</span>` : ''}</div>
-           ${b.delay.note ? `<div style="color:${C.body};padding-top:2px;">${truncate(b.delay.note, 150)}</div>` : ''}
-           <div style="color:${C.faint};font-size:11px;padding-top:2px;">recorded ${esc(formatReportDate(b.delay.recordedAt.slice(0, 10)))}${b.delay.recordedBy ? ` by ${esc(b.delay.recordedBy)}` : ''}</div>`
-        : `<strong style="color:${C.bad};">No reason recorded</strong>
-           <div style="color:${C.faint};font-size:11px;padding-top:2px;">${esc(
-             [b.clientConfirmed ? 'client confirmed' : 'client not confirmed',
-              b.preTourCalled ? 'pre-tour call logged' : 'no pre-tour call'].join(' · '),
-           )}</div>`
-      return `<tr>
-        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
-        ${td(esc(formatReportDate(b.arrivalDate, { weekday: true })), { nowrap: true })}
-        ${td(late, { align: 'center', nowrap: true })}
-        ${td(esc(b.countryLabel), { nowrap: true })}
-        ${td(num(b.pax), { align: 'right' })}
-        ${td(why)}
-      </tr>`
-    }).join('') + TABLE_CLOSE +
-    moreNote(rows.length, source === 'B2C' ? r.channel.b2c : r.channel.b2b, `${source} late bookings`)
-
   return section(
-    `Guest reconfirmation — D-${RECONFIRM_DUE_DAYS}`,
-    `Arrivals ${formatReportDate(r.fromDate)} to ${formatReportDate(r.toDate)} · ${num(r.breached)} past the deadline, ${num(r.unexplained)} of them unexplained`,
-    r.unexplained ? C.bad : C.warn,
-    banner + kpis + reasonTable +
-      `<div style="padding-top:18px;"><div class="h3">Booking by booking</div>${byChannel(r.bookings, rowsTable)}
-        <div class="more">A booking counts as reconfirmed once the client confirms <em>or</em> the pre-tour call is logged — either signal is enough. Hotel Only files are excluded: there is no tour to reconfirm with the guest.</div>
-      </div>` +
-      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
+    'Reconfirmation Status',
+    `${window} · ${num(st.completed)} completed, ${num(st.pending)} pending${st.overdue ? ` (${num(st.overdue)} past D-${RECONFIRM_DUE_DAYS})` : ''} · cancelled files not included`,
+    st.overdue ? C.bad : st.pending ? C.warn : C.good,
+    banner + hero + kpis + pendingTable + completedTable + reasonTable +
+      `<div class="more">Completed means the client has confirmed <em>or</em> the pre-tour call has been logged — either is enough. Every guest is due to be reconfirmed ${RECONFIRM_DUE_DAYS} days before travel (D-${RECONFIRM_DUE_DAYS}).</div>` +
+      leftOut +
+      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise — past D-${RECONFIRM_DUE_DAYS}</div>${countryTable(r.byCountry)}</div>` : ''),
   )
 }
 
@@ -1037,7 +1269,7 @@ function upcomingSection(d: ReportData): string {
 
 export interface RenderOptions {
   /** Which sections to include, in the order they appear. */
-  sections?: { created?: boolean; parity?: boolean; onGround?: boolean; readiness?: boolean; reconfirm?: boolean; complaints?: boolean; upcoming?: boolean }
+  sections?: { created?: boolean; parity?: boolean; onGround?: boolean; drivers?: boolean; readiness?: boolean; reconfirm?: boolean; complaints?: boolean; upcoming?: boolean }
   /** Optional AI-written paragraph placed above the sections. */
   narrative?: string | null
   /** Absolute dashboard URL for the footer link. */
@@ -1099,8 +1331,16 @@ function summaryStrip(d: ReportData): string {
       sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C`,
     },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
-    { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
-    { label: `D-${RECONFIRM_DUE_DAYS} late`, value: num(d.reconfirm.breached), sub: `${num(d.reconfirm.unexplained)} unexplained` },
+    {
+      label: 'D-3 drivers',
+      value: `${num(d.readiness.drivers.allocated)}/${num(d.readiness.drivers.tours)}`,
+      sub: `${num(d.readiness.drivers.partial + d.readiness.drivers.pending)} need a driver`,
+    },
+    {
+      label: 'Reconfirmed',
+      value: `${num(d.reconfirm.status.completed)}/${num(d.reconfirm.total)}`,
+      sub: `${num(d.reconfirm.status.pending)} pending · ${num(d.reconfirm.status.overdue)} late`,
+    },
     { label: 'Complaints', value: num(d.complaints.total), sub: `${num(d.complaints.open)} open` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} in 7d` },
   ]
@@ -1121,6 +1361,9 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     created: opts.sections?.created !== false,
     parity: opts.sections?.parity !== false,
     onGround: opts.sections?.onGround !== false,
+    // The D-3 driver board is built from the readiness data, so it follows that
+    // switch unless it is turned off on its own.
+    drivers: opts.sections?.drivers !== false && opts.sections?.readiness !== false,
     readiness: opts.sections?.readiness !== false,
     reconfirm: opts.sections?.reconfirm !== false,
     complaints: opts.sections?.complaints !== false,
@@ -1155,6 +1398,9 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     // is only trustworthy if the two systems agree on what was confirmed.
     want.parity ? paritySection(d) : '',
     want.onGround ? onGroundSection(d) : '',
+    // Drivers lead the next-three-days block: an unallocated transfer tomorrow
+    // is the one gap that cannot be fixed once the guest has landed.
+    want.drivers ? driverAllocationSection(d) : '',
     want.readiness ? readinessSection(d) : '',
     // Placed after readiness and before complaints: readiness is the next three
     // days, this is the next ten, and both are things to fix before the guest
@@ -1177,7 +1423,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}${d.countCheck.available && d.countCheck.sweptAt ? `, count check ${d.countCheck.balanced ? 'balanced' : 'SHORT'} (${num(d.countCheck.overall.upstream)} upstream / ${num(d.countCheck.overall.pnls)} P&amp;Ls / ${num(d.countCheck.overall.invoices)} invoices)` : ''}.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.drivers.partial + d.readiness.drivers.pending)} D-3 tours need a driver, reconfirmation ${num(d.reconfirm.status.completed)} completed / ${num(d.reconfirm.status.pending)} pending, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}${d.countCheck.available && d.countCheck.sweptAt ? `, count check ${d.countCheck.balanced ? 'balanced' : 'SHORT'} (${num(d.countCheck.overall.upstream)} upstream / ${num(d.countCheck.overall.pnls)} P&amp;Ls / ${num(d.countCheck.overall.invoices)} invoices)` : ''}.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -1382,6 +1628,27 @@ export function renderReportCsv(d: ReportData): string {
         b.readiness.client.detail, b.readiness.driver.detail, b.readiness.tickets.detail, b.readiness.qc.detail,
       ].map(String)))
   }
+
+  // D-3 driver allocation — operating tours only, outstanding first.
+  block(`D-3 driver allocation ${d.readiness.fromDate} to ${d.readiness.toDate} (cancelled and accommodation-only excluded)`,
+    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Day', 'Pax', 'Status', 'Allocation', 'Transfers covered', 'Transfers required', 'Detail'],
+    [...d.readiness.drivers.outstanding, ...d.readiness.drivers.done].map(b => [
+      b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, `D-${b.daysToArrival}`, b.pax, b.status,
+      b.readiness.driver.state === 'DONE' ? 'Allocated' : b.readiness.driver.state === 'PARTIAL' ? 'Part-allocated' : 'Pending',
+      b.readiness.driver.done, b.readiness.driver.required, b.readiness.driver.detail,
+    ].map(String)))
+
+  // Reconfirmation status — Completed and Pending, cancelled and Hotel Only excluded.
+  block(`Reconfirmation status ${d.reconfirm.fromDate} to ${d.reconfirm.toDate} (cancelled and hotel-only excluded)`,
+    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Pax', 'Status', 'Reconfirmation', 'D-10 due', 'D-10 standing',
+      'Client confirmed', 'Pre-tour call', 'Reason'],
+    [...d.reconfirm.status.pendingLines, ...d.reconfirm.status.completedLines].map(l => [
+      l.bookingRef, l.source, l.countryLabel, l.leadPassenger ?? '', l.arrivalDate, l.pax, l.status,
+      l.completed ? 'Completed' : 'Pending', l.dueAt,
+      l.completed ? '' : l.stage === 'OVERDUE' ? `${Math.abs(l.daysToDue)}d overdue` : l.stage === 'DUE_TODAY' ? 'Due today' : `Due in ${l.daysToDue}d`,
+      l.clientConfirmed ? 'Yes' : 'No', l.preTourCalled ? 'Yes' : 'No',
+      l.delay ? `${l.delay.reasonLabel}${l.delay.note ? ` — ${l.delay.note}` : ''}` : '',
+    ].map(String)))
 
   // Every breached booking, with the desk's own words. Uncapped in the CSV even
   // though the mail caps its table: this is the block someone pivots by reason
