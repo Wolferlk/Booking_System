@@ -40,12 +40,51 @@ const ADMIN_ROLES = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
  * The cap has to be a slice the Apple System can actually answer inside, which
  * the original 8s was not: a day's quotation list takes ~15s even paged
  * concurrently, so every preview reported the upstream as unreachable while it
- * was merely slow. One attempt of 25s is the budget now — long enough for a
- * normal (slow) answer, short enough to leave the rest of the report room
- * inside {@link maxDuration} when the upstream really is down.
+ * was merely slow. One attempt of 20s is the budget now: long enough for a
+ * normal (slow) daily answer, and short enough that when the Apple System is
+ * down the preview still comes back — with parity taken from the reconciler's
+ * last run and marked as such — well inside {@link maxDuration} and the proxy's
+ * own timeout. A week the upstream cannot list in 20s is shown the same way.
  */
-const PREVIEW_AS_BUDGET_MS = Number(process.env.REPORT_PREVIEW_AS_BUDGET_MS || 30_000)
-const PREVIEW_AS_TIMEOUT_MS = Number(process.env.REPORT_PREVIEW_AS_TIMEOUT_MS || 25_000)
+const PREVIEW_AS_BUDGET_MS = Number(process.env.REPORT_PREVIEW_AS_BUDGET_MS || 20_000)
+const PREVIEW_AS_TIMEOUT_MS = Number(process.env.REPORT_PREVIEW_AS_TIMEOUT_MS || 20_000)
+
+/**
+ * One build per report, not one per request.
+ *
+ * The drawer opens with two requests at once — the JSON for its stat strip and
+ * `format=html` for the iframe — and the download buttons add a third. Each
+ * used to build the whole report from scratch: two concurrent Apple System
+ * reads (which slows the upstream down for both), two AI paragraphs, two
+ * workbooks. Sharing the in-flight build halves all of that, and keeping it for
+ * a few minutes makes stepping back to a week already viewed instant.
+ *
+ * Keyed on the full query minus `format`, so a different date, schedule or
+ * draft setting always rebuilds. A failed build is dropped at once so a retry
+ * really retries.
+ */
+const PREVIEW_CACHE_MS = 3 * 60_000
+const previewCache = new Map<string, { at: number; built: Promise<Awaited<ReturnType<typeof buildReport>>> }>()
+
+function previewKey(params: URLSearchParams): string {
+  const copy = new URLSearchParams(params)
+  copy.delete('format')
+  copy.sort()
+  return copy.toString()
+}
+
+function cachedBuild(key: string, build: () => ReturnType<typeof buildReport>): ReturnType<typeof buildReport> {
+  const now = Date.now()
+  previewCache.forEach((entry, k) => { if (now - entry.at > PREVIEW_CACHE_MS) previewCache.delete(k) })
+
+  const hit = previewCache.get(key)
+  if (hit) return hit.built
+
+  const built = build()
+  previewCache.set(key, { at: now, built })
+  built.catch(() => previewCache.delete(key))
+  return built
+}
 
 /**
  * Resolve the report shape to preview: an existing schedule by id, or an
@@ -98,10 +137,10 @@ export async function GET(req: NextRequest) {
       throw new ScheduleValidationError('Report date cannot be in the future.')
     }
 
-    const built = await withAsDeadline(
+    const built = await cachedBuild(previewKey(req.nextUrl.searchParams), () => withAsDeadline(
       { budgetMs: PREVIEW_AS_BUDGET_MS, timeoutMs: PREVIEW_AS_TIMEOUT_MS },
       () => buildReport(shape, { testSend: true, anchorDate: date }),
-    )
+    ))
     const format = req.nextUrl.searchParams.get('format')
 
     if (format === 'html') {

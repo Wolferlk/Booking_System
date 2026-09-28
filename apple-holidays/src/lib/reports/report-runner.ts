@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'crypto'
 import openai, { logAiUsage } from '@/lib/openai'
+import { withAsDeadline } from '@/lib/applesystem'
 import { collectReportData, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
@@ -32,6 +33,40 @@ import {
  * stale report into everyone's inbox on recovery.
  */
 const CATCHUP_GRACE_MINUTES = Number(process.env.REPORT_CATCHUP_GRACE_MINUTES ?? '720')
+
+/**
+ * The AI paragraph is optional garnish on every report, so it may never be the
+ * reason one fails to send. The SDK's defaults (a ten-minute timeout, two
+ * retries) would let one stalled completion outlive the request carrying it;
+ * a paragraph that cannot be written in 20s is dropped and the mail goes
+ * without it.
+ */
+const AI_REQUEST_OPTS = { timeout: 20_000, maxRetries: 0 }
+
+/**
+ * How long a send may wait on the Apple System before giving up on it.
+ *
+ * The only live Apple System read an ops report makes is the parity check, and
+ * that already falls back to the reconciler's 15-minute ledger — and says so in
+ * the mail — when the upstream cannot answer. Without a cap, though, the
+ * default retry ladder spends up to 90s per call before that fallback kicks
+ * in, which is longer than a "Send now" request survives behind the proxy. So
+ * a report is always sent: with live Apple System figures when it answers in
+ * time, from the ledger when it does not.
+ *
+ * A button press (test or manual send) has a person and a proxy waiting; the
+ * scheduled sweep has neither, so it is allowed to be more patient.
+ */
+const SEND_AS_LIMITS = {
+  interactive: {
+    budgetMs: Number(process.env.REPORT_SEND_AS_BUDGET_MS || 25_000),
+    timeoutMs: Number(process.env.REPORT_SEND_AS_TIMEOUT_MS || 20_000),
+  },
+  schedule: {
+    budgetMs: Number(process.env.REPORT_CRON_AS_BUDGET_MS || 90_000),
+    timeoutMs: Number(process.env.REPORT_CRON_AS_TIMEOUT_MS || 40_000),
+  },
+}
 
 const DASHBOARD_URL = (process.env.NEXTAUTH_URL || '').replace(/\/$/, '')
   ? `${(process.env.NEXTAUTH_URL || '').replace(/\/$/, '')}/dashboard/reports`
@@ -188,7 +223,7 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
         },
         { role: 'user', content: JSON.stringify(facts) },
       ],
-    })
+    }, AI_REQUEST_OPTS)
 
     await logAiUsage({ callType: 'report_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
     return res.choices[0]?.message?.content?.trim() || null
@@ -299,7 +334,7 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
         },
         { role: 'user', content: JSON.stringify(facts) },
       ],
-    })
+    }, AI_REQUEST_OPTS)
 
     await logAiUsage({ callType: 'report_period_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
     return res.choices[0]?.message?.content?.trim() || null
@@ -400,7 +435,7 @@ async function buildReconcileNarrative(d: ReconcileReportData): Promise<string |
         },
         { role: 'user', content: JSON.stringify(facts) },
       ],
-    })
+    }, AI_REQUEST_OPTS)
 
     await logAiUsage({ callType: 'reconcile_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
     return res.choices[0]?.message?.content?.trim() || null
@@ -666,7 +701,10 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
   }
 
   try {
-    const built = await buildReport(s, { now, testSend: opts.testSend })
+    const built = await withAsDeadline(
+      opts.trigger === 'schedule' || opts.trigger === 'cron-http' ? SEND_AS_LIMITS.schedule : SEND_AS_LIMITS.interactive,
+      () => buildReport(s, { now, testSend: opts.testSend }),
+    )
     covered = { from: built.window.fromDate, to: built.window.toDate }
 
     const counts = built.counts

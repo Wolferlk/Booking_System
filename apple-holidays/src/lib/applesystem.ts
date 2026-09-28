@@ -72,6 +72,13 @@ interface AsCallLimits {
   budgetMs: number
   /** Per-attempt ladder; absent means the default {@link AS_TIMEOUT_LADDER_MS}. */
   ladder?: number[]
+  /**
+   * Wall-clock instant (ms) by which *every* call inside the scope must be done.
+   * `budgetMs` alone caps each call separately, which lets a paginated list
+   * (several pages in sequential batches) or a login followed by a list add up
+   * to several budgets back to back.
+   */
+  deadlineAt?: number
 }
 
 const budgetStore = new AsyncLocalStorage<AsCallLimits>()
@@ -104,16 +111,26 @@ export function withAsDeadline<T>(
   const ladder = LADDER_FACTORS
     .map(f => Math.round(limits.timeoutMs * f))
     .filter(ms => ms <= limits.budgetMs)
+  // The deadline is shared by everything `fn` does: a caller that must answer
+  // in N seconds needs the Apple System out of its way in N seconds in total,
+  // not N seconds per page.
   return budgetStore.run(
-    { budgetMs: limits.budgetMs, ladder: ladder.length > 0 ? ladder : [limits.timeoutMs] },
+    {
+      budgetMs: limits.budgetMs,
+      ladder: ladder.length > 0 ? ladder : [limits.timeoutMs],
+      deadlineAt: Date.now() + limits.budgetMs,
+    },
     fn,
   )
 }
 
 function currentLimits(): Required<Pick<AsCallLimits, 'budgetMs'>> & { ladder: number[] } {
   const store = budgetStore.getStore()
+  const budgetMs = store?.budgetMs ?? AS_RETRY_BUDGET_MS
   return {
-    budgetMs: store?.budgetMs ?? AS_RETRY_BUDGET_MS,
+    budgetMs: store?.deadlineAt != null
+      ? Math.max(0, Math.min(budgetMs, store.deadlineAt - Date.now()))
+      : budgetMs,
     ladder: store?.ladder ?? AS_TIMEOUT_LADDER_MS,
   }
 }
@@ -413,7 +430,9 @@ async function asFetch(path: string, init: RequestInit = {}): Promise<Response> 
   }
 
   const elapsedMs = Date.now() - startedAt
-  const span = `${secs(ladder[0])} → ${secs(ladder[Math.min(attempts, ladder.length) - 1])}`
+  const span = attempts > 0
+    ? `${secs(ladder[0])} → ${secs(ladder[Math.min(attempts, ladder.length) - 1])}`
+    : 'no time left in the caller\'s deadline'
   throw new ASUnreachableError({
     message: sawTimeout
       ? `AppleSystem timed out after ${attempts} attempts (${span}, ${secs(elapsedMs)} total) (${path})`

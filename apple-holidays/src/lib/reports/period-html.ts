@@ -447,7 +447,9 @@ function integritySection(d: ReportData, i: PeriodInsights, periodWord: string):
     {
       label: 'AS parity',
       value: `${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}`,
-      note: d.parity.available ? (g.parityMissing ? `${num(g.parityMissing)} missing` : 'all imported') : 'not checked',
+      note: !d.parity.available
+        ? 'Apple System unreachable'
+        : `${g.parityMissing ? `${num(g.parityMissing)} missing` : 'all imported'}${d.parity.source === 'ledger' ? ' · last reconciliation' : ''}`,
       color: g.parityMissing ? C.bad : C.good,
     },
     {
@@ -475,11 +477,19 @@ function integritySection(d: ReportData, i: PeriodInsights, periodWord: string):
          Every reference is in the workbook — “AS Parity” and “Count Check”.
        </div>`
 
+  // The Apple System did not answer while this mail was written: the report
+  // was still sent, and this says which parity figures the reader is holding.
+  const upstreamNote = d.parity.source !== 'live' && d.parity.note
+    ? `<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;font:400 12px/1.6 ${FONT};color:#92400e;">
+         ${esc(d.parity.note)}
+       </div>`
+    : ''
+
   return section(
     'Integrity',
     `Whether the numbers above describe the whole ${periodWord}`,
     clean ? C.good : C.bad,
-    tiles + verdict,
+    tiles + verdict + upstreamNote,
   )
 }
 
