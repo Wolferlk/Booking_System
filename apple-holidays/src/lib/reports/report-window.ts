@@ -142,13 +142,28 @@ export function isValidDate(date: string): boolean {
   return at.getUTCFullYear() === y && at.getUTCMonth() === m - 1 && at.getUTCDate() === d
 }
 
-/** The whole period containing `anchor` — the range itself, without labels. */
-function periodAround(period: ReportPeriod, anchor: string): { fromDate: string; toDate: string } {
+/** Whole days from `a` to `b` (both `yyyy-mm-dd`); negative when `b` is earlier. */
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number)
+  const [by, bm, bd] = b.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
+}
+
+/**
+ * The whole period containing `anchor` — the range itself, without labels.
+ *
+ * Weeks are rolling seven-day blocks aligned so that one of them ends on
+ * `weekEnd` (yesterday, for a real send). That way the week a scheduled mail
+ * covers — whatever weekday it goes out — is exactly one of the weeks the
+ * preview's date picker steps through, rather than a Mon–Sun week that a
+ * Sunday send would report a full six days late.
+ */
+function periodAround(period: ReportPeriod, anchor: string, weekEnd: string): { fromDate: string; toDate: string } {
   if (period === 'DAILY') return { fromDate: anchor, toDate: anchor }
 
   if (period === 'WEEKLY') {
-    const monday = shiftDate(anchor, -((dayOfWeek(anchor) + 6) % 7))
-    return { fromDate: monday, toDate: shiftDate(monday, 6) }
+    const toDate = shiftDate(anchor, ((daysBetween(anchor, weekEnd) % 7) + 7) % 7)
+    return { fromDate: shiftDate(toDate, -6), toDate }
   }
 
   const y = Number(anchor.slice(0, 4))
@@ -166,7 +181,7 @@ function periodAround(period: ReportPeriod, anchor: string): { fromDate: string;
  * current period would make consecutive emails disagree with each other.
  *
  *  - DAILY   → yesterday
- *  - WEEKLY  → the previous Mon–Sun week
+ *  - WEEKLY  → the seven days ending yesterday (a Sunday send covers Sun–Sat)
  *  - MONTHLY → the previous calendar month
  *
  * `anchorDate` re-points that at a chosen past day: the report then covers the
@@ -189,16 +204,15 @@ export function buildReportWindow(
   const anchored = !!anchorDate && isValidDate(anchorDate)
 
   // Default anchor: any date inside the previous period. Yesterday sits in it
-  // for every period — the day before this month's 1st is last month, the day
-  // before this week's Monday is last week.
-  const defaultAnchor = period === 'DAILY'
-    ? shiftDate(realToday, -1)
-    : period === 'WEEKLY'
-      ? shiftDate(realToday, -(((dayOfWeek(realToday) + 6) % 7) + 1))
-      : shiftDate(`${realToday.slice(0, 7)}-01`, -1)
+  // for every period — the day before this month's 1st is last month, and the
+  // week always ends on yesterday.
+  const yesterday = shiftDate(realToday, -1)
+  const defaultAnchor = period === 'MONTHLY'
+    ? shiftDate(`${realToday.slice(0, 7)}-01`, -1)
+    : yesterday
 
   const anchor = anchored ? anchorDate! : defaultAnchor
-  const { fromDate, toDate } = periodAround(period, anchor)
+  const { fromDate, toDate } = periodAround(period, anchor, yesterday)
 
   // "Yesterday" / "Last week" only make sense relative to the real today; a
   // picked date is labelled as the plain range it is.
