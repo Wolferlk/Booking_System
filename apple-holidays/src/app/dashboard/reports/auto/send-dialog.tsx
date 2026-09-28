@@ -31,6 +31,7 @@ function shiftMonth(month: string, by: number): string {
 }
 
 function monthLabel(month: string): string {
+  if (!/^\d{4}-\d{2}$/.test(month)) return ''
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' })
     .format(new Date(`${month}-01T00:00:00Z`))
 }
@@ -55,12 +56,19 @@ export default function SendDialog({
 
   // null = "the latest completed period", which is what the schedule itself sends.
   const [date, setDate] = useState<string | null>(null)
-  const [month, setMonth] = useState(today.slice(0, 7))
+  // null = the current month. Derived at render rather than seeded into state:
+  // the dialog stays mounted with no request, so state seeded from `today`
+  // would be '' on the first render after a send button is pressed, and
+  // formatting an empty month throws ("Invalid time value") and takes the
+  // whole page down.
+  const [pickedMonth, setPickedMonth] = useState<string | null>(null)
+  const month = pickedMonth ?? today.slice(0, 7)
+  const setMonth = (fn: (m: string) => string) => setPickedMonth(fn(month))
 
   useEffect(() => {
     setDate(null)
-    setMonth(today.slice(0, 7))
-  }, [request, today])
+    setPickedMonth(null)
+  }, [request])
 
   const weeks = useMemo(
     () => (s?.period === 'WEEKLY' && month ? weeksOfMonth(month, s.dayOfWeek) : []),
