@@ -33,7 +33,7 @@ import { ComboInput } from '@/components/ui/combo-input'
 import { TimeInput } from '@/components/ui/time-input'
 import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions, mealPlanFullName } from '@/lib/agenda-suggestions'
 import { range12h, to12h } from '@/lib/clock-time'
-import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { flightLine, linkFlight, removeTransferDescription, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
@@ -1817,16 +1817,26 @@ export default function AgendaPage() {
                                     )}
                                   </div>
                                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                    {transfer && (
+                                    {already ? (
                                       <button
                                         type="button"
-                                        disabled={already}
+                                        onClick={() => setItems(is => is.map((x, j) => j === i
+                                          ? { ...x, details: removeTransferDescription(x.details, link) }
+                                          : x))}
+                                        className="text-[11px] font-medium text-rose-600 hover:text-rose-800 whitespace-nowrap"
+                                        title="Remove the flight wording from Details / Timings"
+                                      >
+                                        Remove from details
+                                      </button>
+                                    ) : transfer && (
+                                      <button
+                                        type="button"
                                         onClick={() => setItems(is => is.map((x, j) => j === i
                                           ? { ...x, details: [x.details.trim(), transfer].filter(Boolean).join(' ') }
                                           : x))}
-                                        className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40 disabled:hover:text-indigo-600 whitespace-nowrap"
+                                        className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
                                       >
-                                        {already ? 'Already in details' : 'Add to details'}
+                                        Add to details
                                       </button>
                                     )}
                                     {link.suggestedPickup && item.meetingTime !== link.suggestedPickup && (

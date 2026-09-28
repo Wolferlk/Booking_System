@@ -304,3 +304,18 @@ export function linkFlights<T extends LinkableAgendaItem>(
   }
   return out
 }
+
+/**
+ * Undo of "Add to details": strips the flight's transfer sentences from a
+ * movement's details text, plus any other sentence naming the flight number
+ * (catches text that was edited after it was added). Everything else the
+ * operator typed — notes, timings — is kept as is.
+ */
+export function removeTransferDescription(details: string, link: FlightLink): string {
+  const splitSentences = (s: string) => s.split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean)
+  const flightNo = link.flight.flightNo.trim()
+  const transfer = new Set(splitSentences(transferDescription(link)))
+  return splitSentences(details)
+    .filter(s => !transfer.has(s) && !(flightNo && s.includes(flightNo)))
+    .join(' ')
+}
