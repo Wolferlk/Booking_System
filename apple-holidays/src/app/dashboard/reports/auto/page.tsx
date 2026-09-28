@@ -21,6 +21,7 @@ import Header from '@/components/layout/header'
 import { cn, readApiResponse } from '@/lib/utils'
 import ScheduleEditor from './schedule-editor'
 import PreviewDrawer, { previewRequestFor, type PreviewRequest } from './preview-drawer'
+import SendDialog, { type SendRequest } from './send-dialog'
 import {
   COUNTRY_OPTIONS, REPORT_TYPE_OPTIONS, sectionOptionsFor,
   type AutoReportPayload, type ReportType, type RunLog, type Schedule,
@@ -285,6 +286,7 @@ export default function AutoReportsPage() {
   const [editing, setEditing] = useState<Schedule | null>(null)
   const [preview, setPreview] = useState<PreviewRequest | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Schedule | null>(null)
+  const [sendRequest, setSendRequest] = useState<SendRequest | null>(null)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -343,17 +345,18 @@ export default function AutoReportsPage() {
     }
   }, [payload, post, load])
 
-  const send = useCallback(async (s: Schedule, mode: 'live' | 'test') => {
+  const send = useCallback(async (s: Schedule, mode: 'live' | 'test', date: string | null = null) => {
     setBusy(s.id)
     try {
       const res = await fetch('/api/reports/auto/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: s.id, mode }),
+        body: JSON.stringify({ id: s.id, mode, date }),
       })
       const json = await readApiResponse(res)
       if (!json.success) throw new Error(json.error || 'Send failed')
       toast.success(json.message ?? 'Report sent')
+      setSendRequest(null)
       void load(true)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
@@ -496,8 +499,8 @@ export default function AutoReportsPage() {
                       onEdit={() => { setEditing(s); setEditorOpen(true) }}
                       onPreview={() => setPreview(previewRequestFor(s))}
                       onToggle={() => void toggleSchedule(s)}
-                      onSend={() => void send(s, 'live')}
-                      onTest={() => void send(s, 'test')}
+                      onSend={() => setSendRequest({ schedule: s, mode: 'live' })}
+                      onTest={() => setSendRequest({ schedule: s, mode: 'test' })}
                       onDelete={() => setConfirmDelete(s)}
                     />
                   ))}
@@ -619,6 +622,13 @@ export default function AutoReportsPage() {
       />
 
       <PreviewDrawer request={preview} onClose={() => setPreview(null)} />
+
+      <SendDialog
+        request={sendRequest}
+        busy={!!sendRequest && busy === sendRequest.schedule.id}
+        onClose={() => setSendRequest(null)}
+        onSend={date => { if (sendRequest) void send(sendRequest.schedule, sendRequest.mode, date) }}
+      />
 
       {confirmDelete && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
