@@ -1,7 +1,14 @@
 import { getGraphToken } from '@/lib/mail-processor'
+import { matchAgentForBooking, agentAddresses } from '@/lib/mailbox/resolve'
 
 const SENDER_EMAIL = process.env.Outlookmail_USERNAME ?? 'confirm.booking@aahaas.com'
-const DEFAULT_AGENT_EMAIL = 'malith2jayasinghe@gmail.com'
+/**
+ * Where an automated booking mail goes when no agent address can be found: the
+ * team's own confirmation inbox, so the mail (and its PDF) is still delivered to
+ * someone who can forward it, instead of the send throwing and vanishing into a
+ * fire-and-forget log line.
+ */
+export const FALLBACK_AGENT_EMAIL = 'confirm.booking@aahaas.com'
 
 interface MailAttachment {
   name: string
@@ -71,8 +78,45 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
   }
 }
 
-export function getAgentEmail(booking: { agentEmail?: string | null }): string {
-  return booking.agentEmail ?? DEFAULT_AGENT_EMAIL
+const isAddress = (v: string | null | undefined): v is string => !!v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())
+
+/**
+ * Who an automated booking mail (Client Confirmed / Operations Ready) goes to.
+ *
+ * `Booking.agentEmail` is often blank — an empty string rather than null — so a
+ * plain `??` fallback never fired and Graph was handed an empty "to". The ladder:
+ *  1. the booking's own agentEmail, when it is a real address;
+ *  2. the Mail Box agent directory, but only on a certain match (known email,
+ *     exact name or alias) — a partial name hit is a guess, and a guess must not
+ *     receive another operator's booking;
+ *  3. the internal confirmation inbox.
+ * Directory CCs ride along whenever the directory matched.
+ */
+export async function resolveAgentRecipients(booking: {
+  bookingRef?: string
+  agent?: string | null
+  agentEmail?: string | null
+}): Promise<{ to: string; cc: string[]; source: 'booking' | 'directory' | 'fallback' }> {
+  const own = isAddress(booking.agentEmail) ? booking.agentEmail.trim() : null
+
+  let directory: { to: string[]; cc: string[] } = { to: [], cc: [] }
+  try {
+    const match = await matchAgentForBooking({ agent: booking.agent, agentEmail: own })
+    if (match.agent && match.reason !== 'partial') directory = agentAddresses(match.agent)
+  } catch (err) {
+    // The directory is a nice-to-have here; its absence must not block the mail.
+    console.warn('[email] Agent directory lookup failed:', err)
+  }
+
+  if (own) return { to: own, cc: directory.cc, source: 'booking' }
+  if (directory.to[0]) {
+    return { to: directory.to[0], cc: [...directory.to.slice(1), ...directory.cc], source: 'directory' }
+  }
+
+  console.warn(
+    `[email] No agent email for ${booking.bookingRef ?? 'booking'} (agent: ${booking.agent ?? '—'}) — sending to ${FALLBACK_AGENT_EMAIL}`,
+  )
+  return { to: FALLBACK_AGENT_EMAIL, cc: [], source: 'fallback' }
 }
 
 export function buildAgentConfirmationEmail(booking: {

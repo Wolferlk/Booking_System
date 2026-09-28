@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
-import { sendMailViaGraph, getAgentEmail, buildOperationsReadyEmail } from '@/lib/send-mail'
+import { sendMailViaGraph, resolveAgentRecipients, buildOperationsReadyEmail } from '@/lib/send-mail'
 
 const TQ_CC_EMAIL = 'confirm.booking@aahaas.com'
 
@@ -39,9 +39,11 @@ export async function sendOperationsReadyEmail(ref: string): Promise<void> {
 
   const pdfBuffer = await generateFullDetailsPdf(booking)
 
-  const agentEmail = getAgentEmail(booking as { agentEmail?: string | null })
+  const recipients = await resolveAgentRecipients(booking)
+  const agentEmail = recipients.to
   const bodyHtml   = buildOperationsReadyEmail(booking)
-  const ccEmails   = agentEmail !== TQ_CC_EMAIL ? [TQ_CC_EMAIL] : []
+  const ccEmails   = [...recipients.cc, ...(agentEmail !== TQ_CC_EMAIL ? [TQ_CC_EMAIL] : [])]
+    .filter((addr, idx, all) => all.indexOf(addr) === idx)
 
   await sendMailViaGraph({
     to: agentEmail,

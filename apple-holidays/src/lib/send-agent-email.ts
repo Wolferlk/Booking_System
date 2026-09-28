@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
-import { sendMailViaGraph, getAgentEmail, buildAgentConfirmationEmail } from '@/lib/send-mail'
+import { sendMailViaGraph, resolveAgentRecipients, buildAgentConfirmationEmail } from '@/lib/send-mail'
 
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
 const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
@@ -21,8 +21,9 @@ async function getMailSettings(): Promise<{
   rows.forEach(r => { map[r.key] = r.value })
   return {
     useTestData: map['use_test_data'] === 'true',
-    testEmail1:  map['test_email_1'] ?? DEFAULT_TEST_EMAIL_1,
-    testEmail2:  map['test_email_2'] ?? DEFAULT_TEST_EMAIL_2,
+    // `||`, not `??`: a cleared setting is stored as '' and must fall back too.
+    testEmail1:  map['test_email_1']?.trim() || DEFAULT_TEST_EMAIL_1,
+    testEmail2:  map['test_email_2']?.trim() || DEFAULT_TEST_EMAIL_2,
   }
 }
 
@@ -69,11 +70,12 @@ export async function sendAgentConfirmationEmail(
     ccEmails = [testEmail2]
     console.log(`[email] TEST MODE — redirecting to ${toEmail}, CC: ${ccEmails.join(', ')}`)
   } else {
-    toEmail  = getAgentEmail(booking as { agentEmail?: string | null })
-    const extraCc = opts?.cc ?? []
+    const recipients = await resolveAgentRecipients(booking)
+    toEmail  = recipients.to
+    const extraCc = [...recipients.cc, ...(opts?.cc ?? [])]
     // Auto-add contact email if not already in CC
     const contactEmail = (booking as { contactEmail?: string | null }).contactEmail
-    const autoCc = contactEmail && contactEmail !== toEmail ? [contactEmail] : []
+    const autoCc = contactEmail?.trim() && contactEmail.trim() !== toEmail ? [contactEmail.trim()] : []
     // Always CC the TQ mailbox for traceability (sender is already confirm.booking@aahaas.com
     // but the inbox copy may be filtered — an explicit CC lands in a separate thread)
     const internalCc = toEmail !== TQ_CC_EMAIL ? [TQ_CC_EMAIL] : []
