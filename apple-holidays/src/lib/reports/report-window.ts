@@ -181,7 +181,8 @@ function periodAround(period: ReportPeriod, anchor: string, weekEnd: string): { 
  * current period would make consecutive emails disagree with each other.
  *
  *  - DAILY   → yesterday
- *  - WEEKLY  → the seven days ending yesterday (a Sunday send covers Sun–Sat)
+ *  - WEEKLY  → the last completed week: seven days ending the day before the
+ *              schedule's send day (a Sunday send covers Sun–Sat)
  *  - MONTHLY → the previous calendar month
  *
  * `anchorDate` re-points that at a chosen past day: the report then covers the
@@ -199,6 +200,13 @@ export function buildReportWindow(
   timezone: string,
   now: Date = new Date(),
   anchorDate?: string | null,
+  /**
+   * WEEKLY only: the weekday (0 = Sunday) a schedule sends on. Weeks then run
+   * from that weekday to the day before it — a Sunday schedule reports Sun–Sat —
+   * as fixed calendar blocks, so "week 3 of September" means the same seven
+   * days whenever it is picked. Omitted, weeks end on yesterday.
+   */
+  sendDay?: number | null,
 ): ReportWindow {
   const realToday = dateInTz(now, timezone)
   const anchored = !!anchorDate && isValidDate(anchorDate)
@@ -207,12 +215,17 @@ export function buildReportWindow(
   // for every period — the day before this month's 1st is last month, and the
   // week always ends on yesterday.
   const yesterday = shiftDate(realToday, -1)
+  // The last completed week ends on the most recent day-before-send-day, which
+  // on the send day itself is yesterday.
+  const weekEnd = sendDay != null && sendDay >= 0 && sendDay <= 6
+    ? shiftDate(yesterday, -((dayOfWeek(yesterday) - (sendDay + 6) % 7 + 7) % 7))
+    : yesterday
   const defaultAnchor = period === 'MONTHLY'
     ? shiftDate(`${realToday.slice(0, 7)}-01`, -1)
-    : yesterday
+    : period === 'WEEKLY' ? weekEnd : yesterday
 
   const anchor = anchored ? anchorDate! : defaultAnchor
-  const { fromDate, toDate } = periodAround(period, anchor, yesterday)
+  const { fromDate, toDate } = periodAround(period, anchor, weekEnd)
 
   // "Yesterday" / "Last week" only make sense relative to the real today; a
   // picked date is labelled as the plain range it is.
@@ -234,6 +247,25 @@ export function buildReportWindow(
     timezone,
     label,
   }
+}
+
+/**
+ * The weeks of a month, numbered for the "send a chosen week" picker.
+ *
+ * A week belongs to the month it *starts* in, and starts on the schedule's send
+ * day: for a Sunday schedule in September 2026 that is 06–12, 13–19, 20–26 and
+ * 27 Sep–03 Oct as weeks 1 to 4. Each week's `toDate` is the anchor that
+ * {@link buildReportWindow} turns back into exactly that range.
+ */
+export function weeksOfMonth(month: string, sendDay: number): { n: number; fromDate: string; toDate: string }[] {
+  const first = `${month}-01`
+  let start = shiftDate(first, (sendDay - dayOfWeek(first) + 7) % 7)
+  const weeks: { n: number; fromDate: string; toDate: string }[] = []
+  while (start.slice(0, 7) === month) {
+    weeks.push({ n: weeks.length + 1, fromDate: start, toDate: shiftDate(start, 6) })
+    start = shiftDate(start, 7)
+  }
+  return weeks
 }
 
 /** The same window shifted one full period earlier — the comparison baseline. */

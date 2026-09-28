@@ -12,6 +12,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { runSchedule } from '@/lib/reports/report-runner'
 import { getSchedule, normalizeEmails } from '@/lib/reports/report-schedules'
+import { dateInTz, isValidDate } from '@/lib/reports/report-window'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,7 +22,8 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session || !ADMIN_ROLES.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  let body: { id?: string; mode?: 'live' | 'test'; to?: string[] | string }
+  // `date` sends a chosen past period ("week 3") instead of the latest one.
+  let body: { id?: string; mode?: 'live' | 'test'; to?: string[] | string; date?: string | null }
   try {
     body = await req.json() as typeof body
   } catch {
@@ -34,6 +36,12 @@ export async function POST(req: NextRequest) {
   if (!schedule) return buildApiError('Schedule not found', 404)
 
   const isTest = body.mode !== 'live'
+
+  const date = body.date?.trim() || null
+  if (date && !isValidDate(date)) return buildApiError('Report date must be a valid yyyy-mm-dd date.')
+  if (date && date >= dateInTz(new Date(), schedule.timezone)) {
+    return buildApiError('That period has not finished yet — pick one that has.')
+  }
 
   // A test defaults to the requesting admin, so nobody can accidentally blast
   // the full CC list while trying out a layout change.
@@ -51,6 +59,7 @@ export async function POST(req: NextRequest) {
     force: true,
     testSend: isTest,
     overrideTo,
+    anchorDate: date,
   })
 
   if (outcome.status === 'error') {

@@ -568,6 +568,8 @@ export interface CollectOptions {
    * Omitted for scheduled sends, which always report the period just closed.
    */
   anchorDate?: string | null
+  /** WEEKLY: the schedule's send weekday, which fixes where its weeks start. */
+  sendDay?: number | null
   /** Cap on the per-section detail tables. */
   maxRows?: number
 }
@@ -1513,7 +1515,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const now = opts.now ?? new Date()
   const countries = (opts.countries ?? []).filter(Boolean)
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
-  const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
+  const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate, opts.sendDay)
 
 /** The labels the mail prints for each intake channel. */
 const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {

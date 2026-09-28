@@ -483,7 +483,7 @@ export interface BuiltReport {
 type BuildShape = Pick<
   ReportSchedule,
   'name' | 'reportType' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'
-> & Partial<Pick<ReportSchedule, 'attachCsv'>>
+> & Partial<Pick<ReportSchedule, 'attachCsv' | 'dayOfWeek'>>
 
 export async function buildReport(
   s: BuildShape,
@@ -504,6 +504,7 @@ async function buildOpsReport(
     countries: s.countries,
     now: opts.now,
     anchorDate: opts.anchorDate,
+    sendDay: s.dayOfWeek,
     maxRows: s.maxRows,
   })
 
@@ -569,6 +570,7 @@ async function buildReconciliation(
     timezone: s.timezone,
     now: opts.now,
     anchorDate: opts.anchorDate,
+    sendDay: s.dayOfWeek,
     maxRows: s.maxRows,
   })
 
@@ -643,6 +645,12 @@ export interface RunScheduleOptions {
   /** Override the recipient list, e.g. to send a test to just yourself. */
   overrideTo?: string[]
   testSend?: boolean
+  /**
+   * `yyyy-mm-dd` inside a past period to send instead of the latest one — the
+   * "send week 3" picker. A back-dated send never moves the schedule's
+   * once-per-slot marker, so it cannot swallow the next real send.
+   */
+  anchorDate?: string | null
 }
 
 export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): Promise<RunOutcome> {
@@ -703,7 +711,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
   try {
     const built = await withAsDeadline(
       opts.trigger === 'schedule' || opts.trigger === 'cron-http' ? SEND_AS_LIMITS.schedule : SEND_AS_LIMITS.interactive,
-      () => buildReport(s, { now, testSend: opts.testSend }),
+      () => buildReport(s, { now, testSend: opts.testSend, anchorDate: opts.anchorDate }),
     )
     covered = { from: built.window.fromDate, to: built.window.toDate }
 
@@ -746,7 +754,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
     })
 
     await recordScheduleRun(s.id, {
-      lastRunKey: opts.force && opts.testSend ? s.lastRunKey : runKey,
+      lastRunKey: opts.force && (opts.testSend || opts.anchorDate) ? s.lastRunKey : runKey,
       lastRunAt: new Date().toISOString(),
       lastStatus: 'ok',
       lastError: null,

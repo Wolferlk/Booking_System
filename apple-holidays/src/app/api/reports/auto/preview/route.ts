@@ -116,6 +116,7 @@ async function resolveShape(params: URLSearchParams) {
     countries,
     to: ['preview@example.com'],
     maxRows: Number(params.get('maxRows') ?? '30'),
+    ...(params.get('dayOfWeek') ? { dayOfWeek: Number(params.get('dayOfWeek')) } : {}),
     aiSummary: params.get('aiSummary') === 'true',
   })
 }

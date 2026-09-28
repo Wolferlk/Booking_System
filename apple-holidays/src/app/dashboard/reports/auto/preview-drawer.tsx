@@ -25,6 +25,8 @@ export interface PreviewRequest {
   countries?: string[]
   aiSummary?: boolean
   maxRows?: number
+  /** WEEKLY drafts: the send weekday, which decides where the weeks start. */
+  dayOfWeek?: number
   title?: string
   /** `yyyy-mm-dd` to back-date the preview to; empty means the latest period. */
   date?: string
@@ -41,6 +43,7 @@ export function previewQuery(req: PreviewRequest): string {
     if (req.countries?.length) p.set('countries', req.countries.join(','))
     if (req.aiSummary) p.set('aiSummary', 'true')
     if (req.maxRows) p.set('maxRows', String(req.maxRows))
+    if (req.dayOfWeek != null) p.set('dayOfWeek', String(req.dayOfWeek))
   }
   // Applies to both shapes — a saved schedule can be previewed for a past day
   // without touching what it will send tomorrow morning.
@@ -59,6 +62,7 @@ export function previewRequestFor(draft: Partial<Schedule>): PreviewRequest {
     countries: draft.countries,
     aiSummary: draft.aiSummary,
     maxRows: draft.maxRows,
+    dayOfWeek: draft.dayOfWeek,
     title: draft.name || 'Preview',
   }
 }

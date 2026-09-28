@@ -232,6 +232,8 @@ export interface CollectReconcileOptions {
   timezone: string
   now?: Date
   anchorDate?: string | null
+  /** WEEKLY: the schedule's send weekday, which fixes where its weeks start. */
+  sendDay?: number | null
   /** Cap on the per-section detail tables. */
   maxRows?: number
 }
@@ -711,7 +713,7 @@ function deriveFindings(b2b: B2bSection, b2c: B2cSection): Finding[] {
 export async function collectReconcileData(opts: CollectReconcileOptions): Promise<ReconcileReportData> {
   const now = opts.now ?? new Date()
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
-  const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
+  const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate, opts.sendDay)
 
   // The Apple System first: its confirmations are the key list every other
   // lookup is scoped to, so there is nothing to ask the others until it answers.
