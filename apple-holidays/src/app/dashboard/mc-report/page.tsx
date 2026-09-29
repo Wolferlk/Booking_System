@@ -9,7 +9,7 @@ import {
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
   PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
-  Columns3, Check,
+  Columns3, Check, CheckCircle2, Circle, Undo2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -101,6 +101,10 @@ type MCRow = {
   bookingRequests?: McBookingRequest[]
   /** Sri Lanka: whole-tour figures from the saved transport settlement sheet. */
   tourFigures?: { packageCost: number | null; budgetKm: number | null; actualKm: number | null } | null
+  /** Sri Lanka: the desk ticked this movement off — the row reads green. */
+  done?:          { at: string; by: string | null } | null
+  /** Lead passenger's name — the file's lead, else its first passenger. */
+  leadGuest:      string | null
   agent:          string | null
   bookingStatus:  string
   /** Cancellation-approval trail — set once a cancellation has been requested. */
@@ -169,7 +173,7 @@ function waitTone(days: number | null): { border: string; chip: string; text: st
   return { border: 'border-amber-300', chip: 'bg-amber-100 text-amber-800 border-amber-300', text: 'text-amber-700' }
 }
 
-type SortField = 'date' | 'vnCode' | 'agent' | 'location' | 'serviceType' | 'meetingTime'
+type SortField = 'date' | 'vnCode' | 'leadGuest' | 'agent' | 'location' | 'serviceType' | 'meetingTime'
 type SortDir   = 'asc' | 'desc'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -251,7 +255,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
     row.guideName, row.tourVendorName,
-    row.vehicleType, row.vehiclePlate, row.agent,
+    row.vehicleType, row.vehiclePlate, row.leadGuest, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
     row.vehicleTypeHint?.value,
     (row.flights ?? []).map(f => `${f.flightNo} ${f.fromApt} ${f.toApt} ${f.airline ?? ''}`).join(' ') || null,
@@ -293,6 +297,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Tour Vendor', value: row.tourVendorName },
     { label: 'Vehicle',   value: row.vehicleType },
     { label: 'Plate',     value: row.vehiclePlate },
+    { label: 'Lead Guest', value: row.leadGuest },
     { label: 'Agent',     value: row.agent },
     { label: 'Tour Ref',  value: row.vnCode },
     { label: 'IS No',     value: row.isNumber },
@@ -476,6 +481,16 @@ function TicketsControlCell({
   )
 }
 
+
+/**
+ * Can the desk tick this movement off? Sri Lanka movements only — a Hotel Only
+ * stay is not a movement, and a cancelled file will not run.
+ */
+function isDoneableRow(row: MCRow): boolean {
+  return isSriLanka(row.operationCountry) && !row.isHotelOnlyBooking && !isCancelledRow(row)
+}
+
+type DoneFilter = 'all' | 'pending' | 'done'
 
 // ─── MC columns: flights, vehicle, desk figures, requests, meal preferences ───
 
@@ -857,6 +872,11 @@ export default function MCReportPage() {
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   /** Narrow the chart to movements on files awaiting a cancellation decision. */
   const [cancelOnly, setCancelOnly] = useState(false)
+  // Sri Lanka "done" ticks: which rows are selected for a bulk mark, and which
+  // slice of the chart to show.
+  const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [doneFilter, setDoneFilter] = useState<DoneFilter>('all')
+  const [savingDone, setSavingDone] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
   const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
@@ -977,6 +997,7 @@ export default function MCReportPage() {
     switch (sort.field) {
       case 'date':        return dir * a.date.localeCompare(b.date)
       case 'vnCode':      return dir * a.vnCode.localeCompare(b.vnCode)
+      case 'leadGuest':   return dir * (a.leadGuest ?? '').localeCompare(b.leadGuest ?? '')
       case 'agent':       return dir * (a.agent ?? '').localeCompare(b.agent ?? '')
       case 'location':    return dir * a.location.localeCompare(b.location)
       case 'serviceType': return dir * a.serviceType.localeCompare(b.serviceType)
@@ -988,10 +1009,69 @@ export default function MCReportPage() {
   // Deep search — client-side filter on already-sorted rows
   const displayedRows = useMemo(() => {
     const q = deepSearch.trim().toLowerCase()
-    const base = cancelOnly ? sorted.filter(isCancelPendingRow) : sorted
+    let base = cancelOnly ? sorted.filter(isCancelPendingRow) : sorted
+    if (doneFilter === 'pending') base = base.filter(r => isDoneableRow(r) && !r.done)
+    if (doneFilter === 'done')    base = base.filter(r => !!r.done)
     if (!q) return base
     return base.filter(row => rowMatchesDeep(row, q))
-  }, [sorted, deepSearch, cancelOnly])
+  }, [sorted, deepSearch, cancelOnly, doneFilter])
+
+  // ── Done ticks (Sri Lanka) ───────────────────────────────────────────────────
+
+  // Counted over the loaded chart, not the filtered view, so switching to
+  // "Pending" does not make the progress bar read 0 / n.
+  const doneStats = useMemo(() => {
+    const doneable = rows.filter(isDoneableRow)
+    return { total: doneable.length, done: doneable.filter(r => r.done).length }
+  }, [rows])
+  const visibleDoneable = useMemo(() => displayedRows.filter(isDoneableRow), [displayedRows])
+  const allVisibleSelected = visibleDoneable.length > 0 && visibleDoneable.every(r => selected.has(r.id))
+
+  // A reload or a filter change can drop rows — never act on one out of sight.
+  useEffect(() => {
+    setSelected(prev => {
+      const visible = new Set(visibleDoneable.map(r => r.id))
+      const next = new Set(Array.from(prev).filter(id => visible.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [visibleDoneable])
+
+  function toggleSelected(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    setSelected(allVisibleSelected ? new Set() : new Set(visibleDoneable.map(r => r.id)))
+  }
+
+  async function markDone(ids: string[], done: boolean) {
+    if (!ids.length || savingDone) return
+    setSavingDone(true)
+    try {
+      const res  = await fetch('/api/mc-report/done', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agendaItemIds: ids, done }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Could not save')
+      const marks = json.data.marks as Record<string, MCRow['done']>
+      setRows(rs => rs.map(r => (r.id in marks ? { ...r, done: marks[r.id] } : r)))
+      setSelected(new Set())
+      const n = Object.keys(marks).length
+      toast.success(done
+        ? `${n} movement${n === 1 ? '' : 's'} marked done`
+        : `${n} movement${n === 1 ? '' : 's'} back to pending`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save')
+    } finally {
+      setSavingDone(false)
+    }
+  }
 
   // ── Guides / tour vendors ─────────────────────────────────────────────────────
 
@@ -1037,8 +1117,9 @@ export default function MCReportPage() {
   const showBudgetTransferCol = hasSgMyRows && colOn('budgetTransfer')
   const showMealPrefCol    = colOn('mealPref')
   const showSpecialReqCol  = colOn('specialRequest')
-  const columnCount = 13
-    + [showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
+  const showDoneCol = hasSlRows || doneFilter !== 'all'
+  const columnCount = 14
+    + [showDoneCol, showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
        showBudgetKmCol, showActualKmCol, showPackageCostCol, showBudgetTransferCol,
        showMealPrefCol, showSpecialReqCol].filter(Boolean).length
 
@@ -1237,8 +1318,8 @@ export default function MCReportPage() {
       'Cancel Requested By', 'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
       'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
       'Vendor', 'Driver', 'Vehicle Type', 'Plate',
-      'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
-      'Tickets Control',
+      'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Lead Guest', 'Agent',
+      'Done', 'Done By', 'Tickets Control',
       ...MC_EXPORT_HEADERS,
     ]
 
@@ -1265,7 +1346,8 @@ export default function MCReportPage() {
       r.vendor ?? '', r.driverName ?? '', r.vehicleType ?? '', r.vehiclePlate ?? '',
       r.guideName ?? '', r.guidePhone ?? '',
       r.tourVendorName ?? '', r.tourVendorPhone ?? '',
-      r.agent ?? '',
+      r.leadGuest ?? '', r.agent ?? '',
+      r.done ? 'Yes' : '', r.done?.by ?? '',
       r.ticketsControl ?? '',
       ...mcExportCells(r),
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
@@ -1301,7 +1383,7 @@ export default function MCReportPage() {
         'Hotel Only Booking', 'Nights', 'Check Out',
         'Vendor', 'Driver', 'Vehicle Type', 'Plate No',
         'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone',
-        'Agent', 'Booking Status',
+        'Lead Guest', 'Agent', 'Booking Status',
         'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
         'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
         'Tickets Control',
@@ -1322,7 +1404,7 @@ export default function MCReportPage() {
         r.vehicleType ?? '', r.vehiclePlate ?? '',
         r.guideName ?? '', r.guidePhone ?? '',
         r.tourVendorName ?? '', r.tourVendorPhone ?? '',
-        r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
+        r.leadGuest ?? '', r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
         isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
         r.cancelRequestedAt?.slice(0, 10) ?? '',
         r.cancelRequestedBy ?? '',
@@ -1880,6 +1962,64 @@ export default function MCReportPage() {
             <h3 className="text-sm font-semibold text-slate-900">Movement Items</h3>
           </CardHeader>
           <CardBody className="p-0">
+            {/* Sri Lanka done progress + All / Pending / Done */}
+            {doneStats.total > 0 && (() => {
+              const pct = Math.round((doneStats.done / doneStats.total) * 100)
+              const complete = doneStats.done === doneStats.total
+              return (
+                <div className="flex flex-wrap items-center gap-4 px-5 py-3 border-b border-slate-100 bg-gradient-to-r from-emerald-50/60 via-white to-white">
+                  <div className="flex items-center gap-3 min-w-[240px] flex-1">
+                    <div className={cn(
+                      'flex items-center justify-center w-9 h-9 rounded-xl shadow-sm transition-colors',
+                      complete ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-600 ring-1 ring-emerald-200',
+                    )}>
+                      <CheckCircle2 className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 max-w-sm">
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xs font-semibold text-slate-700">
+                          {complete ? 'Every Sri Lanka movement is done' : 'Sri Lanka movements done'}
+                        </span>
+                        <span className="text-xs font-bold text-emerald-700 tabular-nums">
+                          {doneStats.done} / {doneStats.total}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-2 rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all duration-700 ease-out"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-xs font-semibold">
+                    {([
+                      ['all',     'All',     rows.length],
+                      ['pending', 'Pending', doneStats.total - doneStats.done],
+                      ['done',    'Done',    doneStats.done],
+                    ] as const).map(([key, label, count]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setDoneFilter(key)}
+                        className={cn(
+                          'flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all',
+                          doneFilter === key
+                            ? key === 'done' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white text-slate-900 shadow-sm'
+                            : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        {label}
+                        <span className={cn(
+                          'rounded-full px-1.5 text-[10px] tabular-nums',
+                          doneFilter === key && key === 'done' ? 'bg-white/25' : 'bg-slate-200/70 text-slate-600',
+                        )}>{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
             {loading ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <Loader2 className="w-7 h-7 text-brand-500 animate-spin" />
@@ -1900,8 +2040,21 @@ export default function MCReportPage() {
                 <table className="w-full text-xs min-w-[1200px]">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 sticky top-0">
+                      {showDoneCol && (
+                        <th className="pl-4 pr-1 py-2.5 w-[64px]">
+                          <input
+                            type="checkbox"
+                            aria-label="Select every Sri Lanka movement in view"
+                            checked={allVisibleSelected}
+                            disabled={!canEditTicketsControl || visibleDoneable.length === 0}
+                            onChange={toggleSelectAll}
+                            className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer disabled:opacity-40"
+                          />
+                        </th>
+                      )}
                       <SortTh field="date"        label="Date"      sort={sort} onSort={handleSort} />
                       <SortTh field="vnCode"      label="VN Code"   sort={sort} onSort={handleSort} />
+                      <SortTh field="leadGuest"   label="Lead Guest" sort={sort} onSort={handleSort} />
                       <SortTh field="agent"       label="Agent"     sort={sort} onSort={handleSort} />
                       <SortTh field="location"    label="Location"  sort={sort} onSort={handleSort} />
                       {showFlightsCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Flight Details</th>}
@@ -1956,9 +2109,15 @@ export default function MCReportPage() {
                             key={row.id}
                             onClick={() => setExpandedRow(isExpanded ? null : row.id)}
                             className={cn(
-                              'transition-colors cursor-pointer group',
+                              'transition-colors duration-500 cursor-pointer group',
                               isExpanded
                                 ? 'bg-brand-50/60 border-l-2 border-l-brand-400'
+                                // Ticked off by the desk — green, edged, and it
+                                // stays green on hover so it never reads as pending.
+                                : row.done
+                                  ? 'bg-gradient-to-r from-emerald-100/80 via-emerald-50/70 to-emerald-50/30 border-l-4 border-l-emerald-500 hover:from-emerald-100 hover:via-emerald-50'
+                                : selected.has(row.id)
+                                  ? 'bg-sky-50/70 border-l-2 border-l-sky-400 hover:bg-sky-50'
                                 // Awaiting a decision — kept at full strength, in
                                 // orange. This movement is still expected to run,
                                 // so greying it out like a dead file would be the
@@ -1976,12 +2135,53 @@ export default function MCReportPage() {
                                     : 'hover:bg-slate-50/80',
                             )}
                           >
+                            {/* Select + one-click done toggle (Sri Lanka movements) */}
+                            {showDoneCol && (
+                              <td className="pl-4 pr-1 py-2.5" onClick={e => e.stopPropagation()}>
+                                {isDoneableRow(row) ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Select ${row.vnCode} on ${row.date}`}
+                                      checked={selected.has(row.id)}
+                                      disabled={!canEditTicketsControl}
+                                      onChange={() => toggleSelected(row.id)}
+                                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer disabled:opacity-40"
+                                    />
+                                    <button
+                                      type="button"
+                                      disabled={!canEditTicketsControl || savingDone}
+                                      onClick={() => markDone([row.id], !row.done)}
+                                      title={row.done ? 'Done — click to undo' : 'Mark done'}
+                                      className={cn(
+                                        'rounded-full transition-all duration-300 disabled:cursor-not-allowed',
+                                        row.done
+                                          ? 'text-emerald-600 scale-110 drop-shadow-[0_0_6px_rgba(16,185,129,0.45)]'
+                                          : 'text-slate-300 hover:text-emerald-500 hover:scale-110',
+                                      )}
+                                    >
+                                      {row.done ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
+                                    </button>
+                                  </div>
+                                ) : <span className="text-slate-200 pl-1">—</span>}
+                              </td>
+                            )}
+
                             {/* Date — a stay spans nights, so it shows the span */}
                             <td className="px-3 py-2.5 whitespace-nowrap font-medium text-slate-800">
                               <div className="flex items-center gap-1.5">
                                 <Calendar className="w-3 h-3 text-slate-400 flex-shrink-0" />
                                 {formatDate(row.date)}
                               </div>
+                              {row.done && (
+                                <div
+                                  className="mt-1 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white shadow-sm"
+                                  title={`Done${row.done.by ? ` by ${row.done.by}` : ''} · ${new Date(row.done.at).toLocaleString()}`}
+                                >
+                                  <Check className="w-2.5 h-2.5" strokeWidth={3} />
+                                  Done{row.done.by ? ` · ${row.done.by.split(' ')[0]}` : ''}
+                                </div>
+                              )}
                               {row.isHotelOnlyBooking && row.checkOut && (
                                 <div className="mt-0.5 text-[10px] text-amber-700 font-semibold">
                                   → {formatDate(row.checkOut)}
@@ -2043,6 +2243,15 @@ export default function MCReportPage() {
                                   {q ? <Highlight text={row.agentBookingId} query={deepSearch} /> : row.agentBookingId}
                                 </span>
                               )}
+                            </td>
+
+                            {/* Lead guest — the name the driver and desk ask for */}
+                            <td className="px-3 py-2.5 max-w-[160px]">
+                              {row.leadGuest ? (
+                                <span className="block truncate font-medium text-slate-800" title={row.leadGuest}>
+                                  {q ? <Highlight text={row.leadGuest} query={deepSearch} /> : row.leadGuest}
+                                </span>
+                              ) : <span className="text-slate-300">—</span>}
                             </td>
 
                             {/* Agent — who sold the file; operations reads it beside the ref */}
@@ -2339,6 +2548,7 @@ export default function MCReportPage() {
                                     { label: 'Tour Ref',       value: row.vnCode },
                                     { label: 'IS Number',      value: row.isNumber },
                                     { label: 'Agent ID',       value: row.agentBookingId },
+                                    { label: 'Lead Guest',     value: row.leadGuest },
                                     { label: 'Agent',          value: row.agent },
                                     { label: 'Full Details',   value: row.details },
                                     { label: 'Driver',         value: row.driverName },
@@ -2561,6 +2771,53 @@ export default function MCReportPage() {
           onSaved={next => applyAssignment(assignRow.id, next)}
         />
       )}
+
+      {/* Bulk done bar — floats while Sri Lanka movements are selected */}
+      {selected.size > 0 && (() => {
+        const picked  = rows.filter(r => selected.has(r.id))
+        const toDo    = picked.filter(r => !r.done).map(r => r.id)
+        const toUndo  = picked.filter(r => r.done).map(r => r.id)
+        return (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-32px)] max-w-xl">
+            <div className="animate-slide-up flex flex-wrap items-center gap-2 rounded-2xl bg-slate-900/90 backdrop-blur-md px-4 py-3 text-white shadow-2xl ring-1 ring-white/10">
+              <span className="flex items-center gap-2 text-sm font-semibold mr-auto">
+                <span className="flex items-center justify-center min-w-[26px] h-[26px] rounded-full bg-emerald-500 text-xs font-bold tabular-nums">
+                  {selected.size}
+                </span>
+                selected
+              </span>
+              <button
+                type="button"
+                disabled={savingDone || toDo.length === 0}
+                onClick={() => markDone(toDo, true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold hover:bg-emerald-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {savingDone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                Mark done{toDo.length ? ` (${toDo.length})` : ''}
+              </button>
+              {toUndo.length > 0 && (
+                <button
+                  type="button"
+                  disabled={savingDone}
+                  onClick={() => markDone(toUndo, false)}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20 transition-colors disabled:opacity-40"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                  Undo ({toUndo.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                aria-label="Clear selection"
+                className="rounded-lg p-2 text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

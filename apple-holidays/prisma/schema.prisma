@@ -398,6 +398,21 @@ model AgendaMcDetail {
   @@map("agenda_mc_details")
 }
 
+/// MC Report "done" mark — the Sri Lanka desk ticks a movement off and the row
+/// turns green. Present = done; un-marking deletes it. Keyed by agenda item id
+/// and carried to the new id on every chart save, like AgendaMcDetail.
+/// Created by prisma/sql/2026-09-29-agenda-mc-done.sql — never `db push`.
+model AgendaMcDone {
+  agendaItemId String   @id
+  bookingRef   String
+  doneById     String?
+  doneByName   String?
+  doneAt       DateTime @default(now())
+
+  @@index([bookingRef], map: "agenda_mc_done_bookingRef_idx")
+  @@map("agenda_mc_done")
+}
+
 /// The Vietnam product sheet, cached — what an agenda include is picked from.
 /// SHEET rows are refreshed by a sync and never deleted (a product that leaves
 /// the sheet goes inactive); MANUAL rows are typed in by an operator and pushed

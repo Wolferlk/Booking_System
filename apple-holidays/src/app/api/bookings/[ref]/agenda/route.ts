@@ -23,6 +23,7 @@ import type { AgendaInclude } from '@/lib/vn-includes/shared'
 import { normaliseServiceType } from '@/lib/service-types'
 import { carryTicketsControl } from '@/lib/tickets-control'
 import { carryMcDetails } from '@/lib/mc-details'
+import { carryMcDone } from '@/lib/mc-done'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -324,6 +325,7 @@ export async function POST(
     await carryTicketsControl(booking.bookingRef, movedIds)
   }
   await carryMcDetails(booking.bookingRef, movedIds)
+  await carryMcDone(booking.bookingRef, movedIds)
 
   // Vietnam includes — rewritten only when the chart sent them. A regenerated
   // chart (AI / upload) arrives without the key, and its includes are left

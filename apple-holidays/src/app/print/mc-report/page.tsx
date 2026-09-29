@@ -41,6 +41,7 @@ type MCRow = {
   driverPhotoUrl: string | null
   vehicleType:    string | null
   vehiclePlate:   string | null
+  leadGuest:      string | null
   agent:          string | null
   bookingStatus:  string
 }
@@ -54,7 +55,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
     row.guideName, row.tourVendorName,
-    row.vehicleType, row.vehiclePlate, row.agent,
+    row.vehicleType, row.vehiclePlate, row.leadGuest, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
   ].some(v => v?.toLowerCase().includes(q))
 }
@@ -234,6 +235,7 @@ function PrintContent() {
               <th style={th}>#</th>
               <th style={th}>Date</th>
               <th style={th}>Tour Ref</th>
+              <th style={th}>Lead Guest</th>
               <th style={th}>Agent</th>
               <th style={th}>Location</th>
               <th style={{ ...th, textAlign: 'center' }}>Pax</th>
@@ -289,6 +291,14 @@ function PrintContent() {
                         {q ? <HighlightText text={row.agentBookingId} query={deepSearch} /> : row.agentBookingId}
                       </div>
                     )}
+                  </td>
+
+                  <td style={{ ...td, fontWeight: 600, maxWidth: 130 }}>
+                    {row.leadGuest
+                      ? (q && row.leadGuest.toLowerCase().includes(q)
+                          ? <HighlightText text={row.leadGuest} query={deepSearch} />
+                          : row.leadGuest)
+                      : <span style={{ color: '#cbd5e1' }}>—</span>}
                   </td>
 
                   <td style={{ ...td, color: '#475569', maxWidth: 110 }}>
