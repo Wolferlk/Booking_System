@@ -224,7 +224,7 @@ export const FOCUS_META: Record<FocusKey, {
 }> = {
   reconfirm:  { label: 'Reconfirmation',    hint: 'Client confirm or pre-tour call',        icon: PhoneCall,    kind: 'check' },
   calls:      { label: 'Call Requests',     hint: 'WhatsApp permission to call the guest',  icon: MessageCircle, kind: 'check' },
-  driver:     { label: 'Driver Allocation', hint: 'Every transfer has a driver or vendor',  icon: Car,          kind: 'check' },
+  driver:     { label: 'Driver / Vendor', hint: 'Every transfer has a driver or vendor',  icon: Car,          kind: 'check' },
   tickets:    { label: 'Tickets Issued',    hint: 'Every active ticket purchased or paid',  icon: Ticket,       kind: 'check' },
   qc:         { label: 'QC1 / QC2',         hint: 'Both quality rounds signed off',         icon: ShieldCheck,  kind: 'check' },
   onground:   { label: 'On Ground',         hint: 'Every tour running in the window',       icon: Users,        kind: 'movement' },

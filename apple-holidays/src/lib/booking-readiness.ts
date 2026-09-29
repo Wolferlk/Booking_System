@@ -15,7 +15,7 @@
  * differences, all of which make the mail less wrong:
  *   - a booking past QC still counts as client-confirmed (the panel's status
  *     list stops at COMPLETED and misses the QC1/QC2/MSG_SENT rungs);
- *   - a vendor counts as an allocated driver, as does Sri Lanka's booking-level
+ *   - a vehicle vendor or tour vendor counts as an allocated driver, as does Sri Lanka's booking-level
  *     chauffeur allocation, which is not stored per agenda row;
  *   - part-done is its own state rather than a flat fail.
  *
@@ -88,7 +88,12 @@ export interface ReadinessAgendaItem {
   serviceType?: string | null
   isLeisure?: boolean | null
   isHotelOnly?: boolean | null
-  assignment?: { driverId?: string | null; vendorId?: string | null } | null
+  assignment?: {
+    driverId?: string | null
+    vendorId?: string | null
+    /** A local tour vendor handling the movement covers it just as a driver does. */
+    tourVendorId?: string | null
+  } | null
 }
 
 export interface ReadinessTicket {
@@ -159,7 +164,8 @@ function needsDriver(item: ReadinessAgendaItem): boolean {
 }
 
 function isAllocated(item: ReadinessAgendaItem): boolean {
-  return !!(item.assignment?.driverId || item.assignment?.vendorId)
+  const a = item.assignment
+  return !!(a?.driverId || a?.vendorId || a?.tourVendorId)
 }
 
 // ─── Checks ───────────────────────────────────────────────────────────────────
@@ -240,8 +246,8 @@ function driverCheck(b: ReadinessBooking): ReadinessCheck {
     state: allocated === serviced.length ? 'DONE' : allocated > 0 ? 'PARTIAL' : 'PENDING',
     short: `${allocated}/${serviced.length}`,
     detail: allocated === serviced.length
-      ? `All ${serviced.length} transfer(s) have a driver`
-      : `${serviced.length - allocated} of ${serviced.length} transfers still need a driver`,
+      ? `All ${serviced.length} transfer(s) have a driver or vendor`
+      : `${serviced.length - allocated} of ${serviced.length} transfers still need a driver or vendor`,
     done: allocated,
     required: serviced.length,
   }

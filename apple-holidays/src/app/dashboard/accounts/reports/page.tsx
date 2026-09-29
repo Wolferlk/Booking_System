@@ -163,7 +163,7 @@ const CHECK_FILTERS: { key: CheckFilter; label: string }[] = [
   { key: 'ALL',       label: 'Any check' },
   { key: 'reconfirm', label: 'Reconfirm outstanding' },
   { key: 'calls',     label: 'Call request outstanding' },
-  { key: 'driver',    label: 'Driver outstanding' },
+  { key: 'driver',    label: 'Driver / Vendor outstanding' },
   { key: 'tickets',   label: 'Tickets outstanding' },
   { key: 'qc',        label: 'QC outstanding' },
 ]
@@ -560,7 +560,7 @@ export default function OperationsBoardPage() {
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
-      'Driver Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
+      'Driver / Vendor Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
       'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By', 'Days Awaiting Approval',
       'Cancel Reason', 'Cancellation Fee',
       'D-10 Due', 'D-10 Status', 'Days Late', 'Delay Reason', 'Delay Detail', 'Reason Recorded By', 'Reason Recorded On',
@@ -1084,7 +1084,7 @@ export default function OperationsBoardPage() {
                               the reason this panel is on an ops board at all. */}
                           {r.driver.state !== 'NA' && r.driver.state !== 'PENDING' && (
                             <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
-                              Drivers {r.driver.short}
+                              Driver / Vendor {r.driver.short}
                             </span>
                           )}
                           {r.tickets.state === 'DONE' && (
@@ -1472,7 +1472,7 @@ export default function OperationsBoardPage() {
                     <tr className="bg-slate-50 border-b border-slate-200">
                       {[
                         'Booking', 'Lead Pax', 'Day', 'Pax', 'Movement',
-                        'Reconfirm', 'Call Request', 'Driver', 'Tickets', 'QC1', 'QC2', '',
+                        'Reconfirm', 'Call Request', 'Driver / Vendor', 'Tickets', 'QC1', 'QC2', '',
                       ].map(h => (
                         <th
                           key={h}
@@ -1724,7 +1724,7 @@ export default function OperationsBoardPage() {
                                       <div className="space-y-2">
                                         <h4 className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Checklist</h4>
                                         <div className="text-xs text-slate-600 space-y-1.5">
-                                          <div><span className="font-semibold text-slate-700">Drivers:</span> {r.driver.detail}</div>
+                                          <div><span className="font-semibold text-slate-700">Driver / Vendor:</span> {r.driver.detail}</div>
                                           <div><span className="font-semibold text-slate-700">Tickets:</span> {r.tickets.detail}</div>
                                           <div><span className="font-semibold text-slate-700">QC:</span> {r.qc.detail}</div>
                                           <div className={cn('font-semibold', r.ready ? 'text-emerald-600' : 'text-rose-600')}>

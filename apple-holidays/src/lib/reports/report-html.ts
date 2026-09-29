@@ -901,7 +901,7 @@ function readinessSection(d: ReportData): string {
     tableOpen([
       { text: 'Ref' }, { text: 'Arrives' }, { text: 'Country' },
       { text: 'Pax', align: 'right', width: '40' },
-      { text: 'Client', align: 'center' }, { text: 'Driver', align: 'center' },
+      { text: 'Client', align: 'center' }, { text: 'Driver / Vendor', align: 'center' },
       { text: 'Tickets', align: 'center' }, { text: 'QC', align: 'center' },
     ]) + rows.map((b: ReadinessLine) => {
       const arrives = b.daysToArrival === 1 ? 'Tomorrow' : formatReportDate(b.arrivalDate, { weekday: true })

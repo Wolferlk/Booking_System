@@ -285,7 +285,7 @@ export default function OpsDrilldown({
       `${meta.label} — State`, `${meta.label} — Detail`,
       'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
-      'Driver Allocation', 'Tickets', 'QC1', 'QC2', 'Outstanding',
+      'Driver / Vendor Allocation', 'Tickets', 'QC1', 'QC2', 'Outstanding',
     ]
     const lines = rows.map(r => [
       r.bookingRef,
