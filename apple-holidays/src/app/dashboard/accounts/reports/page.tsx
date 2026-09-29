@@ -1139,7 +1139,7 @@ export default function OperationsBoardPage() {
                       ]}
                     />
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-500">
-                      {g.counts.PARTIAL > 0 && <span className="text-amber-600 font-semibold">{g.counts.PARTIAL} Done</span>}
+                      {g.covered > 0 && <span className="text-amber-600 font-semibold">{g.covered} Done</span>}
                       {g.counts.PENDING > 0 && <span className="text-rose-600 font-semibold">{g.counts.PENDING} pending</span>}
                       {g.counts.NA > 0 && <span>{g.counts.NA} n/a</span>}
                       {g.counts.PENDING === 0 && g.scope > 0 && (
