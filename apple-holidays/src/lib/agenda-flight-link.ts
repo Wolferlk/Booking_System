@@ -16,6 +16,10 @@
 
 import { to12h } from './clock-time'
 import { airport } from './ops-geo'
+import {
+  DEFAULT_FLIGHT_PICKUP_RULES, durationLabel, durationWords, shiftClock,
+  type FlightPickupRules,
+} from './flight-pickup-rules'
 
 export interface LinkableFlight {
   id?: string
@@ -50,27 +54,28 @@ export interface FlightLink {
   flight: LinkableFlight
   role: FlightRole
   /**
-   * Recommended pickup for a departure transfer — the departure time less the
-   * check-in buffer, as a stored "HH:MM". Null when the flight has no departure
-   * time, or when the subtraction would cross back past midnight (a 01:30
-   * departure), where a same-day pickup time would be a lie.
+   * Recommended meeting time, as a stored "HH:MM". For a departure it is the
+   * hotel pickup (departure less the check-in buffer); for an arrival it is
+   * when the guests meet the driver (landing plus the immigration / baggage
+   * allowance). Null for a sector, when the flight has no time, or when the
+   * shift would leave the day (a 01:30 departure), where a same-day time
+   * would be a lie.
    */
   suggestedPickup: string | null
-  /** Hours of check-in buffer used for `suggestedPickup`. */
-  bufferHours: number
+  /** Minutes before departure / after landing used for `suggestedPickup`. */
+  bufferMinutes: number
+  /** `bufferMinutes` for a label — "3 hrs", "2 hrs 30 min", "45 min". */
+  bufferLabel: string
   /** The sector crosses a border — drives the check-in and immigration wording. */
   international: boolean
 }
 
-/**
- * Check-in buffer. Every departure — international or domestic — is timed three
- * hours before the flight leaves.
- *
- * Whether a sector crosses a border is still decided from the gazetteer in
- * ops-geo (see `isInternational`), because the wording of the agenda note
- * differs (passports vs. photo ID); only the pickup buffer is now uniform.
+/*
+ * The check-in buffer and the arrivals allowance are no longer constants here:
+ * they are set on Settings → Airport Pickup Timings (see flight-pickup-rules.ts)
+ * and passed in. Whether a sector crosses a border is decided from the
+ * gazetteer in ops-geo (see `isInternational`) and picks which rule applies.
  */
-const PICKUP_BUFFER_H = 3
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/
 
@@ -120,15 +125,6 @@ export function isAirportMovement(item: LinkableAgendaItem): boolean {
   return AIRPORTISH.test(`${item.fromPoint ?? ''} ${item.toPoint ?? ''}`)
 }
 
-/** "HH:MM" minus N hours, or null if it would fall on the previous day. */
-function minusHours(time: string | null | undefined, hours: number): string | null {
-  const m = /^(\d{1,2}):(\d{2})/.exec(String(time ?? '').trim())
-  if (!m) return null
-  const total = Number(m[1]) * 60 + Number(m[2]) - hours * 60
-  if (total < 0) return null
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
-}
-
 function isInternational(flight: LinkableFlight): boolean {
   const from = codesIn(flight.fromApt).map(airport).find(Boolean)
   const to = codesIn(flight.toApt).map(airport).find(Boolean)
@@ -150,7 +146,11 @@ function isInternational(flight: LinkableFlight): boolean {
  * Anything still ambiguous returns null rather than guessing, because a wrong
  * pickup time in a guest's PDF is worse than no pickup time.
  */
-export function linkFlight(item: LinkableAgendaItem, flights: LinkableFlight[]): FlightLink | null {
+export function linkFlight(
+  item: LinkableAgendaItem,
+  flights: LinkableFlight[],
+  rules: FlightPickupRules = DEFAULT_FLIGHT_PICKUP_RULES,
+): FlightLink | null {
   if (!flights || flights.length === 0) return null
   if (!isAirportMovement(item)) return null
 
@@ -165,12 +165,20 @@ export function linkFlight(item: LinkableAgendaItem, flights: LinkableFlight[]):
 
   const build = (flight: LinkableFlight, role: FlightRole): FlightLink => {
     const international = isInternational(flight)
-    const bufferHours = PICKUP_BUFFER_H
+    const bufferMinutes = role === 'arrival'
+      ? (international ? rules.arrivalIntlMin : rules.arrivalDomesticMin)
+      : (international ? rules.departureIntlMin : rules.departureDomesticMin)
+    const suggestedPickup = role === 'departure'
+      ? shiftClock(flight.depTime, -bufferMinutes, rules.roundToMin)
+      : role === 'arrival'
+        ? shiftClock(flight.arrTime, bufferMinutes, rules.roundToMin)
+        : null
     return {
       flight,
       role,
-      suggestedPickup: role === 'departure' ? minusHours(flight.depTime, bufferHours) : null,
-      bufferHours,
+      suggestedPickup,
+      bufferMinutes,
+      bufferLabel: durationLabel(bufferMinutes),
       international,
     }
   }
@@ -241,17 +249,18 @@ export function flightLinePlain(flight: LinkableFlight): string {
  * the flight line alone says everything there.
  */
 export function transferDescription(link: FlightLink): string {
-  const { flight, role, suggestedPickup, bufferHours, international } = link
+  const { flight, role, suggestedPickup, bufferMinutes, international } = link
+  const buffer = durationWords(bufferMinutes)
 
   if (role === 'departure') {
     const bits: string[] = []
     if (suggestedPickup) {
       bits.push(
-        `Hotel pickup at ${to12h(suggestedPickup)} — ${bufferHours} hours before the `
+        `Hotel pickup at ${to12h(suggestedPickup)} — ${buffer} before the `
         + `${to12h(flight.depTime ?? '')} departure of ${flight.flightNo}.`,
       )
     } else {
-      bits.push(`Hotel pickup timed ${bufferHours} hours before ${flight.flightNo} departs.`)
+      bits.push(`Hotel pickup timed ${buffer} before ${flight.flightNo} departs.`)
     }
     bits.push(
       `Air-conditioned private vehicle to ${flight.fromApt} Airport, departure terminal, `
@@ -268,6 +277,9 @@ export function transferDescription(link: FlightLink): string {
       `Meet on arrival of ${flight.flightNo}`
       + (flight.arrTime ? ` at ${to12h(flight.arrTime)}` : '')
       + ` into ${flight.toApt} Airport.`,
+      ...(suggestedPickup && bufferMinutes > 0
+        ? [`Meeting time ${to12h(suggestedPickup)}, allowing ${buffer} after landing.`]
+        : []),
       'Our representative waits in the arrivals hall with an Apple Holidays name board.',
       international
         ? 'Please allow time for immigration and baggage claim before meeting the driver.'
@@ -295,11 +307,11 @@ export function flightNote(link: FlightLink | null): string {
  * the print view all want.
  */
 export function linkFlights<T extends LinkableAgendaItem>(
-  items: T[], flights: LinkableFlight[],
+  items: T[], flights: LinkableFlight[], rules: FlightPickupRules = DEFAULT_FLIGHT_PICKUP_RULES,
 ): Map<T, FlightLink> {
   const out = new Map<T, FlightLink>()
   for (const item of items) {
-    const link = linkFlight(item, flights)
+    const link = linkFlight(item, flights, rules)
     if (link) out.set(item, link)
   }
   return out

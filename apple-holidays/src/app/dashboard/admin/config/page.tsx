@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw, FileSpreadsheet } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw, FileSpreadsheet, PlaneTakeoff } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -15,6 +15,8 @@ import FileHandlerResolveSettings from '@/components/settings/file-handler-resol
 import CancellationRecoveryCard from '@/components/settings/cancellation-recovery-card'
 import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
+import AirportPickupCard from '@/components/settings/airport-pickup-card'
+import { parseFlightPickupRules, durationLabel } from '@/lib/flight-pickup-rules'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -67,6 +69,8 @@ interface Settings {
   cancel_full_enabled?: string
   cancel_full_audience?: string
   cancel_full_confirm_ref?: string
+  // Airport pickup / arrivals meeting timings (JSON) — see lib/flight-pickup-rules
+  flight_pickup_rules?: string
 }
 
 /**
@@ -316,6 +320,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'pnl-sync',       title: 'Accounts PNL Database Sync',   group: 'Money & Tickets', icon: Database,     keywords: 'link matching is number tour ref invoice snapshot refresh bulk' },
 
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
+  { id: 'airport-pickup', title: 'Airport Pickup Timings',       group: 'Operations',      icon: PlaneTakeoff, keywords: 'flight departure arrival pickup meeting time hours before after landing buffer check-in movement chart agenda' },
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
   { id: 'vn-products',    title: 'Vietnam Product Sheet',        group: 'Operations',      icon: Store,        keywords: 'includes agenda sic transfer private tour product list sharepoint excel link manual payable split vietnam' },
@@ -665,6 +670,14 @@ export default function ConfigPage() {
     window.setTimeout(() => setFlashId(cur => (cur === id ? null : cur)), 1600)
   }, [])
 
+  // Deep link: /dashboard/admin/config#setting-<id> lands on that card (the
+  // agenda's flight chip links straight to Airport Pickup Timings).
+  useEffect(() => {
+    if (loading) return
+    const id = window.location.hash.replace(/^#setting-/, '')
+    if (id && SECTIONS.some(s => s.id === id)) window.setTimeout(() => jumpTo(id), 60)
+  }, [loading, jumpTo])
+
   // "/" anywhere on the page jumps into the search box — but not while typing
   // into one of the settings fields, where "/" is just a slash.
   useEffect(() => {
@@ -715,6 +728,7 @@ export default function ConfigPage() {
     'automation':     automationOn === 2 ? { label: 'On', tone: 'on' } : automationOn === 1 ? { label: '1/2', tone: 'warn' } : { label: 'Off', tone: 'off' },
     'ai-tokens':      { label: `${aiOnCount}/4`, tone: aiOnCount === 4 ? 'on' : aiOnCount === 0 ? 'off' : 'warn' },
     'partners':       { label: String(partnerCount), tone: partnerCount > 0 ? 'on' : 'off' },
+    'airport-pickup': { label: durationLabel(parseFlightPickupRules(settings.flight_pickup_rules).departureIntlMin), tone: 'on' },
     // Sealed cancellation is the louder fact, so it wins the pill when it is live.
     'cancel-recovery': cancelPolicy.fullEnabled
       ? { label: 'Sealed', tone: 'warn' }
@@ -1120,6 +1134,11 @@ export default function ConfigPage() {
                   </div>
                 </CardBody>
               </Card>
+            </Section>
+
+            <Section id="airport-pickup" visible={show('airport-pickup')} flashed={flashId === 'airport-pickup'}>
+              {/* Hours before departure / minutes after landing for airport rows */}
+              <AirportPickupCard settings={settings} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="last-minute" visible={show('last-minute')} flashed={flashId === 'last-minute'}>

@@ -12,6 +12,9 @@ import path from 'path'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { detectLeisureDay } from '@/lib/leisure-day'
+import { linkFlight, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { durationWords } from '@/lib/flight-pickup-rules'
+import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -130,6 +133,15 @@ export async function POST(
   }
 
   const conditions = loadConditions()
+  // Settings → Airport Pickup Timings. Stated in the prompt so the prose
+  // agrees, and enforced again on the result below so the times do.
+  const pickupRules = await loadFlightPickupRules()
+  const pickupRuleText = `AIRPORT MEETING TIMES (from system settings — these OVERRIDE any other airport timing rule, including the operational rules below):
+  - Departure transfer, international flight: meetingTime = depTime − ${durationWords(pickupRules.departureIntlMin)}
+  - Departure transfer, domestic flight: meetingTime = depTime − ${durationWords(pickupRules.departureDomesticMin)}
+  - Arrival transfer, international flight: meetingTime = arrTime + ${durationWords(pickupRules.arrivalIntlMin)}
+  - Arrival transfer, domestic flight: meetingTime = arrTime + ${durationWords(pickupRules.arrivalDomesticMin)}
+  Wherever a details example says "[departure buffer]", write the departure figure above.`
 
   const systemPrompt = `You are a Vietnam/Asia tour operations expert for AppleHolidays (MMT).
 Generate a day-by-day movement chart from the booking data provided.
@@ -138,6 +150,8 @@ Two data sources are given: structured_booking_data (always) and tq_document_tex
 CRITICAL: One day can have ONE OR MORE agenda items (multiple transfers/tours on the same date).
 Never collapse multiple movements into one. Read the TQ carefully and extract EVERY transfer,
 tour, and movement — even if they are on the same day.
+
+${pickupRuleText}
 
 ${conditions ? `OPERATIONAL RULES:\n${conditions}\n` : ''}
 
@@ -207,7 +221,7 @@ DETAILS EXAMPLES:
 
 — Airport departure (PVT):
   "Private transfer from [hotel] to [CODE] Airport for departure flight. ✈ Flight VJ123 | HAN → SGN | Dep: 14:30 | Arr: 16:45.
-   Pickup from hotel lobby at [meetingTime] (3 hours before departure). Please have passports and boarding documents ready.
+   Pickup from hotel lobby at [meetingTime] ([departure buffer] before departure). Please have passports and boarding documents ready.
    Driver assists with check-in baggage. Drop-off at departures terminal."
 
 — SIC full-day tour (merge description + logistics):
@@ -239,7 +253,7 @@ For ANY item involving an airport (arrival, departure, transit):
 FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   1. Find matching flight(s) in flights[] where flight.date = agenda item date.
   2. Include the pre-formatted flight.formatted string in the details field.
-  3. meetingTime: arrival → arrTime + 30 min; departure → depTime − 3 hours.
+  3. meetingTime: per AIRPORT MEETING TIMES above (international vs domestic).
   4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
 
 ════════════════════════════════════════════════════════════════
@@ -276,8 +290,7 @@ MULTI-TRANSFER DAYS:
   - Split every distinct movement into its own item with its own date.
 
 MEETING TIME DEFAULTS:
-  - Arrival transfer: flight arrTime + 30 min
-  - Departure transfer: flight depTime − 3 hours
+  - Arrival / departure transfers: see AIRPORT MEETING TIMES above
   - SIC full-day: meetingTime=07:30, timeFrom=07:00, timeTo=07:30
   - SIC half-day AM: meetingTime=08:00, timeFrom=07:30, timeTo=08:00
   - SIC half-day PM: meetingTime=13:00, timeFrom=12:30, timeTo=13:00
@@ -558,10 +571,23 @@ ${tqDocumentText
   // Lanka rules above can still rewrite it). Leisure rows need no driver, so
   // the agenda screen hides driver allocation for them; the operator can still
   // toggle the flag either way afterwards.
-  const finalItems = countryItems.map(item => ({
-    ...item,
-    isLeisure: detectLeisureDay(item),
-  }))
+  // Airport rows take their meeting time from the flight table and the pickup
+  // rules, not from the model's arithmetic — the same derivation the editor's
+  // "Use as meeting time" button uses (lib/agenda-flight-link.ts).
+  const flightRows = booking.flights as unknown as LinkableFlight[]
+  const finalItems = countryItems.map(item => {
+    const link = linkFlight({
+      date: String(item.date ?? ''),
+      fromPoint: item.fromPoint, toPoint: item.toPoint,
+      location: item.location, details: item.details, serviceType: item.serviceType,
+    }, flightRows, pickupRules)
+    const meetingTime = link?.suggestedPickup && link.role !== 'sector' ? link.suggestedPickup : item.meetingTime
+    return {
+      ...item,
+      meetingTime,
+      isLeisure: detectLeisureDay(item),
+    }
+  })
 
   return buildApiSuccess({ items: finalItems }, `Generated ${finalItems.length} agenda items`)
 }

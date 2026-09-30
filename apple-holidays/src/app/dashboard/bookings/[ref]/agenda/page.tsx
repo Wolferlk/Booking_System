@@ -11,7 +11,7 @@ import {
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
   ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store, Utensils,
-  FileType,
+  FileType, Settings2,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -34,6 +34,7 @@ import { TimeInput } from '@/components/ui/time-input'
 import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions, mealPlanFullName } from '@/lib/agenda-suggestions'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, removeTransferDescription, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { DEFAULT_FLIGHT_PICKUP_RULES, type FlightPickupRules } from '@/lib/flight-pickup-rules'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
@@ -355,6 +356,9 @@ export default function AgendaPage() {
   const [guideSel,          setGuideSel]          = useState<PartnerSelection>(EMPTY_SELECTION)
   const [tourVendorSel,     setTourVendorSel]     = useState<PartnerSelection>(EMPTY_SELECTION)
 
+  // Airport pickup / arrivals timings from Settings — shipped defaults until loaded.
+  const [pickupRules,       setPickupRules]       = useState<FlightPickupRules>(DEFAULT_FLIGHT_PICKUP_RULES)
+
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
   const pdfMenuRef    = useRef<HTMLDivElement>(null)
@@ -371,7 +375,16 @@ export default function AgendaPage() {
   }, [])
 
   const canEdit   = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  // Settings is admin-only, so only they get the link from a flight chip to its timings.
+  const isAdmin   = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  useEffect(() => {
+    fetch('/api/settings/flight-pickup')
+      .then(r => r.json())
+      .then(json => { if (json.success && json.data) setPickupRules(json.data) })
+      .catch(() => {})
+  }, [])
 
   // Guides / tour vendors are only used in some countries, so the controls
   // appear on a movement only when this booking's country is switched on.
@@ -894,7 +907,7 @@ export default function AgendaPage() {
       // Hand the model the real flight rather than letting it infer one. It was
       // otherwise inventing plausible-looking departure times for airport days,
       // which is the one number on the page a guest acts on.
-      const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
+      const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[], pickupRules)
       const res  = await fetch(`/api/bookings/${ref}/agenda/describe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -910,7 +923,7 @@ export default function AgendaPage() {
             role:            link.role,
             line:            flightLine(link.flight),
             suggestedPickup: link.suggestedPickup,
-            bufferHours:     link.bufferHours,
+            bufferMinutes:   link.bufferMinutes,
             international:   link.international,
           } : null,
         }),
@@ -1793,7 +1806,7 @@ export default function AgendaPage() {
                               an airline reschedule is reflected the moment the flight
                               row is corrected. See lib/agenda-flight-link.ts. */}
                           {(() => {
-                            const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
+                            const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[], pickupRules)
                             if (!link) return null
                             const transfer = transferDescription(link)
                             const already = item.details.includes(link.flight.flightNo.trim())
@@ -1811,8 +1824,23 @@ export default function AgendaPage() {
                                       {flightLine(link.flight)}
                                     </p>
                                     {link.suggestedPickup && (
-                                      <p className="text-[11px] text-indigo-700 mt-0.5">
-                                        Suggested pickup {to12h(link.suggestedPickup)} · {link.bufferHours} hrs before departure
+                                      <p className="text-[11px] text-indigo-700 mt-0.5 flex flex-wrap items-center gap-1">
+                                        {link.role === 'arrival' ? 'Suggested meeting' : 'Suggested pickup'} {to12h(link.suggestedPickup)} ·
+                                        {/* The buffer comes from Settings → Airport Pickup Timings; admins can jump there. */}
+                                        {isAdmin ? (
+                                          <a
+                                            href="/dashboard/admin/config#setting-airport-pickup"
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            title="Change in Settings → Airport Pickup Timings"
+                                            className="inline-flex items-center gap-0.5 rounded px-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-medium"
+                                          >
+                                            {link.bufferLabel} {link.role === 'arrival' ? 'after landing' : 'before departure'}
+                                            <Settings2 className="w-2.5 h-2.5" />
+                                          </a>
+                                        ) : (
+                                          <span>{link.bufferLabel} {link.role === 'arrival' ? 'after landing' : 'before departure'}</span>
+                                        )}
                                       </p>
                                     )}
                                   </div>
@@ -2018,14 +2046,14 @@ export default function AgendaPage() {
 
                         {/* Same derived flight link the editor shows, read-only. */}
                         {(() => {
-                          const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
+                          const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[], pickupRules)
                           if (!link) return null
                           return (
                             <p className="mt-1 flex items-start gap-1.5 text-xs text-indigo-700">
                               <Plane className="w-3 h-3 mt-0.5 flex-shrink-0" />
                               <span className="break-words">
                                 {flightLine(link.flight)}
-                                {link.suggestedPickup && ` · pickup ${to12h(link.suggestedPickup)}`}
+                                {link.suggestedPickup && ` · ${link.role === 'arrival' ? 'meet' : 'pickup'} ${to12h(link.suggestedPickup)}`}
                               </span>
                             </p>
                           )

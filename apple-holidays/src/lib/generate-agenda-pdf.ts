@@ -12,6 +12,7 @@ import { withoutRetiredContacts } from './emergency-contacts'
 import { SERVICE_TYPE_SHORT_LABELS } from './service-types'
 import { range12h, to12h } from './clock-time'
 import { flightLinePlain, linkFlight, transferDescription, type LinkableFlight } from './agenda-flight-link'
+import { loadFlightPickupRules } from './flight-pickup-rules-server'
 import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
@@ -177,6 +178,8 @@ export async function generateAgendaPdf(
   await ensurePdfkitDataFiles()
   const PDFDocument = await loadPdfDocumentCtor()
   const logo = await loadLogo()
+  // Airport pickup / arrivals timings, as set on Settings.
+  const pickupRules = await loadFlightPickupRules()
 
   // Only tickets actually bought go on a customer document; drafts stay internal.
   const purchasedTickets = (booking.tickets ?? []).filter(t => isPurchasedTicket(t.status))
@@ -527,7 +530,7 @@ export async function generateAgendaPdf(
           // Flight the row belongs to, matched live off the booking's flight
           // table — never stored, so a reschedule shows up as soon as the
           // flight row is corrected. See lib/agenda-flight-link.ts.
-          const link = linkFlight(item, (booking.flights ?? []) as LinkableFlight[])
+          const link = linkFlight(item, (booking.flights ?? []) as LinkableFlight[], pickupRules)
           const flightNote = link
             ? sanitizeText([flightLinePlain(link.flight), transferDescription(link)].filter(Boolean).join('  '))
             : ''

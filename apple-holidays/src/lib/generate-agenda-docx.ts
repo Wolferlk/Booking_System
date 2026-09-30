@@ -25,6 +25,7 @@ import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -175,6 +176,8 @@ function noteBlock(icon: string, label: string, content: string): Paragraph[] {
  * @throws when the booking does not exist
  */
 export async function generateAgendaDocx(ref: string, showDrivers = true): Promise<Buffer> {
+  // Airport pickup / arrivals timings, as set on Settings.
+  const pickupRules = await loadFlightPickupRules()
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: ref },
     include: {
@@ -439,7 +442,7 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             // The flight this row serves, matched live off booking.flights —
             // nothing is stored on the item, so an airline reschedule reaches
             // this document as soon as the flight row is corrected.
-            const link = linkFlight(item, booking.flights as LinkableFlight[])
+            const link = linkFlight(item, booking.flights as LinkableFlight[], pickupRules)
 
             // Leisure and hotel-only days carry no driver by design — say so
             // rather than printing "Not assigned", which reads as an operational gap.

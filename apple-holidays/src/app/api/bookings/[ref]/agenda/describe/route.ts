@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import openai from '@/lib/openai'
 import { to12h } from '@/lib/clock-time'
+import { durationWords } from '@/lib/flight-pickup-rules'
 
 export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
@@ -29,7 +30,8 @@ export async function POST(req: NextRequest) {
       role: 'departure' | 'arrival' | 'sector'
       line: string
       suggestedPickup: string | null
-      bufferHours: number
+      /** From Settings → Airport Pickup Timings. */
+      bufferMinutes: number
       international: boolean
     } | null
   }
@@ -47,18 +49,22 @@ export async function POST(req: NextRequest) {
   const isArrival = /airport|terminal/i.test(fromPoint ?? '') || /arrival/i.test(existingDetails ?? '')
 
   let contextHint = ''
+  const buffer = flight ? durationWords(flight.bufferMinutes ?? 0) : ''
   if (flight?.role === 'departure') {
     contextHint = `This is an AIRPORT DEPARTURE transfer for a confirmed flight.`
       + ` The flight is: ${flight.line}.`
       + (flight.suggestedPickup
-        ? ` Pickup is ${to12h(flight.suggestedPickup)} — ${flight.bufferHours} hours before departure. State that exact pickup time.`
-        : ` Pickup is ${flight.bufferHours} hours before departure.`)
+        ? ` Pickup is ${to12h(flight.suggestedPickup)} — ${buffer} before departure. State that exact pickup time.`
+        : ` Pickup is ${buffer} before departure.`)
       + ` Mention luggage assistance and a check-in reminder.`
       + (flight.international ? ' Remind them to have passports ready.' : ' Remind them to have photo ID ready.')
       + ` Do NOT invent any time that is not given above.`
   } else if (flight?.role === 'arrival') {
     contextHint = `This is an AIRPORT ARRIVAL transfer for a confirmed flight.`
       + ` The flight is: ${flight.line}.`
+      + (flight.suggestedPickup
+        ? ` The meeting time is ${to12h(flight.suggestedPickup)} — ${buffer} after landing. State that exact meeting time.`
+        : '')
       + ` The driver waits in the arrivals hall holding an Apple Holidays name board.`
       + (flight.international
         ? ' Allow for immigration and baggage claim after landing.'
