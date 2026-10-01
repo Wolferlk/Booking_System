@@ -109,6 +109,8 @@ export interface AgendaPdfAssignment {
   vehicleType?: string | null; vehiclePlate?: string | null
   vendor?: { name: string; phone?: string | null } | null
   driver?: { name: string; phone?: string | null; vehicle?: { type?: string | null; plateNo?: string | null } | null } | null
+  guideName?: string | null; guidePhone?: string | null
+  tourVendorName?: string | null; tourVendorPhone?: string | null
 }
 
 export interface AgendaPdfItem {
@@ -535,22 +537,32 @@ export async function generateAgendaPdf(
             ? sanitizeText([flightLinePlain(link.flight), transferDescription(link)].filter(Boolean).join('  '))
             : ''
 
-          // Driver / vendor allocation, flattened to one short line
-          let driverLine = ''
+          // Who runs the movement — vehicle vendor, driver + vehicle, tour
+          // vendor and guide — one labelled line each, only the ones set.
+          // Any of them counts as an allocation (see booking-readiness.ts).
+          const allocLines: { label: string; text: string }[] = []
           if (showDrivers) {
+            const withPhone = (name: string, phone?: string | null) =>
+              phone ? `${name}  ·  ${phone}` : name
             const vendorName  = a?.vendorName ?? a?.vendor?.name ?? null
             const vendorPhone = a?.vendor?.phone ?? null
             const driverName  = a?.driverName ?? a?.driver?.name ?? null
             const driverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
             const vehType     = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
             const vehPlate    = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
+            const vehicle     = vehPlate ? `${vehType ? vehType + ' ' : ''}${vehPlate}` : null
 
-            const parts = [
-              vendorName ? `${vendorName}${vendorPhone ? ` (${vendorPhone})` : ''}` : null,
-              driverName ? `${driverName}${driverPhone ? ` · ${driverPhone}` : ''}` : null,
-              vehPlate ? `${vehType ? vehType + ' ' : ''}${vehPlate}` : null,
-            ].filter(Boolean)
-            driverLine = parts.length > 0 ? sanitizeText(parts.join('  ·  ')) : 'Not assigned'
+            if (vendorName) allocLines.push({ label: 'VENDOR', text: withPhone(vendorName, vendorPhone) })
+            if (driverName || vehicle) {
+              allocLines.push({
+                label: 'DRIVER',
+                text: [driverName ? withPhone(driverName, driverPhone) : null, vehicle].filter(Boolean).join('  ·  '),
+              })
+            }
+            if (a?.tourVendorName) allocLines.push({ label: 'TOUR VENDOR', text: withPhone(a.tourVendorName, a.tourVendorPhone) })
+            if (a?.guideName)      allocLines.push({ label: 'GUIDE',       text: withPhone(a.guideName, a.guidePhone) })
+            allocLines.forEach(l => { l.text = sanitizeText(l.text) })
+            if (allocLines.length === 0) allocLines.push({ label: 'DRIVER', text: 'Not assigned' })
           }
 
           // Measure before drawing so a row never straddles a page break
@@ -562,9 +574,9 @@ export async function generateAgendaPdf(
           const detailsH = details
             ? doc.font('Helvetica').fontSize(8).heightOfString(details, { width: CONTENT_W - 20, lineGap: 1.5 }) + 8
             : 0
-          const driverH = driverLine
-            ? doc.font('Helvetica').fontSize(7.5).heightOfString(driverLine, { width: CONTENT_W - 62 }) + 4
-            : 0
+          const allocHs = allocLines.map(l =>
+            doc.font('Helvetica-Bold').fontSize(7.5).heightOfString(l.text, { width: CONTENT_W - 82 }) + 3)
+          const driverH = allocHs.reduce((sum, h) => sum + h, 0) + (allocLines.length > 0 ? 1 : 0)
           const flightH = flightNote
             ? doc.font('Helvetica').fontSize(7.5).heightOfString(flightNote, { width: CONTENT_W - 30, lineGap: 1.5 }) + 8
             : 0
@@ -604,14 +616,16 @@ export async function generateAgendaPdf(
 
           let cursor = ry + 12 + fromToH + 2
 
-          if (driverLine) {
+          allocLines.forEach((l, i) => {
+            const unassigned = l.text === 'Not assigned'
             doc.fillColor('#94A3B8').font('Helvetica-Bold').fontSize(6.5)
-              .text('DRIVER', MARGIN + 8, cursor, { width: 45, lineBreak: false })
-            doc.fillColor(driverLine === 'Not assigned' ? '#CBD5E1' : PURPLE)
-              .font(driverLine === 'Not assigned' ? 'Helvetica-Oblique' : 'Helvetica-Bold').fontSize(7.5)
-              .text(driverLine, MARGIN + 54, cursor, { width: CONTENT_W - 62 })
-            cursor += driverH
-          }
+              .text(l.label, MARGIN + 8, cursor + 0.5, { width: 66, lineBreak: false })
+            doc.fillColor(unassigned ? '#CBD5E1' : PURPLE)
+              .font(unassigned ? 'Helvetica-Oblique' : 'Helvetica-Bold').fontSize(7.5)
+              .text(l.text, MARGIN + 74, cursor, { width: CONTENT_W - 82 })
+            cursor += allocHs[i]
+          })
+          if (allocLines.length > 0) cursor += 1
 
           if (flightH > 0) {
             const fy = cursor + 2

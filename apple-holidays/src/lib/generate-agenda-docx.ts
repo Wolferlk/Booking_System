@@ -112,15 +112,18 @@ function driverCell(
       spacing: { after: 20 },
     }))
   }
-  paragraphs.push(new Paragraph({
-    children: [new TextRun({
-      text: text || '—',
-      italics: opts?.italic,
-      color: opts?.color ?? CLR.dark,
-      size: 17,
-      font: 'Arial',
-    })],
-  }))
+  // One paragraph per line: vendor, driver, tour vendor and guide each get their own.
+  for (const line of (text || '—').split('\n')) {
+    paragraphs.push(new Paragraph({
+      children: [new TextRun({
+        text: line,
+        italics: opts?.italic,
+        color: opts?.color ?? CLR.dark,
+        size: 17,
+        font: 'Arial',
+      })],
+    }))
+  }
   return new TableCell({
     children: paragraphs,
     shading: opts?.shade ? { type: ShadingType.CLEAR, color: 'auto', fill: opts.shade } : undefined,
@@ -416,7 +419,7 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
           new TableRow({
             children: [
               'From', 'To / Activity', 'Meal', 'Meet Time', 'Service',
-              ...(showDrivers ? ['Driver / Vehicle'] : []),
+              ...(showDrivers ? ['Driver / Vendor'] : []),
             ].map(h => hCell(h)),
           }),
           ...dayItems.map((item, idx) => {
@@ -450,19 +453,22 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             const isHotelOnly = resolveIsHotelOnly(item)
             const noDriver    = isLeisure || isHotelOnly
 
-            let driverText = noDriver ? 'No driver required' : 'Not assigned'
-            if (noDriver) {
-              // no allocation to render
-            } else if (displayVendorName) {
-              driverText = displayVendorName
-              if (displayDriverName) driverText += ` · ${displayDriverName}`
-              if (displayDriverPhone) driverText += ` (${displayDriverPhone})`
-              if (displayVehiclePlate) driverText += ` — ${displayVehicleType ?? ''} ${displayVehiclePlate}`.trim()
-            } else if (displayDriverName) {
-              driverText = displayDriverName
-              if (displayDriverPhone) driverText += ` (${displayDriverPhone})`
-              if (displayVehiclePlate) driverText += ` — ${displayVehicleType ?? ''} ${displayVehiclePlate}`.trim()
+            // Everyone running the movement, one line each — vehicle vendor,
+            // driver + vehicle, tour vendor, guide. Any of them is an allocation.
+            const withPhone = (name: string, phone?: string | null) => phone ? `${name} (${phone})` : name
+            const vehicleText = displayVehiclePlate ? `${displayVehicleType ?? ''} ${displayVehiclePlate}`.trim() : null
+            const allocLines: string[] = []
+            if (displayVendorName) allocLines.push(`Vendor: ${withPhone(displayVendorName, a?.vendor?.phone)}`)
+            if (displayDriverName || vehicleText) {
+              allocLines.push(`Driver: ${[displayDriverName ? withPhone(displayDriverName, displayDriverPhone) : null, vehicleText].filter(Boolean).join(' — ')}`)
             }
+            if (a?.tourVendorName) allocLines.push(`Tour Vendor: ${withPhone(a.tourVendorName, a.tourVendorPhone)}`)
+            if (a?.guideName)      allocLines.push(`Guide: ${withPhone(a.guideName, a.guidePhone)}`)
+
+            const unallocated = allocLines.length === 0
+            const driverText  = unallocated
+              ? (noDriver ? 'No driver required' : 'Not assigned')
+              : allocLines.join('\n')
 
             const shade = idx % 2 === 0 ? CLR.white : CLR.rowAlt
             const driverPhoto = a?.driver?.photoUrl ? driverPhotos.get(a.driver.photoUrl) ?? null : null
@@ -477,10 +483,10 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
 
             if (showDrivers) {
               rows.push(driverCell(driverText, {
-                italic: noDriver || driverText === 'Not assigned',
-                color: noDriver || driverText === 'Not assigned' ? CLR.muted : undefined,
+                italic: unallocated,
+                color: unallocated ? CLR.muted : undefined,
                 shade,
-                photo: noDriver ? null : driverPhoto,
+                photo: unallocated ? null : driverPhoto,
               }))
             }
 
@@ -601,6 +607,45 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
                   verticalAlign: VerticalAlign.CENTER,
                   margins: { top: 55, bottom: 55, left: 80, right: 80 },
                 }),
+              ],
+            })
+          }),
+        ],
+      }))
+      children.push(new Paragraph({ text: '', spacing: { after: 80 } }))
+    }
+
+    // ── TOUR VENDORS & GUIDES ────────────────────────────────────────────────
+    const seenPartners = new Set<string>()
+    const partners = items.flatMap(i => {
+      const a = i.assignment
+      if (!a) return []
+      return [
+        a.tourVendorName ? { role: 'Tour Vendor', name: a.tourVendorName, phone: a.tourVendorPhone } : null,
+        a.guideName      ? { role: 'Guide',       name: a.guideName,      phone: a.guidePhone }      : null,
+      ].filter((p): p is { role: string; name: string; phone: string | null } => {
+        if (!p) return false
+        const key = `${p.role}|${p.name.trim().toLowerCase()}`
+        if (seenPartners.has(key)) return false
+        seenPartners.add(key)
+        return true
+      })
+    })
+
+    if (showDrivers && partners.length > 0) {
+      children.push(sectionHeading('🧭', 'Tour Vendors & Guides'))
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows: [
+          new TableRow({ children: ['Role', 'Name', 'Contact'].map(h => hCell(h)) }),
+          ...partners.map((p, i) => {
+            const shade = i % 2 === 0 ? CLR.white : CLR.rowAlt
+            return new TableRow({
+              children: [
+                dCell(p.role,         { shade }),
+                dCell(p.name,         { bold: true, shade }),
+                dCell(p.phone || '—', { shade }),
               ],
             })
           }),
