@@ -30,6 +30,11 @@ import {
   MC_FIELD_META, SPECIAL_REQUEST_MAX, isSriLanka, isSgMy, mcCurrencyFor, mealPrefsText, bookingRequestsText,
   type McDetails, type McFieldKey, type McFlight, type McMealPref, type McBookingRequest,
 } from '@/lib/mc-report-fields'
+import AdvancedFilterPanel, { FlowBadge } from '@/components/mc-report/advanced-filters'
+import {
+  EMPTY_FILTERS, activeFilterCount, applyAdvancedFilters, facetCounts, filtersFromParams, filtersToParams,
+  movementFlow, type AdvancedFilters,
+} from '@/lib/mc-report-filters'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -876,6 +881,9 @@ export default function MCReportPage() {
   // slice of the chart to show.
   const [selected, setSelected]     = useState<Set<string>>(new Set())
   const [doneFilter, setDoneFilter] = useState<DoneFilter>('all')
+  // Arrivals / departures, time of day, allocation, airport… — see mc-report-filters.ts.
+  const [adv, setAdv] = useState<AdvancedFilters>(EMPTY_FILTERS)
+  const advReady = useRef(false)
   const [savingDone, setSavingDone] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
@@ -957,7 +965,19 @@ export default function MCReportPage() {
     setDateFrom(today)
     setDateTo(today)
     setActiveRange('Today')
+    // Read once on arrival rather than through `useSearchParams`, which would
+    // force the whole page under a Suspense boundary at build time.
+    setAdv(filtersFromParams(new URLSearchParams(window.location.search)))
+    advReady.current = true
   }, [])
+
+  // Keep the advanced filters in the address bar, so a view can be shared as a link.
+  useEffect(() => {
+    if (!advReady.current) return
+    const url = new URL(window.location.href)
+    filtersToParams(adv, url.searchParams)
+    if (url.href !== window.location.href) window.history.replaceState(window.history.state, '', url)
+  }, [adv])
 
   useEffect(() => {
     if (dateFrom && dateTo) load()
@@ -978,6 +998,7 @@ export default function MCReportPage() {
     const today = todayISO()
     setDateFrom(today); setDateTo(today); setSearch(''); setSvcFilter('')
     setLocalCountry(''); setActiveRange('Today'); setDeepSearch(''); setCancelOnly(false)
+    setAdv(EMPTY_FILTERS)
     // Bump the nonce so the list always refetches with the cleared filters,
     // even when the date range was already Today (e.g. only a text search was set).
     setResetNonce(n => n + 1)
@@ -1007,7 +1028,7 @@ export default function MCReportPage() {
   }), [rows, sort])
 
   // Deep search — client-side filter on already-sorted rows
-  const displayedRows = useMemo(() => {
+  const preAdvancedRows = useMemo(() => {
     const q = deepSearch.trim().toLowerCase()
     let base = cancelOnly ? sorted.filter(isCancelPendingRow) : sorted
     if (doneFilter === 'pending') base = base.filter(r => isDoneableRow(r) && !r.done)
@@ -1015,6 +1036,13 @@ export default function MCReportPage() {
     if (!q) return base
     return base.filter(row => rowMatchesDeep(row, q))
   }, [sorted, deepSearch, cancelOnly, doneFilter])
+
+  // Advanced filters run last, and their chip counts are taken over the rows
+  // every other filter left — so a count always says what a click would show.
+  const displayedRows = useMemo(() => applyAdvancedFilters(preAdvancedRows, adv), [preAdvancedRows, adv])
+  const advCounts     = useMemo(() => facetCounts(preAdvancedRows, adv), [preAdvancedRows, adv])
+  const advActive     = activeFilterCount(adv)
+  const isFiltered    = displayedRows.length !== rows.length
 
   // ── Done ticks (Sri Lanka) ───────────────────────────────────────────────────
 
@@ -1678,6 +1706,17 @@ export default function MCReportPage() {
               </p>
             )}
 
+            {/* Smart filters — arrivals / departures, time, allocation, airport… */}
+            <div className="mb-4 border-t border-slate-100 pt-4">
+              <AdvancedFilterPanel
+                filters={adv}
+                onChange={setAdv}
+                counts={advCounts}
+                shown={displayedRows.length}
+                total={rows.length}
+              />
+            </div>
+
             <div className="flex items-center gap-2">
               <button onClick={load} disabled={loading} className="btn btn-primary btn-sm">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
@@ -1688,7 +1727,7 @@ export default function MCReportPage() {
               </button>
               {rows.length > 0 && (
                 <span className="ml-auto text-xs text-slate-400">
-                  {displayedRows.length}{deepSearch ? ` / ${rows.length}` : ''} movement{displayedRows.length !== 1 ? 's' : ''}
+                  {displayedRows.length}{isFiltered ? ` / ${rows.length}` : ''} movement{displayedRows.length !== 1 ? 's' : ''}
                 </span>
               )}
             </div>
@@ -1868,9 +1907,20 @@ export default function MCReportPage() {
               // the tile and the alert must never disagree about how many files
               // are waiting on accounts.
               // MC figures — each tile only when the chart has something for it.
-              ...(mcStats.arrivals + mcStats.departures > 0
-                ? [{ icon: <Plane className="w-4 h-4" />, label: 'Flights (SL)', value: `${mcStats.arrivals} / ${mcStats.departures}`, sub: 'arrivals / departures', color: 'text-sky-700', bg: 'bg-sky-50' }]
-                : []),
+              // Every country, not just Sri Lanka's flights: a Hanoi pickup from
+              // Noi Bai is an arrival too. Clicking a tile filters the chart to it.
+              ...(advCounts.flow.arrivals + advCounts.flow.departures > 0 ? [
+                { icon: <PlaneLanding className="w-4 h-4" />, label: 'Arrivals', value: advCounts.flow.arrivals,
+                  sub: `${advCounts.arrivalPax} pax${mcStats.arrivals ? ` · ${mcStats.arrivals} flight${mcStats.arrivals === 1 ? '' : 's'}` : ''}`,
+                  color: 'text-emerald-700', bg: 'bg-emerald-50',
+                  active: adv.flow === 'arrivals',
+                  onClick: () => setAdv(a => ({ ...a, flow: a.flow === 'arrivals' ? 'all' : 'arrivals' })) },
+                { icon: <PlaneTakeoff className="w-4 h-4" />, label: 'Departures', value: advCounts.flow.departures,
+                  sub: `${advCounts.departurePax} pax${mcStats.departures ? ` · ${mcStats.departures} flight${mcStats.departures === 1 ? '' : 's'}` : ''}`,
+                  color: 'text-sky-700', bg: 'bg-sky-50',
+                  active: adv.flow === 'departures',
+                  onClick: () => setAdv(a => ({ ...a, flow: a.flow === 'departures' ? 'all' : 'departures' })) },
+              ] : []),
               ...(mcStats.kmRows > 0 || mcStats.budgetKm > 0 || mcStats.actualKm > 0
                 ? [{
                     icon: <Gauge className="w-4 h-4" />, label: 'KM Actual / Budget',
@@ -1898,8 +1948,21 @@ export default function MCReportPage() {
               ...(cancelQueue.length > 0
                 ? [{ icon: <Ban className="w-4 h-4" />, label: 'Cancel Pending', value: cancelQueue.length, sub: `${cancelQueueMovements} movement${cancelQueueMovements === 1 ? '' : 's'} · awaiting accounts`, color: 'text-orange-700', bg: 'bg-orange-50' }]
                 : []),
-            ].map(stat => (
-              <div key={stat.label} className={cn('rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg)}>
+            ].map((stat: { icon: React.ReactNode; label: string; value: React.ReactNode; sub?: string; color: string; bg: string; active?: boolean; onClick?: () => void }) => (
+              <div
+                key={stat.label}
+                {...(stat.onClick ? {
+                  role: 'button', tabIndex: 0, onClick: stat.onClick,
+                  onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); stat.onClick!() } },
+                  title: stat.active ? 'Showing only these — click to show everything' : `Show only ${stat.label.toLowerCase()}`,
+                } : {})}
+                className={cn(
+                  'rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg,
+                  stat.onClick && 'cursor-pointer transition-all hover:shadow-md hover:-translate-y-px',
+                  stat.active && 'ring-2 ring-offset-1 ring-current border-transparent',
+                  stat.active && stat.color,
+                )}
+              >
                 <div className={cn('flex-shrink-0', stat.color)}>{stat.icon}</div>
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">{stat.label}</div>
@@ -1953,7 +2016,7 @@ export default function MCReportPage() {
                 </div>
                 <ClipboardList className="w-3.5 h-3.5" />
                 {loading ? 'Loading…' : `${displayedRows.length} row${displayedRows.length !== 1 ? 's' : ''}`}
-                {deepSearch && rows.length !== displayedRows.length && (
+                {isFiltered && (
                   <span className="text-violet-500 font-medium">· filtered</span>
                 )}
               </div>
@@ -2029,11 +2092,20 @@ export default function MCReportPage() {
               <div className="flex flex-col items-center justify-center py-16 gap-3 text-slate-400">
                 <MapPin className="w-8 h-8 opacity-30" />
                 <p className="text-sm font-medium">
-                  {deepSearch ? `No movements contain "${deepSearch}"` : 'No movement items found'}
+                  {deepSearch ? `No movements contain "${deepSearch}"`
+                    : advActive > 0 && rows.length > 0 ? 'No movements match these filters'
+                    : 'No movement items found'}
                 </p>
                 <p className="text-xs">
-                  {deepSearch ? 'Try a different keyword or clear the deep search' : 'Try adjusting the date range or clearing filters'}
+                  {deepSearch ? 'Try a different keyword or clear the deep search'
+                    : advActive > 0 && rows.length > 0 ? `${rows.length} movement${rows.length === 1 ? '' : 's'} loaded for these dates — loosen a filter to see them`
+                    : 'Try adjusting the date range or clearing filters'}
                 </p>
+                {advActive > 0 && rows.length > 0 && (
+                  <button type="button" onClick={() => setAdv(EMPTY_FILTERS)} className="btn btn-secondary btn-sm mt-1">
+                    <X className="w-4 h-4" /> Reset smart filters
+                  </button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -2365,6 +2437,7 @@ export default function MCReportPage() {
                                 ) : (
                                   <>
                                     <ServiceBadge type={row.serviceType} />
+                                    <FlowBadge {...movementFlow(row)} />
                                     {row.isLeisure && <LeisureBadge />}
                                     {row.isHotelOnly && <HotelOnlyBadge />}
                                   </>
