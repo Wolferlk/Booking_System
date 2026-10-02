@@ -13,6 +13,7 @@ import { collectReportData, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
 import { renderReportWorkbook, reportWorkbookSheets } from './report-workbook'
+import { renderDailyWorkbook } from './daily-workbook'
 import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
 import {
   renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
@@ -167,8 +168,24 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
   const facts = {
     period: PERIOD_LABEL[d.window.period],
     range: `${d.window.fromDate} to ${d.window.toDate}`,
-    created: { total: d.created.total, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
-    onGround: { total: d.onGround.total, pax: d.onGround.pax, byCountry: d.onGround.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
+    // "todayNewAndUpdated" is the mail's headline intake figure (the ribbon
+    // tile and subject line), so the summary quotes the same number.
+    created: { todayNewAndUpdated: d.split.appleCount || d.created.total, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
+    // Files and guests named apart: the model once called 184 tours "184 guests".
+    onGround: { tourFiles: d.onGround.total, guests: d.onGround.pax, byCountry: d.onGround.byCountry.map(c => ({ c: c.label, files: c.bookings })) },
+    ...(d.opsBoard?.available && d.opsBoard.today && d.opsBoard.week ? {
+      opsBoardToday: {
+        liveFiles: d.opsBoard.today.live, guests: d.opsBoard.today.onGround.pax,
+        b2bFiles: d.opsBoard.today.onGround.b2b, b2cFiles: d.opsBoard.today.onGround.b2c,
+        hotelOnlyFiles: d.opsBoard.today.hotelOnly, cancelledFiles: d.opsBoard.today.cancelled,
+        fullyReadyFiles: d.opsBoard.today.ready,
+      },
+      opsBoardNext7Days: {
+        liveFiles: d.opsBoard.week.live, arrivingFiles: d.opsBoard.week.arrivals.files,
+        hotelOnlyFiles: d.opsBoard.week.hotelOnly, cancelledFiles: d.opsBoard.week.cancelled,
+        driverPendingFiles: d.opsBoard.week.checks.find(c => c.key === 'driver')?.pending ?? 0,
+      },
+    } : {}),
     // The integration's own health. Given to the model because a day where the
     // two systems disagree is the day the narrative should lead with it.
     appleSystemParity: {
@@ -219,7 +236,7 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
             + 'Sentence 2: what is happening on the ground and what arrives in the next three days. '
             + 'Sentence 3: the single thing that needs attention today — prefer an unready arrival '
             + '(missing client confirmation, driver, tickets or QC) over anything else, or state that nothing is outstanding. '
-            + 'Only use the numbers given. Never invent a figure.',
+            + 'Only use the numbers given. Never invent a figure. Files (bookings) and guests (pax) are different units — never call a file count guests.',
         },
         { role: 'user', content: JSON.stringify(facts) },
       ],
@@ -362,6 +379,19 @@ function buildWorkbook(data: ReportData): { buffer: Buffer; sheets: string[] } |
 }
 
 /**
+ * The daily workbook, or null — same contract as `buildWorkbook`: a file that
+ * cannot be written falls back to the CSV attachment, it never sinks the send.
+ */
+async function buildDailyWorkbook(data: ReportData): Promise<{ buffer: Buffer; sheets: string[] } | null> {
+  try {
+    return await renderDailyWorkbook(data)
+  } catch (err) {
+    console.warn('[Reports] daily workbook build failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
  * Why the systems disagree, in plain English.
  *
  * The model is given *only* the counts and the causes `deriveFindings()` already
@@ -472,10 +502,11 @@ export interface BuiltReport {
    * The multi-sheet Excel workbook, on the reports that carry one.
    *
    * Weekly and monthly reports print no individual bookings — the analysis is
-   * the mail, the rows are this file. A daily report has no workbook: its rows
-   * *are* the mail, and the CSV it has always attached is the right shape for a
-   * single day. Null therefore means "this report is not that kind of report",
-   * not "the workbook failed".
+   * the mail, the rows are this file. The daily report attaches its own styled
+   * workbook (`daily-workbook.ts`): an overview, then B2B, B2C, Hotel Only,
+   * Cancelled and the board for today and the next 7 days on separate tabs.
+   * Null means the report has no workbook (reconciliation) or it failed to
+   * build — either way the CSV is attached instead.
    */
   workbook?: { buffer: Buffer; sheets: string[] } | null
 }
@@ -521,7 +552,7 @@ async function buildOpsReport(
 
   // Built once, here: the mail lists the sheet names it is promising, so a
   // workbook that could not be written must not be advertised in the footer.
-  const workbook = periodic ? buildWorkbook(data) : null
+  const workbook = periodic ? buildWorkbook(data) : await buildDailyWorkbook(data)
 
   return {
     data,

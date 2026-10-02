@@ -24,6 +24,9 @@ const nextConfig = {
       'puppeteer-core',
       '@sparticuz/chromium',
       'mysql2',
+      // Styled daily report workbook — kept out of the bundle like the other
+      // Node-only writers.
+      'exceljs',
     ],
   },
   images: {

@@ -47,6 +47,7 @@ import {
   type ReportPeriod, type ReportWindow,
 } from './report-window'
 import { collectPeriodInsights, finaliseInsights, type PeriodInsights } from './period-insights'
+import { collectOpsBoardDigest, type OpsBoardDigest } from './ops-board-digest'
 import type { Prisma } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -546,6 +547,13 @@ export interface ReportData {
   reconfirm: ReconfirmSection
   complaints: ComplaintsSection
   upcoming: UpcomingSection
+  /**
+   * The operations board for today and the next 7 days, split by channel with
+   * Hotel Only and Cancelled apart — what `/dashboard/accounts/reports` shows,
+   * printed in the daily mail. Daily reports only; absent on weekly / monthly.
+   * See `ops-board-digest.ts`.
+   */
+  opsBoard?: OpsBoardDigest | null
   /**
    * Period analytics — trends, movers, delivery, attrition and the derived
    * action list the weekly and monthly mails are built from.
@@ -1644,7 +1652,7 @@ async function collectActivitySplitSection(
   // system's own intake. See apple-cohort.ts.
   const cohort = await collectAppleCohort(window)
 
-  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
+  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard] = await Promise.all([
     // The two figures this mail now leads with, read from the accounts ledger
     // so all three daily mails describe the day with one set of numbers.
     // `cohort.total` is the Apple System count they are checked against.
@@ -1663,6 +1671,9 @@ async function collectActivitySplitSection(
     collectReconfirm(window, countries, maxRows),
     collectComplaints(window, countries, maxRows),
     collectUpcoming(window, countries, maxRows),
+    // The board itself, today and D+6. Only the daily mail prints it, so only
+    // the daily run pays for it. Never throws — see ops-board-digest.ts.
+    window.period === 'DAILY' ? collectOpsBoardDigest(window, countries) : Promise.resolve(null),
   ])
 
   // Only the periodic mails carry analytics, and only they pay for the extra
@@ -1699,6 +1710,7 @@ async function collectActivitySplitSection(
     reconfirm,
     complaints,
     upcoming,
+    opsBoard,
     insights,
   }
 }

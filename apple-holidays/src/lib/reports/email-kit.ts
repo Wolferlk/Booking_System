@@ -80,6 +80,12 @@ table{border-collapse:collapse;}
 .cmp-rep{margin-top:8px;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.6;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;}
 .bar{border-radius:999px;height:6px;}
 .foot{font-size:11px;line-height:1.7;color:${C.faint};padding-top:16px;}
+.mv{border-radius:12px;border-collapse:separate;}
+.mv-l{font-size:10px;line-height:1.3;font-weight:700;color:rgba(255,255,255,.78);text-transform:uppercase;letter-spacing:.1em;}
+.mv-v{font-size:28px;line-height:1.15;font-weight:800;color:#ffffff;padding-top:5px;letter-spacing:-.02em;}
+.mv-n{font-size:11px;line-height:1.5;color:rgba(255,255,255,.85);}
+.sub{color:${C.faint};font-size:11px;}
+.pc{display:inline-block;min-width:34px;text-align:center;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:700;}
 `.replace(/\n+/g, '\n').trim()
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
@@ -191,7 +197,7 @@ export function emptyNote(text: string): string {
 
 export function moreNote(shown: number, total: number, what: string): string {
   if (total <= shown) return ''
-  return `<div class="more">Showing the first ${num(shown)} of ${num(total)} ${esc(what)} — the attached CSV and the dashboard carry the full list.</div>`
+  return `<div class="more">Showing the first ${num(shown)} of ${num(total)} ${esc(what)} — the attachment and the dashboard carry the full list.</div>`
 }
 
 /**

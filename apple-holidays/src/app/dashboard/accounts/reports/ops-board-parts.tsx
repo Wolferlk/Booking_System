@@ -18,6 +18,7 @@ import {
   type FacetGroup, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
 import { HOTEL_ONLY_LABEL } from '@/lib/hotel-only'
+import { reconfirmState, callState } from '@/lib/reports/ops-board-states'
 import { RECONFIRM_DUE_DAYS, delaySummary } from '@/lib/reconfirm-delay-shared'
 
 // ─── Shared vocabulary ────────────────────────────────────────────────────────
@@ -236,20 +237,9 @@ export const FOCUS_META: Record<FocusKey, {
 // Shared by the board table and the drill-down so a booking can never show as
 // amber on one and red on the other.
 
-/**
- * Reconfirmation is two independent signals and the board treats either one as
- * enough — a guest who has confirmed in writing does not also need a call, and a
- * completed pre-tour call reconfirms a booking whose status has not caught up.
- * Both signals in is the only fully-green state.
- */
-export function reconfirmState(r: OpsDayRow): ReadinessState {
-  // Hotel Only has no tour to run the guest through, so neither signal is ever
-  // coming. N/A, not pending — the desk must not be sent chasing it.
-  if (r.hotelOnly) return 'NA'
-  if (r.clientConfirmed && r.preTourCall) return 'DONE'
-  if (r.clientConfirmed || r.preTourCall) return 'PARTIAL'
-  return 'PENDING'
-}
+// The two derived states live in a server-safe module so the daily mail can
+// grade a booking exactly the way this board does.
+export { reconfirmState, callState }
 
 export function reconfirmText(r: OpsDayRow): string {
   if (r.hotelOnly) return HOTEL_ONLY_LABEL
@@ -279,25 +269,6 @@ export function reconfirmDetail(r: OpsDayRow): string {
     // operator needs to see both what is missing and what is being done about it.
     ...(r.reconfirmBreached ? [delaySummary(r.reconfirmStanding, r.reconfirmDelay)] : []),
   ].join(' · ')
-}
-
-/**
- * The WhatsApp call request, graded on the same four-state scale as every other
- * check so one legend covers the whole board.
- *
- * `unknown` grades as N/A rather than pending: the ledger being unreadable is
- * our problem, not the customer's, and colouring it red would send ops chasing
- * guests who may well have accepted already.
- */
-export function callState(r: OpsDayRow): ReadinessState {
-  // No call is ever placed for a room-only file, so permission is moot.
-  if (r.hotelOnly) return 'NA'
-  switch (r.call.approval) {
-    case 'approved':      return 'DONE'
-    case 'pending':       return 'PARTIAL'
-    case 'not_requested': return 'PENDING'
-    default:              return 'NA'
-  }
 }
 
 export function callText(r: OpsDayRow): string {

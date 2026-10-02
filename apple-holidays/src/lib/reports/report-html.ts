@@ -27,6 +27,7 @@ import type {
   BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmStatusLine, ReportData, TourLine,
 } from './report-data'
 import type { CountCheckSection, CountCheckTally } from './count-check'
+import type { BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 
@@ -91,18 +92,19 @@ function createdSection(d: ReportData): string {
     ? c.byCurrency.slice(0, 3).map(x => money(x.total, x.currency)).join(' · ')
     : 'No quoted value recorded'
 
-  // "New bookings" is this period's own new business — the bookings whose
-  // ledger chain opened inside the window — which is the figure both accounts
-  // mails lead with for the same day. It used to be the confirmation count,
-  // which is a different question and is now its own tile beside it.
+  // "New bookings" is the day's Today new & updated figure — every booking
+  // AppleSystem confirmed in the window — the same number the ribbon and the
+  // subject line lead with. The accounts ledger's narrower count (a booking
+  // whose first invoice document was raised inside the window) is stated in
+  // the note above the tiles, not used as the headline.
   const sp = d.split
-  const newBookings = sp.available ? sp.todayCount : c.total
+  const newBookings = newBookingsCount(d)
 
   const kpis = kpiRow([
     {
       label: 'New bookings',
       value: num(newBookings),
-      note: sp.available ? 'today new &amp; updated' : trend(c.total, c.previousTotal),
+      note: `today new &amp; updated<br>${trend(c.total, c.previousTotal)}`,
       color: C.brand,
     },
     { label: 'B2B', value: num(c.channel.b2b), note: `${c.total ? Math.round((c.channel.b2b / c.total) * 100) : 0}% of confirmations`, color: C.b2b },
@@ -117,7 +119,7 @@ function createdSection(d: ReportData): string {
   const originsMax = sp.origins.length ? Math.max(...sp.origins.map(o => o.bookings)) : 0
   const origins = sp.available && sp.origins.length
     ? `<div style="padding-top:4px;padding-bottom:14px;">
-         <div class="h3">Where these ${num(newBookings)} came in from</div>` +
+         <div class="h3">How the ${num(sp.todayCount)} ledger-dated new bookings came in</div>` +
       tableOpen([
         { text: 'Intake channel' },
         { text: 'Bookings', align: 'right', width: '70' },
@@ -130,7 +132,8 @@ function createdSection(d: ReportData): string {
       </tr>`).join('') + TABLE_CLOSE +
       `<div style="font:400 11.5px/1.6 ${FONT};color:${C.muted};padding-top:6px;">
          Read from how each booking reached this system — the creation log first, then the import trail,
-         the confirmation mail and the Drive event. The parts add up to ${num(newBookings)}.
+         the confirmation mail and the Drive event. The parts add up to ${num(sp.todayCount)} — the bookings the
+         accounts ledger dates to this period.
        </div>
        </div>`
     : ''
@@ -173,14 +176,14 @@ function createdSection(d: ReportData): string {
          ${c.cancelledUpstream ? `${num(c.cancelledUpstream)} further confirmation${c.cancelledUpstream === 1 ? ' was' : 's were'} withdrawn upstream. ` : ''}
          The same population the accounts invoice and P&amp;L mails report, so the three figures line up.
          Bookings filed here in this period against an earlier confirmation are listed below, uncounted.
-         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings above is ${num(sp.todayCount)}</strong>, not ${num(c.total)}:
-           it is this period's own new business as the accounts ledger dates it — a booking whose first invoice
-           document was raised inside the window. ${sp.oldCount
+         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings (Today new &amp; updated) is ${num(newBookings)}.</strong>
+           Of these, the accounts ledger dates ${num(sp.todayCount)} as this period's own new business — a booking whose first
+           invoice document was raised inside the window. ${sp.oldCount
              ? `A further ${num(sp.oldCount)} document${sp.oldCount === 1 ? '' : 's'} raised in this period re-opened
                 confirmations from earlier days (Old amendments${sp.oldest ? `, the oldest ${num(sp.oldest)} days back` : ''});
                 that is another day's business and is not in the table below.`
              : 'No confirmation from an earlier day was re-opened in this period.'}
-           Both accounts mails for this day lead with the same two figures.` : ''}
+           ` : ''}
        </div>`
     : `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
          <strong style="color:${C.ink};">Counted: bookings filed in this system.</strong>
@@ -1265,6 +1268,230 @@ function upcomingSection(d: ReportData): string {
   )
 }
 
+// ─── Operations board (today + next 7 days) ───────────────────────────────────
+
+/** References printed per list in the mail; the workbook carries every one. */
+const BOARD_LIST_CAP = 30
+
+/** The three movement tiles, coloured like the board's own hero cards. */
+function boardMovementTiles(v: BoardView): string {
+  const tile = (label: string, m: BoardView['onGround'], bg: string) => `
+    <td width="33%" valign="top" style="padding:0 4px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="mv" style="background:${bg};">
+        <tr><td style="padding:13px 14px 12px 14px;">
+          <div class="mv-l">${esc(label)}</div>
+          <div class="mv-v">${num(m.files)}</div>
+          <div class="mv-n"><b>${num(m.pax)} pax</b><br>B2B ${num(m.b2b)} · B2C ${num(m.b2c)}</div>
+        </td></tr>
+      </table>
+    </td>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -4px 14px -4px;"><tr>
+    ${tile('On ground', v.onGround, '#4f46e5')}
+    ${tile(v.days === 1 ? 'Arrivals' : `Arrivals · ${v.days}d`, v.arrivals, '#059669')}
+    ${tile(v.days === 1 ? 'Departures' : `Departures · ${v.days}d`, v.departures, '#0284c7')}
+  </tr></table>`
+}
+
+/** B2B / B2C / live total, then Hotel Only, pending and Cancelled on their own lines. */
+function boardSegmentTable(v: BoardView): string {
+  const tint: Partial<Record<BoardSegment['key'], string>> = {
+    B2B: C.b2b, B2C: C.b2c, HOTEL_ONLY: '#92400e', CANCEL_PENDING: C.warn, CANCELLED: C.bad,
+  }
+  return tableOpen([
+    { text: 'Segment' },
+    { text: 'Files', align: 'right', width: '52' },
+    { text: 'Pax', align: 'right', width: '52' },
+    { text: 'Arrive', align: 'right', width: '56' },
+    { text: 'Depart', align: 'right', width: '56' },
+    { text: 'B2B', align: 'right', width: '44' },
+    { text: 'B2C', align: 'right', width: '44' },
+  ]) + v.segments.map(s => {
+    const total = s.key === 'LIVE'
+    const style = total ? ` style="background:${C.wash};"` : ''
+    const label = s.aside
+      ? `<span style="color:${tint[s.key] ?? C.muted};">${s.key === 'CANCELLED' ? '' : '&nbsp;&nbsp;↳ '}${esc(s.label)}</span>`
+      : `<span style="color:${tint[s.key] ?? C.ink};">${esc(s.label)}</span>`
+    const n = (x: number) => (x ? num(x) : `<span class="na">0</span>`)
+    return `<tr${style}>
+      ${td(label, { bold: !s.aside, nowrap: true })}
+      ${td(n(s.files), { align: 'right', bold: total })}
+      ${td(n(s.pax), { align: 'right' })}
+      ${td(n(s.arrivals), { align: 'right' })}
+      ${td(n(s.departures), { align: 'right' })}
+      ${td(s.key === 'B2B' || s.key === 'B2C' ? '' : n(s.b2b), { align: 'right', color: C.b2b })}
+      ${td(s.key === 'B2B' || s.key === 'B2C' ? '' : n(s.b2c), { align: 'right', color: C.b2c })}
+    </tr>`
+  }).join('') + TABLE_CLOSE
+}
+
+/** The five check cards as one table: covered / scope, the % and the channel split. */
+function boardCheckTable(v: BoardView): string {
+  const frac = (x: { covered: number; scope: number }) =>
+    x.scope ? `${num(x.covered)}<span class="sub">/${num(x.scope)}</span>` : '<span class="na">—</span>'
+  return tableOpen([
+    { text: 'Check' },
+    { text: 'Done', align: 'right', width: '62' },
+    { text: '%', align: 'center', width: '46' },
+    { text: 'Part', align: 'right', width: '38' },
+    { text: 'Pending', align: 'right', width: '52' },
+    { text: 'B2B', align: 'right', width: '56' },
+    { text: 'B2C', align: 'right', width: '46' },
+  ]) + v.checks.map(c => {
+    const p = c.scope ? Math.round((c.covered / c.scope) * 100) : null
+    const cls = p === null ? '' : p >= 90 ? 'ok' : p >= 50 ? 'wn' : 'bd'
+    return `<tr>
+      ${td(`<b>${esc(c.label)}</b><div class="sub">${esc(c.hint)}</div>`)}
+      ${td(frac(c), { align: 'right', bold: true, nowrap: true })}
+      ${td(p === null ? '<span class="na">—</span>' : `<span class="pc ${cls}">${p}%</span>`, { align: 'center' })}
+      ${td(c.partial ? num(c.partial) : '<span class="na">0</span>', { align: 'right' })}
+      ${td(c.pending ? num(c.pending) : '<span class="na">0</span>', { align: 'right', bold: !!c.pending, color: c.pending ? C.bad : undefined })}
+      ${td(frac(c.b2b), { align: 'right', nowrap: true })}
+      ${td(frac(c.b2c), { align: 'right', nowrap: true })}
+    </tr>`
+  }).join('') + TABLE_CLOSE +
+  `<div class="more">Done counts fully done and part-done files, as the board's rings do. N/A files (Hotel Only, no tickets to buy, no transfers) are out of scope and left out of each total.</div>`
+}
+
+/** "17 of 181 live files fully ready" — the board's readiness strip. */
+function boardReadyStrip(v: BoardView): string {
+  const p = v.live ? Math.round((v.ready / v.live) * 100) : 0
+  const chip = (text: string, bg: string, fg: string) =>
+    `<span class="pill" style="background:${bg};color:${fg};margin:0 4px 4px 0;">${text}</span>`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="margin:4px 0 14px 0;">
+    <tr><td style="padding:12px 14px;">
+      <div style="font:700 13px/1.4 ${FONT};color:${C.ink};">${num(v.ready)} of ${num(v.live)} live files fully ready <span style="color:${p >= 50 ? C.good : C.warn};">· ${p}%</span></div>
+      <div style="padding-top:8px;">${segBar([{ value: v.ready, color: C.good }, { value: v.live - v.ready, color: '#fde68a' }], 8)}</div>
+      <div style="padding-top:9px;">
+        ${chip(`${num(v.hotelOnly)} Hotel Only`, '#fef3c7', '#92400e')}
+        ${chip(`${num(v.cancelled)} Cancelled`, '#f1f5f9', '#475569')}
+        ${v.cancelPending ? chip(`${num(v.cancelPending)} cancellation pending`, '#fff7ed', '#9a3412') : ''}
+        ${v.d10.breached ? chip(`${num(v.d10.breached)} past D-${RECONFIRM_DUE_DAYS} · ${num(v.d10.unexplained)} unexplained`, '#fef2f2', '#991b1b') : ''}
+        ${v.testFiles ? chip(`${num(v.testFiles)} test file${v.testFiles === 1 ? '' : 's'} included`, '#f8fafc', C.muted) : ''}
+      </div>
+    </td></tr>
+  </table>`
+}
+
+/** The seven days one row each. */
+function boardPerDayTable(days: BoardDay[]): string {
+  const n = (x: number) => (x ? num(x) : '<span class="na">0</span>')
+  return tableOpen([
+    { text: 'Day' },
+    { text: 'On grd', align: 'right', width: '50' },
+    { text: 'Pax', align: 'right', width: '42' },
+    { text: 'Arr', align: 'right', width: '36' },
+    { text: 'Dep', align: 'right', width: '36' },
+    { text: 'B2B', align: 'right', width: '38' },
+    { text: 'B2C', align: 'right', width: '36' },
+    { text: 'Hotel', align: 'right', width: '40' },
+    { text: 'Canc', align: 'right', width: '38' },
+    { text: 'Ready', align: 'right', width: '44' },
+    { text: 'No drv', align: 'right', width: '46' },
+  ]) + days.map((x, i) => `<tr${i === 0 ? ` style="background:#eef2ff;"` : ''}>
+    ${td(`${esc(formatReportDate(x.date, { weekday: true }).replace(/ \d{4}$/, ''))}${i === 0 ? ' <span class="pill" style="background:#4f46e5;color:#fff;">TODAY</span>' : ''}`, { nowrap: true, bold: true })}
+    ${td(num(x.onGround), { align: 'right', bold: true })}
+    ${td(num(x.pax), { align: 'right' })}
+    ${td(n(x.arrivals), { align: 'right' })}
+    ${td(n(x.departures), { align: 'right' })}
+    ${td(n(x.b2b), { align: 'right' })}
+    ${td(n(x.b2c), { align: 'right' })}
+    ${td(n(x.hotelOnly), { align: 'right' })}
+    ${td(n(x.cancelled), { align: 'right' })}
+    ${td(n(x.ready), { align: 'right' })}
+    ${td(n(x.driverPending), { align: 'right', bold: x.driverPending > 0, color: x.driverPending ? C.bad : undefined })}
+  </tr>`).join('') + TABLE_CLOSE +
+  `<div class="more">On grd = live files on the ground that day (cancelled not counted). No drv = live files with no driver on any transfer yet.</div>`
+}
+
+/**
+ * A booking list as one compact paragraph of references — cancelled, Hotel
+ * Only, B2C. Deliberately not a table: four tables of booking rows cost ~30 KB,
+ * which pushed the mail toward Gmail's ~102 KB clipping point. Each ref carries
+ * its channel and dates; the full rows are on the workbook's own tab.
+ */
+function boardList(title: string, rows: BoardRow[], opts: { accent: string; bg: string; tab: string }): string {
+  if (!rows.length) return ''
+  const shown = rows.slice(0, BOARD_LIST_CAP)
+  return `<div style="padding-top:14px;">
+    <div class="h3"><span style="color:${opts.accent};">&#9679;</span> ${esc(title)} — ${num(rows.length)}</div>
+    <div style="background:${opts.bg};border-radius:8px;padding:9px 11px;font:400 11.5px/1.9 ${FONT};color:${C.body};">${
+      shown.map(r => `<span class="nw"><b style="color:${C.ink};">${esc(r.bookingRef)}</b>${r.source === 'B2C' ? '<sup style="color:#7c3aed;">B2C</sup>' : ''} <span class="sub">${esc(shortDate(r.arrivalDate).slice(0, 6))}–${esc(shortDate(r.departureDate).slice(0, 6))}${r.onToday ? ' · today' : ''}</span></span>`).join(' &nbsp;·&nbsp; ')
+    }${rows.length > shown.length ? ` &nbsp;… and ${num(rows.length - shown.length)} more` : ''}</div>
+    <div class="more" style="padding-top:4px;">Full detail on the “${esc(opts.tab)}” tab of the attached workbook.</div>
+  </div>`
+}
+
+function boardViewBlock(title: string, tag: string, tagColor: string, v: BoardView, extra = ''): string {
+  return `<div style="padding:4px 0 6px 0;">
+      <span class="pill" style="background:${tagColor};color:#ffffff;">${esc(tag)}</span>
+      <span style="font:800 15px/1.4 ${FONT};color:${C.ink};padding-left:6px;">${esc(title)}</span>
+      <span style="font:400 12px/1.4 ${FONT};color:${C.muted};padding-left:6px;">${esc(v.label)}</span>
+    </div>
+    <div style="padding-top:8px;">${boardMovementTiles(v)}</div>
+    <div class="h3">B2B · B2C · Hotel Only · Cancelled</div>
+    ${boardSegmentTable(v)}
+    <div class="h3" style="padding-top:16px;">Checks</div>
+    ${boardCheckTable(v)}
+    ${boardReadyStrip(v)}
+    ${extra}`
+}
+
+/**
+ * The operations board — today, then the next 7 days — in the same terms the
+ * dashboard uses. See `ops-board-digest.ts` for the counting rules.
+ */
+function opsBoardSection(d: ReportData): string {
+  const b = d.opsBoard
+  if (!b) return ''
+  if (!b.available || !b.today || !b.week) {
+    return section('Operations board', 'Today and the next 7 days', '#4f46e5',
+      emptyNote('The operations board could not be read while this report was written — open the dashboard for today’s figures.'))
+  }
+  const t = b.today
+  const w = b.week
+
+  const countries = w.byCountry.length > 1
+    ? `<div class="h3" style="padding-top:4px;">Country-wise · next 7 days</div>` +
+      tableOpen([
+        { text: 'Country' }, { text: 'Live', align: 'right', width: '50' }, { text: 'Pax', align: 'right', width: '50' },
+        { text: 'B2B', align: 'right', width: '44' }, { text: 'B2C', align: 'right', width: '44' },
+        { text: 'Hotel', align: 'right', width: '44' }, { text: 'Canc', align: 'right', width: '44' },
+      ]) + w.byCountry.map(c => `<tr>
+        ${td(esc(c.label), { bold: true })}
+        ${td(num(c.files), { align: 'right', bold: true })}
+        ${td(num(c.pax), { align: 'right' })}
+        ${td(num(c.b2b), { align: 'right', color: C.b2b })}
+        ${td(num(c.b2c), { align: 'right', color: C.b2c })}
+        ${td(num(c.hotelOnly), { align: 'right', color: '#92400e' })}
+        ${td(num(c.cancelled), { align: 'right', color: C.muted })}
+      </tr>`).join('') + TABLE_CLOSE
+    : ''
+
+  const live = w.rows.filter(r => !r.cancelled)
+  const lists =
+    boardList('Cancelled in the next 7 days — not counted', w.rows.filter(r => r.cancelled), { accent: C.bad, bg: '#fef2f2', tab: 'Cancelled' }) +
+    boardList('Cancellation pending — still counted', live.filter(r => r.cancelPending), { accent: C.warn, bg: '#fff7ed', tab: 'Cancelled' }) +
+    boardList('Hotel Only in the next 7 days', live.filter(r => r.hotelOnly), { accent: '#d97706', bg: '#fffbeb', tab: 'Hotel Only' }) +
+    boardList('B2C (Aahaas storefront) in the next 7 days', live.filter(r => r.source === 'B2C'), { accent: C.b2c, bg: '#f5f3ff', tab: 'B2C Files' })
+
+  const notes = [
+    !b.callDataAvailable ? 'The TE call tables could not be read, so Reconfirmation and Call Requests may read lower than the board.' : '',
+    b.truncated ? 'The board hit its row limit for this window; figures may be incomplete.' : '',
+  ].filter(Boolean)
+
+  return section(
+    'Operations board',
+    `Today and the next 7 days · B2B and B2C apart, Hotel Only and Cancelled on their own lines · same rules as the dashboard`,
+    '#4f46e5',
+    boardViewBlock('Today', 'TODAY', '#4f46e5', t) +
+      `<div style="border-top:1px dashed ${C.line};margin:10px 0 14px 0;font-size:0;line-height:0;">&nbsp;</div>` +
+      boardViewBlock('Next 7 days', 'D+0 → D+6', '#0f766e', w,
+        `<div class="h3">Day by day</div>${boardPerDayTable(w.perDay)}<div style="padding-top:16px;">${countries}</div>`) +
+      lists +
+      (notes.length ? `<div class="more">${notes.map(esc).join(' ')}</div>` : ''),
+  )
+}
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 export interface RenderOptions {
@@ -1304,19 +1531,29 @@ function headerBlock(w: ReportWindow, opts: RenderOptions): string {
   </td></tr>`
 }
 
+/**
+ * The day's "Today new & updated" figure: every booking AppleSystem confirmed
+ * in the window. Falls back to this system's own count when the AppleSystem
+ * cohort could not be read. One function so the ribbon, the New bookings card
+ * and the subject line can never quote different numbers.
+ */
+function newBookingsCount(d: ReportData): number {
+  return d.split.appleCount || d.created.total
+}
+
 function summaryStrip(d: ReportData): string {
   const sp = d.split
 
   const cells = [
-    // The strip used to open with Created / AS parity / Count check — three
-    // answers to "is the integration whole?", a question that now lives on
-    // /sync-ledger and in the reconciliation mail. What opens the day instead
-    // is the split both accounts mails for the same day lead with, so the
-    // three reports state one set of figures from one set of rows.
+    // Leads with the day's new & updated business as AppleSystem confirmed it —
+    // the desk's own figure for "what came in today", and the same number the
+    // New bookings card and the subject line quote. The separate "Apple System"
+    // tile that used to sit beside it repeated this number, so it is gone; the
+    // B2B / B2C split lives in the cards below.
     {
       label: 'Today new & updated',
-      value: sp.available ? num(sp.todayCount) : '—',
-      sub: sp.available ? 'this period\u2019s own business' : 'accounts unreachable',
+      value: num(newBookingsCount(d)),
+      sub: 'confirmed bookings',
     },
     {
       label: 'Old amendments',
@@ -1324,11 +1561,6 @@ function summaryStrip(d: ReportData): string {
       sub: sp.available
         ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
         : 'accounts unreachable',
-    },
-    {
-      label: 'Apple System',
-      value: num(sp.appleCount || d.created.total),
-      sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C`,
     },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
     {
@@ -1394,6 +1626,9 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     // and it is read on /sync-ledger. `renderCountCheckBlock()` is kept for the
     // render-check script, so nothing about the block itself has been lost.
     want.created ? createdSection(d) : '',
+    // The board, today and the next 7 days, straight after intake: what came in,
+    // then what is on the ground and coming. Follows the On ground switch.
+    want.onGround ? opsBoardSection(d) : '',
     // Immediately after intake, because it qualifies it: the created count above
     // is only trustworthy if the two systems agree on what was confirmed.
     want.parity ? paritySection(d) : '',
@@ -1451,13 +1686,11 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 
 /** Subject line: informative enough to triage from the inbox list alone. */
 export function renderReportSubject(d: ReportData, opts: { prefix?: string; testSend?: boolean } = {}): string {
-  // "new" in the subject is the same figure the mail's New bookings tile shows
-  // — this period's own new business — so the inbox line and the first card
-  // cannot say two different things about one day.
+  // "new" in the subject is the same figure the ribbon's Today new & updated
+  // tile shows, so the inbox line and the first card cannot say two different
+  // things about one day.
   const parts = [
-    d.split.available
-      ? `${d.split.todayCount} new${d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`
-      : `${d.created.total} new`,
+    `${newBookingsCount(d)} new${d.split.available && d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`,
     `${d.onGround.total} on ground`,
   ]
   // A parity gap outranks everything else in the subject: it means the mail's

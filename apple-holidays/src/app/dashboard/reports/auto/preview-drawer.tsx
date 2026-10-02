@@ -102,6 +102,7 @@ interface PreviewWindow { label: string; fromDate: string; toDate: string; timez
 interface OpsPreviewData {
   window: PreviewWindow
   created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
+  split?: { appleCount: number }
   onGround: { total: number; pax: number }
   readiness: {
     total: number; notReady: number; tomorrow: number; hotelOnly: number
@@ -137,7 +138,7 @@ interface StatTile { label: string; value: number; sub: string }
 
 function opsStats(d: OpsPreviewData): StatTile[] {
   return [
-    { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
+    { label: 'Today new & updated', value: d.split?.appleCount || d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
     {
       label: 'Next 3 days',
@@ -239,10 +240,9 @@ export default function PreviewDrawer({
   if (!request) return null
 
   const d = summary?.data
-  // Which attachment this shape would actually send: a daily report carries the
-  // CSV it always has, a weekly or monthly one carries the workbook its mail
-  // moved every booking row into.
-  const period = d?.window.period ?? request.period ?? 'DAILY'
+  // Which attachment this shape would actually send: every OPS report carries a
+  // workbook, the reconciliation report a CSV.
+  const csvOnly = (summary?.reportType ?? request.reportType ?? 'OPS') === 'RECONCILIATION'
   // Stepping moves a whole period at a time, taken from the range the server
   // actually returned — so one click back on a weekly report is a whole week,
   // with no period arithmetic duplicated on the client.
@@ -332,13 +332,13 @@ export default function PreviewDrawer({
             ))}
           </div>
 
-          {/* Weekly and monthly reviews attach a multi-sheet workbook instead of
-              a CSV — the mail prints no booking rows, so this is where they are. */}
+          {/* OPS reports — daily, weekly and monthly — attach a multi-sheet
+              workbook; the reconciliation report still attaches a CSV. */}
           <a
-            href={`/api/reports/auto/preview?${query}&format=${period === 'DAILY' ? 'csv' : 'xlsx'}`}
+            href={`/api/reports/auto/preview?${query}&format=${csvOnly ? 'csv' : 'xlsx'}`}
             className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
           >
-            <Download className="w-3.5 h-3.5" /> {period === 'DAILY' ? 'CSV' : 'Excel'}
+            <Download className="w-3.5 h-3.5" /> {csvOnly ? 'CSV' : 'Excel'}
           </a>
 
           <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">
