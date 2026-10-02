@@ -374,29 +374,72 @@ export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlight
 }
 
 /**
- * Traveller ids per order line, across every pre-booking table. Only one of the
- * LEFT JOINs can match a given line because each is gated on its category.
- * Flights (6) are not here — their manifest lives in `aahaas_flight_bookingsv2`.
+ * Where each main category keeps its pre-booking row (`tbl_checkouts.related_order_id`
+ * points at `key`). The same switch the Aahaas admin's supplier voucher uses.
+ */
+const PREBOOKING_TABLES = [
+  { alias: 'ls', table: 'tbl_lifestyle_bookings',  key: 'lifestyle_booking_id',   categories: [3] },
+  { alias: 'hp', table: 'hotel_prebooking',        key: 'prebooking_id',          categories: [4] },
+  { alias: 'ep', table: 'tbl_essentials_preorder', key: 'essential_pre_order_id', categories: [1, 2] },
+  { alias: 'ed', table: 'edu_tbl_booking',         key: 'booking_id',             categories: [5] },
+] as const
+
+/**
+ * Which pre-booking tables actually carry traveller columns on the live store.
+ * The admin code reads `travel_buddy_*_id` null-safely, so it says nothing about
+ * whether a column exists — and on production `tbl_essentials_preorder` has none.
+ * Asking the schema keeps one table's drift from breaking the whole lookup.
+ */
+async function travellerColumns(): Promise<Map<string, { adult: boolean; child: boolean }>> {
+  const rows = await b2cQuery<mysql.RowDataPacket & { table_name: string; column_name: string }>(
+    `SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN (${PREBOOKING_TABLES.map((t) => `'${t.table}'`).join(', ')})
+        AND COLUMN_NAME IN ('travel_buddy_adult_id', 'travel_buddy_child_id')`,
+  )
+  const out = new Map<string, { adult: boolean; child: boolean }>()
+  for (const r of rows) {
+    const cols = out.get(r.table_name) ?? { adult: false, child: false }
+    if (r.column_name === 'travel_buddy_adult_id') cols.adult = true
+    if (r.column_name === 'travel_buddy_child_id') cols.child = true
+    out.set(r.table_name, cols)
+  }
+  return out
+}
+
+/**
+ * Traveller ids per order line, across every pre-booking table that has them.
+ * Only one of the LEFT JOINs can match a given line because each is gated on its
+ * category. Flights (6) are not here — their manifest lives in
+ * `aahaas_flight_bookingsv2`.
  */
 export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cOrderLineTravellers[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const columns = await travellerColumns()
+  const usable = PREBOOKING_TABLES.filter((t) => columns.get(t.table)?.adult)
+  if (usable.length === 0) return []
+
+  const pick = (col: 'adult' | 'child') => {
+    const parts = usable
+      .filter((t) => columns.get(t.table)?.[col])
+      .map((t) => `${t.alias}.travel_buddy_${col}_id`)
+    if (parts.length === 0) return 'NULL'
+    return parts.length === 1 ? parts[0] : `COALESCE(${parts.join(', ')})`
+  }
+  const joins = usable
+    .map((t) => `LEFT JOIN ${t.table} ${t.alias} ON c.main_category_id IN (${t.categories.join(', ')})
+                                AND ${t.alias}.${t.key} = c.related_order_id`)
+    .join('\n       ')
+
   return b2cQuery<B2cOrderLineTravellers>(
     `SELECT m.order_id, m.id AS line_id, m.service_date,
-            COALESCE(ls.travel_buddy_adult_id, hp.travel_buddy_adult_id,
-                     ep.travel_buddy_adult_id, ed.travel_buddy_adult_id) AS adult_ids,
-            COALESCE(ls.travel_buddy_child_id, hp.travel_buddy_child_id,
-                     ep.travel_buddy_child_id, ed.travel_buddy_child_id) AS child_ids
+            ${pick('adult')} AS adult_ids,
+            ${pick('child')} AS child_ids
        FROM checkouts_more_data m
        JOIN tbl_checkouts c ON c.id = m.checkout_id
-       LEFT JOIN tbl_lifestyle_bookings  ls ON c.main_category_id = 3
-                                           AND ls.lifestyle_booking_id   = c.related_order_id
-       LEFT JOIN hotel_prebooking        hp ON c.main_category_id = 4
-                                           AND hp.prebooking_id          = c.related_order_id
-       LEFT JOIN tbl_essentials_preorder ep ON c.main_category_id IN (1, 2)
-                                           AND ep.essential_pre_order_id = c.related_order_id
-       LEFT JOIN edu_tbl_booking         ed ON c.main_category_id = 5
-                                           AND ed.booking_id             = c.related_order_id
+       ${joins}
       WHERE m.order_id IN (${ids})
       ORDER BY m.order_id, m.service_date, m.id`,
   )

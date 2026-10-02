@@ -55,6 +55,11 @@ async function main() {
   const args = process.argv.slice(2)
   const apply = args.includes('--apply')
   const refArg = args.includes('--ref') ? args[args.indexOf('--ref') + 1] : null
+  // A typo like `--red 14779` must not silently widen the run to every booking.
+  const unknown = args.filter((a, i) => a.startsWith('--') && a !== '--apply' && a !== '--ref' || (!a.startsWith('--') && args[i - 1] !== '--ref'))
+  if (unknown.length > 0 || (args.includes('--ref') && !refArg)) {
+    throw new Error(`Unrecognised arguments: ${unknown.join(' ') || '--ref needs a booking ref'} — use --ref <bookingRef> and/or --apply`)
+  }
 
   if (!isB2cConfigured()) throw new Error('B2C database is not configured — set DB_HOST / DB_USERNAME / DB_DATABASE_B2C')
   console.log(apply ? 'APPLY — lead names will be updated\n' : 'DRY RUN — nothing will be written (pass --apply to rename)\n')
