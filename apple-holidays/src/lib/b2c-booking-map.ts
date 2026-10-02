@@ -16,6 +16,7 @@ import {
 import { describeRoute } from './b2c-flight'
 import type { OperationCountry } from './country-detection'
 import type { ParsedFlightBooking } from './b2c-flight'
+import type { OrderTravellers } from './b2c-travellers'
 import type {
   B2cOrderCustomer,
   B2cOrderHeader,
@@ -309,8 +310,10 @@ export function mapB2cOrder(input: {
   products: B2cOrderProduct[]
   customer: B2cOrderCustomer | undefined
   flights: ParsedFlightBooking[]
+  /** Names typed in at checkout; omitted when the lookup was unavailable. */
+  travellers?: OrderTravellers
 }): MapResult {
-  const { header, products, customer, flights } = input
+  const { header, products, customer, flights, travellers } = input
   const orderId = Number(header.order_id)
 
   if (products.length === 0) {
@@ -391,6 +394,8 @@ export function mapB2cOrder(input: {
 
   // Prefer a product city/location; fall back to the flight route so a
   // Colombo→Tokyo ticket still says where it is going.
+  const lead = resolveLeadPassenger(flights, travellers, customer)
+
   const destination =
     products.map((p) => p.product_city || p.service_location).find((v) => v && v.trim()) ??
     destinationLabel ??
@@ -415,12 +420,7 @@ export function mapB2cOrder(input: {
       contactPhone: customer?.customer_phone?.trim() || null,
       contactCountry: customer?.customer_nationality?.trim() || null,
       tourDestination: destination ? destination.trim().slice(0, 191) : null,
-      // The store account name is often a username ("admin6611"); a flight's
-      // passenger manifest carries the traveller's real name, so it wins.
-      leadPassengerName:
-        flights.find((f) => f.leadPassengerName)?.leadPassengerName ??
-        customer?.customer_name?.trim() ??
-        null,
+      leadPassengerName: lead.name,
       itineraryItems,
       pnlLines,
       source: {
@@ -438,6 +438,9 @@ export function mapB2cOrder(input: {
         currency,
         countryResolvedVia: countryVia,
         paxResolvedVia: paxSource,
+        leadPassengerResolvedVia: lead.via,
+        accountName: customer?.customer_name?.trim() || null,
+        travellers: travellers?.adults ?? [],
         productLines: products.length,
         flightBookings: flights.length,
         flightRoutes: flights.map((f) => describeRoute(f)).filter(Boolean),
@@ -445,4 +448,22 @@ export function mapB2cOrder(input: {
       },
     },
   }
+}
+
+/**
+ * The store account name is often a username ("admin6611"), so it is the last
+ * resort. A flight manifest is the most authoritative (it is what is on the
+ * ticket); otherwise the travellers entered at checkout name the real guest.
+ */
+export function resolveLeadPassenger(
+  flights: ParsedFlightBooking[],
+  travellers: OrderTravellers | undefined,
+  customer: B2cOrderCustomer | undefined,
+): { name: string | null; via: 'flight-manifest' | 'checkout-travellers' | 'store-account' | 'none' } {
+  const fromFlight = flights.find((f) => f.leadPassengerName)?.leadPassengerName
+  if (fromFlight) return { name: fromFlight, via: 'flight-manifest' }
+  if (travellers?.leadName) return { name: travellers.leadName, via: 'checkout-travellers' }
+  const account = customer?.customer_name?.trim()
+  if (account) return { name: account, via: 'store-account' }
+  return { name: null, via: 'none' }
 }

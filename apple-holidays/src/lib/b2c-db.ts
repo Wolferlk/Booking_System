@@ -192,6 +192,28 @@ export interface B2cFlightBooking extends mysql.RowDataPacket {
   response_data: string | null
 }
 
+/**
+ * The traveller ids booked on one order line. `tbl_checkouts.related_order_id`
+ * points into a different pre-booking table per main category (the same switch
+ * the Aahaas admin's supplier voucher uses); each carries `travel_buddy_*_id`,
+ * a comma list or JSON array of `aahaas_passenger_details.id`.
+ */
+export interface B2cOrderLineTravellers extends mysql.RowDataPacket {
+  order_id: number
+  line_id: number
+  service_date: string | null
+  adult_ids: string | null
+  child_ids: string | null
+}
+
+/** A row of `aahaas_passenger_details` — the names typed in at checkout. */
+export interface B2cPassengerDetail extends mysql.RowDataPacket {
+  id: number
+  passenger_title: string | null
+  passenger_first_name: string | null
+  passenger_last_name: string | null
+}
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 const CATEGORY_LIST = TRAVEL_CATEGORY_IDS.join(',')
@@ -348,6 +370,45 @@ export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlight
        FROM aahaas_flight_bookingsv2 f
       WHERE f.order_id IN (${ids})
       ORDER BY f.order_id, f.id`,
+  )
+}
+
+/**
+ * Traveller ids per order line, across every pre-booking table. Only one of the
+ * LEFT JOINs can match a given line because each is gated on its category.
+ * Flights (6) are not here — their manifest lives in `aahaas_flight_bookingsv2`.
+ */
+export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cOrderLineTravellers[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  return b2cQuery<B2cOrderLineTravellers>(
+    `SELECT m.order_id, m.id AS line_id, m.service_date,
+            COALESCE(ls.travel_buddy_adult_id, hp.travel_buddy_adult_id,
+                     ep.travel_buddy_adult_id, ed.travel_buddy_adult_id) AS adult_ids,
+            COALESCE(ls.travel_buddy_child_id, hp.travel_buddy_child_id,
+                     ep.travel_buddy_child_id, ed.travel_buddy_child_id) AS child_ids
+       FROM checkouts_more_data m
+       JOIN tbl_checkouts c ON c.id = m.checkout_id
+       LEFT JOIN tbl_lifestyle_bookings  ls ON c.main_category_id = 3
+                                           AND ls.lifestyle_booking_id   = c.related_order_id
+       LEFT JOIN hotel_prebooking        hp ON c.main_category_id = 4
+                                           AND hp.prebooking_id          = c.related_order_id
+       LEFT JOIN tbl_essentials_preorder ep ON c.main_category_id IN (1, 2)
+                                           AND ep.essential_pre_order_id = c.related_order_id
+       LEFT JOIN edu_tbl_booking         ed ON c.main_category_id = 5
+                                           AND ed.booking_id             = c.related_order_id
+      WHERE m.order_id IN (${ids})
+      ORDER BY m.order_id, m.service_date, m.id`,
+  )
+}
+
+export async function fetchPassengerDetails(passengerIds: number[]): Promise<B2cPassengerDetail[]> {
+  if (passengerIds.length === 0) return []
+  const ids = sanitizeIds(passengerIds)
+  return b2cQuery<B2cPassengerDetail>(
+    `SELECT id, passenger_title, passenger_first_name, passenger_last_name
+       FROM aahaas_passenger_details
+      WHERE id IN (${ids})`,
   )
 }
 

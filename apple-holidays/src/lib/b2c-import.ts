@@ -27,6 +27,8 @@ import { parseFlightBooking } from './b2c-flight'
 import { isB2cBooking } from './booking-source'
 import { getAutomationUserId } from './as-booking-import'
 import type { B2cSkipReason, MappedB2cBooking } from './b2c-booking-map'
+import { loadOrderTravellers, repairB2cLeadName } from './b2c-lead-name'
+import type { LeadNameRepair } from './b2c-lead-name'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -94,6 +96,14 @@ export interface B2cImportSummary {
   conflicts: { bookingRef: string; reason: string }[]
   skipped: { orderId: number; reason: B2cSkipReason; detail: string }[]
   failed: { orderId: number; error: string }[]
+  /**
+   * Already-imported bookings whose lead passenger was the store account name
+   * ("admin6611") and now carries the real traveller. In a preview these are
+   * the renames that *would* happen.
+   */
+  leadNamesFixed?: { bookingRef: string; from: string; to: string }[]
+  /** Non-fatal problems, e.g. the traveller lookup was unavailable. */
+  warnings?: string[]
   startedAt: string
   finishedAt: string
 }
@@ -141,6 +151,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     mode, bookedFrom, upcomingFrom,
     candidates: 0, created: [], alreadyImported: [],
     conflicts: [], skipped: [], failed: [],
+    leadNamesFixed: [], warnings: [],
     startedAt, finishedAt: startedAt,
   }
 
@@ -156,11 +167,15 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   const orderIds = headers.map((h) => Number(h.order_id))
 
   // Three bulk reads rather than per-order queries — one round trip each.
-  const [products, customers, flightRows] = await Promise.all([
+  const [products, customers, flightRows, travellers] = await Promise.all([
     fetchOrderProducts(orderIds),
     fetchOrderCustomers(orderIds),
     fetchFlightBookings(orderIds),
+    loadOrderTravellers(orderIds),
   ])
+  if (travellers.error) {
+    summary.warnings!.push(`Traveller names unavailable, used store account names: ${travellers.error}`)
+  }
 
   const productsByOrder = groupBy(products, (p) => Number(p.order_id))
   const customerByOrder = new Map(customers.map((c) => [Number(c.order_id), c]))
@@ -179,6 +194,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         products: productsByOrder.get(orderId) ?? [],
         customer: customerByOrder.get(orderId),
         flights: flightsByOrder.get(orderId) ?? [],
+        travellers: travellers.byOrder.get(orderId),
       })
 
       if (!result.ok) {
@@ -193,7 +209,10 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
           select: { agent: true },
         })
         if (!existing) summary.created.push(result.booking.bookingRef)
-        else if (isB2cBooking(existing.agent)) summary.alreadyImported.push(result.booking.bookingRef)
+        else if (isB2cBooking(existing.agent)) {
+          summary.alreadyImported.push(result.booking.bookingRef)
+          noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, false, automationUserId))
+        }
         else summary.conflicts.push({
           bookingRef: result.booking.bookingRef,
           reason: 'bookingRef already used by a non-B2C booking',
@@ -203,7 +222,10 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
 
       const outcome = await persistB2cBooking(result.booking, automationUserId)
       if (outcome === 'created') summary.created.push(result.booking.bookingRef)
-      else if (outcome === 'exists') summary.alreadyImported.push(result.booking.bookingRef)
+      else if (outcome === 'exists') {
+        summary.alreadyImported.push(result.booking.bookingRef)
+        noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, true, automationUserId))
+      }
       else {
         summary.conflicts.push({
           bookingRef: result.booking.bookingRef,
@@ -216,6 +238,43 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   }
 
   return finish(summary, opts)
+}
+
+/**
+ * Bring an already-imported booking's lead name in line with the store's
+ * travellers. A failure here is a warning, never a failed import — the booking
+ * itself is already in place.
+ */
+async function repairLead(
+  mapped: MappedB2cBooking,
+  accountName: string | null | undefined,
+  apply: boolean,
+  actorId: string,
+): Promise<LeadNameRepair> {
+  try {
+    return await repairB2cLeadName({
+      bookingRef: mapped.bookingRef,
+      newName: mapped.leadPassengerName,
+      via: String(mapped.source.leadPassengerResolvedVia ?? ''),
+      accountName: accountName ?? null,
+      apply,
+      actorId,
+    })
+  } catch (err) {
+    return {
+      bookingRef: mapped.bookingRef,
+      status: 'unchanged',
+      reason: `lead name repair failed: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+}
+
+function noteRepair(summary: B2cImportSummary, r: LeadNameRepair): void {
+  if ((r.status === 'renamed' || r.status === 'would-rename') && r.from && r.to) {
+    summary.leadNamesFixed!.push({ bookingRef: r.bookingRef, from: r.from, to: r.to })
+  } else if (r.reason?.startsWith('lead name repair failed')) {
+    summary.warnings!.push(`${r.bookingRef}: ${r.reason}`)
+  }
 }
 
 /**
