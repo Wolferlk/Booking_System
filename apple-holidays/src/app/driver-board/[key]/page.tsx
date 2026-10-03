@@ -17,7 +17,7 @@ import {
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
 import {
-  CLAIM_STATUS_META, fmtDaysAway, fmtTripDay,
+  CLAIM_STATUS_META, claimFileNo, fmtDaysAway, fmtTripDay,
   type ClaimView, type DaCountry, type OpenTrip,
 } from '@/lib/driver-auto/shared'
 
@@ -30,7 +30,7 @@ interface Board {
   setupRequired: boolean
   countries: { country: DaCountry; label: string; unit: 'BOOKING' | 'MOVEMENT'; requireApproval: boolean; trips: BoardTrip[] }[]
   claims: ClaimView[]
-  myTrips: { bookingRef: string; leadGuest: string | null; pax: number; startDate: string; endDate: string; legs: { date: string; time: string | null; route: string }[] }[]
+  myTrips: { bookingRef: string; fileNo: string; leadGuest: string | null; pax: number; startDate: string; endDate: string; legs: { date: string; time: string | null; route: string }[] }[]
   generatedAt: string
 }
 
@@ -241,6 +241,7 @@ function DriverBoard() {
                     <div key={c.id} className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
+                          <div className="text-[11px] font-black text-emerald-700">{claimFileNo(c)}</div>
                           <div className="text-[13px] font-bold text-slate-900">{fmtTripDay(c.tripDate)}{c.tripEndDate && c.tripEndDate !== c.tripDate ? ` – ${fmtTripDay(c.tripEndDate)}` : ''}</div>
                           <div className="truncate text-xs text-slate-500">{s?.kind === 'BOOKING' ? s?.title : s?.route}</div>
                         </div>
@@ -273,7 +274,7 @@ function DriverBoard() {
                   <div key={t.bookingRef} className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
                     <div className="flex items-center justify-between bg-slate-900 px-4 py-3 text-white">
                       <div>
-                        <div className="text-[13px] font-bold">{t.bookingRef}</div>
+                        <div className="text-[13px] font-bold">{t.fileNo}</div>
                         <div className="text-[11px] text-slate-300">{fmtTripDay(t.startDate)}{t.endDate !== t.startDate ? ` – ${fmtTripDay(t.endDate)}` : ''}</div>
                       </div>
                       <div className="text-right text-[11px] text-slate-300">
@@ -358,6 +359,7 @@ function DriverTripCard({ trip: t, direct, disabled, onAct, onWithdraw }: {
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5">
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-800 ring-1 ring-emerald-200">{t.isNumber ? `IS ${t.isNumber}` : t.fileNo}</span>
               {t.kind === 'BOOKING' && <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-bold text-white">{t.days}-day tour</span>}
               {t.startTime && <span className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600"><Clock className="h-3 w-3" />{t.startTime}</span>}
             </div>
@@ -427,7 +429,7 @@ function ConfirmSheet({ trip, direct, onClose, onConfirm }: { trip: BoardTrip; d
         <p className="mt-1 text-sm text-slate-500">
           {fmtTripDay(trip.startDate, { year: true })}{trip.days > 1 ? ` – ${fmtTripDay(trip.endDate, { year: true })}` : ''} · {trip.pax} guest(s)
         </p>
-        <p className="mt-0.5 text-sm font-semibold text-slate-800">{trip.title}</p>
+        <p className="mt-0.5 text-sm font-semibold text-slate-800"><span className="mr-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-black text-emerald-800 ring-1 ring-emerald-200">{trip.isNumber ? `IS ${trip.isNumber}` : trip.fileNo}</span>{trip.title}</p>
         <textarea value={note} onChange={e => setNote(e.target.value)} maxLength={500} rows={2}
                   placeholder="Note for operations (optional) — e.g. vehicle you will use"
                   className="mt-4 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500" />

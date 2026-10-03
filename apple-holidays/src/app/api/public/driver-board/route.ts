@@ -17,7 +17,7 @@ import {
   addDays, isDaTableMissing, localToday, readSettings, resolveParty, tabsForPartner, verifyBoardToken, ymdOf,
   type ResolvedParty,
 } from '@/lib/driver-auto/server'
-import { DA_COUNTRY_META, parsePartyKey, type ClaimView, type DaCountry } from '@/lib/driver-auto/shared'
+import { DA_COUNTRY_META, fileNumberOf, parsePartyKey, type ClaimView, type DaCountry } from '@/lib/driver-auto/shared'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,7 +50,7 @@ async function myTrips(party: ResolvedParty, today: string) {
         select: {
           date: true, location: true, fromPoint: true, toPoint: true, meetingTime: true, timeFrom: true, sortOrder: true,
           agenda: { select: { booking: { select: {
-            bookingRef: true, paxAdults: true, paxChildren: true,
+            bookingRef: true, isNumber: true, cntlNumber: true, paxAdults: true, paxChildren: true,
             passengers: { where: { isLead: true }, take: 1, select: { name: true } },
           } } } },
         },
@@ -59,7 +59,7 @@ async function myTrips(party: ResolvedParty, today: string) {
     take: 300,
   })
   const byRef = new Map<string, {
-    bookingRef: string; leadGuest: string | null; pax: number; startDate: string; endDate: string
+    bookingRef: string; fileNo: string; leadGuest: string | null; pax: number; startDate: string; endDate: string
     legs: { date: string; time: string | null; route: string }[]
   }>()
   const sorted = rows.map(r => r.agendaItem).sort((a, b) => a.date.getTime() - b.date.getTime() || a.sortOrder - b.sortOrder)
@@ -69,7 +69,7 @@ async function myTrips(party: ResolvedParty, today: string) {
     const from = i.fromPoint?.trim() || i.location
     const route = i.toPoint?.trim() && i.toPoint.trim() !== from ? `${from} → ${i.toPoint.trim()}` : from
     const entry = byRef.get(b.bookingRef) ?? {
-      bookingRef: b.bookingRef, leadGuest: b.passengers[0]?.name ?? null, pax: b.paxAdults + b.paxChildren,
+      bookingRef: b.bookingRef, fileNo: fileNumberOf(b), leadGuest: b.passengers[0]?.name ?? null, pax: b.paxAdults + b.paxChildren,
       startDate: date, endDate: date, legs: [],
     }
     entry.endDate = date

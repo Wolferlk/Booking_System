@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver } from '@/lib/driver-requirement'
 import type { BookingStatus, OperationCountry, Prisma } from '@prisma/client'
 import { addDays, dayDiff, localToday, ymdOf } from './server'
-import type { DaCountry, OpenTrip, TripLeg } from './shared'
+import { fileNumberOf, type DaCountry, type OpenTrip, type TripLeg } from './shared'
 
 /** A booking in any of these states is not a trip anyone should drive. */
 export const CLOSED_STATUSES: BookingStatus[] = [
@@ -103,7 +103,7 @@ function byLegOrder(a: ItemRow, b: ItemRow) {
 // ── Sri Lanka: whole booking = one round trip ────────────────────────────────
 
 const SL_BOOKING_SELECT = {
-  id: true, bookingRef: true, status: true, agent: true, arrivalDate: true, departureDate: true,
+  id: true, bookingRef: true, isNumber: true, cntlNumber: true, status: true, agent: true, arrivalDate: true, departureDate: true,
   paxAdults: true, paxChildren: true, hotelOnly: true, operationCountry: true,
   passengers: { where: { isLead: true }, take: 1, select: { name: true } },
   accommodations: { orderBy: { checkIn: 'asc' }, select: { city: true } },
@@ -138,6 +138,8 @@ function slTripFrom(b: SlBookingRow, today: string): OpenTrip | null {
     country: 'SRILANKA',
     bookingId: b.id,
     bookingRef: b.bookingRef,
+    isNumber: b.isNumber?.trim() || null,
+    fileNo: fileNumberOf(b),
     agendaItemId: null,
     startDate: start,
     endDate: end,
@@ -168,7 +170,7 @@ const MOVEMENT_SELECT = {
     select: {
       booking: {
         select: {
-          id: true, bookingRef: true, status: true, agent: true, hotelOnly: true, operationCountry: true,
+          id: true, bookingRef: true, isNumber: true, cntlNumber: true, status: true, agent: true, hotelOnly: true, operationCountry: true,
           paxAdults: true, paxChildren: true,
           passengers: { where: { isLead: true }, take: 1, select: { name: true } },
         },
@@ -193,6 +195,8 @@ function movementTripFrom(i: MovementRow, today: string, tab: DaCountry): OpenTr
     country: tab,
     bookingId: b.id,
     bookingRef: b.bookingRef,
+    isNumber: b.isNumber?.trim() || null,
+    fileNo: fileNumberOf(b),
     agendaItemId: i.id,
     startDate: leg.date,
     endDate: leg.date,

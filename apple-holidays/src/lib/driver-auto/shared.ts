@@ -127,6 +127,10 @@ export interface OpenTrip {
   country: DaCountry
   bookingId: string
   bookingRef: string
+  /** IS number (file number) — what the desk and drivers call the file. */
+  isNumber: string | null
+  /** The file number to show: IS number → CNTL number → booking ref. */
+  fileNo: string
   agendaItemId: string | null
   startDate: string           // YYYY-MM-DD
   endDate: string             // YYYY-MM-DD
@@ -201,6 +205,16 @@ export interface PartyView {
   lastSendStatus: string | null
   /** Staff-only full link, so it can be copied and shared by hand. */
   link?: string
+}
+
+/** Same convention as the SL Driver Allocation board: IS → CNTL → ref. */
+export function fileNumberOf(b: { isNumber?: string | null; cntlNumber?: string | null; bookingRef: string }): string {
+  return b.isNumber?.trim() || b.cntlNumber?.trim() || b.bookingRef
+}
+
+/** File number of a claim, from the trip snapshot it was made against. */
+export function claimFileNo(c: { bookingRef: string; snapshot: Partial<OpenTrip> | null }): string {
+  return c.snapshot?.fileNo?.trim() || c.bookingRef
 }
 
 export function partyKey(type: PartyType, id: string): string {

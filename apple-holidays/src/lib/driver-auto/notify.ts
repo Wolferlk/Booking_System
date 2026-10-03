@@ -187,7 +187,7 @@ function boardEmailHtml(name: string, trips: OpenTrip[], country: DaCountry, lin
   const rows = trips.slice(0, 12).map(t => `
     <tr>
       <td style="padding:9px 10px;border-bottom:1px solid #eef2f7;white-space:nowrap;color:#334155;font-weight:600">${esc(fmtTripDay(t.startDate))}${t.days > 1 ? `<div style="font-weight:400;color:#94a3b8;font-size:11px">${t.days} days</div>` : ''}</td>
-      <td style="padding:9px 10px;border-bottom:1px solid #eef2f7;color:#0f172a">${esc(t.kind === 'BOOKING' ? t.title : t.route)}<div style="color:#94a3b8;font-size:11px">${t.pax} guest(s)${t.startTime ? ` · ${esc(t.startTime)}` : ''}</div></td>
+      <td style="padding:9px 10px;border-bottom:1px solid #eef2f7;color:#0f172a"><b>${esc(t.fileNo)}</b> · ${esc(t.kind === 'BOOKING' ? t.title : t.route)}<div style="color:#94a3b8;font-size:11px">${t.pax} guest(s)${t.startTime ? ` · ${esc(t.startTime)}` : ''}</div></td>
     </tr>`).join('')
   const more = trips.length > 12 ? `<p style="color:#64748b;font-size:12px;margin:10px 0 0">+ ${trips.length - 12} more on your board.</p>` : ''
   return `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif">

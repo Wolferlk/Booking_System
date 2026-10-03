@@ -24,7 +24,7 @@ import {
   type ResolvedParty,
 } from './server'
 import {
-  DA_COUNTRY_META, fmtTripDay, isDaCountry, partyKey,
+  DA_COUNTRY_META, fileNumberOf, fmtTripDay, isDaCountry, partyKey,
   type ClaimStatus, type ClaimView, type OpenTrip, type PartyType,
 } from './shared'
 
@@ -73,7 +73,7 @@ export function toClaimView(c: ClaimRow): ClaimView {
  */
 export async function partyCommitments(
   type: PartyType, id: string, fromYmd: string, toYmd: string,
-): Promise<{ date: string; bookingRef: string }[]> {
+): Promise<{ date: string; bookingRef: string; fileNo: string }[]> {
   const from = new Date(`${fromYmd}T00:00:00.000Z`)
   const to = new Date(`${toYmd}T23:59:59.999Z`)
   const who = type === 'DRIVER' ? { driverId: id } : { vendorId: id }
@@ -81,37 +81,37 @@ export async function partyCommitments(
   const [assignments, slAllocs] = await Promise.all([
     prisma.assignment.findMany({
       where: { ...who, agendaItem: { date: { gte: from, lte: to } } },
-      select: { agendaItem: { select: { date: true, agenda: { select: { booking: { select: { bookingRef: true, status: true } } } } } } },
+      select: { agendaItem: { select: { date: true, agenda: { select: { booking: { select: { bookingRef: true, isNumber: true, cntlNumber: true, status: true } } } } } } },
     }),
     prisma.sriLankaDriverAllocation.findMany({
       where: { ...who, booking: { arrivalDate: { lte: to }, departureDate: { gte: from } } },
-      select: { booking: { select: { bookingRef: true, arrivalDate: true, status: true } } },
+      select: { booking: { select: { bookingRef: true, isNumber: true, cntlNumber: true, arrivalDate: true, status: true } } },
     }),
   ])
 
-  const out = new Map<string, { date: string; bookingRef: string }>()
+  const out = new Map<string, { date: string; bookingRef: string; fileNo: string }>()
   for (const a of assignments) {
     const b = a.agendaItem.agenda.booking
     if (b.status === 'CANCELLED') continue
     const date = ymdOf(a.agendaItem.date)
-    out.set(`${b.bookingRef}|${date}`, { date, bookingRef: b.bookingRef })
+    out.set(`${b.bookingRef}|${date}`, { date, bookingRef: b.bookingRef, fileNo: fileNumberOf(b) })
   }
   for (const s of slAllocs) {
     if (s.booking.status === 'CANCELLED') continue
     const date = ymdOf(s.booking.arrivalDate)
     if (!Array.from(out.values()).some(v => v.bookingRef === s.booking.bookingRef)) {
-      out.set(`${s.booking.bookingRef}|${date}`, { date, bookingRef: s.booking.bookingRef })
+      out.set(`${s.booking.bookingRef}|${date}`, { date, bookingRef: s.booking.bookingRef, fileNo: fileNumberOf(s.booking) })
     }
   }
   return Array.from(out.values()).sort((a, b) => a.date.localeCompare(b.date))
 }
 
-function clashLabels(list: { date: string; bookingRef: string }[], trip: OpenTrip): string[] {
+function clashLabels(list: { date: string; bookingRef: string; fileNo: string }[], trip: OpenTrip): string[] {
   const driven = new Set(trip.legs.filter(l => l.driven).map(l => l.date))
   if (driven.size === 0) driven.add(trip.startDate)
   return list
     .filter(c => c.bookingRef !== trip.bookingRef && (driven.has(c.date) || (trip.kind === 'BOOKING' && c.date >= trip.startDate && c.date <= trip.endDate)))
-    .map(c => `${c.bookingRef} · ${fmtTripDay(c.date)}`)
+    .map(c => `${c.fileNo} · ${fmtTripDay(c.date)}`)
 }
 
 function seatsFit(party: ResolvedParty, trip: OpenTrip): boolean | null {
@@ -448,7 +448,7 @@ async function notifyAssigned(trip: OpenTrip, party: ResolvedParty): Promise<str
       const settings = await readSettings()
       await sendMailViaGraph({
         to: party.email,
-        subject: `Trip confirmed — ${trip.bookingRef} · ${fmtTripDay(trip.startDate, { year: true })}`,
+        subject: `Trip confirmed — ${trip.fileNo}${trip.fileNo !== trip.bookingRef ? ` (${trip.bookingRef})` : ''} · ${fmtTripDay(trip.startDate, { year: true })}`,
         bodyHtml: assignedEmailHtml(trip, party, boardUrl(party.key, settings)),
       })
       notes.push('email sent')
@@ -475,7 +475,7 @@ function assignedEmailHtml(trip: OpenTrip, party: ResolvedParty, link: string): 
   <div style="max-width:600px;margin:0 auto;padding:24px">
     <div style="background:linear-gradient(135deg,#0f172a,#1e293b);color:#fff;border-radius:16px;padding:22px">
       <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#34d399">Trip confirmed</div>
-      <div style="font-size:22px;font-weight:700;margin-top:6px">${esc(trip.bookingRef)} · ${esc(country)}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:6px">${esc(trip.fileNo)} · ${esc(country)}</div>${trip.fileNo !== trip.bookingRef ? `<div style="font-size:12px;color:#94a3b8;margin-top:2px">Booking ${esc(trip.bookingRef)}</div>` : ''}
       <div style="font-size:13px;color:#cbd5e1;margin-top:4px">${esc(fmtTripDay(trip.startDate, { year: true }))}${trip.days > 1 ? ` – ${esc(fmtTripDay(trip.endDate, { year: true }))} (${trip.days} days)` : ''}</div>
     </div>
     <div style="background:#fff;border-radius:16px;padding:20px;margin-top:12px">
@@ -508,7 +508,7 @@ export async function listClaimsForCountry(country: string, openKeys: Set<string
 
   const pending = views.filter(v => v.status === 'PENDING')
   const partyCache = new Map<string, ResolvedParty | null>()
-  const commitCache = new Map<string, { date: string; bookingRef: string }[]>()
+  const commitCache = new Map<string, { date: string; bookingRef: string; fileNo: string }[]>()
 
   await Promise.all(pending.map(async v => {
     v.stillOpen = openKeys.has(v.tripKey)

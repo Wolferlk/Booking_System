@@ -27,7 +27,7 @@ import Button from '@/components/ui/button'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
 import {
-  CLAIM_STATUS_META, DA_COUNTRY_META, HORIZON_CHOICES, fmtDaysAway, fmtTripDay,
+  CLAIM_STATUS_META, DA_COUNTRY_META, HORIZON_CHOICES, claimFileNo, fmtDaysAway, fmtTripDay,
   type ClaimView, type DaCountry, type DaSettings, type OpenTrip, type PartyView,
 } from '@/lib/driver-auto/shared'
 
@@ -444,7 +444,7 @@ function OpenTrips({ data, onAssign }: { data: Overview; onAssign: (t: OpenTrip)
     return data.trips.filter(t => {
       if (onlyRequested && !(t.requestCount ?? 0)) return false
       if (!s) return true
-      return [t.bookingRef, t.title, t.route, t.agent, t.leadGuest, ...t.cities].filter(Boolean).join(' ').toLowerCase().includes(s)
+      return [t.fileNo, t.isNumber, t.bookingRef, t.title, t.route, t.agent, t.leadGuest, ...t.cities].filter(Boolean).join(' ').toLowerCase().includes(s)
     })
   }, [data.trips, q, onlyRequested])
 
@@ -469,7 +469,7 @@ function OpenTrips({ data, onAssign }: { data: Overview; onAssign: (t: OpenTrip)
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Ref, city, agent, guest…"
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="IS number, ref, city, agent…"
                    className="w-52 rounded-lg border border-slate-300 py-1.5 pl-8 pr-2 text-xs focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500" />
           </div>
           <button onClick={() => setOnlyRequested(v => !v)}
@@ -518,7 +518,11 @@ function TripCard({ trip: t, expanded, onToggle, onAssign }: { trip: OpenTrip; e
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <a href={`/dashboard/bookings/${encodeURIComponent(t.bookingRef)}`} target="_blank" rel="noreferrer"
-               className="text-xs font-bold text-slate-900 hover:text-emerald-700 hover:underline">{t.bookingRef}</a>
+               title={`Booking ${t.bookingRef}`}
+               className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-xs font-black tracking-tight text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100">
+              {t.isNumber ? `IS ${t.isNumber}` : t.fileNo}
+            </a>
+            {t.fileNo !== t.bookingRef && <span className="text-[10px] font-semibold text-slate-400">{t.bookingRef}</span>}
             {t.kind === 'BOOKING' && <span className="rounded bg-slate-900 px-1.5 py-px text-[9px] font-bold text-white">{t.days}D ROUND TRIP</span>}
             {t.startTime && <span className="flex items-center gap-0.5 text-[10px] font-semibold text-slate-500"><Clock className="h-3 w-3" />{t.startTime}</span>}
           </div>
@@ -595,7 +599,7 @@ function RequestsInbox({ data, onChanged }: { data: Overview; onChanged: () => v
   const act = async (c: ClaimView, action: 'approve' | 'reject') => {
     let note: string | null = null
     if (action === 'reject') {
-      note = window.prompt(`Decline ${c.partyName}'s request for ${c.bookingRef}? Optional note:`, '')
+      note = window.prompt(`Decline ${c.partyName}'s request for ${claimFileNo(c)}? Optional note:`, '')
       if (note === null) return
     }
     setBusy(c.id)
@@ -638,7 +642,9 @@ function RequestsInbox({ data, onChanged }: { data: Overview; onChanged: () => v
             <div key={head.tripKey} className={cn('rounded-xl border p-3', head.stillOpen === false ? 'border-slate-200 bg-slate-50' : 'border-amber-200 bg-amber-50/40')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-xs font-bold text-slate-900">{head.bookingRef}
+                  <div className="text-xs font-bold text-slate-900">
+                    <span className="rounded bg-emerald-50 px-1 py-px font-black text-emerald-800 ring-1 ring-emerald-200">{claimFileNo(head)}</span>
+                    {claimFileNo(head) !== head.bookingRef && <span className="ml-1 text-[10px] font-semibold text-slate-400">{head.bookingRef}</span>}
                     <span className="ml-1.5 font-semibold text-slate-500">{fmtTripDay(head.tripDate)}{head.tripEndDate && head.tripEndDate !== head.tripDate ? ` – ${fmtTripDay(head.tripEndDate)}` : ''}</span>
                   </div>
                   <div className="truncate text-[11px] text-slate-600">{snap?.kind === 'BOOKING' ? snap?.title : snap?.route}</div>
@@ -703,7 +709,7 @@ function RequestsInbox({ data, onChanged }: { data: Overview; onChanged: () => v
               return (
                 <li key={c.id} className="flex items-center justify-between gap-2 px-4 py-2 text-[11px]">
                   <div className="min-w-0">
-                    <div className="truncate font-semibold text-slate-700">{c.bookingRef} · {c.partyName}</div>
+                    <div className="truncate font-semibold text-slate-700">{claimFileNo(c)} · {c.partyName}</div>
                     <div className="truncate text-[10px] text-slate-400">
                       {fmtTripDay(c.tripDate)} · {c.decidedByName ?? '—'} · {ago(c.decidedAt ?? c.createdAt)}
                       {c.notifyResult ? ` · ${c.notifyResult}` : ''}
@@ -989,7 +995,7 @@ function AssignModal({ trip, parties, claims, onClose, onDone }: {
   }, [parties, q, trip.pax])
 
   const assign = async (p: PartyView) => {
-    if (!window.confirm(`Assign ${p.name} to ${trip.bookingRef} (${fmtTripDay(trip.startDate)})? They will be messaged on WhatsApp.`)) return
+    if (!window.confirm(`Assign ${p.name} to ${trip.fileNo} (${fmtTripDay(trip.startDate)})? They will be messaged on WhatsApp.`)) return
     setBusy(p.key)
     try {
       const { message } = await api('/api/driver-auto/assign', { method: 'POST', body: JSON.stringify({ tripKey: trip.key, partyKey: p.key }) })
@@ -1003,7 +1009,7 @@ function AssignModal({ trip, parties, claims, onClose, onDone }: {
   }
 
   return (
-    <Shell onClose={onClose} title={<span className="flex items-center gap-2"><UserPlus className="h-4 w-4 text-emerald-600" /> Assign {trip.bookingRef} <ArrowRight className="h-3.5 w-3.5 text-slate-400" /> <span className="font-semibold text-slate-500">{fmtTripDay(trip.startDate)}{trip.days > 1 ? ` · ${trip.days} days` : ''}</span></span>}>
+    <Shell onClose={onClose} title={<span className="flex items-center gap-2"><UserPlus className="h-4 w-4 text-emerald-600" /> Assign {trip.fileNo}{trip.fileNo !== trip.bookingRef && <span className="text-xs font-semibold text-slate-400">({trip.bookingRef})</span>} <ArrowRight className="h-3.5 w-3.5 text-slate-400" /> <span className="font-semibold text-slate-500">{fmtTripDay(trip.startDate)}{trip.days > 1 ? ` · ${trip.days} days` : ''}</span></span>}>
       <div className="space-y-3 p-5">
         <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
           <div className="font-semibold text-slate-800">{trip.title}</div>
