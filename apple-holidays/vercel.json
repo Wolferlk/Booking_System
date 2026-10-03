@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/vn-checklist-sheet",
       "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/cron/driver-auto-send",
+      "schedule": "5 * * * *"
     }
   ]
 }

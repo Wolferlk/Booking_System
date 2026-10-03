@@ -3468,3 +3468,76 @@ model ActionVerification {
   @@index([expiresAt])
   @@map("action_verifications")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Driver-Auto (Allocating) — drivers and vehicle vendors pick up open trips from
+// a personal tokenised trip board. Lib: src/lib/driver-auto/*.
+// Created by prisma/sql/2026-10-03-driver-auto.sql — never `db push`.
+// No relations by design: agenda items are recreated on every chart save, so a
+// claim keeps its own snapshot of what the driver saw.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One request by a driver/vendor for an open trip. `lockKey` is set only on the
+/// claim that won the trip; its UNIQUE index is the race guard.
+model DriverTripClaim {
+  id            String    @id @default(cuid())
+  /// 'BOOKING' (Sri Lanka round trip) | 'MOVEMENT' (one agenda item)
+  kind          String    @db.VarChar(16)
+  /// 'B:<bookingId>' | 'M:<agendaItemId>'
+  tripKey       String
+  bookingId     String
+  bookingRef    String
+  agendaItemId  String?
+  country       String    @db.VarChar(32)
+  tripDate      DateTime
+  tripEndDate   DateTime?
+  snapshot      Json?
+  /// 'DRIVER' | 'VENDOR'
+  partyType     String    @db.VarChar(16)
+  partyId       String
+  partyName     String?
+  partyPhone    String?   @db.VarChar(64)
+  /// PENDING | APPROVED | AUTO_ASSIGNED | REJECTED | WITHDRAWN | SUPERSEDED | STALE | RELEASED
+  status        String    @default("PENDING") @db.VarChar(24)
+  lockKey       String?   @unique(map: "driver_trip_claims_lockKey_key")
+  driverNote    String?   @db.Text
+  decisionNote  String?   @db.Text
+  decidedById   String?
+  decidedByName String?
+  decidedAt     DateTime?
+  assignedAt    DateTime?
+  notifyResult  String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@index([tripKey], map: "driver_trip_claims_tripKey_idx")
+  @@index([partyType, partyId], map: "driver_trip_claims_party_idx")
+  @@index([status], map: "driver_trip_claims_status_idx")
+  @@index([country, tripDate], map: "driver_trip_claims_country_date_idx")
+  @@index([bookingRef], map: "driver_trip_claims_bookingRef_idx")
+  @@map("driver_trip_claims")
+}
+
+/// One daily "open trips" message to one driver/vendor on one channel. The
+/// (partyKey, sendDate, channel) UNIQUE index is the once-a-day guard.
+model DriverBoardSend {
+  id          String   @id @default(cuid())
+  partyKey    String
+  partyName   String?
+  country     String   @db.VarChar(32)
+  sendDate    String   @db.VarChar(10)
+  channel     String   @db.VarChar(16)
+  recipient   String?
+  tripCount   Int      @default(0)
+  status      String   @db.VarChar(16)
+  waMessageId String?
+  error       String?  @db.Text
+  trigger     String   @default("schedule") @db.VarChar(16)
+  sentByName  String?
+  createdAt   DateTime @default(now())
+
+  @@unique([partyKey, sendDate, channel], map: "driver_board_sends_once_key")
+  @@index([country, sendDate], map: "driver_board_sends_country_date_idx")
+  @@index([createdAt], map: "driver_board_sends_createdAt_idx")
+  @@map("driver_board_sends")
+}

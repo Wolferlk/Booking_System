@@ -351,6 +351,18 @@ async function startDriverBriefReportSchedulerTask() {
   }
 }
 
+async function startDriverAutoSchedulerTask() {
+  try {
+    // Driver-Auto: hourly node-cron tick that sends each country's open-trips
+    // board link in its own morning window. Sends nothing unless a country's
+    // autoSend switch is on (default off). Once-a-day guard is a UNIQUE index.
+    const { startDriverAutoScheduler } = await import('./driver-auto/scheduler')
+    await startDriverAutoScheduler()
+  } catch (err) {
+    console.error('[Scheduler] driver-auto scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startFileHandlerResolveSweepScheduler() {
   try {
     // Interval sweep: replaces the "30sundays Aahaas" placeholder file handler
@@ -446,6 +458,7 @@ export function startCronJobs() {
   // timezone-aware with boot catch-up. Backend-only, gated by a global switch.
   void startDriverLogAutoSendScheduler()
   void startDriverBriefReportSchedulerTask()
+  void startDriverAutoSchedulerTask()
 
   // 30 Sundays placeholder file handler → the real handler from apple_quote_ai.
   // Interval sweep every 5 min over bookings created at least 10 min ago; the
