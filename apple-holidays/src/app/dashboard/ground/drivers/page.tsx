@@ -11,6 +11,7 @@ import {
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
   MessageCircle, Send, Clock, Link2, Download,
   Users, ShieldCheck, Layers, BarChart3, ClipboardList,
+  Star, Route, FolderOpen, CalendarClock, History,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -54,6 +55,20 @@ interface Driver {
   advanceBalance: number
   driverPayments?: DriverPayment[]
   vendorId?: string | null
+}
+
+/** One driver's row from GET /api/ground/analytics/leaderboard — read-only. */
+interface DriverPerf {
+  id: string
+  score: number | null
+  grade: 'A+' | 'A' | 'B' | 'C' | 'D' | null
+  toursDone: number
+  trips: number
+  bookings: number
+  rating: number | null
+  ratedBookings: number
+  lastCompletedTrip: string | null
+  nextTrip: string | null
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -180,6 +195,11 @@ export default function DriversPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [exportingD, setExportingD]   = useState(false)
 
+  // Performance strip per driver, keyed by driver id. Loaded separately so the
+  // list itself never waits on the analytics roll-up.
+  const [perf, setPerf]               = useState<Record<string, DriverPerf>>({})
+  const [perfLoading, setPerfLoading] = useState(true)
+
   // ── Vehicles state ─────────────────────────────────────────────────────────
   const [vehicles, setVehicles]       = useState<Vehicle[]>([])
   const [loadingV, setLoadingV]       = useState(false)
@@ -215,6 +235,23 @@ export default function DriversPage() {
     } finally { setLoadingD(false) }
   }
 
+  async function loadPerformance() {
+    setPerfLoading(true)
+    try {
+      const params = new URLSearchParams({ kind: 'driver', months: 'all' })
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const res = await fetch(`/api/ground/analytics/leaderboard?${params}`)
+      const data = await res.json()
+      if (data.success) {
+        const map: Record<string, DriverPerf> = {}
+        for (const r of data.data.rows as DriverPerf[]) map[r.id] = r
+        setPerf(map)
+      }
+    } catch {
+      // The strip just shows dashes; the driver list itself is unaffected.
+    } finally { setPerfLoading(false) }
+  }
+
   async function loadVehicles() {
     setLoadingV(true)
     try {
@@ -225,7 +262,7 @@ export default function DriversPage() {
     } finally { setLoadingV(false) }
   }
 
-  useEffect(() => { loadDrivers() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadDrivers(); loadPerformance() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load vehicles once on mount so the "All Vehicles" / "Total Vehicles" counts are
   // correct before the user ever opens the Vehicles tab.
@@ -621,7 +658,7 @@ export default function DriversPage() {
                           <User className={`w-6 h-6 text-brand-500 ${driver.photoUrl ? 'hidden' : ''}`} />
                         </div>
                         {/* Info grid */}
-                        <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.75fr)] xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.75fr)_minmax(0,2.4fr)] gap-3 items-center">
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-semibold text-slate-900">{driver.name}</p>
@@ -653,12 +690,15 @@ export default function DriversPage() {
                               <div className="flex items-center gap-2 text-xs text-slate-400"><Truck className="w-4 h-4" /> No vehicle</div>
                             )}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5 text-amber-500" /><span className="text-xs text-slate-500">Advance Balance</span></div>
-                            <p className={`text-base font-bold mt-0.5 ${Number(driver.advanceBalance) > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
-                              {formatCurrency(Number(driver.advanceBalance))}
-                            </p>
-                            {driver.bankName && <p className="text-xs text-slate-400 mt-0.5">{driver.bankName} · ****{driver.bankAccountNo?.slice(-4)}</p>}
+                          <div className="md:col-span-2 xl:col-span-1">
+                            <DriverPerfStrip
+                              perf={perf[driver.id]}
+                              loading={perfLoading}
+                              onOpen={() => {
+                                setDetailTab(prev => ({ ...prev, [driver.id]: 'performance' }))
+                                if (!isExpanded) loadDriverDetail(driver.id)
+                              }}
+                            />
                           </div>
                         </div>
                         {/* Actions */}
@@ -1250,5 +1290,128 @@ export default function DriversPage() {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Performance strip ────────────────────────────────────────────────────────
+
+const GRADE_TONE: Record<string, { ring: string; chip: string }> = {
+  'A+': { ring: '#059669', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  A:    { ring: '#10b981', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  B:    { ring: '#3b82f6', chip: 'bg-blue-50 text-blue-700 border-blue-200' },
+  C:    { ring: '#f59e0b', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  D:    { ring: '#ef4444', chip: 'bg-red-50 text-red-700 border-red-200' },
+}
+
+function daysFromToday(iso: string): number {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const d = new Date(iso); d.setHours(0, 0, 0, 0)
+  return Math.round((d.getTime() - today.getTime()) / 86_400_000)
+}
+
+function relativeDay(iso: string): string {
+  const n = daysFromToday(iso)
+  if (n === 0) return 'today'
+  if (n === 1) return 'tomorrow'
+  if (n === -1) return 'yesterday'
+  return n > 0 ? `in ${n}d` : `${-n}d ago`
+}
+
+function MiniScoreRing({ score, grade }: { score: number | null; grade: string | null }) {
+  const size = 48, stroke = 5
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const pct = Math.max(0, Math.min(100, score ?? 0))
+  return (
+    <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
+          stroke={grade ? GRADE_TONE[grade]?.ring : '#cbd5e1'} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c - (pct / 100) * c}
+          className="transition-all duration-700 ease-out" />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-sm font-bold text-slate-800 tabular-nums">{score ?? '—'}</span>
+      </div>
+    </div>
+  )
+}
+
+function PerfStat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ className?: string }>; label: string; value: React.ReactNode; tone: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-slate-400 font-semibold">
+        <Icon className={`w-3 h-3 ${tone}`} />{label}
+      </div>
+      <p className="text-sm font-bold text-slate-800 tabular-nums mt-0.5 truncate">{value}</p>
+    </div>
+  )
+}
+
+/**
+ * Score, work volume, rating and trip dates for one driver, in one row.
+ * Read-only: everything comes from the analytics leaderboard.
+ */
+function DriverPerfStrip({ perf, loading, onOpen }: { perf: DriverPerf | undefined; loading: boolean; onOpen: () => void }) {
+  if (loading && !perf) {
+    return (
+      <div className="flex items-center gap-3 animate-pulse">
+        <div className="w-12 h-12 rounded-full bg-slate-100" />
+        <div className="flex-1 grid grid-cols-4 gap-3">{[0, 1, 2, 3].map(i => <div key={i} className="h-8 rounded bg-slate-100" />)}</div>
+      </div>
+    )
+  }
+
+  const p = perf
+  const grade = p?.grade ?? null
+  const next = p?.nextTrip ? daysFromToday(p.nextTrip) : null
+  const idleDays = p?.lastCompletedTrip ? -daysFromToday(p.lastCompletedTrip) : null
+
+  return (
+    <button type="button" onClick={onOpen} title="Open performance"
+      className="w-full text-left rounded-xl border border-slate-100 bg-gradient-to-r from-slate-50/80 to-white px-3 py-2.5 hover:border-brand-200 hover:shadow-sm transition-all group">
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col items-center gap-1">
+          <MiniScoreRing score={p?.score ?? null} grade={grade} />
+          <span className={`px-1.5 py-px rounded-full text-[9px] font-bold border ${grade ? GRADE_TONE[grade].chip : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+            {grade ?? 'New'}
+          </span>
+        </div>
+
+        <div className="flex-1 min-w-0 grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-2">
+          <PerfStat icon={Route} label="Tours" tone="text-violet-500" value={p?.toursDone ?? 0} />
+          <PerfStat icon={Car} label="Movements" tone="text-sky-500" value={p?.trips ?? 0} />
+          <PerfStat icon={FolderOpen} label="Files" tone="text-amber-500" value={p?.bookings ?? 0} />
+          <PerfStat icon={Star} label="Rating" tone="text-yellow-500" value={
+            p?.rating != null
+              ? <span className="inline-flex items-center gap-1">{p.rating.toFixed(1)}<Star className="w-3 h-3 fill-yellow-400 text-yellow-400" /><span className="text-[10px] font-medium text-slate-400">({p.ratedBookings})</span></span>
+              : <span className="text-slate-400 font-medium text-xs">Unrated</span>
+          } />
+
+          <div className="col-span-2 flex items-center gap-1.5 min-w-0">
+            <History className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+            <span className="text-[11px] text-slate-500 truncate">
+              Last trip{' '}
+              {p?.lastCompletedTrip
+                ? <><b className="text-slate-700">{formatDate(p.lastCompletedTrip, 'dd MMM yy')}</b>
+                    <span className={idleDays != null && idleDays > 60 ? 'text-red-500' : 'text-slate-400'}> · {relativeDay(p.lastCompletedTrip)}</span></>
+                : <span className="text-slate-400">never</span>}
+            </span>
+          </div>
+          <div className="col-span-2 flex items-center gap-1.5 min-w-0">
+            <CalendarClock className={`w-3.5 h-3.5 flex-shrink-0 ${next != null ? 'text-emerald-500' : 'text-slate-400'}`} />
+            <span className="text-[11px] text-slate-500 truncate">
+              Next trip{' '}
+              {p?.nextTrip
+                ? <><b className="text-slate-700">{formatDate(p.nextTrip, 'dd MMM yy')}</b>
+                    <span className={`ml-1 px-1.5 py-px rounded-full text-[10px] font-bold ${next != null && next <= 2 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{relativeDay(p.nextTrip)}</span></>
+                : <span className="text-slate-400">none scheduled</span>}
+            </span>
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-brand-500 flex-shrink-0 hidden sm:block" />
+      </div>
+    </button>
   )
 }

@@ -83,6 +83,12 @@ export interface PartnerAnalytics {
   lastTrip: string | null
   /** Days since the last completed movement — null when never driven. */
   daysSinceLastTrip: number | null
+  /** Latest movement before today. `lastTrip` above can be a future date. */
+  lastCompletedTrip: string | null
+  /** Earliest movement from today on, on a file that is not cancelled. */
+  nextTrip: string | null
+  /** Files with at least one movement already driven, cancelled files excluded. */
+  toursDone: number
   /** Movements in the last 30 / 90 days. */
   trips30d: number
   trips90d: number
@@ -127,6 +133,9 @@ export interface PartnerSummary {
   bookings: number
   trips90d: number
   lastTrip: string | null
+  lastCompletedTrip: string | null
+  nextTrip: string | null
+  toursDone: number
   rating: number | null
   ratedBookings: number
   praiseCount: number
@@ -403,6 +412,9 @@ function aggregate({ kind, id, rows, feedback, withComments }: AggregateInput): 
   let trips90d = 0
   let firstTrip: Date | null = null
   let lastTrip: Date | null = null
+  let lastCompletedTrip: Date | null = null
+  let nextTrip: Date | null = null
+  const toursDone = new Set<string>()
 
   for (const row of rows) {
     const item = row.agendaItem
@@ -412,9 +424,13 @@ function aggregate({ kind, id, rows, feedback, withComments }: AggregateInput): 
     if (date) {
       if (!firstTrip || date < firstTrip) firstTrip = date
       if (!lastTrip || date > lastTrip) lastTrip = date
-      if (date >= today) upcomingTrips++
-      else {
+      if (date >= today) {
+        upcomingTrips++
+        if (booking?.status !== 'CANCELLED' && (!nextTrip || date < nextTrip)) nextTrip = date
+      } else {
         completedTrips++
+        if (!lastCompletedTrip || date > lastCompletedTrip) lastCompletedTrip = date
+        if (booking && booking.status !== 'CANCELLED') toursDone.add(booking.id)
         if (date >= d30) trips30d++
         if (date >= d90) trips90d++
       }
@@ -602,6 +618,9 @@ function aggregate({ kind, id, rows, feedback, withComments }: AggregateInput): 
     daysSinceLastTrip: lastTrip
       ? Math.max(0, Math.floor((today.getTime() - (lastTrip as Date).getTime()) / 86_400_000))
       : null,
+    lastCompletedTrip: lastCompletedTrip ? (lastCompletedTrip as Date).toISOString() : null,
+    nextTrip: nextTrip ? (nextTrip as Date).toISOString() : null,
+    toursDone: toursDone.size,
     trips30d,
     trips90d,
     value: Array.from(valueByCurrency.entries())
@@ -698,6 +717,7 @@ export async function getPartnerLeaderboard(
     out.push({
       kind, id: pid,
       trips: a.trips, bookings: a.bookings, trips90d: a.trips90d, lastTrip: a.lastTrip,
+      lastCompletedTrip: a.lastCompletedTrip, nextTrip: a.nextTrip, toursDone: a.toursDone,
       rating: a.ratingBlended, ratedBookings: a.ratedBookings,
       praiseCount: a.praiseCount, complaintCount: a.complaintCount,
       score: a.score, grade: a.grade,
