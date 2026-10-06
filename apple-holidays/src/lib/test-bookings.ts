@@ -102,6 +102,37 @@ export interface TestBookingSet {
   marks: Map<string, TestBookingMark>
   /** False when the register could not be read just now (a stale or empty set is in use). */
   checked: boolean
+  /**
+   * Why it could not be read: 'missing' — the accounts migration that creates
+   * test_bookings has not been run; 'unreachable' — the accounts DB did not
+   * answer; 'error' — anything else. Null when `checked`.
+   */
+  problem: RegisterProblem | null
+  /** The underlying message, for the log line and the person who has to fix it. */
+  detail: string | null
+}
+
+export type RegisterProblem = 'missing' | 'unreachable' | 'error'
+
+/** Sort a failed register query into something a person can act on. */
+export function classifyRegisterError(err: unknown): { problem: RegisterProblem; detail: string } {
+  const e = err as { code?: string; errno?: number; message?: string }
+  const detail = String(e?.message ?? err)
+  if (e?.code === 'ER_NO_SUCH_TABLE' || e?.errno === 1146 || /test_bookings.*doesn't exist/i.test(detail)) {
+    return { problem: 'missing', detail }
+  }
+  if (/timed out|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ECONNRESET|PROTOCOL_CONNECTION_LOST|exceeded \d+ms/i.test(detail)
+    || ['ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ECONNRESET', 'PROTOCOL_CONNECTION_LOST'].includes(String(e?.code))) {
+    return { problem: 'unreachable', detail }
+  }
+  return { problem: 'error', detail }
+}
+
+/** What a person is told for each problem. */
+export const REGISTER_PROBLEM_MESSAGE: Record<RegisterProblem, string> = {
+  missing: 'The Test Bookings register is not set up in the Accounts database yet — run `php artisan migrate` on the Accounts server. Nothing was changed.',
+  unreachable: 'The Accounts database did not answer, so the Test Bookings register could not be reached. Nothing was changed — try again in a minute.',
+  error: 'The Test Bookings register could not be read. Nothing was changed.',
 }
 
 /** Trusted this long; the register changes by hand, a few times a day at most. */
@@ -123,7 +154,7 @@ function withBudget<T>(work: Promise<T>, ms: number): Promise<T> {
 /** Every active test booking. Never throws. */
 export async function loadTestBookings(): Promise<TestBookingSet> {
   const now = Date.now()
-  if (cache && now - cache.at < FRESH_MS) return { marks: cache.marks, checked: true }
+  if (cache && now - cache.at < FRESH_MS) return { marks: cache.marks, checked: true, problem: null, detail: null }
 
   try {
     const rows = await withBudget(accountsQuery<MarkRow>(
@@ -150,12 +181,13 @@ export async function loadTestBookings(): Promise<TestBookingSet> {
     }
 
     cache = { at: now, marks }
-    return { marks, checked: true }
+    return { marks, checked: true, problem: null, detail: null }
   } catch (err) {
     // A missing table (accounts not migrated yet) lands here too: nothing hidden.
-    console.error('[test-bookings] register unreadable, falling back:', err instanceof Error ? err.message : err)
-    if (cache && now - cache.at < STALE_MS) return { marks: cache.marks, checked: false }
-    return { marks: new Map(), checked: false }
+    const { problem, detail } = classifyRegisterError(err)
+    console.error(`[test-bookings] register unreadable (${problem}), falling back:`, detail)
+    if (cache && now - cache.at < STALE_MS) return { marks: cache.marks, checked: false, problem, detail }
+    return { marks: new Map(), checked: false, problem, detail }
   }
 }
 
@@ -258,7 +290,32 @@ async function moneyOn(key: string): Promise<{ paid: number; receipts: number }>
   return { paid: Number(row?.paid ?? 0), receipts: Number(row?.receipts ?? 0) }
 }
 
-export class TestBookingError extends Error {}
+export class TestBookingError extends Error {
+  constructor(message: string, readonly problem: RegisterProblem | null = null, readonly detail: string | null = null) {
+    super(message)
+  }
+}
+
+/**
+ * Run a register statement; any database failure comes back as a
+ * TestBookingError saying what is wrong (table missing / DB down), never as a
+ * bare server error.
+ */
+async function onRegister<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (err) {
+    if (err instanceof TestBookingError) throw err
+    const { problem, detail } = classifyRegisterError(err)
+    console.error(`[test-bookings] register ${problem}:`, detail)
+    throw new TestBookingError(REGISTER_PROBLEM_MESSAGE[problem], problem, detail)
+  }
+}
+
+/** Fails with the setup message when test_bookings does not exist yet. */
+async function assertRegisterReady(): Promise<void> {
+  await onRegister(() => accountsQuery<RowDataPacket>('SELECT 1 FROM test_bookings LIMIT 1'))
+}
 
 /**
  * Mark a booking as a test from OPS. Writes one `test_bookings` row.
@@ -279,7 +336,9 @@ export async function markTestBooking(input: {
   const reason = input.reason.trim()
   if (reason.length < 3) throw new TestBookingError('Say why this is a test booking — the reason is kept with the mark.')
 
-  const money = await moneyOn(key)
+  await assertRegisterReady()
+
+  const money = await onRegister(() => moneyOn(key))
   if (money.receipts > 0) {
     throw new TestBookingError(
       `Accounts has ${money.receipts} payment receipt(s) recorded against ${ref}. ` +
@@ -287,14 +346,14 @@ export async function markTestBooking(input: {
     )
   }
 
-  const result = await accountsWrite(
+  const result = await onRegister(() => accountsWrite(
     `INSERT INTO test_bookings
             (booking_key, booking_ref, channel, reason, snapshot, marked_by, marked_from, marked_at, created_at, updated_at)
      SELECT ?, ?, ?, ?, ?, ?, 'ops', UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP()
        FROM DUAL
       WHERE NOT EXISTS (SELECT 1 FROM test_bookings t WHERE t.booking_key = ? AND t.released_at IS NULL)`,
     [key, ref, testBookingChannel(key), reason.slice(0, 2000), JSON.stringify(input.snapshot ?? {}), input.by.slice(0, 120), key],
-  )
+  ))
 
   flushTestBookings()
   refCache = null
@@ -312,18 +371,18 @@ export async function releaseTestBooking(input: { reference: string; by: string;
   const key = testBookingKey(input.reference)
   if (!key) throw new TestBookingError('Enter a booking reference.')
 
-  const [{ n } = { n: 0 } as CountRow] = await accountsQuery<CountRow>(
+  const [{ n } = { n: 0 } as CountRow] = await onRegister(() => accountsQuery<CountRow>(
     'SELECT COUNT(*) AS n FROM test_bookings WHERE booking_key = ? AND released_at IS NULL',
     [key],
-  )
+  ))
   if (!Number(n)) throw new TestBookingError(`${input.reference} is not marked as a test booking.`)
 
-  const result = await accountsWrite(
+  const result = await onRegister(() => accountsWrite(
     `UPDATE test_bookings
         SET released_at = UTC_TIMESTAMP(), released_by = ?, release_note = ?, updated_at = UTC_TIMESTAMP()
       WHERE booking_key = ? AND released_at IS NULL`,
     [input.by.slice(0, 120), input.note?.trim() ? input.note.trim().slice(0, 2000) : null, key],
-  )
+  ))
 
   flushTestBookings()
   refCache = null

@@ -20,6 +20,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import {
+  REGISTER_PROBLEM_MESSAGE,
   TestBookingError,
   canManageTestBookings,
   findTestBooking,
@@ -50,10 +51,18 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   const booking = await loadBooking(params.ref)
   if (!booking) return buildApiError('Booking not found', 404)
 
-  const { checked } = await loadTestBookings()
+  // Never fails the page: an unreadable register is reported as state.
+  const { checked, problem } = await loadTestBookings()
   const mark = await findTestBooking(booking.bookingRef, booking.isNumber, booking.agentBookingId)
 
-  return buildApiSuccess({ mark, checked, canManage: canManageTestBookings(role) })
+  return buildApiSuccess({
+    mark,
+    checked,
+    /** 'missing' = accounts migration not run; 'unreachable' = accounts DB down. */
+    problem,
+    problemMessage: problem ? REGISTER_PROBLEM_MESSAGE[problem] : null,
+    canManage: canManageTestBookings(role),
+  })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { ref: string } }) {
@@ -103,8 +112,15 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
 
     return buildApiError('Unknown action', 400)
   } catch (err) {
-    if (err instanceof TestBookingError) return buildApiError(err.message, 422)
+    // Deliberately never a 502/504: those are the statuses a proxy replaces
+    // with its own page, which is how the reason got lost before and the
+    // person saw only "Request failed (502)".
+    if (err instanceof TestBookingError) {
+      const status = err.problem === 'missing' ? 409 : err.problem ? 424 : 422
+      return buildApiError(err.message, status)
+    }
+    const message = err instanceof Error ? err.message : String(err)
     console.error('[POST /api/bookings/[ref]/test-booking]', err)
-    return buildApiError('Could not reach the Accounts register. Nothing was changed.', 502)
+    return buildApiError(`Could not update the Test Bookings register: ${message}. Nothing was changed.`, 422)
   }
 }

@@ -15,7 +15,13 @@ import { FlaskConical, RotateCcw, Loader2, EyeOff } from 'lucide-react'
 import { formatDateTime, readApiResponse } from '@/lib/utils'
 import type { TestBookingMark } from '@/lib/test-bookings'
 
-interface State { mark: TestBookingMark | null; checked: boolean; canManage: boolean }
+interface State {
+  mark: TestBookingMark | null
+  checked: boolean
+  canManage: boolean
+  problem?: 'missing' | 'unreachable' | 'error' | null
+  problemMessage?: string | null
+}
 
 export default function TestBookingBanner({ bookingRef }: { bookingRef: string }) {
   const [state, setState] = useState<State | null>(null)
@@ -100,6 +106,19 @@ export default function TestBookingBanner({ bookingRef }: { bookingRef: string }
 
   if (!state.canManage) return null
 
+  // The register is not set up on the accounts side yet: say so plainly
+  // instead of offering a button that can only fail.
+  if (state.problem === 'missing') {
+    return (
+      <div className="flex justify-end">
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+          <FlaskConical className="h-3.5 w-3.5" />
+          Test Bookings not available yet — the Accounts register has not been set up (migration pending).
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
       {!open ? (
@@ -129,7 +148,11 @@ export default function TestBookingBanner({ bookingRef }: { bookingRef: string }
           <button onClick={() => setOpen(false)} className="rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-white">Cancel</button>
         </div>
       )}
-      {!state.checked && <span className="text-[11px] text-amber-600">Test register unreachable — showing last known state.</span>}
+      {!state.checked && (
+        <span className="text-[11px] text-amber-600">
+          {state.problemMessage ?? 'Test register unreachable — showing last known state.'}
+        </span>
+      )}
     </div>
   )
 }
