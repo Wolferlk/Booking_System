@@ -109,6 +109,14 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
  *                      neither writes the other's half of the row. Nothing here
  *                      moves money — a row is a claim, not a payment.
  *
+ *   test_bookings      the shared register of bookings that were only ever
+ *                      tests (src/lib/test-bookings.ts). OPS may add a mark
+ *                      and release one — an INSERT of a new row, or stamping
+ *                      released_at on an active one. Never a DELETE: the rows
+ *                      are the history of who hid what. Hiding is derived by
+ *                      both systems from this table; no booking, invoice or
+ *                      P&L is ever touched to make it happen.
+ *
  * Everything else over there stays read-only, and this guard is what keeps that
  * true: the connection is a privileged one, so the restriction cannot be left
  * to whoever writes the next query.
@@ -116,7 +124,10 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
  * @throws if the statement touches any other table.
  */
 const WRITABLE_TABLE =
-  /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals|sl_transport_settlement_requests)`?\b/i
+  /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals|sl_transport_settlement_requests|test_bookings)`?\b/i
+
+/** test_bookings rows are history: OPS may insert and update them, never delete. */
+const NEVER_DELETE = /^\s*delete\s+from\s+`?test_bookings`?\b/i
 
 export async function accountsWrite(
   sql: string,
@@ -124,9 +135,13 @@ export async function accountsWrite(
 ): Promise<{ affectedRows: number; insertId: number }> {
   if (!WRITABLE_TABLE.test(sql)) {
     throw new Error(
-      'Refused: this app may only write to `payment_portals`, `ticket_approvals` and '
-      + '`sl_transport_settlement_requests` in the Accounts database.',
+      'Refused: this app may only write to `payment_portals`, `ticket_approvals`, '
+      + '`sl_transport_settlement_requests` and `test_bookings` in the Accounts database.',
     )
+  }
+
+  if (NEVER_DELETE.test(sql)) {
+    throw new Error('Refused: test_bookings rows are history — release a mark, never delete it.')
   }
 
   // One statement per call. `multipleStatements` is off by default on this

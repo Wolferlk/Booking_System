@@ -9,6 +9,7 @@ import { bookingSourceWhere } from '@/lib/booking-source'
 import { QUICK_FILTERS, quickFilterWhere, type CardQuickFilter } from '@/lib/booking-quick-filters'
 import { calendarDayStart, opsToday } from '@/lib/booking-date-window'
 import { shiftDate } from '@/lib/reports/report-window'
+import { testBookingWhere } from '@/lib/test-bookings'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -52,6 +53,10 @@ export async function GET(req: NextRequest) {
 
   const sourceClause = bookingSourceWhere(searchParams.get('source'))
   if (sourceClause) andClauses.push(sourceClause as Prisma.BookingWhereInput)
+
+  // Test bookings never count towards the operational cards.
+  const tests = await testBookingWhere('exclude')
+  if (tests.clause) andClauses.push(tests.clause as Prisma.BookingWhereInput)
 
   const now = new Date()
   const fragments = QUICK_FILTERS.map(f => quickFilterWhere(f, now))

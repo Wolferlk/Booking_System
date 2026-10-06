@@ -10,6 +10,7 @@ import {
   Download, ChevronDown, Table2,
   Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
   Hotel, Receipt, Filter, ScrollText,
+  FlaskConical,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -237,6 +238,7 @@ function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortFi
 const SWITCH_TONE = {
   amber: { on: 'bg-amber-50 text-amber-800 border-amber-300', track: 'bg-amber-500' },
   teal:  { on: 'bg-teal-50 text-teal-800 border-teal-300',    track: 'bg-teal-500' },
+  violet: { on: 'bg-violet-50 text-violet-800 border-violet-300', track: 'bg-violet-500' },
 } as const
 
 /**
@@ -303,6 +305,10 @@ function BookingsPageInner() {
   // they answer "show me only X", not "which kind of X".
   const [hotelOnlyFilter, setHotelOnlyFilter] = useState(searchParams.get('hotelOnly') === '1')
   const [detailedPnlFilter, setDetailedPnlFilter] = useState(searchParams.get('detailedPnl') === '1')
+  // Test bookings (shared Test Bookings register) are hidden by default; this
+  // switch lists only them. `testHidden` is how many the filters left out.
+  const [testsOnly, setTestsOnly] = useState(searchParams.get('tests') === 'only')
+  const [testHidden, setTestHidden] = useState(0)
   /** False when the Accounts DB could not be reached on the last fetch. */
   const [pnlChecked, setPnlChecked] = useState(true)
   /** False when the accounts ledger could not be read for this page of rows. */
@@ -384,6 +390,7 @@ function BookingsPageInner() {
     if (source)                                         params.set('source',        source)
     if (hotelOnlyFilter)                                params.set('hotelOnly',     '1')
     if (detailedPnlFilter)                              params.set('detailedPnl',   '1')
+    if (testsOnly)                                      params.set('tests',         'only')
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
     // The cohort *is* a date question, asked of the accounts ledger rather than
     // of this column — so it replaces the date filters instead of intersecting
@@ -413,13 +420,14 @@ function BookingsPageInner() {
         setTotal(json.data.total)
         setPnlChecked(json.data.detailedPnlChecked !== false)
         setInvoiceChecked(json.data.invoicePaymentChecked !== false)
+        setTestHidden(Number(json.data.testHidden ?? 0))
       } else if (json.error) {
         toast.error(json.error)
       }
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
+  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, testsOnly, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
 
   // Card counts follow the scope filters only (country + channel) — never the
   // search box — so the row of numbers stays a steady operational readout.
@@ -902,6 +910,16 @@ function BookingsPageInner() {
               tone="teal"
               title="Show only bookings that have a Detailed P&L costing sheet in the Accounts system"
             />
+            {(testsOnly || testHidden > 0) && (
+              <FilterSwitch
+                on={testsOnly}
+                onChange={v => { setTestsOnly(v); setPage(1) }}
+                icon={<FlaskConical className="w-3.5 h-3.5" />}
+                label={testsOnly ? 'Test bookings only' : `${testHidden} test hidden`}
+                tone="violet"
+                title="Test bookings are hidden from every list, count and daily mail (here and in Accounts). Switch on to list only them."
+              />
+            )}
           </div>
 
           {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Created date range */}

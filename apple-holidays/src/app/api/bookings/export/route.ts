@@ -8,6 +8,7 @@ import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
+import { testBookingWhere } from '@/lib/test-bookings'
 import { explicitDateRange, isBookingDateFilter, periodDateRange } from '@/lib/booking-date-window'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@prisma/client'
@@ -153,6 +154,10 @@ export async function GET(req: NextRequest) {
   const hotelOnlyParam = searchParams.get('hotelOnly')
   if (hotelOnlyParam === '1') andClauses.push({ hotelOnly: true })
   else if (hotelOnlyParam === '0') andClauses.push({ hotelOnly: false })
+
+  // Test bookings (shared Test Bookings register) never reach the export.
+  const tests = await testBookingWhere(req.nextUrl.searchParams.get('tests') === 'only' ? 'only' : 'exclude')
+  if (tests.clause) andClauses.push(tests.clause)
 
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 

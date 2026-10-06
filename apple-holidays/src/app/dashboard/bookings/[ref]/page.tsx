@@ -32,6 +32,7 @@ import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import DetailedPnlPanel from '@/components/bookings/detailed-pnl-panel'
 import InvoicePaymentPanel from '@/components/bookings/invoice-payment-panel'
+import TestBookingBanner from '@/components/bookings/test-booking-banner'
 import PrecheckPanel from '@/components/bookings/precheck-panel'
 import ReconfirmDelayPanel from '@/components/bookings/reconfirm-delay-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
@@ -1443,6 +1444,10 @@ Wishing you a wonderful trip! ✈️
         'p-8 space-y-6',
         isCancelled && 'bg-slate-100/70 [&>*:not(:first-child)]:opacity-75 [&>*:not(:first-child)]:grayscale-[45%]',
       )}>
+
+        {/* Shared Test Bookings register: banner when marked, a small
+            "Mark as test" control for the roles that may use it. */}
+        <TestBookingBanner bookingRef={ref} />
 
         {isCancelled && (
           <div className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">

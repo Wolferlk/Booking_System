@@ -383,6 +383,12 @@ function countCheckSection(d: ReportData): string {
        </div>`
     : ''
 
+  // ── Test bookings, left out of every figure above ─────────────────────────
+  const tx = cc.testExcluded
+  const testBlock = tx && (tx.count > 0 || tx.active > 0)
+    ? `<div class="more" style="color:#6d28d9;">&#9879; <strong>${num(tx.count)} test booking${tx.count === 1 ? '' : 's'}</strong> in this period ${tx.count === 1 ? 'is' : 'are'} left out of every count above${tx.refs.length ? ` (${esc(tx.refs.slice(0, 12).join(', '))}${tx.refs.length > 12 ? ` and ${num(tx.refs.length - 12)} more` : ''})` : ''} · ${num(tx.active)} marked as test in total, on the shared Test Bookings register.</div>`
+    : ''
+
   const provenance = unswept
     ? ''
     : `<div class="more">Last checked ${stamp(cc.sweptAt as string)} · one booking is counted once on every side; invoice revisions are not counted again. Source: the accounts Sync Ledger — the same rows the accounts report for this day was built from.</div>`
@@ -391,7 +397,7 @@ function countCheckSection(d: ReportData): string {
     'Count check',
     'Apple System · OPS · P&L · invoice — the same four numbers accounts reports',
     accent,
-    verdict + table + intake + activity + provenance,
+    verdict + table + testBlock + intake + activity + provenance,
   )
 }
 

@@ -20,6 +20,7 @@
  * may not exist on every environment. Each read is probed once (`hasTable`) and
  * degrades to an empty list plus a warning rather than 500-ing the page.
  */
+import { loadTestBookings } from '@/lib/test-bookings'
 import type { RowDataPacket } from 'mysql2/promise'
 import { b2bQuery, b2bBatch, isB2bConfigured } from './b2b-db'
 
@@ -766,6 +767,17 @@ export async function listB2bBookings(params: ListParams = {}): Promise<ListResu
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 200)
   const offset = Math.max(params.offset ?? 0, 0)
 
+  // Bookings marked as tests on the shared register are left out of the list
+  // and its board figures. Ids come from the register's AAH-B2B-<id> keys and
+  // are integers by construction (regex-parsed), so inlining them is safe.
+  const { marks } = await loadTestBookings()
+  const testIds = Array.from(marks.keys())
+    .map(k => /^AAHB2B0*(\d+)$/.exec(k)?.[1])
+    .filter((v): v is string => !!v)
+    .map(Number)
+    .filter(n => Number.isInteger(n) && n > 0)
+  const LIVE_ONLY = testIds.length ? `${CONFIRMED_ONLY} AND b.id NOT IN (${testIds.join(',')})` : CONFIRMED_ONLY
+
   return b2bBatch(async (q) => {
     const warnings: string[] = []
     const present: Record<ComponentTable, boolean> = {
@@ -778,7 +790,7 @@ export async function listB2bBookings(params: ListParams = {}): Promise<ListResu
       if (!present[t]) warnings.push(`Table ${t} is not present on this database — those components are not shown.`)
     }
 
-    const where: string[] = [CONFIRMED_ONLY]
+    const where: string[] = [LIVE_ONLY]
     const args: unknown[] = []
 
     if (params.from) { where.push('b.created_at >= ?'); args.push(`${params.from} 00:00:00`) }
@@ -844,11 +856,11 @@ export async function listB2bBookings(params: ListParams = {}): Promise<ListResu
     // Board-level stats over the whole confirmed set, not just this page.
     const grossRows = await q<RowDataPacket & { currency: string; amount: string; n: number }>(
       `SELECT COALESCE(b.currency,'—') AS currency, SUM(b.amount) AS amount, COUNT(*) AS n
-       FROM b2b_bookings b WHERE ${CONFIRMED_ONLY} GROUP BY b.currency ORDER BY amount DESC`,
+       FROM b2b_bookings b WHERE ${LIVE_ONLY} GROUP BY b.currency ORDER BY amount DESC`,
     )
     const [recentRow] = await q<RowDataPacket & { n: number }>(
       `SELECT COUNT(*) AS n FROM b2b_bookings b
-       WHERE ${CONFIRMED_ONLY} AND b.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+       WHERE ${LIVE_ONLY} AND b.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
     )
 
     const componentTotals: ComponentCounts = { flights: 0, hotels: 0, insurances: 0, lifestyles: 0 }
@@ -862,7 +874,7 @@ export async function listB2bBookings(params: ListParams = {}): Promise<ListResu
       const [row] = await q<RowDataPacket & { n: number }>(
         `SELECT COUNT(*) AS n FROM ${table} c
          JOIN b2b_bookings b ON b.id = c.booking_id
-         WHERE ${CONFIRMED_ONLY} AND c.deleted_at IS NULL`,
+         WHERE ${LIVE_ONLY} AND c.deleted_at IS NULL`,
       )
       componentTotals[key] = Number(row?.n ?? 0)
     }

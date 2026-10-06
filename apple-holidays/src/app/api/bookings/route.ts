@@ -12,6 +12,7 @@ import { explicitDateRange, isBookingDateFilter, periodDateRange } from '@/lib/b
 import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
 import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import { cohortBookingRefs } from '@/lib/reports/created-reconcile'
+import { testBookingWhere } from '@/lib/test-bookings'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -338,6 +339,19 @@ export async function GET(req: NextRequest) {
     andClauses.push({ bookingRef: { in: cohort.refs } })
   }
 
+  /**
+   * Test bookings — marked on the shared register (src/lib/test-bookings.ts)
+   * — are kept out of the list and every count by default. `tests=only` lists
+   * just them (the "Test bookings" chip), `tests=include` shows everything.
+   * How many the current filters hid is returned as `testHidden`, so the list
+   * can say so rather than leave a booking to vanish without a word.
+   */
+  const testsParam = searchParams.get('tests')
+  const testMode = testsParam === 'only' || testsParam === 'include' ? testsParam : 'exclude'
+  const scopeBeforeTests: Record<string, unknown> = andClauses.length > 0 ? { AND: [...andClauses] } : {}
+  const tests = await testBookingWhere(testMode)
+  if (tests.clause) andClauses.push(tests.clause)
+
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
   const baseInclude = {
@@ -367,7 +381,7 @@ export async function GET(req: NextRequest) {
     tourAgenda:  { select: { id: true } },
   }
 
-  const [total, bookings] = await Promise.all([
+  const [total, bookings, testHidden] = await Promise.all([
     prisma.booking.count({ where }),
     prisma.booking.findMany({
       where,
@@ -376,6 +390,10 @@ export async function GET(req: NextRequest) {
       take: limit,
       include,
     }),
+    // Test bookings the current filters would otherwise have listed.
+    tests.refs.length
+      ? prisma.booking.count({ where: { AND: [scopeBeforeTests, { bookingRef: { in: tests.refs } }] } })
+      : Promise.resolve(0),
   ])
 
   /**
@@ -437,6 +455,11 @@ export async function GET(req: NextRequest) {
     detailedPnlTruncated,
     /** False when the invoice ledger could not be read; the cells say "unknown". */
     invoicePaymentChecked: invoiceSummaries !== null,
+    /** Test bookings matching these filters (hidden unless tests=only/include). */
+    testHidden,
+    testMode,
+    /** False when the test register could not be read just now. */
+    testChecked: tests.checked,
   })
 }
 

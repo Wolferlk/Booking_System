@@ -62,6 +62,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { accountsQuery } from '@/lib/accounts-db'
 import { prisma } from '@/lib/prisma'
 import { bookingSourceOf } from '@/lib/booking-source'
+import { loadTestBookings, testBookingKey } from '@/lib/test-bookings'
 import type { ReportWindow } from './report-window'
 
 /**
@@ -104,6 +105,11 @@ export interface CountCheckTally {
   cancelled: number
   /** B2C orders settling to zero after refunds — correctly uninvoiced. */
   notBillable: number
+  /**
+   * Test bookings (the shared test register) left out of every figure here.
+   * Mirrors the `test` field of SyncParityService::tallyFor().
+   */
+  test: number
   /** `upstream - cancelled`: what the day is entitled to expect. */
   expected: number
   /** `expected - notBillable`: the same, for invoices. */
@@ -177,6 +183,8 @@ export interface CountCheckSection {
   overall: CountCheckTally
   activity: AccountsActivity | null
   intake: IntakeReconciliation | null
+  /** Test bookings this window's ledger rows held, left out of every figure. */
+  testExcluded: { count: number; refs: string[]; active: number }
 }
 
 // ─── Ledger rows ──────────────────────────────────────────────────────────────
@@ -198,7 +206,7 @@ function emptyTally(channel: CountCheckTally['channel'], label: string): CountCh
   return {
     channel, label,
     upstream: 0, bookings: 0, pnls: 0, invoices: 0,
-    cancelled: 0, notBillable: 0,
+    cancelled: 0, notBillable: 0, test: 0,
     expected: 0, expectedInvoices: 0,
     pnlShort: 0, invoiceShort: 0, bookingShort: 0,
     balanced: true, status: 'balanced', verdict: '', checkedAt: null,
@@ -245,11 +253,18 @@ function finalise(t: CountCheckTally): CountCheckTally {
 }
 
 /** Fold one channel's ledger rows into its tally. */
-function tally(rows: LedgerRow[], channel: CountCheckChannel): CountCheckTally {
+function tally(rows: LedgerRow[], channel: CountCheckChannel, tests: Set<string> = new Set()): CountCheckTally {
   const t = emptyTally(channel, COUNT_CHECK_CHANNELS[channel])
   let checked: number | null = null
 
   for (const row of rows) {
+    // A test booking is neither owed a P&L nor an invoice, and is not one of
+    // the day's bookings — counted apart, exactly as SyncParityService does.
+    if (tests.size && tests.has(testBookingKey(row.is_key))) {
+      t.test++
+      continue
+    }
+
     t.upstream++
 
     const at = row.last_checked_at ? new Date(row.last_checked_at).getTime() : null
@@ -318,7 +333,7 @@ interface PnlRow extends RowDataPacket { documents: number; bookings: number }
  * one row per booking (the report collapses revisions to the latest document),
  * classified by what that document did — raised, amended or voided.
  */
-async function fetchActivity(window: ReportWindow): Promise<AccountsActivity> {
+async function fetchActivity(window: ReportWindow, tests: Set<string> = new Set()): Promise<AccountsActivity> {
   const from = utcStamp(window.start)
   const to = utcStamp(window.end)
 
@@ -357,6 +372,8 @@ async function fetchActivity(window: ReportWindow): Promise<AccountsActivity> {
   for (const r of invoiceRows) {
     // A key that is empty on both number columns is not a billable document.
     if (!String(r.k ?? '').trim()) continue
+    // Nor is a test booking's.
+    if (tests.size && tests.has(testBookingKey(r.k))) continue
 
     const movement = Number(r.cancelled) ? 'cancelled' : Number(r.amended) ? 'amended' : 'new'
     out.invoiceBookings++
@@ -386,7 +403,7 @@ async function fetchActivity(window: ReportWindow): Promise<AccountsActivity> {
  * produces an OPS booking, so counting them here would compare two different
  * populations and manufacture a gap that does not exist.
  */
-async function reconcileIntake(window: ReportWindow, rows: LedgerRow[]): Promise<IntakeReconciliation> {
+async function reconcileIntake(window: ReportWindow, rows: LedgerRow[], tests: Set<string> = new Set()): Promise<IntakeReconciliation> {
   const asRows = rows.filter(r => r.channel === 'as')
 
   const confirmedKeys = new Set(asRows.map(r => ledgerKey(r.is_key)).filter(Boolean))
@@ -401,6 +418,7 @@ async function reconcileIntake(window: ReportWindow, rows: LedgerRow[]): Promise
   // exactly the unattributed bookings this reconciliation exists to surface.
   const createdKeys = created
     .filter(b => bookingSourceOf(b.agent) !== 'B2C')
+    .filter(b => !tests.has(testBookingKey(b.bookingRef)))
     .map(b => ledgerKey(b.bookingRef))
     .filter(Boolean)
 
@@ -432,7 +450,7 @@ async function reconcileIntake(window: ReportWindow, rows: LedgerRow[]): Promise
 const UNAVAILABLE: CountCheckSection = {
   available: false, error: null, sweptAt: null, balanced: false, unchecked: [],
   headline: '', channels: [], overall: emptyTally('all', 'All channels'),
-  activity: null, intake: null,
+  activity: null, intake: null, testExcluded: { count: 0, refs: [], active: 0 },
 }
 
 /**
@@ -456,8 +474,14 @@ export async function collectCountCheck(window: ReportWindow): Promise<CountChec
     return { ...UNAVAILABLE, error: `The accounts database could not be read (${message}).` }
   }
 
+  // Test bookings come out of every figure below; never fatal (fail-open).
+  const testSet = await loadTestBookings()
+  const tests = new Set(testSet.marks.keys())
+  const testRows = tests.size ? rows.filter(r => tests.has(testBookingKey(r.is_key))) : []
+  const liveRows = tests.size ? rows.filter(r => !tests.has(testBookingKey(r.is_key))) : rows
+
   const channels = (Object.keys(COUNT_CHECK_CHANNELS) as CountCheckChannel[])
-    .map(ch => tally(rows.filter(r => r.channel === ch), ch))
+    .map(ch => tally(rows.filter(r => r.channel === ch), ch, tests))
 
   const overall = emptyTally('all', 'All channels')
   const unchecked: string[] = []
@@ -469,6 +493,7 @@ export async function collectCountCheck(window: ReportWindow): Promise<CountChec
     overall.invoices += t.invoices
     overall.cancelled += t.cancelled
     overall.notBillable += t.notBillable
+    overall.test += t.test
     overall.expected += t.expected
     overall.expectedInvoices += t.expectedInvoices
     overall.pnlShort += t.pnlShort
@@ -490,11 +515,11 @@ export async function collectCountCheck(window: ReportWindow): Promise<CountChec
   // The activity and intake reads are extras: a failure in either leaves the
   // verdict above standing rather than taking the section down with it.
   const [activity, intake] = await Promise.all([
-    fetchActivity(window).catch(err => {
+    fetchActivity(window, tests).catch(err => {
       console.error('[report] count check: accounts activity read failed:', err instanceof Error ? err.message : err)
       return null
     }),
-    reconcileIntake(window, rows).catch(err => {
+    reconcileIntake(window, liveRows, tests).catch(err => {
       console.error('[report] count check: intake reconciliation failed:', err instanceof Error ? err.message : err)
       return null
     }),
@@ -511,5 +536,10 @@ export async function collectCountCheck(window: ReportWindow): Promise<CountChec
     overall,
     activity,
     intake,
+    testExcluded: {
+      count: testRows.length,
+      refs: testRows.map(r => String(r.booking_ref || r.is_key || '').trim()).filter(Boolean).slice(0, 40),
+      active: testSet.marks.size,
+    },
   }
 }

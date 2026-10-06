@@ -49,6 +49,20 @@ import {
 import { collectPeriodInsights, finaliseInsights, type PeriodInsights } from './period-insights'
 import { collectOpsBoardDigest, type OpsBoardDigest } from './ops-board-digest'
 import type { Prisma } from '@prisma/client'
+import { testBookingWhere } from '@/lib/test-bookings'
+
+/**
+ * The country scope every section reads bookings through, plus the shared
+ * test-booking register: a booking marked as a test is not in any figure this
+ * report prints. Fail-open — an unreadable register hides nothing.
+ */
+async function reportScope(countries: string[]): Promise<Prisma.BookingWhereInput | null> {
+  const country = countryWhere(countries)
+  const { clause } = await testBookingWhere('exclude')
+  if (!clause) return country
+  if (!country) return clause as Prisma.BookingWhereInput
+  return { AND: [country, clause as Prisma.BookingWhereInput] }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -608,7 +622,7 @@ async function collectCreated(
   maxRows: number,
   cohort: AppleCohort,
 ): Promise<CreatedSection> {
-  const scope = countryWhere(countries)
+  const scope = await reportScope(countries)
   const prev = previousWindow(w)
 
   // Everything the window could possibly be about: bookings filed here inside
@@ -737,7 +751,7 @@ async function previousCohortTotal(
  * arrives, so it must not drift back to yesterday on a daily report.
  */
 async function collectOnGround(w: ReportWindow, countries: string[], maxRows: number): Promise<OnGroundSection> {
-  const scope = countryWhere(countries)
+  const scope = await reportScope(countries)
   const dayStart = zonedDayStart(w.today, w.timezone)
   const dayEnd = zonedDayStart(shiftDate(w.today, 1), w.timezone)
 
@@ -808,7 +822,7 @@ function isAccommodationOnly(r: {
  * driver allocation above all — is about guests we are actually moving.
  */
 async function collectReadiness(w: ReportWindow, countries: string[], maxRows: number): Promise<ReadinessSection> {
-  const scope = countryWhere(countries)
+  const scope = await reportScope(countries)
   const fromDate = shiftDate(w.today, 1)
   const toDate = shiftDate(w.today, READINESS_DAYS)
   const start = zonedDayStart(fromDate, w.timezone)
@@ -1008,7 +1022,7 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
  * who would otherwise ask the same question again tomorrow.
  */
 async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: number): Promise<ReconfirmSection> {
-  const scope = countryWhere(countries)
+  const scope = await reportScope(countries)
   const fromDate = w.today
   const toDate = shiftDate(w.today, RECONFIRM_DUE_DAYS)
   const start = zonedDayStart(fromDate, w.timezone)
@@ -1317,7 +1331,7 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
 
 /** Every confirmed tour that has not started yet, from tomorrow onwards. */
 async function collectUpcoming(w: ReportWindow, countries: string[], maxRows: number): Promise<UpcomingSection> {
-  const scope = countryWhere(countries)
+  const scope = await reportScope(countries)
   const tomorrow = zonedDayStart(shiftDate(w.today, 1), w.timezone)
   const in7 = zonedDayStart(shiftDate(w.today, 8), w.timezone)
   const in30 = zonedDayStart(shiftDate(w.today, 31), w.timezone)
