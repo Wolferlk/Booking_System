@@ -11,9 +11,9 @@
  * ops has typed since then is left exactly as it is.
  */
 import { prisma } from './prisma'
-import { fetchOrderLineTravellers, fetchPassengerDetails } from './b2c-db'
-import type { B2cOrderLineTravellers, B2cPassengerDetail } from './b2c-db'
-import { collectPassengerIds, resolveOrderTravellers } from './b2c-travellers'
+import { fetchOrderLineBookingNames, fetchOrderLineTravellers, fetchPassengerDetails } from './b2c-db'
+import type { B2cOrderLineBookingNames, B2cOrderLineTravellers, B2cPassengerDetail } from './b2c-db'
+import { bookingRowNames, collectPassengerIds, resolveOrderTravellers, withBookingRowNames } from './b2c-travellers'
 import type { OrderTravellers } from './b2c-travellers'
 import { isB2cBooking } from './booking-source'
 import { passengerNameKey } from './passenger-note-key'
@@ -44,6 +44,25 @@ export async function loadOrderTravellers(
     linesByOrder.forEach((orderLines, orderId) => {
       byOrder.set(orderId, resolveOrderTravellers(orderLines, passengersById))
     })
+
+    // Most checkouts leave the passenger table empty; the lifestyle / hotel /
+    // education booking rows still hold the names typed in. A failure here
+    // only loses this fallback — the travellers found above still stand.
+    try {
+      const rowNames = new Map<number, B2cOrderLineBookingNames[]>()
+      for (const l of await fetchOrderLineBookingNames(orderIds)) {
+        const id = Number(l.order_id)
+        const list = rowNames.get(id)
+        if (list) list.push(l)
+        else rowNames.set(id, [l])
+      }
+      rowNames.forEach((lines, orderId) => {
+        const merged = withBookingRowNames(byOrder.get(orderId), bookingRowNames(lines))
+        if (merged) byOrder.set(orderId, merged)
+      })
+    } catch (err) {
+      console.error('[b2c-lead-name] booking-row names unavailable (non-fatal):', err)
+    }
     return { byOrder, error: null }
   } catch (err) {
     return { byOrder, error: err instanceof Error ? err.message : String(err) }

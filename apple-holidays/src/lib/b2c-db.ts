@@ -206,6 +206,25 @@ export interface B2cOrderLineTravellers extends mysql.RowDataPacket {
   child_ids: string | null
 }
 
+/**
+ * Names held on the booking rows themselves, per order line — what the Aahaas
+ * admin prints under Traveler Details. Only the column for the line's own
+ * category is filled; see {@link fetchOrderLineBookingNames}.
+ */
+export interface B2cOrderLineBookingNames extends mysql.RowDataPacket {
+  order_id: number
+  line_id: number
+  service_date: string | null
+  category_id: number | null
+  /** Lifestyle: comma-separated full names. */
+  ls_adults: string | null
+  ls_children: string | null
+  /** Education: the student. */
+  student_name: string | null
+  /** Hotels: `bookingdataset.paxDetails`, as JSON text. */
+  hotel_pax: string | null
+}
+
 /** A row of `aahaas_passenger_details` — the names typed in at checkout. */
 export interface B2cPassengerDetail extends mysql.RowDataPacket {
   id: number
@@ -440,6 +459,58 @@ export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cO
        FROM checkouts_more_data m
        JOIN tbl_checkouts c ON c.id = m.checkout_id
        ${joins}
+      WHERE m.order_id IN (${ids})
+      ORDER BY m.order_id, m.service_date, m.id`,
+  )
+}
+
+/** Booking-row name columns that exist on the live store, "table.column". */
+async function bookingNameColumns(): Promise<Set<string>> {
+  const rows = await b2cQuery<mysql.RowDataPacket & { t: string; c: string }>(
+    `SELECT TABLE_NAME AS t, COLUMN_NAME AS c
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND ((TABLE_NAME = 'tbl_lifestyle_bookings' AND COLUMN_NAME IN ('lifestyle_adult_details', 'lifestyle_children_details'))
+          OR (TABLE_NAME = 'edu_tbl_booking'        AND COLUMN_NAME = 'student_name')
+          OR (TABLE_NAME = 'hotel_prebooking'       AND COLUMN_NAME = 'bookingdataset'))`,
+  )
+  return new Set(rows.map((r) => `${r.t}.${r.c}`))
+}
+
+/**
+ * Traveller names stored on the booking rows, per order line. Most checkouts
+ * leave `aahaas_passenger_details` empty, but the lifestyle / education / hotel
+ * booking keeps the names the customer typed — the same fields the Aahaas admin
+ * and the accounts system's B2cTravellerService read. Flights are not here;
+ * their manifest comes from `aahaas_flight_bookingsv2` (see b2c-flight.ts).
+ *
+ * Each booking table is joined only for its own category: `related_order_id`
+ * is a different table's key per category, so an unfiltered join would hand a
+ * hotel line somebody else's lifestyle travellers. Hotel payloads are large, so
+ * only the `paxDetails` subtree comes back, and only from valid JSON.
+ */
+export async function fetchOrderLineBookingNames(orderIds: number[]): Promise<B2cOrderLineBookingNames[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const cols = await bookingNameColumns()
+  const has = (c: string) => cols.has(c)
+
+  const lsAdults   = has('tbl_lifestyle_bookings.lifestyle_adult_details')    ? 'ls.lifestyle_adult_details'    : 'NULL'
+  const lsChildren = has('tbl_lifestyle_bookings.lifestyle_children_details') ? 'ls.lifestyle_children_details' : 'NULL'
+  const student    = has('edu_tbl_booking.student_name')                      ? 'ed.student_name'               : 'NULL'
+  const hotelPax   = has('hotel_prebooking.bookingdataset')
+    ? `CASE WHEN JSON_VALID(hp.bookingdataset) THEN JSON_EXTRACT(hp.bookingdataset, '$.paxDetails') END`
+    : 'NULL'
+
+  return b2cQuery<B2cOrderLineBookingNames>(
+    `SELECT m.order_id, m.id AS line_id, m.service_date, c.main_category_id AS category_id,
+            ${lsAdults} AS ls_adults, ${lsChildren} AS ls_children,
+            ${student} AS student_name, ${hotelPax} AS hotel_pax
+       FROM checkouts_more_data m
+       JOIN tbl_checkouts c ON c.id = m.checkout_id
+       LEFT JOIN tbl_lifestyle_bookings ls ON c.main_category_id = 3 AND ls.lifestyle_booking_id = c.related_order_id
+       LEFT JOIN hotel_prebooking       hp ON c.main_category_id = 4 AND hp.prebooking_id        = c.related_order_id
+       LEFT JOIN edu_tbl_booking        ed ON c.main_category_id = 5 AND ed.booking_id           = c.related_order_id
       WHERE m.order_id IN (${ids})
       ORDER BY m.order_id, m.service_date, m.id`,
   )
