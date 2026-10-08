@@ -30,6 +30,7 @@
 import type { RowDataPacket } from 'mysql2/promise'
 import { accountsQuery, accountsWrite } from '@/lib/accounts-db'
 import { prisma } from '@/lib/prisma'
+import { B2C_AGENT_NAME, isB2cBooking } from '@/lib/booking-source'
 import type { UserRole } from '@prisma/client'
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -47,6 +48,18 @@ export function testBookingKey(reference: string | null | undefined): string {
   ref = ref.replace(/_R\d+(\/R\d+)?$/i, '').replace(/-?CXL$/i, '')
   const key = ref.toUpperCase().replace(/[^A-Z0-9]/g, '')
   return EMPTY_KEYS.has(key) ? '' : key
+}
+
+/**
+ * The reference an OPS booking is registered under. B2C orders are imported
+ * with the bare checkout id as their ref (and IS number), but accounts files
+ * them as AHS-<id> (B2cPnlService::invoiceNumberFor) — and a bare number is
+ * refused by the register. Everything else: the IS number, else the ref.
+ */
+export function testBookingReference(b: { bookingRef: string; isNumber?: string | null; agent?: string | null }): string {
+  const ref = b.bookingRef.trim()
+  if (isB2cBooking(b.agent) && /^\d+$/.test(ref)) return `AHS-${ref}`
+  return b.isNumber || b.bookingRef
 }
 
 /** Why a reference cannot be marked, or null. Mirrors TestBookingRegistry::problemWith. */
@@ -222,19 +235,22 @@ export async function testBookingRefs(set?: TestBookingSet): Promise<{ refs: str
   }
 
   const candidates = keys.flatMap(spellings)
+  // AHS14999 → the B2C order stored here as bookingRef "14999".
+  const b2cIds = keys.map(k => k.match(/^AHS(\d+)$/)?.[1]).filter((id): id is string => !!id)
   const rows = await prisma.booking.findMany({
     where: {
       OR: [
         { bookingRef: { in: candidates } },
         { isNumber: { in: candidates } },
         { agentBookingId: { in: candidates } },
+        ...(b2cIds.length ? [{ bookingRef: { in: b2cIds }, agent: B2C_AGENT_NAME }] : []),
       ],
     },
-    select: { bookingRef: true, isNumber: true, agentBookingId: true },
+    select: { bookingRef: true, isNumber: true, agentBookingId: true, agent: true },
   })
 
   const refs = rows
-    .filter(b => [b.bookingRef, b.isNumber, b.agentBookingId].some(r => marks.has(testBookingKey(r))))
+    .filter(b => [b.bookingRef, b.isNumber, b.agentBookingId, testBookingReference(b)].some(r => marks.has(testBookingKey(r))))
     .map(b => b.bookingRef)
 
   refCache = { at: Date.now(), keys: signature, refs }

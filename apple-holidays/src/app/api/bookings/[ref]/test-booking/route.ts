@@ -24,6 +24,7 @@ import {
   TestBookingError,
   canManageTestBookings,
   findTestBooking,
+  testBookingReference,
   loadTestBookings,
   markTestBooking,
   releaseTestBooking,
@@ -53,7 +54,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
 
   // Never fails the page: an unreadable register is reported as state.
   const { checked, problem } = await loadTestBookings()
-  const mark = await findTestBooking(booking.bookingRef, booking.isNumber, booking.agentBookingId)
+  const mark = await findTestBooking(testBookingReference(booking), booking.bookingRef, booking.isNumber, booking.agentBookingId)
 
   return buildApiSuccess({
     mark,
@@ -78,13 +79,13 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
 
   const body = await req.json().catch(() => ({})) as { action?: string; reason?: string; note?: string }
   const by = String(session.user.email || session.user.name || session.user.id)
-  // The booking's own reference unless it carries an IS number, which is the
-  // key accounts files invoices and P&Ls under.
-  const reference = booking.isNumber || booking.bookingRef
+  // The key accounts files invoices and P&Ls under: AHS-<id> for a B2C order,
+  // else the IS number, else the booking's own reference.
+  const reference = testBookingReference(booking)
 
   try {
     if (body.action === 'release') {
-      const existing = await findTestBooking(booking.bookingRef, booking.isNumber, booking.agentBookingId)
+      const existing = await findTestBooking(testBookingReference(booking), booking.bookingRef, booking.isNumber, booking.agentBookingId)
       const released = await releaseTestBooking({ reference: existing?.ref ?? reference, by, note: body.note ?? null })
       return buildApiSuccess({ released }, `${booking.bookingRef} is a real booking again — back in every list and count.`)
     }
