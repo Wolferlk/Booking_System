@@ -14,12 +14,20 @@
  * low-volume configuration, not booking data. See `report-schedules.ts`.
  */
 import { prisma } from '@/lib/prisma'
-import { normalizePhone } from './te-api'
+import { normalizePhone, teGet } from './te-api'
 
 export const APPROVALS_KEY = 'te_call_approvals'
 
-/** Ledger is keyed by digits-only phone; oldest entries drop past this size. */
-const MAX_ENTRIES = 3000
+/**
+ * One `SystemSetting` row per number, keyed `te_call_approval:<digits>`.
+ *
+ * The ledger used to be a single JSON blob under `APPROVALS_KEY`, but
+ * `system_settings.value` is a TEXT column (64 KB) — it filled up after a few
+ * hundred numbers and every later write failed silently, so sends from the
+ * booking page never reached the Ops Board. The legacy blob is still read and
+ * merged underneath the per-number rows; it is never written again.
+ */
+const ENTRY_PREFIX = 'te_call_approval:'
 
 export type ApprovalState = 'approved' | 'pending' | 'not_requested'
 
@@ -35,38 +43,43 @@ export interface ApprovalEntry {
 
 type Ledger = Record<string, ApprovalEntry>
 
-async function readLedger(): Promise<Ledger> {
+function parseJson<T>(value: string | null | undefined): T | null {
+  if (!value) return null
+  try { return JSON.parse(value) as T } catch { return null }
+}
+
+async function readLegacyBlob(): Promise<Ledger> {
   const row = await prisma.systemSetting.findUnique({ where: { key: APPROVALS_KEY } })
-  if (!row?.value) return {}
-  try {
-    const parsed = JSON.parse(row.value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Ledger) : {}
-  } catch {
-    console.warn('[TE approvals] ledger holds unparseable JSON — starting empty')
-    return {}
-  }
+  const parsed = parseJson<Ledger>(row?.value)
+  if (row?.value && !parsed) console.warn('[TE approvals] legacy ledger holds unparseable JSON — ignoring it')
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
 }
 
-async function writeLedger(ledger: Ledger): Promise<void> {
-  let entries = Object.entries(ledger)
-  if (entries.length > MAX_ENTRIES) {
-    // Keep approved numbers and the most recent requests; a dropped stale entry
-    // only costs the report an "approval unknown", never a wrong "approved".
-    entries = entries
-      .sort((a, b) => (b[1].approvedAt ?? b[1].requestedAt ?? '').localeCompare(a[1].approvedAt ?? a[1].requestedAt ?? ''))
-      .slice(0, MAX_ENTRIES)
+async function readLedger(): Promise<Ledger> {
+  const [legacy, rows] = await Promise.all([
+    readLegacyBlob(),
+    prisma.systemSetting.findMany({ where: { key: { startsWith: ENTRY_PREFIX } } }),
+  ])
+  const ledger: Ledger = { ...legacy }
+  for (const row of rows) {
+    const entry = parseJson<ApprovalEntry>(row.value)
+    if (entry?.phone) ledger[entry.phone] = entry
   }
-  const json = JSON.stringify(Object.fromEntries(entries))
+  return ledger
+}
+
+async function readEntry(key: string): Promise<ApprovalEntry | undefined> {
+  const row = await prisma.systemSetting.findUnique({ where: { key: ENTRY_PREFIX + key } })
+  return parseJson<ApprovalEntry>(row?.value) ?? (await readLegacyBlob())[key]
+}
+
+async function writeEntry(entry: ApprovalEntry): Promise<void> {
+  const json = JSON.stringify(entry)
   await prisma.systemSetting.upsert({
-    where: { key: APPROVALS_KEY },
+    where: { key: ENTRY_PREFIX + entry.phone },
     update: { value: json },
-    create: { key: APPROVALS_KEY, value: json },
+    create: { key: ENTRY_PREFIX + entry.phone, value: json },
   })
-}
-
-/** Re-read before write so two admins approving at once cannot clobber each other. */
-async function mutate(fn: (l: Ledger) => Ledger): Promise<void> {
-  await writeLedger(fn(await readLedger()))
 }
 
 export async function recordApprovalRequest(opts: {
@@ -79,39 +92,82 @@ export async function recordApprovalRequest(opts: {
   if (!key) return
   const now = new Date().toISOString()
 
-  await mutate(ledger => {
-    const prev = ledger[key]
-    return {
-      ...ledger,
-      [key]: {
-        phone: key,
-        bookingRef: opts.bookingRef ?? prev?.bookingRef ?? null,
-        requestedAt: now,
-        requestedBy: opts.actor ?? prev?.requestedBy ?? null,
-        approvedAt: opts.alreadyApproved ? prev?.approvedAt ?? now : prev?.approvedAt ?? null,
-      },
-    }
+  const prev = await readEntry(key)
+  await writeEntry({
+    phone: key,
+    bookingRef: opts.bookingRef ?? prev?.bookingRef ?? null,
+    requestedAt: now,
+    requestedBy: opts.actor ?? prev?.requestedBy ?? null,
+    approvedAt: opts.alreadyApproved ? prev?.approvedAt ?? now : prev?.approvedAt ?? null,
   })
 }
 
 /** Mark a number as approved — from `already_allowed`, or from a connected call. */
-export async function markApproved(phone: string, at: string = new Date().toISOString()): Promise<void> {
+export async function markApproved(
+  phone: string,
+  at: string = new Date().toISOString(),
+  bookingRef?: string | null,
+): Promise<void> {
   const key = normalizePhone(phone)
   if (!key) return
-  await mutate(ledger => {
-    const prev = ledger[key]
-    if (prev?.approvedAt) return ledger
-    return {
-      ...ledger,
-      [key]: {
-        phone: key,
-        bookingRef: prev?.bookingRef ?? null,
-        requestedAt: prev?.requestedAt ?? null,
-        requestedBy: prev?.requestedBy ?? null,
-        approvedAt: at,
-      },
-    }
+  const prev = await readEntry(key)
+  if (prev?.approvedAt) return
+  await writeEntry({
+    phone: key,
+    bookingRef: prev?.bookingRef ?? bookingRef ?? null,
+    requestedAt: prev?.requestedAt ?? null,
+    requestedBy: prev?.requestedBy ?? null,
+    approvedAt: at,
   })
+}
+
+/**
+ * Meta's real permission state for a batch of numbers, via the upstream
+ * `GET approval?to=` — the same check behind the "Customer allows calls" chip on
+ * the booking page. Numbers that come back allowed are written to the ledger, so
+ * the next read does not have to ask again.
+ *
+ * Bounded on purpose: a board load must not wait on a slow upstream, so each
+ * lookup has a short timeout and a number that fails is simply left out of the
+ * result (the caller keeps whatever the ledger said). Results are cached for a
+ * few minutes per server instance.
+ */
+const LIVE_TTL_MS = 10 * 60_000
+const LIVE_TIMEOUT_MS = 4_000
+const LIVE_CONCURRENCY = 8
+const liveCache = new Map<string, { allowed: boolean; at: number }>()
+
+export async function checkLivePermissions(
+  targets: { phone: string; bookingRef?: string | null }[],
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>()
+  const queue: { phone: string; bookingRef?: string | null }[] = []
+  const seen = new Set<string>()
+  for (const t of targets) {
+    const key = normalizePhone(t.phone)
+    if (key.length < 8 || seen.has(key)) continue
+    seen.add(key)
+    const hit = liveCache.get(key)
+    if (hit && Date.now() - hit.at < LIVE_TTL_MS) out.set(key, hit.allowed)
+    else queue.push({ phone: key, bookingRef: t.bookingRef })
+  }
+
+  async function worker() {
+    for (let t = queue.shift(); t; t = queue.shift()) {
+      try {
+        const res = await Promise.race([
+          teGet<{ checked?: boolean; allowed?: boolean | null }>('approval', { to: t.phone }),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), LIVE_TIMEOUT_MS)),
+        ])
+        if (typeof res?.allowed !== 'boolean') continue
+        liveCache.set(t.phone, { allowed: res.allowed, at: Date.now() })
+        out.set(t.phone, res.allowed)
+        if (res.allowed) await markApproved(t.phone, undefined, t.bookingRef).catch(() => {})
+      } catch { /* upstream slow or down — keep the ledger's answer */ }
+    }
+  }
+  await Promise.all(Array.from({ length: LIVE_CONCURRENCY }, worker))
+  return out
 }
 
 export async function getApprovalLedger(): Promise<Ledger> {
@@ -136,7 +192,7 @@ export function resolveApprovalState(
 }
 
 export const APPROVAL_LABEL: Record<ApprovalState, string> = {
-  approved: 'Approved',
-  pending: 'Awaiting customer',
+  approved: 'Accepted',
+  pending: 'Sent',
   not_requested: 'Not sent',
 }

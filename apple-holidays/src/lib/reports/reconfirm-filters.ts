@@ -45,7 +45,7 @@ export type CallApprovalState = 'approved' | 'pending' | 'not_requested' | 'unkn
 
 export const APPROVAL_LABEL: Record<CallApprovalState, string> = {
   approved: 'Accepted',
-  pending: 'Awaiting customer',
+  pending: 'Sent',
   not_requested: 'Not sent',
   unknown: 'Unknown',
 }

@@ -75,7 +75,7 @@ function dateTime(iso: string | null): string {
 
 function approvalPill(row: CallReportRow): string {
   if (row.approval === 'approved') return pill('Approved', '#065f46', '#d1fae5')
-  if (row.approval === 'pending') return pill('Awaiting customer', '#92400e', '#fef3c7')
+  if (row.approval === 'pending') return pill('Sent', '#92400e', '#fef3c7')
   return pill('Not sent', '#475569', '#e2e8f0')
 }
 

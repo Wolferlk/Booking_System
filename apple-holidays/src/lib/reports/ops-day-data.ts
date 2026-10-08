@@ -45,7 +45,7 @@ import { prisma } from '@/lib/prisma'
 import { countryLabel, countryScope, type OperationCountry } from '@/lib/country-detection'
 import { computeReadiness, type ReadinessCheck, type QcStage } from '@/lib/booking-readiness'
 import { STATUS_LABELS } from '@/lib/state-machine'
-import { getApprovalLedger, resolveApprovalState, type ApprovalEntry } from '@/lib/te/call-approvals'
+import { checkLivePermissions, getApprovalLedger, resolveApprovalState, type ApprovalEntry } from '@/lib/te/call-approvals'
 import { normalizePhone } from '@/lib/te/te-api'
 import {
   classifyReconfirm, loadReconfirmDelays,
@@ -524,18 +524,38 @@ async function loadCallState(
     if (!preTourByRef.has(s.booking_ref)) preTourByRef.set(s.booking_ref, s)
   }
 
+  const phoneOf = (ref: string) => {
+    const service = serviceByRef.get(ref)
+    return normalizePhone(service?.call_phone ?? service?.customer_phone) || null
+  }
+  const entryOf = (ref: string, phone: string | null) =>
+    (phone ? byPhone.get(phone) : undefined) ?? byRef.get(ref)
+
+  // The ledger only knows about sends it saw. Ask Meta directly for every
+  // registered number the ledger cannot yet call accepted — the same live check
+  // as the "Customer allows calls" chip on the booking page — so the board and
+  // the booking page agree.
+  const live = await checkLivePermissions(
+    refs.flatMap(ref => {
+      const phone = phoneOf(ref)
+      if (!phone || entryOf(ref, phone)?.approvedAt || connectedRefs.has(ref) || calledRefs.has(ref)) return []
+      return [{ phone, bookingRef: ref }]
+    }),
+  ).catch(() => new Map<string, boolean>())
+
   for (const ref of refs) {
     const service = serviceByRef.get(ref)
-    const phone = normalizePhone(service?.call_phone ?? service?.customer_phone) || null
+    const phone = phoneOf(ref)
     const schedule = preTourByRef.get(ref)
     // A written-up reconfirmation is the strongest proof of all: the call ran.
     const connected = connectedRefs.has(ref) || calledRefs.has(ref)
-    const entry = (phone ? byPhone.get(phone) : undefined) ?? byRef.get(ref)
+      || (phone !== null && live.get(phone) === true)
+    const entry = entryOf(ref, phone)
 
     map.set(ref, {
       registered: !!service,
       phone,
-      approval: ledger === null ? 'unknown' : resolveApprovalState(entry, connected),
+      approval: ledger === null && !connected ? 'unknown' : resolveApprovalState(entry, connected),
       approvalRequestedAt: entry?.requestedAt ?? null,
       approvedAt: entry?.approvedAt ?? null,
       scheduledAt: isoStamp(schedule?.scheduled_at) || isoDate(schedule?.call_date) || null,
