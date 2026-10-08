@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
+import { carryMovementWhatsApp } from '@/lib/movement-whatsapp'
 import { normalisePhone } from '@/lib/whatsapp'
 import { parse12h } from '@/lib/clock-time'
 import {
@@ -326,6 +327,13 @@ export async function POST(
   }
   await carryMcDetails(booking.bookingRef, movedIds)
   await carryMcDone(booking.bookingRef, movedIds)
+  // Movement WhatsApp history is tagged by agenda item id too — move it across
+  // so the chart's "sent" badges and the duplicate guard survive a Save.
+  try {
+    await carryMovementWhatsApp(booking.bookingRef, movedIds)
+  } catch (err) {
+    console.error('[agenda POST] carrying movement WhatsApp history failed (non-fatal):', err)
+  }
 
   // Vietnam includes — rewritten only when the chart sent them. A regenerated
   // chart (AI / upload) arrives without the key, and its includes are left

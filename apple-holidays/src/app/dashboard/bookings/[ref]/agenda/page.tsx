@@ -36,6 +36,7 @@ import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, removeTransferDescription, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { DEFAULT_FLIGHT_PICKUP_RULES, type FlightPickupRules } from '@/lib/flight-pickup-rules'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
+import MovementWhatsAppModal, { MovementWhatsAppButton, type MovementSendSummary } from '@/components/agenda/movement-whatsapp-modal'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
@@ -326,6 +327,10 @@ export default function AgendaPage() {
   // Drag-to-reorder state
   const [dragIndex,      setDragIndex]      = useState<number | null>(null)
   const [dragOverIndex,  setDragOverIndex]  = useState<number | null>(null)
+  // Movement WhatsApp — which row's dialog is open, and the per-row send badges
+  const [waItemIdx,      setWaItemIdx]      = useState<number | null>(null)
+  const [waEnabled,      setWaEnabled]      = useState(false)
+  const [waSummary,      setWaSummary]      = useState<Record<string, MovementSendSummary>>({})
   // Driver / vendor view modal
   const [driverModalTarget, setDriverModalTarget] = useState<AgendaItem['assignment'] | null>(null)
 
@@ -567,6 +572,19 @@ export default function AgendaPage() {
     }
   }, [ref])
 
+  const loadWaSummary = useCallback(async () => {
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda/whatsapp-sent`)
+      const json = await res.json()
+      if (json.success) {
+        setWaEnabled(json.data.enabled === true)
+        setWaSummary(json.data.summary ?? {})
+      }
+    } catch { /* badges are a convenience — the chart works without them */ }
+  }, [ref])
+
+  useEffect(() => { void loadWaSummary() }, [loadWaSummary])
+
   // Restrict driver/vendor lists to the booking's operation country.
   // Drivers/vendors without a specific country are shown for every country's bookings.
   function bookingCountry() {
@@ -702,7 +720,8 @@ export default function AgendaPage() {
     if (!res.ok || !json.success) throw new Error(json.error || `Save failed (${res.status})`)
     if (!silent) toast.success('Movement chart saved!')
     if (json.data?.includesWarning) toast.warning(json.data.includesWarning)
-    await loadAgenda()
+    // Every movement gets a new id on save — refresh the WhatsApp badges with it.
+    await Promise.all([loadAgenda(), loadWaSummary()])
   }
 
   async function generateFromFile(file: File) {
@@ -1982,6 +2001,13 @@ export default function AgendaPage() {
                           {needsDriver(item) && <PartnerChips assignment={item.assignment} />}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
+                            {waEnabled && (
+                              <MovementWhatsAppButton
+                                summary={item.id ? waSummary[item.id] : undefined}
+                                disabledReason={item.id ? null : 'Save the chart first — a new movement has nothing saved to send yet'}
+                                onClick={() => setWaItemIdx(i)}
+                              />
+                            )}
                             <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />
                             {needsDriver(item) && (
                               <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
@@ -2155,6 +2181,13 @@ export default function AgendaPage() {
                       </div>
                       {canAssign && (
                         <div className="flex items-center gap-2 flex-shrink-0">
+                          {waEnabled && (
+                            <MovementWhatsAppButton
+                              summary={item.id ? waSummary[item.id] : undefined}
+                              disabledReason={item.id ? null : 'Save the chart first — a new movement has nothing saved to send yet'}
+                              onClick={() => setWaItemIdx(i)}
+                            />
+                          )}
                           <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />
                           {needsDriver(item) && (
                             <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
@@ -2185,6 +2218,18 @@ export default function AgendaPage() {
           </Button>
         )}
       </div>
+
+      {/* ── WHATSAPP ONE MOVEMENT ── */}
+      {waItemIdx !== null && items[waItemIdx]?.id && (
+        <MovementWhatsAppModal
+          bookingRef={ref}
+          itemId={items[waItemIdx].id!}
+          local={items[waItemIdx]}
+          isAdmin={isAdmin}
+          onClose={() => setWaItemIdx(null)}
+          onSent={() => void loadWaSummary()}
+        />
+      )}
 
       {/* ── ASSIGN DRIVER / VENDOR MODAL ── */}
       {assigningIdx !== null && (
