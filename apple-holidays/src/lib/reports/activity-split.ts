@@ -28,9 +28,11 @@
  *     from OPS (which keeps no revision chain at all);
  *   • **Today new & updated** — a booking whose chain opened inside the window
  *     and was not cancelled. One line per booking, on its latest document;
- *   • **Old amendments** — a revision raised inside the window against a
- *     booking whose chain opened before it. One line per revision raised: a
- *     booking re-issued twice in the window is two documents and two lines;
+ *   • **Old amendments** — an older confirmation edited in the window: a
+ *     revision raised inside it against a booking whose chain opened before
+ *     it. One line per booking, on its latest document in the window — a
+ *     booking re-issued R13, R14 and R15 the same day is one confirmation
+ *     edited, not three (the accounts side's "Order confirmations edited");
  *   • **Apple System count** — the confirmations the day actually raised, which
  *     is the figure the other two are checked against. It comes from this
  *     report's own cohort, not from here.
@@ -123,7 +125,7 @@ export interface ActivitySplit {
   error?: string
   /** Bookings whose chain opened inside the window. One line per booking. */
   today: ActivitySplitSide
-  /** Revisions raised in the window against a booking opened before it. */
+  /** Bookings opened before the window and re-issued inside it. One line per booking. */
   old: ActivitySplitSide
   /** Every key in either side, for marking this report's own rows. */
   index: Record<string, 'today' | 'old'>
@@ -248,7 +250,7 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
     })
 
     const todayByBooking = new Map<string, { row: DocRow; line: SplitLine }>()
-    const oldLines: SplitLine[] = []
+    const oldByBooking = new Map<string, { row: DocRow; line: SplitLine }>()
 
     for (const row of raised) {
       const chain = chains.get(chainKeyOf(row)) ?? [row]
@@ -285,17 +287,16 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
         raisedAt: raisedAt.toISOString(),
       }
 
-      if (carried) {
-        // One line per revision raised: two files went out, and both were sent
-        // to somebody.
-        if (updated) oldLines.push(line)
-        continue
-      }
+      // Only a revision re-opens an older confirmation; an R0 raised today on
+      // an older chain is neither side, as on the accounts side.
+      if (carried && !updated) continue
 
-      // One line per booking, on its latest document in the window.
-      const held = todayByBooking.get(line.key || line.ref)
+      // One line per booking, on its latest document in the window — both
+      // sides, as `todayBusiness()` and `oldAmendments()` do.
+      const bucket = carried ? oldByBooking : todayByBooking
+      const held = bucket.get(line.key || line.ref)
       if (!held || Number(row.id) > Number(held.row.id)) {
-        todayByBooking.set(line.key || line.ref, { row, line })
+        bucket.set(line.key || line.ref, { row, line })
       }
     }
 
@@ -303,6 +304,7 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
       .map(v => v.line)
       .sort((a, b) => a.type.localeCompare(b.type) || a.ref.localeCompare(b.ref))
 
+    const oldLines = Array.from(oldByBooking.values()).map(v => v.line)
     oldLines.sort((a, b) => (b.ageDays ?? 0) - (a.ageDays ?? 0))
 
     const side = (lines: SplitLine[]): ActivitySplitSide => {

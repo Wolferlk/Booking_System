@@ -23,7 +23,7 @@
 import ExcelJS from 'exceljs'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
-import type { ReportData, BookingLine } from './report-data'
+import { todayNewAndUpdated, type ReportData, type BookingLine } from './report-data'
 import type { BoardRow, BoardView } from './ops-board-digest'
 import { formatReportDate, PERIOD_LABEL } from './report-window'
 
@@ -366,7 +366,7 @@ function overview(wb: ExcelJS.Workbook, d: ReportData, index: { name: string; wh
   // Headline tiles — two columns each, value over label over note.
   const sp = d.split
   const tiles: { label: string; value: string | number; note: string; color: string }[] = [
-    { label: 'Today new & updated', value: sp.appleCount || d.created.total, note: `B2B ${d.created.channel.b2b} · B2C ${d.created.channel.b2c}`, color: P.brand },
+    { label: 'Today new & updated', value: todayNewAndUpdated(d), note: sp.available ? `${sp.todayCount} new + ${sp.oldCount} amended` : `B2B ${d.created.channel.b2b} · B2C ${d.created.channel.b2c}`, color: P.brand },
     { label: 'Old amendments', value: sp.available ? sp.oldCount : '—', note: sp.available && sp.oldest ? `oldest ${sp.oldest}d back` : 'earlier files re-opened', color: P.amber },
     { label: 'On ground today', value: d.opsBoard?.today?.onGround.files ?? d.onGround.total, note: `${d.opsBoard?.today?.onGround.pax ?? d.onGround.pax} guests`, color: P.indigo },
     { label: 'D-3 drivers', value: `${d.readiness.drivers.allocated}/${d.readiness.drivers.tours}`, note: `${d.readiness.drivers.partial + d.readiness.drivers.pending} need a driver`, color: P.blue },
@@ -504,16 +504,15 @@ function overview(wb: ExcelJS.Workbook, d: ReportData, index: { name: string; wh
 
   // ── Intake
   title('Intake — Today new & updated',
-    'Every booking AppleSystem confirmed in the report period. Old amendments are revisions raised in the period against confirmations from earlier days.')
+    'New + booked & amended same day, plus order confirmations from earlier days edited in the period — as the accounts invoice mail counts the day. B2B / B2C / pax are AppleSystem\'s confirmations.')
   header(['Measure', 'Count'])
-  line(['Today new & updated', sp.appleCount || d.created.total], { bold: true, bg: P.brandWash })
+  line(['Today new & updated', todayNewAndUpdated(d)], { bold: true, bg: P.brandWash })
   line(['  B2B', d.created.channel.b2b], { labelColor: P.b2b })
   line(['  B2C', d.created.channel.b2c], { labelColor: P.b2c })
   line(['  Pax booked', d.created.pax])
   if (sp.available) {
-    line(['Accounts ledger: first document in period', sp.todayCount])
-    line(['Old amendments (documents)', sp.oldCount], { labelColor: P.amber })
-    line(['Old amendments (bookings)', sp.oldBookings], { labelColor: P.amber })
+    line(['New + booked & amended same day', sp.todayCount])
+    line(['Old amendments (order confirmations edited)', sp.oldCount], { labelColor: P.amber })
   }
   if (d.created.missingRefs.length) line(['Confirmed upstream, not filed here', d.created.missingRefs.length], { labelColor: P.red, color: P.red })
   r += 1

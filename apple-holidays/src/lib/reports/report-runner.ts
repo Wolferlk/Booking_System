@@ -9,7 +9,7 @@
 import { randomUUID } from 'crypto'
 import openai, { logAiUsage } from '@/lib/openai'
 import { withAsDeadline } from '@/lib/applesystem'
-import { collectReportData, type ReportData } from './report-data'
+import { collectReportData, todayNewAndUpdated, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
 import { renderReportWorkbook, reportWorkbookSheets } from './report-workbook'
@@ -170,7 +170,7 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     // "todayNewAndUpdated" is the mail's headline intake figure (the ribbon
     // tile and subject line), so the summary quotes the same number.
-    created: { todayNewAndUpdated: d.split.appleCount || d.created.total, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
+    created: { todayNewAndUpdated: todayNewAndUpdated(d), newSameDay: d.split.available ? d.split.todayCount : null, oldAmendments: d.split.available ? d.split.oldCount : null, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
     // Files and guests named apart: the model once called 184 tours "184 guests".
     onGround: { tourFiles: d.onGround.total, guests: d.onGround.pax, byCountry: d.onGround.byCountry.map(c => ({ c: c.label, files: c.bookings })) },
     ...(d.opsBoard?.available && d.opsBoard.today && d.opsBoard.week ? {

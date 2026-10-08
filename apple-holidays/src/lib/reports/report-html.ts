@@ -26,6 +26,7 @@ import {
 import type {
   BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmStatusLine, ReportData, TourLine,
 } from './report-data'
+import { todayNewAndUpdated } from './report-data'
 import type { CountCheckSection, CountCheckTally } from './count-check'
 import type { BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
@@ -92,11 +93,9 @@ function createdSection(d: ReportData): string {
     ? c.byCurrency.slice(0, 3).map(x => money(x.total, x.currency)).join(' · ')
     : 'No quoted value recorded'
 
-  // "New bookings" is the day's Today new & updated figure — every booking
-  // AppleSystem confirmed in the window — the same number the ribbon and the
-  // subject line lead with. The accounts ledger's narrower count (a booking
-  // whose first invoice document was raised inside the window) is stated in
-  // the note above the tiles, not used as the headline.
+  // "New bookings" is the day's Today new & updated figure — this period's own
+  // bookings plus the older confirmations edited in it, exactly as the accounts
+  // invoice mail adds the day up — the same number the ribbon leads with.
   const sp = d.split
   const newBookings = newBookingsCount(d)
 
@@ -176,13 +175,14 @@ function createdSection(d: ReportData): string {
          ${c.cancelledUpstream ? `${num(c.cancelledUpstream)} further confirmation${c.cancelledUpstream === 1 ? ' was' : 's were'} withdrawn upstream. ` : ''}
          The same population the accounts invoice and P&amp;L mails report, so the three figures line up.
          Bookings filed here in this period against an earlier confirmation are listed below, uncounted.
-         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings (Today new &amp; updated) is ${num(newBookings)}.</strong>
-           Of these, the accounts ledger dates ${num(sp.todayCount)} as this period's own new business — a booking whose first
-           invoice document was raised inside the window. ${sp.oldCount
-             ? `A further ${num(sp.oldCount)} document${sp.oldCount === 1 ? '' : 's'} raised in this period re-opened
-                confirmations from earlier days (Old amendments${sp.oldest ? `, the oldest ${num(sp.oldest)} days back` : ''});
-                that is another day's business and is not in the table below.`
-             : 'No confirmation from an earlier day was re-opened in this period.'}
+         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings (Today new &amp; updated) is ${num(newBookings)}
+           = ${num(sp.todayCount)} new + ${num(sp.oldCount)} amended</strong>, the same figures the accounts invoice mail prints.
+           ${num(sp.todayCount)} ${sp.todayCount === 1 ? 'is' : 'are'} this period's own business (new, or booked &amp; amended the same day) —
+           a booking whose first invoice document was raised inside the window. ${sp.oldCount
+             ? `${num(sp.oldCount)} ${sp.oldCount === 1 ? 'is an order confirmation' : 'are order confirmations'} from earlier days edited in this period
+                (Old amendments${sp.oldest ? `, the oldest ${num(sp.oldest)} days back` : ''}), counted once per booking;
+                they are not in the table below.`
+             : 'No confirmation from an earlier day was edited in this period.'}
            ` : ''}
        </div>`
     : `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
@@ -1537,29 +1537,22 @@ function headerBlock(w: ReportWindow, opts: RenderOptions): string {
   </td></tr>`
 }
 
-/**
- * The day's "Today new & updated" figure: every booking AppleSystem confirmed
- * in the window. Falls back to this system's own count when the AppleSystem
- * cohort could not be read. One function so the ribbon, the New bookings card
- * and the subject line can never quote different numbers.
- */
+/** The day's "Today new & updated" figure — see `todayNewAndUpdated()`. */
 function newBookingsCount(d: ReportData): number {
-  return d.split.appleCount || d.created.total
+  return todayNewAndUpdated(d)
 }
 
 function summaryStrip(d: ReportData): string {
   const sp = d.split
 
   const cells = [
-    // Leads with the day's new & updated business as AppleSystem confirmed it —
-    // the desk's own figure for "what came in today", and the same number the
-    // New bookings card and the subject line quote. The separate "Apple System"
-    // tile that used to sit beside it repeated this number, so it is gone; the
-    // B2B / B2C split lives in the cards below.
+    // Leads with the day's new & updated business as the accounts invoice mail
+    // adds it up — this period's own bookings plus older confirmations edited —
+    // and the same number the New bookings card quotes.
     {
       label: 'Today new & updated',
       value: num(newBookingsCount(d)),
-      sub: 'confirmed bookings',
+      sub: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'confirmed bookings',
     },
     {
       label: 'Old amendments',
@@ -1692,11 +1685,12 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 
 /** Subject line: informative enough to triage from the inbox list alone. */
 export function renderReportSubject(d: ReportData, opts: { prefix?: string; testSend?: boolean } = {}): string {
-  // "new" in the subject is the same figure the ribbon's Today new & updated
-  // tile shows, so the inbox line and the first card cannot say two different
-  // things about one day.
+  // The two halves of the ribbon's Today new & updated tile, as the accounts
+  // invoice mail prints them ("29 new + 16 amended" adds up to the tile's 45).
   const parts = [
-    `${newBookingsCount(d)} new${d.split.available && d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`,
+    d.split.available
+      ? `${d.split.todayCount} new${d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`
+      : `${newBookingsCount(d)} new`,
     `${d.onGround.total} on ground`,
   ]
   // A parity gap outranks everything else in the subject: it means the mail's
@@ -1742,10 +1736,12 @@ export function renderReportCsv(d: ReportData): string {
     block('Today new & updated / Old amendments — the day in two passes',
       ['Figure', 'Count', 'What it counts'],
       [
-        ['Today new & updated', d.split.todayCount,
-          "This period's own new business — a booking whose first invoice document was raised inside the window, counted once on its latest document. The figure both accounts mails lead with."],
-        ['Old amendments', d.split.oldCount,
-          `Revisions raised in this period against confirmations from earlier days${d.split.oldest ? `, the oldest ${d.split.oldest} days back` : ''} — ${d.split.oldBookings} booking${d.split.oldBookings === 1 ? '' : 's'}. Another day's business; not in the rows below.`],
+        ['Today new & updated', newBookingsCount(d),
+          'New + booked & amended same day, plus order confirmations edited — the two counts below added together, as the accounts invoice mail reports the day.'],
+        ['New + booked & amended same day', d.split.todayCount,
+          "This period's own business — a booking whose first invoice document was raised inside the window, counted once on its latest document."],
+        ['Old amendments (order confirmations edited)', d.split.oldCount,
+          `Confirmations from earlier days re-issued in this period${d.split.oldest ? `, the oldest ${d.split.oldest} days back` : ''}, counted once per booking. Not in the rows below.`],
         ['Apple System count', d.split.appleCount,
           'Confirmations AppleSystem raised in this period — the population the rows below carry, and the figure the two above are checked against.'],
       ].map(r => r.map(String)))

@@ -196,9 +196,9 @@ export interface ActivitySplitSection {
   error?: string
   /** Bookings whose ledger chain opened inside the window. One per booking. */
   todayCount: number
-  /** Revisions raised in the window against a booking opened before it. */
+  /** Bookings opened before the window and re-issued inside it. One per booking. */
   oldCount: number
-  /** Distinct bookings behind `oldCount`. */
+  /** Distinct bookings behind `oldCount` — equal to it now both sides count bookings. */
   oldBookings: number
   /** The oldest confirmation re-opened, in days. */
   oldest: number | null
@@ -210,6 +210,21 @@ export interface ActivitySplitSection {
   held: number
   /** Booking key → which table it belongs to, for marking the detail rows. */
   index: Record<string, 'today' | 'old'>
+}
+
+/**
+ * The day's "Today new & updated" figure, as the accounts invoice mail adds it
+ * up: this period's own bookings (new + booked & amended same day) plus the
+ * older confirmations edited in it. 29 + 16 on 07/10/2026 → 45.
+ *
+ * Falls back to AppleSystem's confirmation count, then this system's own, only
+ * when the accounts ledger could not be read. One function so the ribbon, the
+ * New bookings card, the workbook, the preview and the narrative can never
+ * quote different numbers.
+ */
+export function todayNewAndUpdated(d: { split: Pick<ActivitySplitSection, 'available' | 'todayCount' | 'oldCount' | 'appleCount'>; created: { total: number } }): number {
+  const sp = d.split
+  return sp.available ? sp.todayCount + sp.oldCount : (sp.appleCount || d.created.total)
 }
 
 export interface OnGroundSection {

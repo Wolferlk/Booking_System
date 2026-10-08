@@ -102,7 +102,7 @@ interface PreviewWindow { label: string; fromDate: string; toDate: string; timez
 interface OpsPreviewData {
   window: PreviewWindow
   created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
-  split?: { appleCount: number }
+  split?: { available: boolean; todayCount: number; oldCount: number; appleCount: number }
   onGround: { total: number; pax: number }
   readiness: {
     total: number; notReady: number; tomorrow: number; hotelOnly: number
@@ -138,7 +138,11 @@ interface StatTile { label: string; value: number; sub: string }
 
 function opsStats(d: OpsPreviewData): StatTile[] {
   return [
-    { label: 'Today new & updated', value: d.split?.appleCount || d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
+    // Same rule as `todayNewAndUpdated()` (server-only module): the accounts
+    // invoice mail's new + same-day-amended plus order confirmations edited.
+    d.split?.available
+      ? { label: 'Today new & updated', value: d.split.todayCount + d.split.oldCount, sub: `${d.split.todayCount} new + ${d.split.oldCount} amended` }
+      : { label: 'Today new & updated', value: d.split?.appleCount || d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
     {
       label: 'Next 3 days',
