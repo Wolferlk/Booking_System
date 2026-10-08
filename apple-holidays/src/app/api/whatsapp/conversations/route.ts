@@ -9,7 +9,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { findBookingByPhone, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
 import { syncInboundRecent } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
@@ -41,6 +41,10 @@ export async function GET(req: NextRequest) {
   const rows = await prisma.whatsAppMessage.findMany({
     orderBy: { createdAt: 'desc' },
     take: 5000,
+    select: {
+      phone: true, bookingRef: true, direction: true, body: true, mediaType: true,
+      senderName: true, read: true, createdAt: true,
+    },
   })
 
   type Row = (typeof rows)[number]
@@ -78,8 +82,40 @@ export async function GET(req: NextRequest) {
     : []
   const bookingByRef = new Map(fallbackBookings.map(b => [b.bookingRef, b]))
 
-  const results = await Promise.all(conversations.map(async ([phone, entry]) => {
-    const booking = (await findBookingByPhone(phone)) ?? (entry.ref ? bookingByRef.get(entry.ref) ?? null : null)
+  // Same match as findBookingByPhone (any of the four contact columns, as
+  // stored or with a leading +, newest booking wins) but in one query for the
+  // whole list instead of one per conversation — the inbox polls this every
+  // few seconds, so N lookups per poll was the slow part.
+  const phones = conversations.map(([phone]) => phone)
+  const variants = phones.flatMap(p => [p, `+${p}`])
+  const phoneBookings = variants.length
+    ? await prisma.booking.findMany({
+        where: {
+          OR: [
+            { contactWhatsapp: { in: variants } },
+            { contactPhone:    { in: variants } },
+            { agentWhatsapp:   { in: variants } },
+            { agentPhone:      { in: variants } },
+          ],
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          bookingRef: true, status: true, operationCountry: true,
+          contactWhatsapp: true, contactPhone: true, agentWhatsapp: true, agentPhone: true,
+        },
+      })
+    : []
+  const bookingByPhone = new Map<string, (typeof phoneBookings)[number]>()
+  for (const b of phoneBookings) {
+    for (const raw of [b.contactWhatsapp, b.contactPhone, b.agentWhatsapp, b.agentPhone]) {
+      if (!raw) continue
+      const key = raw.startsWith('+') ? raw.slice(1) : raw
+      if (!bookingByPhone.has(key)) bookingByPhone.set(key, b) // newest first
+    }
+  }
+
+  const results = conversations.map(([phone, entry]) => {
+    const booking = bookingByPhone.get(phone) ?? (entry.ref ? bookingByRef.get(entry.ref) ?? null : null)
     const { last } = entry
     return {
       phone,
@@ -94,7 +130,7 @@ export async function GET(req: NextRequest) {
         operationCountry: booking.operationCountry,
       } : null,
     }
-  }))
+  })
 
   return buildApiSuccess(results)
 }
