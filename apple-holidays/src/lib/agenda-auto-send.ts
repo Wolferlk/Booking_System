@@ -86,7 +86,10 @@ export async function runAgendaAutoSend(opts: { dryRun?: boolean } = {}): Promis
         booking,
         to,
         subject:     `Tour Confirmation — ${booking.bookingRef}`,
-        showDrivers: false,   // customer copy never exposes driver allocation
+        // Vietnam's D-3 copy names who runs each movement — vehicle vendor,
+        // driver + vehicle, tour vendor, guide — so the guest knows who to
+        // expect. Never the driver rate. Other countries keep it hidden.
+        showDrivers: booking.operationCountry === 'VIETNAM',
       })
       await prisma.systemSetting.upsert({
         where:  { key },

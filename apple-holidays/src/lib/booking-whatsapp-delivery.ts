@@ -65,7 +65,15 @@ function bookingInclude(isFull: boolean) {
       include: {
         items: {
           orderBy: [{ date: 'asc' as const }, { sortOrder: 'asc' as const }],
-          include: { assignment: { include: { driver: { include: { vehicle: true } } } } },
+          include: {
+            assignment: {
+              include: {
+                driver:     { include: { vehicle: true } },
+                vendor:     { select: { name: true, phone: true } },
+                tourVendor: { select: { name: true, phone: true } },
+              },
+            },
+          },
         },
       },
     },

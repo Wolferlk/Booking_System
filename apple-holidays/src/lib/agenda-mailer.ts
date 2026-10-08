@@ -47,6 +47,7 @@ export const AGENDA_INCLUDE = {
             include: {
               driver: { include: { vehicle: true } },
               vendor: { select: { id: true, name: true, phone: true } },
+              tourVendor: { select: { id: true, name: true, phone: true } },
             },
           },
         },

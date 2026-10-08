@@ -370,21 +370,36 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
         })
       }
 
-      // ── 8. Drivers (Full PDF only) ────────────────────────────────────────
+      // ── 8. Drivers, vendors & tour vendors (Full PDF only) ────────────────
+      // Who runs each movement — vehicle vendor, driver + vehicle, tour vendor
+      // and guide — same set the movement chart prints. Any one of them makes
+      // the movement worth listing. Never the driver rate: that is internal.
       if (includeDriversAndTickets) {
         const assignments = agendaItems
-          .filter((item: any) => item.assignment?.driverName || item.assignment?.driver?.name)
-          .map((item: any) => ({
-            date:          item.date,
-            location:      item.location,
-            driverName:    item.assignment.driverName ?? item.assignment.driver?.name,
-            driverPhone:   item.assignment.driverPhone ?? item.assignment.driver?.phone,
-            vehicleType:   item.assignment.vehicleType ?? item.assignment.driver?.vehicle?.type,
-            vehiclePlate:  item.assignment.vehiclePlate,
-            notes:         item.assignment.notes,
-            driverPhotoUrl:  item.assignment.driver?.photoUrl ?? null,
-            vehiclePhotoUrl: item.assignment.driver?.vehicle?.photoOutside ?? null,
-          }))
+          .map((item: any) => {
+            const a = item.assignment
+            if (!a) return null
+            const row = {
+              date:            item.date,
+              location:        item.location,
+              vendorName:      a.vendorName ?? a.vendor?.name ?? null,
+              vendorPhone:     a.vendor?.phone ?? null,
+              driverName:      a.driverName ?? a.driver?.name ?? null,
+              driverPhone:     a.driverPhone ?? a.driver?.phone ?? null,
+              vehicleType:     a.vehicleType ?? a.driver?.vehicle?.type ?? null,
+              vehiclePlate:    a.vehiclePlate ?? a.driver?.vehicle?.plateNo ?? null,
+              tourVendorName:  a.tourVendorName ?? a.tourVendor?.name ?? null,
+              tourVendorPhone: a.tourVendorPhone ?? a.tourVendor?.phone ?? null,
+              guideName:       a.guideName ?? null,
+              guidePhone:      a.guidePhone ?? null,
+              notes:           a.notes,
+              driverPhotoUrl:  a.driver?.photoUrl ?? null,
+              vehiclePhotoUrl: a.driver?.vehicle?.photoOutside ?? null,
+            }
+            return row.vendorName || row.driverName || row.vehiclePlate || row.tourVendorName || row.guideName
+              ? row : null
+          })
+          .filter(Boolean) as any[]
 
         if (assignments.length > 0) {
           // Pre-fetch photo buffers off disk — PDFKit draws synchronously so this can't happen mid-layout
@@ -397,7 +412,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
             if (buf) photoBuffers.set(url, buf)
           }))
 
-          sectionTitle('Drivers & Vehicle Assignments')
+          sectionTitle('Drivers, Vendors & Tour Vendors')
           assignments.forEach((a: any, i: number) => {
             const driverPhoto  = a.driverPhotoUrl  ? photoBuffers.get(a.driverPhotoUrl)  : null
             const vehiclePhoto = a.vehiclePhotoUrl ? photoBuffers.get(a.vehiclePhotoUrl) : null
@@ -423,10 +438,16 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
 
             doc.y = ay + 20
 
+            infoRow('Vehicle Vendor', a.vendorName)
+            infoRow('Vendor Phone', a.vendorPhone)
             infoRow('Driver Name', a.driverName)
             infoRow('Driver Phone', a.driverPhone)
             infoRow('Vehicle Type', a.vehicleType)
             infoRow('Plate Number', a.vehiclePlate)
+            infoRow('Tour Vendor', a.tourVendorName)
+            infoRow('Tour Vendor Phone', a.tourVendorPhone)
+            infoRow('Guide', a.guideName)
+            infoRow('Guide Phone', a.guidePhone)
             if (a.notes) infoRow('Notes', a.notes)
 
             if (vehiclePhoto) {

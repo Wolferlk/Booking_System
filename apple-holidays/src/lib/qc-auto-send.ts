@@ -190,7 +190,15 @@ export async function triggerQC2AutoSend(bookingRef: string): Promise<void> {
         include: {
           items: {
             orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
-            include: { assignment: { include: { driver: true } } },
+            include: {
+              assignment: {
+                include: {
+                  driver:     { include: { vehicle: true } },
+                  vendor:     { select: { name: true, phone: true } },
+                  tourVendor: { select: { name: true, phone: true } },
+                },
+              },
+            },
           },
         },
       },
@@ -221,7 +229,7 @@ Please find the *Full Tour Details & Vouchers* for your upcoming trip.
 
 This document includes:
 ✅ Complete day-by-day itinerary & tour agenda
-✅ Driver & vehicle assignments
+✅ Driver, vehicle vendor & tour vendor details
 ✅ All tickets and voucher receipts
 
 Please keep this document handy throughout your travel.
