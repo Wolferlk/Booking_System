@@ -1,9 +1,9 @@
-# Aahaas Driver — iOS & Android (Expo / React Native)
+# Aahaas — iOS & Android ops app (Expo / React Native)
 
-One app, two kinds of user:
+One app with the Aahaas brand and **two logins** on the welcome screen — **Driver** and **Company**:
 
 - **Drivers.** Any driver who is already in `drivers` (from https://ops.aahaas.com/register/driver) can sign in. The first time, they verify the phone number or e-mail from that form with a 6-digit code (WhatsApp or e-mail) and choose a password. They never register twice.
-- **Ops team.** TE, GT, GT/TE, GT-VN and the admins sign in with their ops.aahaas.com e-mail and password. Ultra Super Admin also needs the critical password, the same as on the web.
+- **Company.** Every ops.aahaas.com staff role (BT, GT, GT-VN, TE, GT/TE, AC, RS, Super Admin, Ultra Super Admin) signs in with the same e-mail and password as the web. Ultra Super Admin also needs the critical password, the same as on the web.
 
 The app uses the existing ops backend at `/api/mobile/*` (code in `apple-holidays/src/lib/mobile/`). Ops manage it on the web at **Driver App** (`/dashboard/driver-app`).
 
@@ -31,7 +31,34 @@ The app uses the existing ops backend at `/api/mobile/*` (code in `apple-holiday
 - Vehicle photos are due.
 - Ops answered a request.
 
-**Ops in the app:**
+**Company app:**
+
+| Tab | What it does |
+|---|---|
+| **Home** | Today in one screen: on tour now, arriving / leaving today, WhatsApp unread, drivers driving, driver requests, and shortcuts to the MC Report, WhatsApp, team chat and the live map. |
+| **Bookings** | Every booking, with search by ref, IS number, guest or agent, plus quick views: on tour, arriving today / tomorrow / upcoming, leaving today, new today. |
+| **Booking page** | The status buttons your role has on the web (same state machine), the operation checklist, guests, contact, flights, hotels, special notes, agenda with drivers per movement, a per-movement **WhatsApp brief** to driver / guide / vendor, tickets with files, P&L (revenue, cost, profit, lines), and the timeline. Tools: **PDF** and **Agenda Word** (open or share), **portal link** (copy or share), **send the Tour Confirmation on WhatsApp**, guest chat, agent e-mail, feedback and complete, and **cancel request** (with the same e-mailed code as the web). |
+| **Chats** | The **WhatsApp inbox** (threads, booking link, 24h-window banner, send, media) and the **team chat** (conversations, unread, live polling, send, attachments). |
+| **Drivers** | The driver and vehicle registry with search. Each driver page has the score ring, rating, tours, vehicle photos, details, WhatsApp history and send, and call. |
+| **More** | **MC Report** (a day or a week; *needs driver* / airport / allocated views; tap a row to open the booking), live drivers, driver requests and sign out. |
+
+**How the company app reaches the web's features.** It does not copy any of them. It calls the web's own `/api/*` routes through **`/api/mobile/web/*`** (`src/lib/mobile/bridge.ts`):
+
+1. It checks the app token.
+2. It allows only the listed areas: bookings, tickets, mc-report, whatsapp, chat, ground, driver-auto, srilanka, feedbacks, PDF and verification.
+3. It runs the call as that person, using a 5-minute web session.
+4. It writes an **ActivityLog** row (`MOBILE_POST/PUT/PATCH`) for every change.
+
+So the app can never do more than the same person can on the web. These stay **web-only** on purpose:
+
+- deleting a booking
+- full cancellation
+- restoring a version
+- bulk changes
+- deleting drivers, vehicles or vendors
+- saving the movement chart, which rewrites every movement
+
+**Ops (driver operations) in the app:**
 
 - **Live:** a map of drivers on the road, km today, drivers with no GPS for 20+ minutes, drivers who haven't started yet, and each driver's route for the day.
 - **Requests:** approve or decline driver requests and vehicle photos.
@@ -84,6 +111,8 @@ EXPO_PUBLIC_API_URL=http://192.168.1.20:3000 npx expo start
    - `MOBILE_AI_VISION_MODEL` and `MOBILE_AI_TEXT_MODEL`: both default to `gpt-4o-mini`.
 
 ## Live-database safety
+
+- **Company app:** each change goes through the same web route the website uses, with the same permission checks. Every change is also logged to `activity_logs` with `via: aahaas-app`. Irreversible actions are blocked in the bridge (see the list above). The bridge calls the server's own public address (`NEXTAUTH_URL`); set `MOBILE_BRIDGE_ORIGIN` if that address is not reachable from the server itself.
 
 - The app **writes only to the new `mobile_*` tables**. Everything else it reads.
 - An existing table is written only when **a person in ops approves** something, and only the named fields of that one row change:
