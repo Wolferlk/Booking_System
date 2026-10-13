@@ -33,8 +33,9 @@ import {
 import AdvancedFilterPanel, { FlowBadge } from '@/components/mc-report/advanced-filters'
 import {
   EMPTY_FILTERS, activeFilterCount, applyAdvancedFilters, facetCounts, filtersFromParams, filtersToParams,
-  movementFlow, type AdvancedFilters,
+  movementFlow, driverState, tripStages, type AdvancedFilters,
 } from '@/lib/mc-report-filters'
+import type { McSheetRow } from '@/lib/mc-report-workbook'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1399,114 +1400,60 @@ export default function MCReportPage() {
     setDownloadingXlsx(true)
     setShowExportMenu(false)
     try {
-      const XLSX = await import('xlsx')
-
-      const wb = XLSX.utils.book_new()
-
-      // Sheet 1: Main movements
-      const headers = [
-        'Date', 'Tour Ref', 'IS Number', 'Agent Booking ID', 'Location',
-        'Adults', 'Children', 'From', 'To', 'Details',
-        'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day', 'Hotel Only',
-        'Hotel Only Booking', 'Nights', 'Check Out',
-        'Vendor', 'Driver', 'Vehicle Type', 'Plate No',
-        'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone',
-        'Lead Guest', 'Agent', 'Booking Status',
-        'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
-        'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
-        'Tickets Control',
-        ...MC_EXPORT_HEADERS,
-      ]
-
-      const dataRows = displayedRows.map(r => [
-        r.date, r.vnCode, r.isNumber ?? '', r.agentBookingId ?? '',
-        r.location, r.paxAdults, r.paxChildren,
-        r.fromPoint ?? '', r.toPoint ?? '', r.details ?? '',
-        r.mealPlan ?? '', r.meetingTime ?? '',
-        SERVICE_LABELS[r.serviceType] ?? r.serviceType,
-        r.isLeisure ? 'Yes' : '',
-        r.isHotelOnly ? 'Yes' : '',
-        r.isHotelOnlyBooking ? 'Yes' : '',
-        r.nights ?? '', r.checkOut ?? '',
-        r.vendor ?? '', r.driverName ?? '',
-        r.vehicleType ?? '', r.vehiclePlate ?? '',
-        r.guideName ?? '', r.guidePhone ?? '',
-        r.tourVendorName ?? '', r.tourVendorPhone ?? '',
-        r.leadGuest ?? '', r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
-        isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
-        r.cancelRequestedAt?.slice(0, 10) ?? '',
-        r.cancelRequestedBy ?? '',
-        isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
-        r.cancelReason ?? '',
-        r.cancelFeeTotal ?? '',
-        r.ticketsControl ?? '',
-        ...mcExportCells(r),
-      ])
-
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
-      ws['!cols'] = [
-        { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 20 },
-        { wch: 7  }, { wch: 8  }, { wch: 22 }, { wch: 22 }, { wch: 40 },
-        { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-        { wch: 18 }, { wch: 8  }, { wch: 12 },
-        { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 },
-        { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
-        { wch: 18 }, { wch: 16 },
-        { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 40 }, { wch: 14 },
-        { wch: 24 },
-        { wch: 34 }, { wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 16 },
-        { wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 50 }, { wch: 28 },
-      ]
-      XLSX.utils.book_append_sheet(wb, ws, 'Movements')
-
-      // Sheet 2: Stats summary
-      const statsData = [
-        ['MC Report Summary'],
-        ['Generated', new Date().toLocaleString('en-GB')],
-        ['Date Range', `${dateFrom || '—'} → ${dateTo || '—'}`],
-        deepSearch ? ['Deep Search Filter', deepSearch] : [],
-        [''],
-        ['Total Movements', displayedRows.length],
-        ['Total Adults',    totalAdults],
-        ['Total Children',  totalChildren],
-        ['Private Transfers', pvtCount],
-        ['SIC Transfers',    sicCount],
-        ['Own Arrangements', ownCount],
-        ['Leisure Days',     leisureCount],
-        ['Hotel Only',       hotelOnlyCount],
-        ['Hotel Only Bookings', hotelOnlyBookingCount],
-        ['Hotel Only Stays',    hotelOnlyStayCount],
-        ['Cancelled Bookings',  cancelledBookingCount],
-        ['Cancelled Movements', cancelledRowCount],
-        ['Cancellations Awaiting Accounts Approval', cancelQueue.length],
-        ['Movements On Files Awaiting Approval',     cancelQueueMovements],
-        [''],
-        ['Sri Lanka Arrivals / Departures', `${mcStats.arrivals} / ${mcStats.departures}`],
-        ['Sri Lanka Budget KM',  mcStats.budgetKm],
-        ['Sri Lanka Actual KM',  mcStats.actualKm],
-        ['Sri Lanka Package Cost (LKR)', mcStats.packageCost],
-        ['SG / MY Budget Transfer', transferText || 0],
-        ['Bookings With Special Requests', mcStats.requestFiles],
-        ['Movements With Their Own Special Request', mcStats.requestMoves],
-        ['Bookings With Meal Preferences', mcStats.mealFiles],
-      ].filter(r => r.length > 0)
-
-      const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
-      wsSummary['!cols'] = [{ wch: 24 }, { wch: 30 }]
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary')
-
-      const buf      = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-      const blob     = new Blob([new Uint8Array(buf)], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      const flight = (r: MCRow, dir: 'ARR' | 'DEP') => (r.flights ?? []).filter(f => f.direction === dir)
+        .map(f => `${f.flightNo} ${f.date} ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`).join('; ')
+      const rows: McSheetRow[] = displayedRows.map(r => {
+        const sl = isSriLanka(r.operationCountry), sgmy = isSgMy(r.operationCountry)
+        const flow = movementFlow(r)
+        const ds = driverState(r)
+        const stages = tripStages(r)
+        const pending = isCancelPendingRow(r)
+        return {
+          date: r.date, ref: r.vnCode, isNumber: r.isNumber ?? '', agentBookingId: r.agentBookingId ?? '',
+          country: r.operationCountry?.replace(/_/g, ' ') ?? '',
+          location: r.location, adults: r.paxAdults, children: r.paxChildren,
+          from: r.fromPoint ?? '', to: r.toPoint ?? '', details: r.details ?? '',
+          mealPlan: r.mealPlan ?? '', meetingTime: r.meetingTime ?? '', time: flow.time ?? '',
+          service: SERVICE_LABELS[r.serviceType] ?? r.serviceType,
+          serviceGroup: isPrivateTransferType(r.serviceType) ? 'Private' : isSicType(r.serviceType) ? 'SIC'
+            : r.serviceType === 'OWN_ARRANGEMENT' ? 'Own arrangement' : r.serviceType === 'ACCOMMODATION' ? 'Accommodation' : 'Other',
+          leisure: r.isLeisure, hotelOnly: r.isHotelOnly, hotelOnlyBooking: r.isHotelOnlyBooking,
+          nights: r.nights, checkOut: r.checkOut ?? '',
+          vendor: r.vendor ?? '', driver: r.driverName ?? '',
+          vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? '', plate: r.vehiclePlate ?? '',
+          guide: r.guideName ?? '', guidePhone: r.guidePhone ?? '',
+          tourVendor: r.tourVendorName ?? '', tourVendorPhone: r.tourVendorPhone ?? '',
+          leadGuest: r.leadGuest ?? '', agent: r.agent ?? '',
+          status: r.bookingStatus?.replace(/_/g, ' ') ?? '',
+          cancelled: isCancelledRow(r), cancelPending: pending,
+          cancelRequestedAt: r.cancelRequestedAt, cancelRequestedBy: r.cancelRequestedBy ?? '',
+          waitingDays: pending ? waitingDays(r.cancelRequestedAt) : null,
+          cancelReason: r.cancelReason ?? '', cancelFee: r.cancelFeeTotal, currency: r.currency ?? '',
+          allocation: ds === 'needs' ? 'Needs allocation' : ds === 'assigned' ? 'Allocated' : 'N/A',
+          flow: flow.arrival && flow.departure ? 'Arrival + departure' : flow.arrival ? 'Arrival' : flow.departure ? 'Departure' : '',
+          airport: flow.airport ?? '', flight: flow.flight?.flightNo ?? '',
+          tripStage: stages.map(x => (x === 'first' ? 'First day' : x === 'last' ? 'Last day' : 'Mid-tour')).join(' + '),
+          done: !!r.done, doneBy: r.done?.by ?? '', ticketsControl: r.ticketsControl ?? '',
+          arrFlights: sl ? flight(r, 'ARR') : '', depFlights: sl ? flight(r, 'DEP') : '',
+          budgetKm: sl ? mcNumber(r, 'budgetKm') : null, actualKm: sl ? mcNumber(r, 'actualKm') : null,
+          kmVariance: sl ? kmVariance(r) : null, packageCost: sl ? mcNumber(r, 'packageCost') : null,
+          budgetTransfer: sgmy ? mcNumber(r, 'budgetTransfer') : null,
+          transferCurrency: sgmy && mcNumber(r, 'budgetTransfer') != null ? (r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)) : '',
+          specialRequest: r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
+          bookingRequests: bookingRequestsText(r.bookingRequests),
+          mealPrefs: mealPrefsText(r.mealPrefs),
+        }
       })
-      const url      = URL.createObjectURL(blob)
-      const a        = document.createElement('a')
-      a.href         = url
-      a.download     = `mc-report-${dateFrom || 'all'}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
+      const filterLabel = [
+        deepSearch ? `deep search “${deepSearch}”` : null,
+        search ? `search “${search}”` : null,
+        advActive ? `${advActive} advanced filter${advActive === 1 ? '' : 's'}` : null,
+      ].filter(Boolean).join(' · ')
+      const { downloadMcWorkbook } = await import('@/lib/mc-report-workbook')
+      await downloadMcWorkbook({ rows, dateFrom, dateTo, filterLabel }, `mc-report-${dateFrom || 'all'}${dateTo && dateTo !== dateFrom ? `_to_${dateTo}` : ''}.xlsx`)
       toast.success(`Exported ${displayedRows.length} rows as Excel`)
-    } catch {
+    } catch (err) {
+      console.error('[mc-report] excel export failed', err)
       toast.error('Excel export failed')
     } finally {
       setDownloadingXlsx(false)

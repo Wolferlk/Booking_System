@@ -12,7 +12,7 @@ import { withAsDeadline } from '@/lib/applesystem'
 import { collectReportData, todayNewAndUpdated, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
-import { renderReportWorkbook, reportWorkbookSheets } from './report-workbook'
+import { renderReportWorkbook } from './report-workbook'
 import { renderDailyWorkbook } from './daily-workbook'
 import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
 import {
@@ -369,9 +369,9 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
  * the footer chip that advertises it — `renderPeriodEmail` is told it is not
  * there and says so, rather than promising a file nobody received.
  */
-function buildWorkbook(data: ReportData): { buffer: Buffer; sheets: string[] } | null {
+async function buildWorkbook(data: ReportData): Promise<{ buffer: Buffer; sheets: string[] } | null> {
   try {
-    return { buffer: renderReportWorkbook(data), sheets: reportWorkbookSheets(data) }
+    return await renderReportWorkbook(data)
   } catch (err) {
     console.warn('[Reports] workbook build failed:', err instanceof Error ? err.message : err)
     return null
@@ -552,7 +552,7 @@ async function buildOpsReport(
 
   // Built once, here: the mail lists the sheet names it is promising, so a
   // workbook that could not be written must not be advertised in the footer.
-  const workbook = periodic ? buildWorkbook(data) : await buildDailyWorkbook(data)
+  const workbook = periodic ? await buildWorkbook(data) : await buildDailyWorkbook(data)
 
   return {
     data,

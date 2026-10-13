@@ -621,8 +621,8 @@ function workbookNote(opts: PeriodRenderOptions, periodWord: string): string {
         <div style="font:700 12px/1.4 ${FONT};color:${C.ink};">Every booking is in the attached Excel workbook — not in this email</div>
         <div style="font:400 12px/1.7 ${FONT};color:${C.muted};padding-top:6px;">
           This ${periodWord}'s report analyses; the workbook lists. Each sheet opens with a line saying what it holds and
-          how its figures were derived, every table is filterable, and the first sheet is a contents page that explains
-          the whole file. Nothing has been summarised away — it has been moved somewhere it can be sorted.
+          how its figures were derived, every table is filterable with a live total underneath, and the first sheet is an
+          overview dashboard with a linked index of the whole file. Nothing has been summarised away — it has been moved somewhere it can be sorted.
         </div>
         <div style="padding-top:9px;">${sheets}</div>
       </td></tr>

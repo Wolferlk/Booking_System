@@ -17,7 +17,7 @@
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 import { renderPeriodEmail, renderPeriodSubject } from '../src/lib/reports/period-html'
-import { renderReportWorkbook, reportWorkbookSheets } from '../src/lib/reports/report-workbook'
+import { renderReportWorkbook } from '../src/lib/reports/report-workbook'
 import { buildReportWindow, DEFAULT_REPORT_TZ, type ReportPeriod } from '../src/lib/reports/report-window'
 import { finaliseInsights, type PeriodInsights } from '../src/lib/reports/period-insights'
 import type { ReportData } from '../src/lib/reports/report-data'
@@ -241,7 +241,7 @@ async function main() {
     reconfirm: data.reconfirm,
   })
 
-  const sheets = reportWorkbookSheets(data)
+  const { buffer: workbook, sheets } = await renderReportWorkbook(data)
   const html = renderPeriodEmail(data, {
     narrative: 'A synthetic period, written to exercise every block at once.',
     dashboardUrl: 'https://ops.aahaas.com/dashboard/reports',
@@ -250,7 +250,6 @@ async function main() {
     workbookAttached: true,
     workbookSheets: sheets,
   })
-  const workbook = renderReportWorkbook(data)
 
   console.log('Subject :', renderPeriodSubject(data, { testSend: true }))
   console.log('Email   :', `${Math.round(html.length / 1024)} KB${html.length > 102_400 ? '  ← OVER GMAIL CLIP THRESHOLD' : ''}`)
