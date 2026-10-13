@@ -79,6 +79,10 @@
     {
       "path": "/api/cron/driver-auto-send",
       "schedule": "5 * * * *"
+    },
+    {
+      "path": "/api/cron/mobile-notify",
+      "schedule": "0 * * * *"
     }
   ]
 }

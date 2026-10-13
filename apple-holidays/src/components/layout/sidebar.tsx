@@ -14,7 +14,7 @@ import {
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
-  Database, ListChecks,
+  Database, ListChecks, Smartphone,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -41,7 +41,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
-  Database, ListChecks, Zap,
+  Database, ListChecks, Zap, Smartphone,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -87,6 +87,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',    href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments',       icon: 'MapPin' },
     { label: 'Driver-Auto',    href: '/dashboard/driver-auto',              icon: 'Zap' },
+    { label: 'Driver App',      href: '/dashboard/driver-app',               icon: 'Smartphone' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
     { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
@@ -222,6 +223,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
@@ -274,6 +276,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
@@ -315,6 +318,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
@@ -433,6 +437,7 @@ function classifyNavItem(item: NavItem): NavGroupId {
   if (h.startsWith('/dashboard/ground')) return 'ops'
   if (h.startsWith('/dashboard/srilanka')) return 'ops'
   if (h.startsWith('/dashboard/driver-auto')) return 'ops'
+  if (h.startsWith('/dashboard/driver-app')) return 'ops'
   if (h.startsWith('/dashboard/driver-log')) return 'ops'
   if (h.startsWith('/dashboard/te')) return 'te'
   if (h.startsWith('/dashboard/accounts')) return 'finance'

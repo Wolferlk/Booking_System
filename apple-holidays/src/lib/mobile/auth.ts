@@ -1,0 +1,156 @@
+/**
+ * Aahaas Driver App — authentication for `/api/mobile/*`.
+ *
+ * The app cannot use the NextAuth cookie session, so it carries a bearer JWT
+ * signed with its own secret. Two kinds of actor sign in through the same app:
+ *
+ *   DRIVER  a row in `drivers` (registered through /register/driver) with an
+ *           app account in `mobile_driver_accounts`. Tokens carry the account's
+ *           `tokenVersion`; a password reset bumps it, which signs every other
+ *           phone out.
+ *   STAFF   a row in `users` — the same e-mail + password as ops.aahaas.com.
+ *           Only the desks that run drivers on the road get the app.
+ *
+ * `/api/mobile` is excluded from the NextAuth middleware (see src/middleware.ts)
+ * exactly like `/api/vendor`, so every route here must call `requireDriver` /
+ * `requireStaff` / `requireActor` itself.
+ */
+import { SignJWT, jwtVerify } from 'jose'
+import type { NextRequest } from 'next/server'
+import type { UserRole } from '@prisma/client'
+import { prisma } from '@/lib/prisma'
+
+const SECRET = new TextEncoder().encode(
+  process.env.MOBILE_JWT_SECRET || `${process.env.NEXTAUTH_SECRET || 'apple-holidays'}:mobile-app`,
+)
+
+const DRIVER_TTL = '60d'
+const STAFF_TTL = '7d'
+
+/** Staff roles that can use the app's ops view. */
+export const MOBILE_STAFF_ROLES: UserRole[] = [
+  'TE_USER', 'GT_USER', 'GT_TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
+]
+
+export interface DriverActor {
+  kind: 'DRIVER'
+  driverId: string
+  accountId: string
+  name: string
+  country: string | null
+}
+
+export interface StaffActor {
+  kind: 'STAFF'
+  userId: string
+  name: string
+  role: UserRole
+  country: string
+}
+
+export type MobileActor = DriverActor | StaffActor
+
+export class MobileAuthError extends Error {
+  constructor(message: string, public status = 401) { super(message) }
+}
+
+export async function signDriverToken(driverId: string, accountId: string, tokenVersion: number): Promise<string> {
+  return new SignJWT({ k: 'D', a: accountId, v: tokenVersion })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(driverId)
+    .setIssuedAt()
+    .setExpirationTime(DRIVER_TTL)
+    .sign(SECRET)
+}
+
+export async function signStaffToken(userId: string): Promise<string> {
+  return new SignJWT({ k: 'S' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(userId)
+    .setIssuedAt()
+    .setExpirationTime(STAFF_TTL)
+    .sign(SECRET)
+}
+
+/** Short-lived token proving an OTP was verified — used to set a new password. */
+export async function signResetToken(driverId: string, otpId: string): Promise<string> {
+  return new SignJWT({ k: 'R', o: otpId })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(driverId)
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .sign(SECRET)
+}
+
+export async function verifyResetToken(token: string): Promise<{ driverId: string; otpId: string } | null> {
+  try {
+    const { payload } = await jwtVerify(token, SECRET)
+    if (payload.k !== 'R' || !payload.sub) return null
+    return { driverId: payload.sub, otpId: String(payload.o ?? '') }
+  } catch {
+    return null
+  }
+}
+
+function bearer(req: NextRequest): string | null {
+  const h = req.headers.get('authorization') || ''
+  const m = /^Bearer\s+(.+)$/i.exec(h)
+  return m ? m[1].trim() : null
+}
+
+export async function requireActor(req: NextRequest): Promise<MobileActor> {
+  const token = bearer(req)
+  if (!token) throw new MobileAuthError('Please sign in.')
+  let payload: Record<string, unknown> & { sub?: string }
+  try {
+    payload = (await jwtVerify(token, SECRET)).payload as typeof payload
+  } catch {
+    throw new MobileAuthError('Your session has expired. Please sign in again.')
+  }
+  if (!payload.sub) throw new MobileAuthError('Please sign in.')
+
+  if (payload.k === 'D') {
+    const [account, driver] = await Promise.all([
+      prisma.mobileDriverAccount.findUnique({ where: { driverId: payload.sub } }),
+      prisma.driver.findUnique({ where: { id: payload.sub }, select: { id: true, name: true, isActive: true, country: true } }),
+    ])
+    if (!account || !driver || account.id !== payload.a) throw new MobileAuthError('Please sign in again.')
+    if (account.tokenVersion !== Number(payload.v ?? -1)) throw new MobileAuthError('You were signed out. Please sign in again.')
+    if (!driver.isActive) throw new MobileAuthError('Your profile is not active. Please contact operations.', 403)
+    // Cheap presence signal for the ops view; never blocks the request.
+    if (!account.lastSeenAt || Date.now() - account.lastSeenAt.getTime() > 5 * 60_000) {
+      prisma.mobileDriverAccount.update({ where: { id: account.id }, data: { lastSeenAt: new Date() } }).catch(() => {})
+    }
+    return { kind: 'DRIVER', driverId: driver.id, accountId: account.id, name: driver.name, country: driver.country ?? null }
+  }
+
+  if (payload.k === 'S') {
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, name: true, role: true, country: true, isActive: true },
+    })
+    if (!user || !user.isActive) throw new MobileAuthError('Please sign in again.')
+    if (!MOBILE_STAFF_ROLES.includes(user.role)) throw new MobileAuthError('This account cannot use the app.', 403)
+    return { kind: 'STAFF', userId: user.id, name: user.name, role: user.role, country: user.country }
+  }
+
+  throw new MobileAuthError('Please sign in.')
+}
+
+export async function requireDriver(req: NextRequest): Promise<DriverActor> {
+  const a = await requireActor(req)
+  if (a.kind !== 'DRIVER') throw new MobileAuthError('This screen is for drivers.', 403)
+  return a
+}
+
+export async function requireStaff(req: NextRequest): Promise<StaffActor> {
+  const a = await requireActor(req)
+  if (a.kind !== 'STAFF') throw new MobileAuthError('This screen is for the operations team.', 403)
+  return a
+}
+
+/** Country filter for staff reads — same rule as the web (ALL sees all). */
+export function staffSeesCountry(actor: StaffActor, country: string | null | undefined): boolean {
+  if (actor.role === 'ULTRA_SUPER_ADMIN' || actor.country === 'ALL') return true
+  return !country || country === actor.country
+}

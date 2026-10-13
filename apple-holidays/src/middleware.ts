@@ -173,6 +173,7 @@ export const config = {
     //   filehandler — file handler portal uses its own signed cookie, not NextAuth
     //   uploads  — static file serving
     //   pnl-by-isnumber — intentionally public IS-number lookup
-    '/api/((?!auth|public|cron|webhooks|vendor|filehandler|uploads|pnl-by-isnumber|bookings/full).*)',
+    //   mobile   — Aahaas Driver App; its own bearer JWT (lib/mobile/auth.ts), checked per route
+    '/api/((?!auth|public|cron|webhooks|vendor|filehandler|uploads|pnl-by-isnumber|bookings/full|mobile/).*)',
   ],
 }

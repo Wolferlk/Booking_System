@@ -3541,3 +3541,190 @@ model DriverBoardSend {
   @@index([createdAt], map: "driver_board_sends_createdAt_idx")
   @@map("driver_board_sends")
 }
+
+// ─── Aahaas Driver App (mobile) ──────────────────────────────────────────────
+// Created by prisma/sql/2026-10-13-driver-app.sql — never `db push`.
+// No relations by design: keyed by ids/refs, like driver_trip_claims.
+
+model MobileDriverAccount {
+  id              String    @id @default(cuid())
+  driverId        String    @unique(map: "mobile_driver_accounts_driverId_key")
+  passwordHash    String?   @db.Text
+  phoneVerifiedAt DateTime?
+  emailVerifiedAt DateTime?
+  language        String    @default("en") @db.VarChar(8)
+  tokenVersion    Int       @default(0)
+  lastLoginAt     DateTime?
+  lastSeenAt      DateTime?
+  appVersion      String?   @db.VarChar(32)
+  platform        String?   @db.VarChar(16)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@map("mobile_driver_accounts")
+}
+
+model MobileOtp {
+  id         String    @id @default(cuid())
+  /// ACTIVATE | LOGIN | RESET
+  purpose    String    @db.VarChar(16)
+  /// WHATSAPP | EMAIL
+  channel    String    @db.VarChar(16)
+  target     String
+  driverId   String
+  codeHash   String    @db.VarChar(128)
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  ip         String?   @db.VarChar(64)
+  createdAt  DateTime  @default(now())
+
+  @@index([driverId, createdAt], map: "mobile_otps_driver_created_idx")
+  @@index([target, createdAt], map: "mobile_otps_target_created_idx")
+  @@map("mobile_otps")
+}
+
+model MobileTripSession {
+  id               String    @id @default(cuid())
+  driverId         String
+  bookingId        String
+  bookingRef       String
+  country          String?   @db.VarChar(32)
+  /// ACTIVE | COMPLETED | HANDED_OVER
+  status           String    @default("ACTIVE") @db.VarChar(16)
+  portalShownAt    DateTime?
+  portalSkipped    Boolean   @default(false)
+  startedAt        DateTime  @default(now())
+  feedbackShownAt  DateTime?
+  /// NULL | SUBMITTED | WAIVED
+  feedbackStatus   String?   @db.VarChar(16)
+  feedbackWaivedBy String?
+  completedAt      DateTime?
+  totalKm          Decimal   @default(0.00) @db.Decimal(10, 2)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  @@unique([driverId, bookingId], map: "mobile_trip_sessions_driver_booking_key")
+  @@index([status], map: "mobile_trip_sessions_status_idx")
+  @@index([bookingRef], map: "mobile_trip_sessions_bookingRef_idx")
+  @@map("mobile_trip_sessions")
+}
+
+model MobileTripDay {
+  id            String    @id @default(cuid())
+  sessionId     String
+  driverId      String
+  bookingRef    String
+  /// Local day, YYYY-MM-DD
+  dayDate       String    @db.VarChar(10)
+  /// STARTED | ENDED
+  status        String    @default("STARTED") @db.VarChar(16)
+  startedAt     DateTime  @default(now())
+  endedAt       DateTime?
+  startLat      Float?
+  startLng      Float?
+  endLat        Float?
+  endLng        Float?
+  startOdometer Int?
+  endOdometer   Int?
+  distanceKm    Decimal   @default(0.000) @db.Decimal(10, 3)
+  pointCount    Int       @default(0)
+  lastLat       Float?
+  lastLng       Float?
+  lastSpeed     Float?    @db.Float
+  lastPingAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@unique([sessionId, dayDate], map: "mobile_trip_days_session_day_key")
+  @@index([driverId, dayDate], map: "mobile_trip_days_driver_day_idx")
+  @@index([status, lastPingAt], map: "mobile_trip_days_status_ping_idx")
+  @@map("mobile_trip_days")
+}
+
+model MobileLocationPoint {
+  id         BigInt   @id @default(autoincrement())
+  dayId      String
+  lat        Float
+  lng        Float
+  accuracy   Float?   @db.Float
+  speed      Float?   @db.Float
+  recordedAt DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([dayId, recordedAt], map: "mobile_location_points_day_time_idx")
+  @@map("mobile_location_points")
+}
+
+model MobileVehicleCheck {
+  id             String    @id @default(cuid())
+  driverId       String
+  vehicleId      String?
+  photos         Json
+  odometer       Int?
+  aiReview       Json?
+  /// SUBMITTED | APPROVED | REJECTED
+  status         String    @default("SUBMITTED") @db.VarChar(16)
+  reviewNote     String?   @db.Text
+  reviewedByName String?
+  reviewedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  @@index([driverId, createdAt], map: "mobile_vehicle_checks_driver_created_idx")
+  @@index([status], map: "mobile_vehicle_checks_status_idx")
+  @@map("mobile_vehicle_checks")
+}
+
+model MobilePushToken {
+  id        String   @id @default(cuid())
+  token     String   @unique(map: "mobile_push_tokens_token_key") @db.VarChar(255)
+  /// DRIVER | STAFF
+  actorType String   @db.VarChar(16)
+  actorId   String
+  platform  String?  @db.VarChar(16)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([actorType, actorId], map: "mobile_push_tokens_actor_idx")
+  @@map("mobile_push_tokens")
+}
+
+model MobileNotification {
+  id        String    @id @default(cuid())
+  actorType String    @db.VarChar(16)
+  actorId   String
+  kind      String    @db.VarChar(32)
+  title     String
+  body      String    @db.Text
+  data      Json?
+  dedupeKey String?   @unique(map: "mobile_notifications_dedupeKey_key")
+  readAt    DateTime?
+  pushedAt  DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([actorType, actorId, createdAt], map: "mobile_notifications_actor_created_idx")
+  @@map("mobile_notifications")
+}
+
+model MobileDriverRequest {
+  id            String    @id @default(cuid())
+  driverId      String
+  driverName    String?
+  /// HANDOVER | HELP | PROFILE_CHANGE | FEEDBACK_WAIVER
+  kind          String    @db.VarChar(24)
+  bookingRef    String?
+  payload       Json?
+  reason        String?   @db.Text
+  /// PENDING | APPROVED | REJECTED
+  status        String    @default("PENDING") @db.VarChar(16)
+  decidedByName String?
+  decidedAt     DateTime?
+  decisionNote  String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+
+  @@index([status, createdAt], map: "mobile_driver_requests_status_idx")
+  @@index([driverId, createdAt], map: "mobile_driver_requests_driver_idx")
+  @@map("mobile_driver_requests")
+}
