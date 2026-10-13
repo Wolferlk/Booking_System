@@ -65,7 +65,36 @@ export const GET = mobileRoute('open-trips', async (req: NextRequest) => {
     }
   })))).flat().sort((a, b) => a.startDate.localeCompare(b.startDate))
 
-  return buildApiSuccess({ enabled: true, today, trips, claims })
+  // Day-by-day detail for the trip screen: what each movement involves and where
+  // the guests sleep. Still no agent, guest name or contact — the driver does not
+  // hold this trip yet.
+  const itemIds = Array.from(new Set(trips.flatMap(t => t.legs.map(l => l.agendaItemId)).filter(Boolean)))
+  const bookingIds = Array.from(new Set(trips.map(t => t.bookingId)))
+  const [items, stays] = await Promise.all([
+    itemIds.length
+      ? prisma.agendaItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, details: true, mealPlan: true, timeTo: true } })
+      : Promise.resolve([]),
+    bookingIds.length
+      ? prisma.accommodation.findMany({
+          where: { bookingId: { in: bookingIds }, ownArrangement: false },
+          select: { bookingId: true, hotel: true, city: true, checkIn: true, checkOut: true },
+        })
+      : Promise.resolve([]),
+  ])
+  const itemById = new Map(items.map(i => [i.id, i]))
+  const ymd = (d: Date) => d.toISOString().slice(0, 10)
+  const detailed = trips.map(t => ({
+    ...t,
+    legs: t.legs.map(l => {
+      const i = itemById.get(l.agendaItemId)
+      return { ...l, details: i?.details?.trim().slice(0, 600) || null, mealPlan: i?.mealPlan ?? null, timeTo: i?.timeTo ?? null }
+    }),
+    stays: stays
+      .filter(s => s.bookingId === t.bookingId)
+      .map(s => ({ hotel: s.hotel, city: s.city, checkIn: ymd(s.checkIn), checkOut: ymd(s.checkOut) })),
+  }))
+
+  return buildApiSuccess({ enabled: true, today, trips: detailed, claims })
 })
 
 export const POST = mobileRoute('open-trips-action', async (req: NextRequest) => {

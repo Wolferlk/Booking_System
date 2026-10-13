@@ -1,25 +1,23 @@
 /** Open trips — the Driver-Auto board in the app. Request with one tap; ops approves. */
 import * as Haptics from 'expo-haptics';
-import { useState } from 'react';
+import { router } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Alert, Text, View } from 'react-native';
 import { Button, Card, ErrorBox, H1, Ionicons, Loading, P, Pill, Row, Screen } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api, ApiError } from '@/lib/api';
 import { fmtRange } from '@/lib/format';
 import { useT } from '@/lib/i18n';
+import { rememberTrips, type OpenTrip } from '@/lib/open-trips';
 import { C, S } from '@/lib/theme';
 
-interface OpenTrip {
-  key: string; fileNo: string; countryLabel: string; startDate: string; endDate: string; days: number; daysAway: number
-  startTime: string | null; title: string; route: string; cities: string[]; pax: number; vehicleType: string | null
-  requireApproval: boolean; myRequestId: string | null; busy: boolean; fits: boolean | null
-}
 interface Claim { id: string; tripKey: string; status: string; bookingRef: string; createdAt: string; snapshot?: { fileNo?: string; route?: string } | null }
 
 export default function GetTrips() {
   const t = useT();
   const { data, error, loading, refreshing, reload, silent } = useLoad<{ enabled: boolean; trips: OpenTrip[]; claims: Claim[] }>('/api/mobile/open-trips');
   const [busy, setBusy] = useState<string | null>(null);
+  useEffect(() => { if (data?.trips) rememberTrips(data.trips); }, [data]);
 
   async function request(trip: OpenTrip) {
     setBusy(trip.key);
@@ -64,7 +62,7 @@ export default function GetTrips() {
 
       {data?.enabled && data.trips.length === 0 && <P>No open trips right now. We will notify you when new ones come.</P>}
       {data?.trips.map(trip => (
-        <Card key={trip.key} style={{ gap: 6 }}>
+        <Card key={trip.key} style={{ gap: 6 }} onPress={() => router.push({ pathname: '/open-trip', params: { key: trip.key } })}>
           <Row style={{ justifyContent: 'space-between' }}>
             <Text style={{ color: C.gold, fontWeight: '800' }}>{fmtRange(trip.startDate, trip.endDate)}</Text>
             <Pill text={trip.daysAway === 0 ? 'Today' : trip.daysAway === 1 ? 'Tomorrow' : `In ${trip.daysAway} days`} tone={trip.daysAway <= 1 ? 'red' : 'dim'} />
@@ -76,6 +74,13 @@ export default function GetTrips() {
             <Row gap={4}><Ionicons name="calendar" size={14} color={C.sub} /><Text style={{ color: C.sub }}>{trip.days} {trip.days === 1 ? 'day' : 'days'}</Text></Row>
             {trip.vehicleType && <Row gap={4}><Ionicons name="car" size={14} color={C.sub} /><Text style={{ color: C.sub }}>{trip.vehicleType}</Text></Row>}
           </Row>
+          {trip.legs.filter(l => l.driven).slice(0, 2).map(l => (
+            <Row key={l.agendaItemId} gap={6}>
+              <Text style={{ color: C.gold, fontWeight: '800', width: 46 }}>{l.time ?? '—'}</Text>
+              <Text style={{ color: C.text, flex: 1 }} numberOfLines={1}>{l.from || l.location}{l.to ? ` → ${l.to}` : ''}</Text>
+            </Row>
+          ))}
+          <Row gap={4}><Text style={{ color: C.red, fontWeight: '800' }}>See day-by-day plan</Text><Ionicons name="chevron-forward" size={16} color={C.red} /></Row>
           {trip.busy && <Text style={{ color: C.amber }}>⚠ You already have a trip on these dates</Text>}
           {trip.fits === false && <Text style={{ color: C.amber }}>⚠ More guests than your vehicle seats</Text>}
           <View style={{ marginTop: 6 }}>
