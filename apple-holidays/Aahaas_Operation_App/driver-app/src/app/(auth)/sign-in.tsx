@@ -23,7 +23,7 @@ export default function SignIn() {
     try {
       const r = await api<{ token: string; actor: Actor }>('/api/mobile/auth/login', {
         auth: false,
-        body: { identifier: identifier.trim(), password, criticalPassword: critical || undefined, platform: Platform.OS, appVersion: APP_VERSION },
+        body: { identifier: identifier.trim(), password, criticalPassword: critical || undefined, as: 'DRIVER', platform: Platform.OS, appVersion: APP_VERSION },
       });
       await signIn(r.token, r.actor);
       router.replace('/');
@@ -45,8 +45,9 @@ export default function SignIn() {
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, padding: S.xl, gap: S.lg }}>
         <IconButton icon="chevron-back" onPress={() => router.back()} />
         <View style={{ gap: S.sm }}>
-          <H1>Sign in</H1>
-          <P>Drivers: your phone number or e-mail. Ops team: your ops.aahaas.com e-mail and password.</P>
+          <Text style={{ color: C.red, fontWeight: '800', letterSpacing: 1 }}>DRIVER LOGIN</Text>
+          <H1>Hello, driver 👋</H1>
+          <P>Sign in with the phone number or e-mail you registered with.</P>
         </View>
         <Input icon="person-outline" placeholder="Phone or e-mail" value={identifier} onChangeText={setIdentifier}
           autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="username" />

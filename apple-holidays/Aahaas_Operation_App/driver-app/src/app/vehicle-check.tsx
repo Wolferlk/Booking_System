@@ -100,7 +100,7 @@ export default function VehicleCheck() {
               <Pressable key={slot} onPress={() => shoot(slot)} style={{ width: '47%', aspectRatio: 1.2, borderRadius: R.md, borderWidth: 2, borderStyle: p ? 'solid' : 'dashed', borderColor: p ? C.green : req ? C.gold : C.line, backgroundColor: C.card, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
                 {p ? <Image alt="" source={{ uri: p.localUri }} style={{ position: 'absolute', inset: 0 } as never} contentFit="cover" /> : null}
                 {busySlot === slot ? <Loading /> : (
-                  <View style={{ alignItems: 'center', gap: 4, backgroundColor: p ? 'rgba(0,0,0,0.55)' : 'transparent', padding: 8, borderRadius: 10 }}>
+                  <View style={{ alignItems: 'center', gap: 4, backgroundColor: p ? 'rgba(255,255,255,0.85)' : 'transparent', padding: 8, borderRadius: 10 }}>
                     <Ionicons name={p ? 'checkmark-circle' : 'camera'} size={30} color={p ? C.green : req ? C.gold : C.sub} />
                     <Text style={{ color: C.text, fontWeight: '800' }}>{SLOT_LABEL[slot] ?? slot}</Text>
                     {!p && <Text style={{ color: C.dim, fontSize: 12 }}>{req ? 'needed' : 'optional'}</Text>}

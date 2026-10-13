@@ -9,7 +9,7 @@ export default function DriverTabs() {
   const { actor } = useAuth();
   const t = useT();
   if (!actor) return <Redirect href="/welcome" />;
-  if (actor.kind !== 'DRIVER') return <Redirect href="/live" />;
+  if (actor.kind !== 'DRIVER') return <Redirect href="/home" />;
   const icon = (name: keyof typeof Ionicons.glyphMap) => function TabIcon({ color, size }: { color: ColorValue; size: number }) {
     return <Ionicons name={name} color={color} size={size + 2} />;
   };
@@ -18,7 +18,7 @@ export default function DriverTabs() {
       headerShown: false,
       tabBarActiveTintColor: C.red,
       tabBarInactiveTintColor: C.dim,
-      tabBarStyle: { backgroundColor: '#0B1120', borderTopColor: C.line, height: 88, paddingTop: 8 },
+      tabBarStyle: { backgroundColor: C.card, borderTopColor: C.line, height: 88, paddingTop: 8 },
       tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
     }}>
       <Tabs.Screen name="today" options={{ title: t('today'), tabBarIcon: icon('sunny') }} />

@@ -27,7 +27,7 @@ export async function registerForPush(): Promise<string | null> {
         name: 'Trips',
         importance: Notifications.AndroidImportance.HIGH,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#E11D48',
+        lightColor: '#FF2638',
       });
     }
     if (!Device.isDevice) return null;

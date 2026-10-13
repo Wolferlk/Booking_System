@@ -14,7 +14,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { buildApiSuccess } from '@/lib/utils'
 import { normalizeEmail } from '@/lib/credential-match'
-import { MOBILE_STAFF_ROLES, signDriverToken, signStaffToken } from '@/lib/mobile/auth'
+import { COMPANY_ROLES, signDriverToken, signStaffToken } from '@/lib/mobile/auth'
 import { MobileError, clientIp, mobileRoute, readJson } from '@/lib/mobile/http'
 import { findDriverByIdentifier } from '@/lib/mobile/otp'
 import { driverProfile, staffProfile } from '@/lib/mobile/profile'
@@ -40,20 +40,20 @@ function fail(ip: string | null, message: string, code = 'bad_credentials'): nev
 export const POST = mobileRoute('login', async (req: NextRequest) => {
   const ip = clientIp(req)
   guard(ip)
-  const body = await readJson<{ identifier?: string; password?: string; criticalPassword?: string; platform?: string; appVersion?: string }>(req)
+  const body = await readJson<{ identifier?: string; password?: string; criticalPassword?: string; platform?: string; appVersion?: string; as?: 'DRIVER' | 'COMPANY' }>(req)
   const identifier = String(body.identifier ?? '').trim()
   const password = String(body.password ?? '')
   if (!identifier || !password) throw new MobileError('Enter your phone or e-mail and your password.')
 
   // ── Staff ────────────────────────────────────────────────────────────────
-  if (identifier.includes('@')) {
+  if (identifier.includes('@') && body.as !== 'DRIVER') {
     const user = await prisma.user.findFirst({ where: { email: normalizeEmail(identifier) } })
       ?? await prisma.user.findUnique({ where: { email: identifier } })
     if (user) {
       if (!(await bcrypt.compare(password, user.password))) fail(ip, 'Wrong e-mail or password.')
       if (!user.isActive) throw new MobileError('This account is inactive.', 403, 'inactive')
-      if (!MOBILE_STAFF_ROLES.includes(user.role)) {
-        throw new MobileError('Your team does not use the driver app. Please use ops.aahaas.com.', 403, 'role')
+      if (!COMPANY_ROLES.includes(user.role)) {
+        throw new MobileError('This account cannot use the app. Please use ops.aahaas.com.', 403, 'role')
       }
       if (user.role === 'ULTRA_SUPER_ADMIN') {
         const expected = process.env.CRITICAL_SERVICES_PASSWORD
@@ -65,6 +65,7 @@ export const POST = mobileRoute('login', async (req: NextRequest) => {
   }
 
   // ── Driver ───────────────────────────────────────────────────────────────
+  if (body.as === 'COMPANY') fail(ip, 'No company account with that e-mail. Drivers: use Driver sign in.', 'not_found')
   const driver = await findDriverByIdentifier(identifier)
   if (!driver) fail(ip, 'We could not find a driver with that phone or e-mail.', 'not_found')
   if (!driver.isActive) throw new MobileError('Your driver profile is not active. Please contact operations.', 403, 'inactive')

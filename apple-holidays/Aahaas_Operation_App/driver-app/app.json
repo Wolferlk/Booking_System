@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "Aahaas Driver",
-    "slug": "aahaas-driver",
+    "name": "Aahaas",
+    "slug": "aahaas-ops",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "aahaasdriver",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#070B14",
+    "scheme": "aahaas",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F5F6FA",
     "ios": {
-      "bundleIdentifier": "com.aahaas.driver",
+      "bundleIdentifier": "com.aahaas.ops",
       "supportsTablet": false,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Aahaas Driver uses your location while a trip day is running to count the kilometres you drive and show operations where the car is.",
@@ -20,10 +20,10 @@
       }
     },
     "android": {
-      "package": "com.aahaas.driver",
+      "package": "com.aahaas.ops",
       "adaptiveIcon": {
-        "backgroundColor": "#070B14",
-        "foregroundImage": "./assets/images/icon.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/images/splash-icon.png"
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
@@ -46,9 +46,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#070B14",
+          "backgroundColor": "#FFFFFF",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 140
+          "imageWidth": 180
         }
       ],
       [
@@ -64,7 +64,7 @@
       [
         "expo-notifications",
         {
-          "color": "#E11D48"
+          "color": "#FF2638"
         }
       ],
       [
@@ -73,7 +73,8 @@
           "cameraPermission": "Take photos of your vehicle for the 2-monthly vehicle check.",
           "photosPermission": "Choose vehicle or profile photos."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": false,

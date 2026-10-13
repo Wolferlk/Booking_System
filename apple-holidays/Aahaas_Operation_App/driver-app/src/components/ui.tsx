@@ -6,7 +6,7 @@ import {
   type TextInputProps, type TextStyle, type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { C, R, S } from '@/lib/theme';
+import { C, R, S, shadow } from '@/lib/theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
 export { Ionicons };
@@ -53,8 +53,8 @@ export function Button({ title, onPress, icon, kind = 'primary', loading, disabl
   title: string; onPress: () => void; icon?: IconName; kind?: 'primary' | 'secondary' | 'danger' | 'gold' | 'ghost'
   loading?: boolean; disabled?: boolean; style?: ViewStyle
 }) {
-  const bg = { primary: C.red, secondary: C.cardHi, danger: '#7F1D1D', gold: C.gold, ghost: 'transparent' }[kind];
-  const fg = kind === 'gold' ? '#1A1300' : C.text;
+  const bg = { primary: C.red, secondary: C.cardHi, danger: C.redDeep, gold: C.gold, ghost: 'transparent' }[kind];
+  const fg = kind === 'secondary' || kind === 'ghost' ? C.text : C.onBrand;
   return (
     <Pressable
       disabled={disabled || loading}
@@ -127,7 +127,7 @@ export function IconButton({ icon, onPress, badge, color = C.text }: { icon: Ico
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: S.lg },
+  card: { backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: S.lg, ...shadow },
   btn: { minHeight: 58, borderRadius: R.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.sm, paddingHorizontal: S.lg },
   input: { flexDirection: 'row', alignItems: 'center', gap: S.sm, backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.line, paddingHorizontal: S.lg },
   iconBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },

@@ -27,9 +27,18 @@ const SECRET = new TextEncoder().encode(
 const DRIVER_TTL = '60d'
 const STAFF_TTL = '7d'
 
-/** Staff roles that can use the app's ops view. */
+/** Staff roles that run drivers — the driver-ops views (live map, driver requests). */
 export const MOBILE_STAFF_ROLES: UserRole[] = [
   'TE_USER', 'GT_USER', 'GT_TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
+]
+
+/**
+ * Every ops.aahaas.com staff role may use the app's company login. What each
+ * can do inside is decided by the same per-route checks as on the web (the
+ * bridge in lib/mobile/bridge.ts runs the web routes as that user).
+ */
+export const COMPANY_ROLES: UserRole[] = [
+  'BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'RS_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
 ]
 
 export interface DriverActor {
@@ -130,7 +139,7 @@ export async function requireActor(req: NextRequest): Promise<MobileActor> {
       select: { id: true, name: true, role: true, country: true, isActive: true },
     })
     if (!user || !user.isActive) throw new MobileAuthError('Please sign in again.')
-    if (!MOBILE_STAFF_ROLES.includes(user.role)) throw new MobileAuthError('This account cannot use the app.', 403)
+    if (!COMPANY_ROLES.includes(user.role)) throw new MobileAuthError('This account cannot use the app.', 403)
     return { kind: 'STAFF', userId: user.id, name: user.name, role: user.role, country: user.country }
   }
 
@@ -146,6 +155,13 @@ export async function requireDriver(req: NextRequest): Promise<DriverActor> {
 export async function requireStaff(req: NextRequest): Promise<StaffActor> {
   const a = await requireActor(req)
   if (a.kind !== 'STAFF') throw new MobileAuthError('This screen is for the operations team.', 403)
+  return a
+}
+
+/** Staff who run drivers (live map, driver requests, vehicle checks). */
+export async function requireDriverOps(req: NextRequest): Promise<StaffActor> {
+  const a = await requireStaff(req)
+  if (!MOBILE_STAFF_ROLES.includes(a.role)) throw new MobileAuthError('Driver operations are not part of your role.', 403)
   return a
 }
 

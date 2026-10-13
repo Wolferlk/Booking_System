@@ -112,7 +112,7 @@ export async function startTracking(): Promise<TrackingMode> {
             foregroundService: {
               notificationTitle: 'Aahaas trip running',
               notificationBody: 'Counting your kilometres. End the day in the app to stop.',
-              notificationColor: '#E11D48',
+              notificationColor: '#FF2638',
             },
           });
         }

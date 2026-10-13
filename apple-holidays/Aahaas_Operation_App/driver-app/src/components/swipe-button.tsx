@@ -14,7 +14,7 @@ import type { IconName } from './ui';
 const KNOB = 64;
 const PAD = 6;
 
-export function SwipeButton({ label, onComplete, colors = [C.red, '#9F1239'], icon = 'arrow-forward', loading, disabled }: {
+export function SwipeButton({ label, onComplete, colors = [C.red, C.redDeep], icon = 'arrow-forward', loading, disabled }: {
   label: string
   onComplete: () => void
   colors?: [string, string]
@@ -71,6 +71,6 @@ export function SwipeButton({ label, onComplete, colors = [C.red, '#9F1239'], ic
 const styles = StyleSheet.create({
   track: { height: KNOB + PAD * 2, borderRadius: 99, backgroundColor: C.cardHi, borderWidth: 1, borderColor: C.line, justifyContent: 'center', overflow: 'hidden' },
   fill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 99, overflow: 'hidden' },
-  label: { position: 'absolute', left: KNOB + 24, right: 16, color: C.text, fontSize: 17, fontWeight: '700', textAlign: 'center' },
+  label: { position: 'absolute', left: KNOB + 24, right: 16, color: C.sub, fontSize: 17, fontWeight: '700', textAlign: 'center' },
   knob: { position: 'absolute', left: PAD, width: KNOB, height: KNOB, borderRadius: KNOB / 2, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
 });
