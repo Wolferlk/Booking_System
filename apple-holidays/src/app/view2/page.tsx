@@ -85,20 +85,23 @@ function CommandCenter() {
 
   // ── Takeovers ────────────────────────────────────────────────────────────
   const [takeover, setTakeover] = useState<Takeover | null>(null)
+  // The queue and "what is showing" live in refs so pump() stays outside a
+  // state updater — updaters must be pure (StrictMode calls them twice).
   const queue = useRef<Takeover[]>([])
+  const showing = useRef<Takeover | null>(null)
   const pump = useCallback(() => {
-    setTakeover(cur => {
-      if (cur) return cur
-      const next = queue.current.shift() ?? null
-      if (next && soundRef.current) {
-        const loud = next.kind === 'alert' || (next.kind === 'fh' && next.event.action === 'CANCEL_REQUESTED')
-        loud ? siren() : chime()
-      }
-      return next
-    })
+    if (showing.current) return
+    const next = queue.current.shift()
+    if (!next) return
+    showing.current = next
+    setTakeover(next)
+    if (soundRef.current) {
+      const loud = next.kind === 'alert' || (next.kind === 'fh' && next.event.action === 'CANCEL_REQUESTED')
+      loud ? siren() : chime()
+    }
   }, [])
   const enqueue = useCallback((items: Takeover[]) => { if (!items.length) return; queue.current.push(...items); pump() }, [pump])
-  const done = useCallback(() => { setTakeover(null); setTimeout(pump, 500) }, [pump])
+  const done = useCallback(() => { showing.current = null; setTakeover(null); setTimeout(pump, 500) }, [pump])
 
   // A freshly opened screen must not replay the backlog: the first load of each
   // feed only seeds the "seen" set.
