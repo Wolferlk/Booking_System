@@ -1442,7 +1442,7 @@ Wishing you a wonderful trip! ✈️
           shaded and red-marked so nobody mistakes them for live work. */}
       <div className={cn(
         'p-8 space-y-6',
-        isCancelled && 'bg-slate-100/70 [&>*:not(:first-child)]:opacity-75 [&>*:not(:first-child)]:grayscale-[45%]',
+        isCancelled && 'bg-slate-100/70 [&>*:not(:first-child):not([data-cancel-banner])]:opacity-75 [&>*:not(:first-child):not([data-cancel-banner])]:grayscale-[45%]',
       )}>
 
         {/* Shared Test Bookings register: banner when marked, a small
@@ -1450,7 +1450,7 @@ Wishing you a wonderful trip! ✈️
         <TestBookingBanner bookingRef={ref} />
 
         {isCancelled && (
-          <div className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">
+          <div data-cancel-banner className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">
             <div
               className="pointer-events-none absolute inset-0 opacity-[0.07]"
               style={{ backgroundImage: 'repeating-linear-gradient(45deg,#dc2626 0 12px,transparent 12px 24px)' }}

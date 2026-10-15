@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { X } from 'lucide-react'
 
@@ -39,9 +40,11 @@ export default function Modal({ open, onClose, title, children, size = 'md', foo
     }
   }, [open, onClose])
 
-  if (!open) return null
+  if (!open || typeof document === 'undefined') return null
 
-  return (
+  // Portalled to <body> so a filtered, transformed or overflow-hidden ancestor
+  // (e.g. the shaded "Booking Cancelled" banner) can't trap or clip the dialog.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         ref={overlayRef}
@@ -73,6 +76,7 @@ export default function Modal({ open, onClose, title, children, size = 'md', foo
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
