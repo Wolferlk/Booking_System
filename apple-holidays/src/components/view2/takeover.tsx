@@ -157,7 +157,7 @@ export function TakeoverLayer({ item, onDone }: { item: Takeover; onDone: () => 
         </div>
         <div className="relative px-8 py-7">
           {body}
-          <div className="absolute right-6 bottom-4 px-3 py-1 rounded-md border-2 font-extrabold uppercase tracking-widest text-sm -rotate-12" style={{ color: accent, borderColor: accent, opacity: .85 }}>{stamp}</div>
+          <div className="absolute right-6 bottom-7 px-3 py-1 rounded-md border-2 font-extrabold uppercase tracking-widest text-sm -rotate-12" style={{ color: accent, borderColor: accent, opacity: .85 }}>{stamp}</div>
         </div>
         <div className="h-1.5 w-full" style={{ background: 'rgba(255,255,255,.05)' }}>
           <div className="h-full" style={{ background: accent, animation: `ccShrink ${total}s linear forwards` }} />
