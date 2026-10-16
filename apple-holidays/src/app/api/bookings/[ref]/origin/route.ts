@@ -35,7 +35,7 @@ export async function GET(req: NextRequest, { params }: { params: { ref: string 
     select: {
       id: true, bookingRef: true, createdAt: true, createdById: true,
       isNumber: true, agentBookingId: true, sourceDocName: true, sourceDocUrl: true,
-      operationCountry: true,
+      operationCountry: true, agent: true,
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
@@ -55,6 +55,7 @@ export async function GET(req: NextRequest, { params }: { params: { ref: string 
       sourceDocName: booking.sourceDocName,
       sourceDocUrl: booking.sourceDocUrl,
       createdById: booking.createdById,
+      agent: booking.agent,
     }))
   } catch (err) {
     console.error('[GET /api/bookings/[ref]/origin]', err)

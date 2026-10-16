@@ -1557,6 +1557,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
 /** The labels the mail prints for each intake channel. */
 const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {
   APPLESYSTEM: 'Apple System',
+  B2C: 'Aahaas B2C',
   ONEDRIVE: 'OneDrive',
   EMAIL: 'Confirmation mail',
   OPS_AI: 'OPS AI',
@@ -1568,7 +1569,7 @@ const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {
 
 /** The order they are printed in — biggest intake paths first. */
 const ORIGIN_ORDER: (OriginChannel | 'MISSING')[] =
-  ['APPLESYSTEM', 'ONEDRIVE', 'EMAIL', 'API', 'OPS_AI', 'MANUAL', 'UNKNOWN', 'MISSING']
+  ['APPLESYSTEM', 'ONEDRIVE', 'EMAIL', 'B2C', 'API', 'OPS_AI', 'MANUAL', 'UNKNOWN', 'MISSING']
 
 /**
  * The split, plus where this system's own new business came in from.

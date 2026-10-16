@@ -44,9 +44,10 @@
  * failing side query removes one line of evidence rather than the whole panel.
  */
 import { prisma } from '@/lib/prisma'
+import { B2C_IMPORT_NOTE_PREFIX, isB2cBooking } from '@/lib/booking-source'
 
 export type OriginChannel =
-  | 'EMAIL' | 'ONEDRIVE' | 'APPLESYSTEM' | 'OPS_AI' | 'API' | 'MANUAL' | 'UNKNOWN'
+  | 'EMAIL' | 'ONEDRIVE' | 'APPLESYSTEM' | 'B2C' | 'OPS_AI' | 'API' | 'MANUAL' | 'UNKNOWN'
 
 export interface OriginEvidence {
   /** What kind of record this is — "Activity log", "Tour confirmation email"… */
@@ -98,6 +99,7 @@ const CHANNEL_LABEL: Record<OriginChannel, string> = {
   EMAIL:       'Email pipeline',
   ONEDRIVE:    'OneDrive / SharePoint',
   APPLESYSTEM: 'AppleSystem import',
+  B2C:         'Aahaas B2C store',
   OPS_AI:      'Ops AI assistant',
   API:         'Created in this system',
   MANUAL:      'Created in this system',
@@ -106,7 +108,7 @@ const CHANNEL_LABEL: Record<OriginChannel, string> = {
 
 /** A pipeline wrote it — so the name on `createdById` is an account, not an author. */
 const AUTOMATED: Record<OriginChannel, boolean> = {
-  EMAIL: true, ONEDRIVE: true, APPLESYSTEM: true,
+  EMAIL: true, ONEDRIVE: true, APPLESYSTEM: true, B2C: true,
   OPS_AI: false, API: false, MANUAL: false, UNKNOWN: false,
 }
 
@@ -115,6 +117,7 @@ const AUTOMATION_PHRASE: Record<OriginChannel, string> = {
   EMAIL:       'the email pipeline',
   ONEDRIVE:    'the OneDrive poller',
   APPLESYSTEM: 'the AppleSystem importer',
+  B2C:         'the Aahaas B2C importer',
   OPS_AI:      'the Ops AI assistant',
   API:         'an API call',
   MANUAL:      'a user',
@@ -178,7 +181,7 @@ function channelFromLog(details: Record<string, unknown>): OriginChannel | null 
  * @returns booking id → channel, for every booking passed in.
  */
 export async function resolveBookingOriginChannels(
-  bookings: { id: string; bookingRef: string; isNumber?: string | null; sourceDocUrl?: string | null }[],
+  bookings: { id: string; bookingRef: string; isNumber?: string | null; sourceDocUrl?: string | null; agent?: string | null }[],
 ): Promise<Map<string, OriginChannel>> {
   const out = new Map<string, OriginChannel>()
 
@@ -243,6 +246,9 @@ export async function resolveBookingOriginChannels(
     else if (source === 'mail') channel = 'EMAIL'
     else if (source === 'onedrive') channel = 'ONEDRIVE'
     else if (source === 'manual') channel = 'MANUAL'
+    // Store orders carry an IS number (the order id) and no document, so they
+    // must be caught before the AppleSystem inference below.
+    else if (source === 'b2c' || isB2cBooking(booking.agent)) channel = 'B2C'
     else if (asImported.has(booking.bookingRef)) channel = 'APPLESYSTEM'
     else if (mailed.has(booking.bookingRef)) channel = 'EMAIL'
     else if (droppedOnDrive.has(booking.bookingRef) || /sharepoint|onedrive/i.test(booking.sourceDocUrl ?? '')) channel = 'ONEDRIVE'
@@ -269,6 +275,7 @@ export async function resolveBookingOrigin(args: {
   sourceDocName?: string | null
   sourceDocUrl?: string | null
   createdById?: string | null
+  agent?: string | null
 }): Promise<BookingOrigin> {
   const { bookingId, bookingRef, createdAt } = args
 
@@ -309,7 +316,7 @@ export async function resolveBookingOrigin(args: {
     prisma.statusEvent.findFirst({
       where: { bookingId },
       orderBy: { createdAt: 'asc' },
-      select: { toState: true, createdAt: true, actor: { select: { name: true } } },
+      select: { toState: true, note: true, createdAt: true, actor: { select: { name: true } } },
     }).catch(() => null),
 
     prisma.fileHandlerLog.findFirst({
@@ -341,6 +348,13 @@ export async function resolveBookingOrigin(args: {
     channel = 'ONEDRIVE'; confidence = 'certain'
   } else if (firstVersion?.source === 'manual') {
     channel = 'MANUAL'; confidence = 'certain'
+  } else if (
+    firstVersion?.source === 'b2c' ||
+    (firstStatusRow?.note ?? '').startsWith(B2C_IMPORT_NOTE_PREFIX) ||
+    isB2cBooking(args.agent)
+  ) {
+    // The B2C importer writes a DRAFT status note, not an activity log.
+    channel = 'B2C'; confidence = 'certain'
   } else if (asImported) {
     channel = 'APPLESYSTEM'; confidence = 'certain'
   } else if (mail) {
@@ -372,6 +386,8 @@ export async function resolveBookingOrigin(args: {
       args.agentBookingId ? `agent ref ${args.agentBookingId}` : null,
       asImported ? 'pulled over the API' : null,
     ].filter(Boolean).join(' · ')
+  } else if (channel === 'B2C') {
+    where = `Aahaas storefront · order ${bookingRef}`
   } else if (channel === 'OPS_AI') {
     where = `Ops AI assistant${logDetails.isNumber ? ` · AppleSystem IS ${String(logDetails.isNumber)}` : ''}`
   } else if (channel === 'API' || channel === 'MANUAL') {

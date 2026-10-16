@@ -36,3 +36,32 @@ export function bookingSourceWhere(source: string | null | undefined): Record<st
   if (source === 'B2B') return { OR: [{ agent: { not: B2C_AGENT_NAME } }, { agent: null }] }
   return null
 }
+
+/** The `StatusEvent.note` prefix the B2C importer writes on the DRAFT event. */
+export const B2C_IMPORT_NOTE_PREFIX = 'Imported from Aahaas B2C'
+
+/** `PNL.isPnlData.channel` stamped by the B2C importer. */
+export const B2C_PNL_CHANNEL = 'AAHAAS_B2C'
+
+/**
+ * Did this booking come from the Aahaas storefront, judged on every marker the
+ * importer leaves rather than `agent` alone?
+ *
+ * `agent` is editable on the booking page, and an AppleSystem sync used to be
+ * able to overwrite it, so a B2C order can end up carrying an agency's name.
+ * The importer also stamps the P&L source (`isPnlData.channel`) and writes an
+ * append-only DRAFT status note — either of those still identifies it. Use this
+ * wherever the answer decides which upstream a booking may be refreshed from.
+ */
+export function isB2cOrigin(input: {
+  agent: string | null | undefined
+  pnlData?: unknown
+  statusNotes?: (string | null | undefined)[]
+}): boolean {
+  if (isB2cBooking(input.agent)) return true
+  const data = input.pnlData
+  if (data && typeof data === 'object' && (data as Record<string, unknown>).channel === B2C_PNL_CHANNEL) {
+    return true
+  }
+  return (input.statusNotes ?? []).some((n) => (n ?? '').startsWith(B2C_IMPORT_NOTE_PREFIX))
+}

@@ -44,6 +44,7 @@ import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
+import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 import LogoSpinner from '@/components/shared/logo-spinner'
 // Shared with the pre-checking engine, so the badge here and the queue's
@@ -1861,8 +1862,16 @@ Wishing you a wonderful trip! ✈️
                   <Edit2 className="w-3.5 h-3.5" /> Edit
                 </button>
               )}
+              {/* Aahaas B2C store order: refresh from the store as a new version */}
+              {!isVnGroundLimited && (booking as any).isB2c && (
+                <B2cUpdateActions
+                  bookingRef={ref}
+                  canUpdate={canEditBooking}
+                  onUpdated={load}
+                />
+              )}
               {/* AppleSystem: re-pull the itinerary, or inspect the raw upstream payload */}
-              {!isVnGroundLimited && (
+              {!isVnGroundLimited && !(booking as any).isB2c && (
               <AppleSystemActions
                 bookingRef={ref}
                 isNumber={booking.isNumber as string | null}

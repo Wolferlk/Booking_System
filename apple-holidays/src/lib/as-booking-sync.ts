@@ -52,6 +52,7 @@ import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames, type MappedB
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { saveAsExtras } from '@/lib/as-booking-extras'
 import { logActivity, ACTION } from '@/lib/activity'
+import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
 import {
   getFieldEdits,
   writePendingConflicts,
@@ -258,6 +259,14 @@ export async function syncBookingFromAs(
     },
   })
   if (!booking) throw new AsSyncError('Booking not found', 404)
+
+  // An Aahaas store order is refreshed from the store, never from AppleSystem.
+  // A numeric order id can match an unrelated AppleSystem quotation, and a
+  // sync would then overwrite the customer's booking with an agency's file
+  // (agent, dates, hotels) — and erase the B2C marker while doing it.
+  if (await isB2cOriginBooking(booking.id, booking.agent)) {
+    throw new AsSyncError('This is an Aahaas B2C booking — it is updated from the store (Update Booking), not from AppleSystem.', 409)
+  }
 
   // A cancelled file is a closed record. Refreshing it from upstream would
   // reanimate content nobody is operating on any more.

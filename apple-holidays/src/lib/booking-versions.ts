@@ -17,7 +17,7 @@ import { prisma } from '@/lib/prisma'
 // are deliberately left untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type VersionSource = 'mail' | 'onedrive' | 'restore' | 'manual'
+export type VersionSource = 'mail' | 'onedrive' | 'restore' | 'manual' | 'b2c'
 
 // Children captured in a snapshot (mirrors the fields written by
 // replaceBookingChildren / upsertAgenda in incoming-mail-automation.ts).
@@ -117,6 +117,37 @@ export async function bumpVersionAndSnapshot(
     amendmentNote: opts.amendmentNote ?? null,
   })
   return updated.version
+}
+
+/**
+ * Like {@link bumpVersionAndSnapshot}, but the new number is one past the
+ * HIGHEST version on file rather than `booking.version + 1`.
+ *
+ * The two differ once someone has switched back to an older version: with V7
+ * on file and V3 active, `version + 1` is V4 and the upsert in
+ * `snapshotBooking` would silently overwrite V4's history. Appending as V8
+ * keeps every earlier snapshot intact.
+ */
+export async function appendVersionAndSnapshot(
+  bookingId: string,
+  opts: { createdById: string; source: VersionSource; amendmentNote?: string | null },
+): Promise<number> {
+  const [booking, latest] = await Promise.all([
+    prisma.booking.findUnique({ where: { id: bookingId }, select: { version: true } }),
+    prisma.bookingVersion.findFirst({
+      where: { bookingId },
+      orderBy: { versionNo: 'desc' },
+      select: { versionNo: true },
+    }),
+  ])
+  const next = Math.max(booking?.version ?? 1, latest?.versionNo ?? 0) + 1
+  await prisma.booking.update({ where: { id: bookingId }, data: { version: next } })
+  await snapshotBooking(bookingId, next, {
+    createdById:   opts.createdById,
+    source:        opts.source,
+    amendmentNote: opts.amendmentNote ?? null,
+  })
+  return next
 }
 
 /** Write the initial v1 snapshot for a brand-new booking (best-effort). */

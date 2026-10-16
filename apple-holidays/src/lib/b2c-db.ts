@@ -279,6 +279,31 @@ export async function fetchOrderHeaders(opts: {
 }
 
 /**
+ * The header for ONE order, whatever its travel date.
+ *
+ * {@link fetchOrderHeaders} floors on upcoming travel, which is right for the
+ * importer but wrong for "Update booking": an order whose first service has
+ * already started must still be refreshable. Same shape, same travel-category
+ * filter, no date gate. Returns null when the order has no dated travel line.
+ */
+export async function fetchOrderHeaderById(orderId: number): Promise<B2cOrderHeader | null> {
+  const id = sanitizeIds([orderId])
+  const rows = await b2cQuery<B2cOrderHeader>(
+    `SELECT m.order_id                AS order_id,
+            MIN(m.service_date)       AS arrival,
+            MAX(m.service_date)       AS departure,
+            COUNT(*)                  AS productLines,
+            MIN(m.booked_date)        AS bookedDate
+       FROM checkouts_more_data m
+      WHERE m.order_id = ${id}
+        AND m.service_date IS NOT NULL
+        AND m.category_id IN (${CATEGORY_LIST})
+      GROUP BY m.order_id`,
+  )
+  return rows[0] ?? null
+}
+
+/**
  * Orders **placed** inside a date range, one row per order.
  *
  * `fetchOrderHeaders()` answers a different question — it is the importer's

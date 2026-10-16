@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isB2cOrigin } from '@/lib/booking-source'
 import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
@@ -119,6 +120,16 @@ export async function GET(
     }
   }
   responseData.pnlSource = pnlSource
+
+  // Store orders are refreshed from the store, not AppleSystem — the page uses
+  // this to show "Update Booking" instead of "Fetch Data from API". Judged on
+  // every importer marker, so a B2C booking whose agent was overwritten still
+  // counts. Uses data already loaded above; no extra query.
+  responseData.isB2c = isB2cOrigin({
+    agent: booking.agent,
+    pnlData: booking.pnl?.isPnlData,
+    statusNotes: booking.statusEvents.map((e) => e.note),
+  })
 
   // Which package/notes fields were edited by hand, and whether a sync is
   // waiting on a replace/skip decision for any of them. Staff-only — a client
