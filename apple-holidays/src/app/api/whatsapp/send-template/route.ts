@@ -4,7 +4,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { sendViaMetaTemplate, findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { sendViaMetaTemplate, findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
   const phone = normalisePhone(body.phone ?? '')
   const templateName = (body.template ?? '').trim()
   if (!phone) return buildApiError('phone is required')
+  if (!(await canAccessWhatsAppPhone(session.user.role, phone))) {
+    return buildApiError('This chat is outside your country scope', 403)
+  }
   if (!templateName) return buildApiError('template is required')
 
   const senderName = session.user.name ?? session.user.email ?? 'Staff'

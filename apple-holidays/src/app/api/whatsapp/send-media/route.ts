@@ -5,7 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { putUpload } from '@/lib/storage'
-import { sendViaMetaApi, findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { sendViaMetaApi, findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +27,9 @@ export async function POST(req: NextRequest) {
   if (typeof rawPhone !== 'string') return buildApiError('phone is required')
   const phone = normalisePhone(rawPhone)
   if (!phone) return buildApiError('phone is required')
+  if (!(await canAccessWhatsAppPhone(session.user.role, phone))) {
+    return buildApiError('This chat is outside your country scope', 403)
+  }
   if (file.size > MAX_BYTES) return buildApiError('File is too large (max 16 MB)')
 
   const buffer = Buffer.from(await file.arrayBuffer())

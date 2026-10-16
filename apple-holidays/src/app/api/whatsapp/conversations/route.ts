@@ -9,7 +9,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { WHATSAPP_STAFF_ROLES, whatsappInboxCountry } from '@/lib/whatsapp'
 import { syncInboundRecent } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
@@ -114,10 +114,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const results = conversations.map(([phone, entry]) => {
+  // A country-confined desk (Vietnam ground) sees only chats linked to one of
+  // its own bookings — never another country's guests or unlinked numbers.
+  const scopeCountry = whatsappInboxCountry(session.user.role)
+
+  const results = conversations.flatMap(([phone, entry]) => {
     const booking = bookingByPhone.get(phone) ?? (entry.ref ? bookingByRef.get(entry.ref) ?? null : null)
+    if (scopeCountry && booking?.operationCountry !== scopeCountry) return []
     const { last } = entry
-    return {
+    return [{
       phone,
       displayName: entry.displayName,
       snippet: last.body ?? (last.mediaType ? MEDIA_LABEL[last.mediaType] ?? '📎 Attachment' : ''),
@@ -129,7 +134,7 @@ export async function GET(req: NextRequest) {
         status:           booking.status,
         operationCountry: booking.operationCountry,
       } : null,
-    }
+    }]
   })
 
   return buildApiSuccess(results)

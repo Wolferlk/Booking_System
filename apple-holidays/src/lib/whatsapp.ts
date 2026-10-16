@@ -29,7 +29,8 @@ export function normalisePhone(raw: string): string {
  * booking WhatsApp messages and the daily trip details from the booking page,
  * so it was answering guests through a window it could not read. The inbox is
  * the same one every other desk sees — country scoping is applied per
- * conversation, not by withholding the page.
+ * conversation (see `whatsappInboxCountry` / `canAccessWhatsAppPhone`), not by
+ * withholding the page.
  */
 export const WHATSAPP_STAFF_ROLES = [
   'BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
@@ -57,6 +58,42 @@ export async function findBookingByPhone(phone: string) {
     },
     orderBy: { createdAt: 'desc' },
   })
+}
+
+/**
+ * The single operation country a role's inbox is confined to, or null when the
+ * role sees every conversation. Only the Vietnam desk (`GT_VN_USER`) is
+ * confined: it gets the chats linked to a Vietnam booking and nothing else —
+ * no other country's guests, and no unlinked numbers.
+ */
+export function whatsappInboxCountry(role: string | undefined | null): 'VIETNAM' | null {
+  return role === 'GT_VN_USER' ? 'VIETNAM' : null
+}
+
+/**
+ * May this role read or message this phone number? Resolves the booking the
+ * same way the inbox does — by phone first, then by the bookingRef the number's
+ * own messages were filed under — so a thread visible in the list can be opened,
+ * and one hidden from the list cannot be reached by typing its number.
+ */
+export async function canAccessWhatsAppPhone(role: string | undefined | null, phone: string): Promise<boolean> {
+  const country = whatsappInboxCountry(role)
+  if (!country) return true
+
+  const byPhone = await findBookingByPhone(phone)
+  if (byPhone) return byPhone.operationCountry === country
+
+  const filed = await prisma.whatsAppMessage.findFirst({
+    where:   { phone: normalisePhone(phone), NOT: { bookingRef: { startsWith: 'UNKNOWN:' } } },
+    orderBy: { createdAt: 'desc' },
+    select:  { bookingRef: true },
+  })
+  if (!filed?.bookingRef) return false
+  const booking = await prisma.booking.findUnique({
+    where:  { bookingRef: filed.bookingRef },
+    select: { operationCountry: true },
+  })
+  return booking?.operationCountry === country
 }
 
 /**

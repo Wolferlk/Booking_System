@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
   if (!(WHATSAPP_STAFF_ROLES as readonly string[]).includes(session.user.role as UserRole)) {
     return buildApiError('Forbidden', 403)
   }
+  // Templates live on the shared Meta account every desk sends from, so the
+  // country-confined Vietnam desk may send approved ones but not create new ones.
+  if (session.user.role === 'GT_VN_USER') return buildApiError('Forbidden', 403)
 
   const body = await req.json() as {
     name?: string

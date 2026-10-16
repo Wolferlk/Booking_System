@@ -10,7 +10,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
 import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
@@ -25,6 +25,9 @@ export async function GET(req: NextRequest) {
 
   const phone = normalisePhone(req.nextUrl.searchParams.get('phone') ?? '')
   if (!phone) return buildApiError('phone is required')
+  if (!(await canAccessWhatsAppPhone(session.user.role, phone))) {
+    return buildApiError('This chat is outside your country scope', 403)
+  }
 
   // Pull any replies n8n's webhook stored that we haven't imported yet — this
   // is what makes customer replies appear in the thread (n8n owns the Meta
