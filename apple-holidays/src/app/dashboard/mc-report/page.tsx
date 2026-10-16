@@ -36,6 +36,11 @@ import {
   movementFlow, driverState, tripStages, type AdvancedFilters,
 } from '@/lib/mc-report-filters'
 import type { McSheetRow } from '@/lib/mc-report-workbook'
+import ReportStudio, { downloadMcPdf, type SavedTemplate } from '@/components/mc-report/report-studio'
+import {
+  DEFAULT_CONFIG, describeFilters,
+  type McDateMode, type McPdfRow, type McReportTemplate, type McTemplateConfig, type McTemplateFilters,
+} from '@/lib/mc-report-pdf'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -245,6 +250,22 @@ function startOfMonth() {
 function endOfMonth() {
   const d = new Date(); d.setMonth(d.getMonth() + 1, 0)
   return d.toISOString().slice(0, 10)
+}
+
+/** The range a template's date mode stands for; null = keep what is on screen. */
+function rangeForDateMode(mode: McDateMode): { from: string; to: string; label: string | null } | null {
+  switch (mode) {
+    case 'today':     return { from: todayISO(), to: todayISO(), label: 'Today' }
+    case 'tomorrow':  return { from: offsetISO(1), to: offsetISO(1), label: 'Tomorrow' }
+    case 'next7':     return { from: todayISO(), to: offsetISO(6), label: null }
+    case 'thisWeek':  return { from: startOfWeek(), to: endOfWeek(), label: 'This Week' }
+    case 'nextWeek': {
+      const shift = (iso: string) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 7); return d.toISOString().slice(0, 10) }
+      return { from: shift(startOfWeek()), to: shift(endOfWeek()), label: null }
+    }
+    case 'thisMonth': return { from: startOfMonth(), to: endOfMonth(), label: 'This Month' }
+    default:          return null
+  }
 }
 
 const QUICK_RANGES = [
@@ -527,6 +548,46 @@ function mcNumber(row: MCRow, field: McFieldKey): number | null {
 function kmVariance(row: MCRow): number | null {
   const b = mcNumber(row, 'budgetKm'), a = mcNumber(row, 'actualKm')
   return a != null && b != null ? Math.round((a - b) * 10) / 10 : null
+}
+
+/**
+ * A chart row as the PDF prints it. Built here, from the row the desk is
+ * looking at, so every on-screen rule (cancelled, no driver needed, the
+ * vehicle hint) carries over. The driver rate is deliberately not copied.
+ */
+function toPdfRow(r: MCRow): McPdfRow {
+  const flow = movementFlow(r)
+  const sl = isSriLanka(r.operationCountry), sgmy = isSgMy(r.operationCountry)
+  const transfer = sgmy ? mcNumber(r, 'budgetTransfer') : null
+  const specialReq = [
+    r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
+    bookingRequestsText(r.bookingRequests),
+  ].filter(Boolean).join(' | ')
+  return {
+    id: r.id, date: r.date.slice(0, 10), time: flow.time ?? r.meetingTime,
+    vnCode: r.vnCode, isNumber: r.isNumber, agentRef: r.agentBookingId,
+    leadGuest: r.leadGuest, agent: r.agent, location: r.location, country: r.operationCountry,
+    adults: r.paxAdults, children: r.paxChildren,
+    from: r.fromPoint, to: r.toPoint, details: r.details, mealPlan: r.mealPlan,
+    service: SERVICE_LABELS[r.serviceType] ?? r.serviceType,
+    flow: flow.arrival && flow.departure ? 'both' : flow.arrival ? 'arrival' : flow.departure ? 'departure' : null,
+    airport: flow.airport,
+    flights: (r.flights ?? []).filter(f => !flow.flight || f.date === r.date.slice(0, 10) || f === flow.flight)
+      .map(f => `${f.flightNo} · ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`.trim()),
+    leisure: r.isLeisure, hotelOnly: r.isHotelOnly || r.isHotelOnlyBooking,
+    noDriver: r.isLeisure || r.isHotelOnly || r.isHotelOnlyBooking,
+    vendor: r.vendor, driver: r.driverName, driverPhone: r.driverPhone,
+    vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? null, plate: r.vehiclePlate,
+    guide: r.guideName, guidePhone: r.guidePhone, tourVendor: r.tourVendorName, tourVendorPhone: r.tourVendorPhone,
+    mealPrefs: mealPrefsText(r.mealPrefs), specialReq,
+    ticketsControl: r.ticketsControl ?? null,
+    status: r.bookingStatus?.replace(/_/g, ' ') ?? '',
+    cancelled: isCancelledRow(r), cancelPending: isCancelPendingRow(r), done: !!r.done,
+    budgetKm: sl ? mcNumber(r, 'budgetKm') : null, actualKm: sl ? mcNumber(r, 'actualKm') : null,
+    packageCost: sl ? mcNumber(r, 'packageCost') : null,
+    budgetTransfer: transfer != null
+      ? `${r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)} ${fmtNum(transfer)}` : null,
+  }
 }
 
 function flightTime(f: McFlight) {
@@ -887,6 +948,12 @@ export default function MCReportPage() {
   const advReady = useRef(false)
   const [savingDone, setSavingDone] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  // Report Studio — PDF builder + saved templates.
+  const [showStudio, setShowStudio] = useState(false)
+  const [templates, setTemplates] = useState<SavedTemplate[]>([])
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const studioConfig = useRef<McTemplateConfig>(DEFAULT_CONFIG)
+  const [studioTemplateId, setStudioTemplateId] = useState<string | null>(null)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
   const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
   const [assignRow, setAssignRow] = useState<MCRow | null>(null)
@@ -914,6 +981,15 @@ export default function MCReportPage() {
       return next
     })
   }
+
+  const reloadTemplates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/mc-report/templates')
+      const json = await res.json()
+      if (json.success) setTemplates(json.data)
+    } catch { /* starters still work without the saved list */ }
+  }, [])
+  useEffect(() => { reloadTemplates() }, [reloadTemplates])
 
   useEffect(() => {
     fetch('/api/public/partner-settings')
@@ -1044,6 +1120,51 @@ export default function MCReportPage() {
   const advCounts     = useMemo(() => facetCounts(preAdvancedRows, adv), [preAdvancedRows, adv])
   const advActive     = activeFilterCount(adv)
   const isFiltered    = displayedRows.length !== rows.length
+
+  // ── Report Studio wiring ─────────────────────────────────────────────────────
+  const pdfRows = useMemo(() => displayedRows.map(toPdfRow), [displayedRows])
+  const effectiveCountryForView = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
+  const currentFilters = useMemo<McTemplateFilters>(() => ({
+    adv, search, deepSearch, serviceType: svcFilter, country: localCountry, cancelOnly, doneFilter,
+  }), [adv, search, deepSearch, svcFilter, localCountry, cancelOnly, doneFilter])
+  const serviceLabel = useCallback((v: string) => SERVICE_LABELS[v] ?? v, [])
+  const onStudioConfig = useCallback((c: McTemplateConfig) => { studioConfig.current = c }, [])
+
+  /** Put a template's filters (and dates) on the chart. */
+  const applyTemplate = useCallback((t: McReportTemplate) => {
+    const f = t.config.filters
+    if (t.builtIn) {
+      // A starter says what *kind* of movement to print, not whose — keep the
+      // driver / agent / city / text filters already on the chart.
+      setAdv(cur => ({ ...f.adv, drivers: cur.drivers, agents: cur.agents, locations: cur.locations, airports: cur.airports }))
+    } else {
+      setAdv(f.adv)
+      setSearch(f.search); setDeepSearch(f.deepSearch); setSvcFilter(f.serviceType)
+      setLocalCountry(f.country); setCancelOnly(f.cancelOnly); setDoneFilter(f.doneFilter)
+    }
+    const range = rangeForDateMode(t.config.dateMode)
+    if (range) { setDateFrom(range.from); setDateTo(range.to); setActiveRange(range.label) }
+    // Search / country only reach the server on a reload.
+    setResetNonce(n => n + 1)
+  }, [])
+
+  async function quickPdf() {
+    setShowExportMenu(false)
+    setExportingPdf(true)
+    try {
+      await downloadMcPdf(pdfRows, { ...studioConfig.current, filters: currentFilters }, {
+        dateFrom, dateTo, generatedBy: session?.user?.name ?? null,
+        filterChips: [
+          ...describeFilters(currentFilters, serviceLabel),
+          ...(effectiveCountryForView && !localCountry ? [`Country: ${effectiveCountryForView.replace(/_/g, ' ')}`] : []),
+        ],
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'PDF failed')
+    } finally {
+      setExportingPdf(false)
+    }
+  }
 
   // ── Done ticks (Sri Lanka) ───────────────────────────────────────────────────
 
@@ -1460,21 +1581,6 @@ export default function MCReportPage() {
     }
   }
 
-  // ── PDF Export ────────────────────────────────────────────────────────────────
-
-  function openPrintPage() {
-    const params = new URLSearchParams()
-    if (dateFrom)    params.set('dateFrom', dateFrom)
-    if (dateTo)      params.set('dateTo',   dateTo)
-    if (search)      params.set('search',   search)
-    if (deepSearch)  params.set('deepSearch', deepSearch)
-    if (svcFilter)   params.set('serviceType', svcFilter)
-    const effectiveCountry = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
-    if (effectiveCountry) params.set('country', effectiveCountry)
-    window.open(`/print/mc-report?${params}`, '_blank')
-    setShowExportMenu(false)
-  }
-
   // ── Render ────────────────────────────────────────────────────────────────────
 
   const q = deepSearch.trim().toLowerCase()
@@ -1491,6 +1597,13 @@ export default function MCReportPage() {
               Refresh
             </button>
 
+            <button onClick={() => setShowStudio(true)} className="btn btn-secondary btn-sm"
+              title="Build a PDF from this view and save it as a template">
+              <Sparkles className="w-4 h-4 text-brand-500" />
+              Report Studio
+              {templates.length > 0 && <span className="text-[10px] font-bold bg-brand-100 text-brand-700 rounded-full px-1.5">{templates.length}</span>}
+            </button>
+
             {/* Export dropdown */}
             <div className="relative" ref={exportMenuRef}>
               <button
@@ -1504,7 +1617,7 @@ export default function MCReportPage() {
               {showExportMenu && (
                 <div className="absolute right-0 top-10 z-30 w-56 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">
-                    {displayedRows.length} row{displayedRows.length !== 1 ? 's' : ''}{deepSearch ? ' · filtered' : ''}
+                    {displayedRows.length} row{displayedRows.length !== 1 ? 's' : ''}{isFiltered ? ' · filtered' : ''}
                   </p>
                   <div className="border-t border-slate-100 divide-y divide-slate-100">
                     <button onClick={downloadCSV}
@@ -1525,12 +1638,22 @@ export default function MCReportPage() {
                         <p className="text-xs text-emerald-600">2 sheets: movements + summary</p>
                       </div>
                     </button>
-                    <button onClick={openPrintPage}
-                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-50 text-sm text-blue-800 text-left transition-colors">
-                      <Printer className="w-4 h-4 text-blue-500" />
+                    <button onClick={quickPdf} disabled={exportingPdf}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-50 text-sm text-blue-800 text-left transition-colors disabled:opacity-60">
+                      {exportingPdf
+                        ? <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                        : <Printer className="w-4 h-4 text-blue-500" />}
                       <div>
-                        <p className="font-semibold">PDF (Print)</p>
-                        <p className="text-xs text-blue-500">Opens print-ready view</p>
+                        <p className="font-semibold">{exportingPdf ? 'Generating…' : 'PDF — this view'}</p>
+                        <p className="text-xs text-blue-500">Exactly the filtered rows{studioTemplateId ? ' · last Studio layout' : ''}</p>
+                      </div>
+                    </button>
+                    <button onClick={() => { setShowExportMenu(false); setShowStudio(true) }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-amber-50 text-sm text-amber-900 text-left transition-colors">
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      <div>
+                        <p className="font-semibold">Report Studio…</p>
+                        <p className="text-xs text-amber-600">Pick columns, layout & save templates</p>
                       </div>
                     </button>
                   </div>
@@ -2838,6 +2961,26 @@ export default function MCReportPage() {
           </div>
         )
       })()}
+
+      <ReportStudio
+        open={showStudio}
+        onClose={() => setShowStudio(false)}
+        rows={pdfRows}
+        totalRows={rows.length}
+        loading={loading}
+        filters={currentFilters}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        userName={session?.user?.name ?? null}
+        serviceLabel={serviceLabel}
+        onApplyTemplate={applyTemplate}
+        onConfigChange={onStudioConfig}
+        initialConfig={studioConfig.current}
+        initialTemplateId={studioTemplateId}
+        onTemplateIdChange={setStudioTemplateId}
+        templates={templates}
+        reloadTemplates={reloadTemplates}
+      />
     </div>
   )
 }
