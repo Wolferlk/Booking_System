@@ -13,10 +13,11 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, History, RefreshCw, ShieldCheck, Store } from 'lucide-react'
+import { AlertTriangle, Calculator, CheckCircle2, ChevronDown, ChevronRight, History, RefreshCw, ShieldCheck, Store } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { readApiResponse, cn } from '@/lib/utils'
+import type { AccountsCall, AccountsPreview } from '@/lib/accounts-b2c-client'
 
 type ChangeKey = string
 
@@ -63,9 +64,17 @@ interface SyncResult {
   warnings: string[]
   lastUpdate: { at: string; by: string; version: number } | null
   unchanged: boolean
+  /** The Accounts system's own preview of the same order (P&L + invoice). */
+  accounts?: AccountsCall<AccountsPreview>
 }
 
-interface LastUpdate { at: string; by: string; version: number; changed: string[] }
+interface LastUpdate {
+  at: string
+  by: string
+  version: number
+  changed: string[]
+  accounts?: { status: string; message: string | null; versionNo?: number | null; invoice?: string | null } | null
+}
 
 export default function B2cUpdateActions({
   bookingRef,
@@ -84,6 +93,8 @@ export default function B2cUpdateActions({
   const [selected, setSelected] = useState<Set<ChangeKey>>(new Set())
   const [showItin, setShowItin] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<LastUpdate | null>(null)
+  const [accPnl, setAccPnl] = useState(false)
+  const [accInvoice, setAccInvoice] = useState(false)
 
   const loadStatus = useCallback(async () => {
     try {
@@ -113,6 +124,10 @@ export default function B2cUpdateActions({
       if (!json.success || !json.data) throw new Error(json.error || 'Could not read the store order')
       setPreview(json.data)
       setSelected(new Set(json.data.changes.filter((c) => c.recommended).map((c) => c.key)))
+      const acc = json.data.accounts
+      const accData = acc?.status === 'ok' ? acc.data : null
+      setAccPnl(!!accData?.pnl.needs_update)
+      setAccInvoice(accData?.invoice.action === 'revise' || accData?.invoice.action === 'create')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read the store order')
     } finally {
@@ -127,11 +142,18 @@ export default function B2cUpdateActions({
       const res = await fetch(`/api/bookings/${bookingRef}/b2c-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'apply', keys: Array.from(selected), expectedVersion: preview.version }),
+        body: JSON.stringify({
+          mode: 'apply',
+          keys: Array.from(selected),
+          expectedVersion: preview.version,
+          accounts: accPnl || accInvoice ? { pnl: accPnl, invoice: accInvoice } : false,
+        }),
       })
       const json = await readApiResponse<SyncResult>(res)
       if (!json.success || !json.data) throw new Error(json.error || 'Update failed')
-      toast.success(json.message || 'Booking updated')
+      const acc = (json.data as SyncResult & { accounts?: { status: string } | null }).accounts
+      if (acc && acc.status !== 'ok') toast.warning(json.message || 'OPS updated; Accounts was not')
+      else toast.success(json.message || 'Booking updated')
       setOpen(false)
       setPreview(null)
       await loadStatus()
@@ -155,6 +177,10 @@ export default function B2cUpdateActions({
   if (!canUpdate && !lastUpdate) return null
 
   const pickedCount = preview ? preview.changes.filter((c) => selected.has(c.key)).length : 0
+  const accData = preview?.accounts?.status === 'ok' ? preview.accounts.data : null
+  const accountsHasWork = !!accData && (accData.pnl.needs_update || accData.invoice.action === 'revise' || accData.invoice.action === 'create')
+  const totalPicked = pickedCount + (accPnl ? 1 : 0) + (accInvoice ? 1 : 0)
+  const nothingAnywhere = !!preview && preview.unchanged && !accountsHasWork
 
   return (
     <>
@@ -177,6 +203,11 @@ export default function B2cUpdateActions({
         >
           <RefreshCw className="w-3 h-3 text-slate-400" />
           Store checked <span className="font-semibold text-slate-700">{relTimeAgo(lastUpdate.at)}</span>
+          {lastUpdate.accounts && (
+            <span className={lastUpdate.accounts.status === 'ok' ? 'text-emerald-600' : 'text-rose-600'}>
+              · Accounts {lastUpdate.accounts.status === 'ok' ? (lastUpdate.accounts.versionNo ? `v${lastUpdate.accounts.versionNo}` : 'ok') : 'not updated'}
+            </span>
+          )}
         </span>
       )}
 
@@ -188,16 +219,16 @@ export default function B2cUpdateActions({
         footer={
           <>
             <Button variant="secondary" onClick={() => setOpen(false)} disabled={applying}>
-              {preview?.unchanged ? 'Close' : 'Cancel'}
+              {nothingAnywhere ? 'Close' : 'Cancel'}
             </Button>
-            {preview && !preview.unchanged && (
+            {preview && !nothingAnywhere && (
               <Button
                 onClick={apply}
                 loading={applying}
-                disabled={pickedCount === 0}
+                disabled={totalPicked === 0}
                 icon={<History className="w-3.5 h-3.5" />}
               >
-                Apply {pickedCount} change{pickedCount === 1 ? '' : 's'} → new version
+                Apply {totalPicked} change{totalPicked === 1 ? '' : 's'} → OPS{accPnl || accInvoice ? ' + Accounts' : ''}
               </Button>
             )}
           </>
@@ -237,7 +268,7 @@ export default function B2cUpdateActions({
             {preview.unchanged ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 flex gap-2">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
-                This booking already matches the store order. Nothing to update.
+                The OPS booking already matches the store order.
               </div>
             ) : (
               <>
@@ -334,6 +365,15 @@ export default function B2cUpdateActions({
               </>
             )}
 
+            <AccountsSection
+              call={preview.accounts}
+              pnl={accPnl}
+              invoice={accInvoice}
+              onPnl={setAccPnl}
+              onInvoice={setAccInvoice}
+              disabled={applying}
+            />
+
             {preview.lastUpdate && (
               <p className="text-[11px] text-slate-400">
                 Last store update: {fmtDateTime(preview.lastUpdate.at)} by {preview.lastUpdate.by} (V{preview.lastUpdate.version})
@@ -343,6 +383,86 @@ export default function B2cUpdateActions({
         )}
       </Modal>
     </>
+  )
+}
+
+/** The Accounts system's P&L + invoice for the same order, with its two tick boxes. */
+function AccountsSection({
+  call, pnl, invoice, onPnl, onInvoice, disabled,
+}: {
+  call?: AccountsCall<AccountsPreview>
+  pnl: boolean
+  invoice: boolean
+  onPnl: (v: boolean) => void
+  onInvoice: (v: boolean) => void
+  disabled: boolean
+}) {
+  if (!call) return null
+  const money = (v: number | null | undefined) => (v == null ? '—' : Number(v).toFixed(2))
+
+  return (
+    <div className="rounded-lg border border-teal-200 bg-teal-50/40 p-3 text-xs space-y-2">
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-teal-900">
+        <Calculator className="w-4 h-4" /> Accounts system (P&amp;L + invoice)
+      </div>
+
+      {call.status !== 'ok' ? (
+        <p className={call.status === 'failed' ? 'text-rose-700' : 'text-slate-500'}>{call.message}</p>
+      ) : (
+        <>
+          {call.data.warnings.map((w) => (
+            <p key={w} className="text-amber-800 flex gap-1"><AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />{w}</p>
+          ))}
+          {!call.data.available && (
+            <p className="text-rose-700">Accounts has not run its b2c_order_versions migration yet — it will refuse the update.</p>
+          )}
+
+          <label className={cn('flex items-start gap-2', call.data.pnl.needs_update ? 'cursor-pointer' : 'opacity-60')}>
+            <input type="checkbox" className="mt-0.5" checked={pnl} disabled={disabled || !call.data.pnl.needs_update} onChange={(e) => onPnl(e.target.checked)} />
+            <span>
+              <span className="font-semibold text-slate-800">Accounts P&amp;L</span>{' '}
+              {call.data.pnl.protected
+                ? <span className="text-slate-500">kept — the store&apos;s price snapshot was unreadable this time</span>
+                : !call.data.pnl.needs_update
+                  ? <span className="text-emerald-700">already matches the store</span>
+                  : (
+                    <span className="text-slate-600">
+                      {call.data.pnl.exists ? '' : 'new record · '}
+                      {call.data.pnl.changes.map((c) => `${c.label} ${String(c.from ?? '—')} → ${String(c.to ?? '—')}`).join(' · ') || 'line changes'}
+                      {call.data.pnl.lines.added.length > 0 && ` · +${call.data.pnl.lines.added.length} line(s)`}
+                      {call.data.pnl.lines.changed.length > 0 && ` · ${call.data.pnl.lines.changed.length} line(s) re-priced`}
+                      {call.data.pnl.lines.removed.length > 0 && ` · ${call.data.pnl.lines.removed.length} line(s) gone`}
+                    </span>
+                  )}
+            </span>
+          </label>
+
+          {(() => {
+            const inv = call.data.invoice
+            const actionable = inv.action === 'revise' || inv.action === 'create'
+            return (
+              <label className={cn('flex items-start gap-2', actionable ? 'cursor-pointer' : 'opacity-60')}>
+                <input type="checkbox" className="mt-0.5" checked={invoice} disabled={disabled || !actionable} onChange={(e) => onInvoice(e.target.checked)} />
+                <span>
+                  <span className="font-semibold text-slate-800">Invoice</span>{' '}
+                  {inv.action === 'revise' && (
+                    <span className="text-slate-600">
+                      {inv.current} ({money(inv.current_total)}) → new revision <b>{inv.next}</b> ({money(inv.store_total)}). The old one and its payments stay on record.
+                    </span>
+                  )}
+                  {inv.action === 'create' && <span className="text-slate-600">none yet → <b>{inv.next}</b> ({money(inv.store_total)})</span>}
+                  {inv.action === 'none' && <span className="text-emerald-700">{inv.current ?? 'No invoice'} already matches ({money(inv.store_total)})</span>}
+                  {inv.action === 'blocked' && <span className="text-amber-800">{inv.reason}</span>}
+                  {actionable && inv.mail_mode && (
+                    <span className="block text-slate-500">Customer mail for this: <b>{inv.mail_mode}</b> (Accounts → Settings → Aahaas B2C)</span>
+                  )}
+                </span>
+              </label>
+            )
+          })()}
+        </>
+      )}
+    </div>
   )
 }
 

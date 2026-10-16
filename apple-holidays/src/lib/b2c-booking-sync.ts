@@ -79,6 +79,9 @@ export interface B2cSyncState {
   /** Booking version after this update (unchanged when nothing was written). */
   version: number
   changed: string[]
+  syncId?: string
+  /** What the Accounts system did with the same update, when it was asked. */
+  accounts?: { status: string; message: string | null; versionNo?: number | null; invoice?: string | null }
   /** What the store said for each scalar on this run — the next run's merge base. */
   baseline: Record<string, string | null>
   /** Itinerary row signatures the store sent on this run. */
@@ -204,6 +207,11 @@ export interface B2cSyncOptions {
   keys?: B2cChangeKey[]
   /** apply: the booking version the preview was made against. */
   expectedVersion?: number
+  /**
+   * Shared with the Accounts half of the same update (b2c_order_versions.sync_id
+   * there), so the two systems' versions can be read as one event.
+   */
+  syncId?: string
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────────
@@ -746,7 +754,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
       }).catch((err) => warnings.push(`Lead passenger rename failed: ${err instanceof Error ? err.message : String(err)}`))
     }
 
-    const note = `Updated from Aahaas store order ${orderId} by ${opts.actorName}: ` +
+    const note = `Updated from Aahaas store order ${orderId} by ${opts.actorName}${opts.syncId ? ` [sync ${opts.syncId}]` : ''}: ` +
       changes.filter((c) => selected.has(c.key)).map((c) => `${c.label} ${c.from ?? '—'} → ${c.to ?? '—'}`).join('; ')
     newVersion = await appendVersionAndSnapshot(booking.id, {
       createdById: opts.actorId,
@@ -760,6 +768,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     by: opts.actorName,
     version: newVersion ?? booking.version,
     changed: applied,
+    ...(opts.syncId && { syncId: opts.syncId }),
     baseline: nextBaseline,
     itinerarySig: theirSig.length > 0 ? theirSig : (state?.itinerarySig ?? ourSig),
   })
@@ -772,6 +781,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     details: {
       op: 'b2c_store_update',
       bookingRef: booking.bookingRef,
+      syncId: opts.syncId ?? null,
       orderId,
       fromVersion: booking.version,
       toVersion: newVersion,
@@ -797,4 +807,38 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
 function costOf(l: MappedB2cPnlLine, adults: number, children: number): string {
   const total = (l.sicRate + l.pvtRatePP + l.otherRate) * (adults + children) + l.adEntrance * adults + l.chEntrance * children
   return total.toFixed(2)
+}
+
+/**
+ * Record what the Accounts system did with an update started (or finished)
+ * here: appended to the new version's note and kept on the sync marker, so the
+ * OPS version names its Accounts twin ("Accounts v3 · AHS-15077R2").
+ */
+export async function recordAccountsOutcome(
+  bookingRef: string,
+  newVersion: number | null,
+  accounts: NonNullable<B2cSyncState['accounts']>,
+): Promise<void> {
+  const line = accounts.status === 'ok'
+    ? `Accounts: ${[accounts.versionNo ? `v${accounts.versionNo}` : null, accounts.invoice, accounts.message].filter(Boolean).join(' · ')}`
+    : `Accounts NOT updated (${accounts.status}): ${accounts.message ?? 'no reason given'}`
+
+  if (newVersion) {
+    const booking = await prisma.booking.findUnique({ where: { bookingRef }, select: { id: true } })
+    if (booking) {
+      const v = await prisma.bookingVersion.findUnique({
+        where: { bookingId_versionNo: { bookingId: booking.id, versionNo: newVersion } },
+        select: { amendmentNote: true },
+      })
+      if (v) {
+        await prisma.bookingVersion.update({
+          where: { bookingId_versionNo: { bookingId: booking.id, versionNo: newVersion } },
+          data: { amendmentNote: `${v.amendmentNote ?? ''}\n${line}`.trim().slice(0, 4000) },
+        })
+      }
+    }
+  }
+
+  const state = await getB2cSyncState(bookingRef)
+  if (state) await writeB2cSyncState(bookingRef, { ...state, accounts })
 }
