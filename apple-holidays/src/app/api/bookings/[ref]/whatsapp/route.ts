@@ -18,6 +18,8 @@
  */
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { prisma } from '@/lib/prisma'
+import { whatsappInboxCountry } from '@/lib/whatsapp'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import {
@@ -57,6 +59,16 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['TE_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
+  }
+
+  // The Vietnam desk sends only on its own bookings — same scope as the inbox.
+  const scopeCountry = whatsappInboxCountry(session.user.role)
+  if (scopeCountry) {
+    const booking = await prisma.booking.findUnique({
+      where:  { bookingRef: params.ref },
+      select: { operationCountry: true },
+    })
+    if (booking?.operationCountry !== scopeCountry) return buildApiError('Forbidden', 403)
   }
 
   const { to, name, message, note, attachPdf, pdfType, fileFormat } = await req.json() as {

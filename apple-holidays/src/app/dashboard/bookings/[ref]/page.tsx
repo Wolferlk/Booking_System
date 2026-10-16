@@ -4464,7 +4464,7 @@ Wishing you a wonderful trip! ✈️
       </Modal>
 
       {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
-      {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+      {['TE_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
       )}
 
