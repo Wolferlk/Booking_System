@@ -12,6 +12,7 @@ import { prisma } from '@/lib/prisma'
 import { getCancellationDeadline } from '@/lib/utils'
 import { getQuoteTemplate } from '@/lib/applesystem'
 import { mapQuoteToBooking, normalizeIsNumber, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
+import { saveAsExtras, quotationNoFromCntl, cntlCandidates } from '@/lib/as-booking-extras'
 import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-import'
 import { detectCountryFromRef, isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { sanitizeCancellationFees, totalCancellationFee, type CancellationFeeLine } from '@/lib/cancellation-fees'
@@ -99,7 +100,7 @@ export function serializeBooking(b: BookingSummary) {
   return {
     booking_ref: b.bookingRef,
     is_number: b.isNumber,
-    quotation_no: b.cntlNumber,
+    quotation_no: quotationNoFromCntl(b.cntlNumber),
     status: b.status,
     version: b.version,
     agent: b.agent,
@@ -134,7 +135,7 @@ export async function resolveBooking(id: QuotationIdentifier): Promise<BookingSu
   }
   if (id.quotation_no) {
     const byQuote = await prisma.booking.findFirst({
-      where: { cntlNumber: id.quotation_no },
+      where: { cntlNumber: { in: cntlCandidates(id.quotation_no) } },
       orderBy: { createdAt: 'desc' },
       select: BOOKING_SUMMARY_SELECT,
     })
@@ -334,7 +335,7 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
   }
 
   const actorId = await getAutomationUserId()
-  const quotationNo = input.quotation_no?.trim() || existing.cntlNumber || ''
+  const quotationNo = input.quotation_no?.trim() || quotationNoFromCntl(existing.cntlNumber) || ''
   const referenceId = input.reference_id?.trim() || ''
 
   const data: Prisma.BookingUpdateInput = {}
@@ -363,6 +364,8 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
         'COUNTRY_MISMATCH',
       )
     }
+
+    await saveAsExtras(existing.bookingRef, mapped)
 
     Object.assign(data, {
       cntlNumber: mapped.cntlNumber ?? existing.cntlNumber,
@@ -480,7 +483,10 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
     if (f.package_includes !== undefined) setText('packageIncludes', f.package_includes)
     if (f.package_excludes !== undefined) setText('packageExcludes', f.package_excludes)
     if (f.important_notes !== undefined) setText('importantNotes', f.important_notes)
-    if (f.quotation_no !== undefined) setText('cntlNumber', f.quotation_no)
+    if (f.quotation_no !== undefined) {
+      const bare = quotationNoFromCntl(f.quotation_no == null ? null : String(f.quotation_no))
+      setText('cntlNumber', bare ? `${bare}CNTL` : f.quotation_no)
+    }
 
     if (changed.length === 0) {
       throw new AsApiError(

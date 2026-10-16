@@ -11,6 +11,7 @@
 import { prisma } from '@/lib/prisma'
 import type { OperationCountry } from '@/lib/country-detection'
 import type { MappedBookingInput } from '@/lib/as-booking-map'
+import { saveAsExtras } from '@/lib/as-booking-extras'
 
 export class AlreadyImportedError extends Error {
   constructor(public bookingRef: string, public bookingId: string) {
@@ -119,6 +120,8 @@ export async function importMappedBooking(
       note: `Imported from AppleSystem (quotation ${mapped.source.quotationNo || '—'})`,
     },
   })
+
+  await saveAsExtras(booking.bookingRef, mapped)
 
   return { booking, alreadyExists: false }
 }

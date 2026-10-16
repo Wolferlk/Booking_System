@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { getAsExtras } from '@/lib/as-booking-extras'
 import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import { isInCountryScope } from '@/lib/country-detection'
 import {
@@ -123,12 +124,15 @@ export async function GET(
   // waiting on a replace/skip decision for any of them. Staff-only — a client
   // has no use for the provenance of the text and never resolves a conflict.
   if (role !== 'CLIENT') {
-    const [noteFieldEdits, notePendingConflicts] = await Promise.all([
+    const [noteFieldEdits, notePendingConflicts, asExtras] = await Promise.all([
       getFieldEdits(params.ref),
       getPendingConflicts(params.ref),
+      getAsExtras(params.ref),
     ])
     responseData.noteFieldEdits = noteFieldEdits
     responseData.notePendingConflicts = notePendingConflicts
+    // AppleSystem agent id / sales person / day routes (no columns for them).
+    responseData.asExtras = asExtras
   }
 
   return buildApiSuccess(responseData)

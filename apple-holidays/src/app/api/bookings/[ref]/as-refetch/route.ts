@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
+import { saveAsExtras } from '@/lib/as-booking-extras'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { logActivity, ACTION } from '@/lib/activity'
 
@@ -123,6 +124,9 @@ export async function POST(
       })),
     }),
   ])
+
+  // Day routes ride alongside the itinerary (no column — see as-booking-extras).
+  await saveAsExtras(booking.bookingRef, mapped)
 
   // 4. Audit trail. This goes to the activity log, not `StatusEvent` — the
   //    status timeline is the append-only record of workflow *transitions*, and

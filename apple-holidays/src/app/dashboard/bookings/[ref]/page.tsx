@@ -594,6 +594,12 @@ export default function BookingDetailPage() {
   const accommodations: any[] = booking.accommodations ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const itinerary: any[] = booking.itineraryItems ?? []
+  // AppleSystem fields with no column (agent id, sales person, day routes).
+  const asExtras = (booking as any).asExtras as
+    | { agentId: string | null; salesPerson: string | null; dayRoutes: { dayNo: number; date: string; route: string }[] }
+    | null
+    | undefined
+  const routeByDay = new Map<number, string>((asExtras?.dayRoutes ?? []).map(d => [d.dayNo, d.route]))
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const changeRequests: any[] = booking.changeRequests ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2107,6 +2113,18 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent ID</p>
+              {asExtras?.agentId
+                ? <p className="text-sm font-mono text-slate-700 break-all">{asExtras.agentId}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Sales Person</p>
+              {asExtras?.salesPerson
+                ? <p className="text-sm text-slate-700">{asExtras.salesPerson}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1">
                 <UserCheck className="w-3 h-3 text-slate-400" /> Agent / Tour Operator
               </p>
@@ -2978,7 +2996,14 @@ Wishing you a wonderful trip! ✈️
                   — see the Journey Map section above. */}
               <div>
                 <div className="divide-y divide-slate-100">
-                  {itinerary.map((item) => (
+                  {itinerary.map((item, idx) => {
+                    // A day with several activities is several rows; show its
+                    // route once, on the first row, and not when it is the title.
+                    const route = routeByDay.get(item.dayNo as number)
+                    const showRoute = !!route
+                      && (idx === 0 || itinerary[idx - 1].dayNo !== item.dayNo)
+                      && route.trim().toLowerCase() !== String(item.title ?? '').trim().toLowerCase()
+                    return (
                     <div key={item.id as string} className="flex gap-4 px-6 py-4">
                       <div className="flex-shrink-0 text-center">
                         <div className="w-9 h-9 rounded-full bg-brand-50 border-2 border-brand-200 flex items-center justify-center">
@@ -2990,10 +3015,17 @@ Wishing you a wonderful trip! ✈️
                           <p className="text-sm font-semibold text-slate-900">{item.title as string}</p>
                           <span className="text-xs text-slate-400">{formatDate(item.date as string)}</span>
                         </div>
+                        {showRoute && (
+                          <p className="text-xs font-medium text-brand-700 mt-0.5">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mr-1">Route</span>
+                            {route}
+                          </p>
+                        )}
                         {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             </CardBody>

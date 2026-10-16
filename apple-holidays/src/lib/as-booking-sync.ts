@@ -50,6 +50,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
+import { saveAsExtras } from '@/lib/as-booking-extras'
 import { logActivity, ACTION } from '@/lib/activity'
 import {
   getFieldEdits,
@@ -626,6 +627,10 @@ export async function syncBookingFromAs(
   }
 
   if (ops.length > 0) await prisma.$transaction(ops)
+
+  // Agent id, sales person and day routes have no column — refreshed every
+  // sync so a booking imported before they were read picks them up.
+  await saveAsExtras(booking.bookingRef, mapped)
 
   // ── Marker + audit trail ──────────────────────────────────────────────────
   const changed = [
