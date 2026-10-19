@@ -14,6 +14,7 @@
 # Usage, from the apple-holidays/ directory:
 #   bash prisma/sql/apply-trans-recon.sh
 #   bash prisma/sql/apply-trans-recon.sh --check    # show the target, run nothing
+#   bash prisma/sql/apply-trans-recon.sh --upgrade  # tables already exist: add the Excel-import columns
 
 set -euo pipefail
 
@@ -41,8 +42,15 @@ urlencode() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.a
 
 URL="mysql://$(urlencode "$DB_USERNAME"):$(urlencode "$DB_PASSWORD")@${DB_HOST}:${DB_PORT:-3306}/${DB_DATABASE}"
 
+SQL_FILE="prisma/sql/2026-10-19-trans-recon.sql"
+ACTION="CREATE TABLE IF NOT EXISTS trans_recon_sheets, trans_recon_lines  (additive only)"
+if [[ "${1:-}" == "--upgrade" ]]; then
+  SQL_FILE="prisma/sql/2026-10-20-trans-recon-import.sql"
+  ACTION="ADD COLUMN IF NOT EXISTS (Excel-import provenance) on trans_recon_*  (additive only, MariaDB)"
+fi
+
 echo "Target : ${DB_USERNAME}@${DB_HOST}:${DB_PORT:-3306}/${DB_DATABASE}"
-echo "Action : CREATE TABLE IF NOT EXISTS trans_recon_sheets, trans_recon_lines  (additive only)"
+echo "Action : ${ACTION}"
 
 if [[ "${1:-}" == "--check" ]]; then
   echo "--check given; nothing was run."
@@ -53,7 +61,7 @@ read -r -p "Proceed? [y/N] " reply
 [[ "$reply" == "y" || "$reply" == "Y" ]] || { echo "Aborted."; exit 1; }
 
 DATABASE_URL="$URL" npx prisma db execute \
-  --file prisma/sql/2026-10-19-trans-recon.sql \
+  --file "$SQL_FILE" \
   --schema prisma/schema.prisma
 
 echo "Done. Run 'npx prisma generate' if you have not already."

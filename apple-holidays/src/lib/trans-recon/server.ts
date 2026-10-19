@@ -81,6 +81,9 @@ function toSheet(s: SheetRow): ReconSheet {
     lockedAt: s.lockedAt?.toISOString() ?? null,
     lockedByName: s.lockedByName,
     lastSyncedAt: s.lastSyncedAt?.toISOString() ?? null,
+    lastImportAt: s.lastImportAt?.toISOString() ?? null,
+    lastImportFile: s.lastImportFile,
+    lastImportBy: s.lastImportBy,
     updatedByName: s.updatedByName,
     updatedAt: s.updatedAt?.toISOString() ?? null,
   }
@@ -126,6 +129,8 @@ function toLine(r: LineRow): ReconLine {
     approvedRate: dec(r.approvedRate),
     approvedByName: r.approvedByName,
     approvedAt: r.approvedAt?.toISOString() ?? null,
+    importedFrom: r.importedFrom,
+    importRow: r.importRow,
     updatedByName: r.updatedByName,
     updatedAt: r.updatedAt?.toISOString() ?? null,
   }
@@ -246,9 +251,11 @@ function shortDetails(text: string | null): string | null {
   return (first.length > 160 ? `${first.slice(0, 157).trimEnd()}…` : first) || null
 }
 
-interface Snapshot {
+export interface Snapshot {
   agendaItemId: string
   bookingRef: string
+  /** Agent booking id and IS number — the other names a desk writes a tour under. */
+  aliases: string[]
   bookingId: string
   cancelled: boolean
   serviceDate: string
@@ -269,7 +276,7 @@ interface PnlPick { id: string; activity: string; category: string; value: numbe
  * P&L pairing worked out over the WHOLE agenda — matching only the fifteen days
  * on this sheet would let a movement in the other half steal a line.
  */
-async function collectMovements(country: ReconCountry, start: string, end: string) {
+export async function collectMovements(country: ReconCountry, start: string, end: string) {
   const group = country === 'MALAYSIA' || country === 'SINGAPORE'
     ? ['SINGAPORE', 'MALAYSIA', 'SINGAPORE_MALAYSIA'] : [country]
 
@@ -283,7 +290,7 @@ async function collectMovements(country: ReconCountry, start: string, end: strin
         select: {
           booking: {
             select: {
-              id: true, bookingRef: true, agentBookingId: true, status: true, cancelledAt: true,
+              id: true, bookingRef: true, agentBookingId: true, isNumber: true, status: true, cancelledAt: true,
               operationCountry: true, tourDestination: true, arrivalDate: true, currency: true,
               paxAdults: true, paxChildren: true, paxInfants: true,
               passengers: { select: { name: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
@@ -367,6 +374,7 @@ async function collectMovements(country: ReconCountry, start: string, end: strin
     return {
       agendaItemId: i.id,
       bookingRef: b.bookingRef,
+      aliases: [b.agentBookingId, b.isNumber].map(v => clean(v)).filter(Boolean),
       bookingId: b.id,
       cancelled: b.status === 'CANCELLED' || b.cancelledAt !== null,
       serviceDate: date,
@@ -604,6 +612,10 @@ export interface LineInput {
   remarks?: string | null
   /** '' clears the pairing; an id picks that P&L line by hand. */
   pnlLineItemId?: string | null
+  /** New rows only: the booking this row belongs to, when the tour cell names it by an alias. */
+  bookingRef?: string | null
+  /** Excel import: the workbook row this line was read from. */
+  importRow?: number
 }
 
 const LIMITS: Record<EditableField, number> = {
@@ -629,7 +641,13 @@ async function resolvePnl(bookingRef: string | null, pnlLineItemId: string): Pro
  * back, applied together. A rate or P&L change on a line Accounts already
  * decided sends it back to them as pending, with the reason.
  */
-export async function saveLines(sheetId: string, body: { lines?: LineInput[]; remove?: string[]; restore?: string[] }, actor: Actor) {
+export async function saveLines(
+  sheetId: string,
+  body: { lines?: LineInput[]; remove?: string[]; restore?: string[] },
+  actor: Actor,
+  opts: { importedFrom?: string } = {},
+) {
+  const importedFrom = opts.importedFrom ? opts.importedFrom.slice(0, 191) : null
   const sheet = await prisma.transReconSheet.findUnique({ where: { id: sheetId } })
   if (!sheet) throw new ReconError('Sheet not found', 404)
   if (sheet.status === 'LOCKED') throw new ReconError('This sheet is locked by Accounts — ask them to unlock it first.', 409)
@@ -652,7 +670,11 @@ export async function saveLines(sheetId: string, body: { lines?: LineInput[]; re
   }
 
   const refs = new Set<string>()
-  for (const l of body.lines ?? []) if (!l.id && l.tourNo) refs.add(String(l.tourNo).trim())
+  for (const l of body.lines ?? []) {
+    if (l.id) continue
+    if (l.tourNo) refs.add(String(l.tourNo).trim())
+    if (l.bookingRef) refs.add(String(l.bookingRef).trim())
+  }
   const knownRefs = refs.size
     ? new Set((await prisma.booking.findMany({ where: { bookingRef: { in: Array.from(refs) } }, select: { bookingRef: true } })).map(b => b.bookingRef))
     : new Set<string>()
@@ -661,7 +683,8 @@ export async function saveLines(sheetId: string, body: { lines?: LineInput[]; re
     if (!input.id) {
       const date = checkDate(val('serviceDate', input.serviceDate))
       const tourNo = val('tourNo', input.tourNo)
-      const bookingRef = tourNo && knownRefs.has(tourNo) ? tourNo : null
+      const hint = clean(input.bookingRef)
+      const bookingRef = hint && knownRefs.has(hint) ? hint : tourNo && knownRefs.has(tourNo) ? tourNo : null
       const rateText = val('rateText', input.rateText)
       const pnl = input.pnlLineItemId ? await resolvePnl(bookingRef, input.pnlLineItemId) : null
       ops.push(prisma.transReconLine.create({
@@ -674,6 +697,7 @@ export async function saveLines(sheetId: string, body: { lines?: LineInput[]; re
           rateText, rate: parseRate(rateText), remarks: val('remarks', input.remarks),
           ...pnlData(pnl, pnl ? 'MANUAL' : 'NONE'),
           editedFields: [...EDITABLE_FIELDS],
+          ...(importedFrom ? { importedFrom, importRow: input.importRow ?? null } : {}),
           updatedByName: actor.name ?? null,
         },
       }))
@@ -704,6 +728,11 @@ export async function saveLines(sheetId: string, body: { lines?: LineInput[]; re
       data.pnlMatch = 'MANUAL'
     }
 
+    if (importedFrom && input.importRow != null) {
+      // Provenance is recorded even when the workbook agreed with every cell.
+      data.importedFrom = importedFrom
+      data.importRow = input.importRow
+    }
     if (!Object.keys(data).length) continue
     const rateChanged = 'rate' in data && (data.rate as number | null) !== dec(line.rate)
     const pnlChanged = 'pnlValue' in data && (data.pnlValue as number | null) !== dec(line.pnlValue)

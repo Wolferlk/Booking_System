@@ -13,10 +13,11 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertTriangle, ArrowLeft, BarChart3, CalendarRange, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed,
   Download, Eye, EyeOff, FileSpreadsheet, Link2, Loader2, Lock, Plus, RefreshCw, RotateCcw, Save, Search, Send,
-  Sparkles, Trash2, Undo2, XCircle,
+  Sparkles, Trash2, Undo2, Upload, XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
+import { ImportDialog } from '@/components/trans-recon/import-dialog'
 import { cn, readApiResponse } from '@/lib/utils'
 import {
   NOT_INSTALLED, RECON_COUNTRIES, RECON_COUNTRY_META, RECON_CURRENCIES, breakdown, byBooking, byDay, byVendor,
@@ -117,6 +118,7 @@ function Board({ onOpen }: { onOpen: (id: string) => void }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true); setError(null)
@@ -166,6 +168,12 @@ function Board({ onOpen }: { onOpen: (id: string) => void }) {
                 <div className="text-2xl font-bold tracking-tight">{new Date(Date.UTC(ym.y, ym.m - 1, 1)).toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
               </div>
               <button onClick={() => shift(1)} className="rounded-lg bg-white/10 p-2 ring-1 ring-white/20 hover:bg-white/20" aria-label="Next month"><ChevronRight className="h-4 w-4" /></button>
+              {data?.canEdit && data.installed && (
+                <button onClick={() => setImporting(true)}
+                  className="ml-2 inline-flex items-center gap-1.5 rounded-lg bg-emerald-400 px-3 py-2 text-xs font-bold text-emerald-950 shadow hover:bg-emerald-300">
+                  <Upload className="h-3.5 w-3.5" /> Import Excel
+                </button>
+              )}
             </div>
             <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
               {[
@@ -251,6 +259,7 @@ function Board({ onOpen }: { onOpen: (id: string) => void }) {
         </div>
         {data && !countries.length && <div className="rounded-xl bg-white p-8 text-center text-sm text-slate-500 ring-1 ring-slate-200">Your account is not assigned to Malaysia, Singapore, Vietnam or Sri Lanka.</div>}
       </div>
+      <ImportDialog open={importing} onClose={() => setImporting(false)} allowed={countries} onDone={onOpen} />
     </>
   )
 }
@@ -278,6 +287,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [picker, setPicker] = useState<string | null>(null)
   const [pnlCache, setPnlCache] = useState<Record<string, PnlOptions | 'loading' | 'error'>>({})
+  const [importing, setImporting] = useState(false)
   const tempSeq = useRef(0)
 
   const apply = useCallback((d: SheetData) => {
@@ -414,7 +424,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
       pnlLineItemId: null, pnlDescription: null, pnlCategory: null, pnlValue: null, pnlCurrency: null, pnlMatch: 'NONE',
       pnlScore: null, rateText: '', rate: null, remarks: '', editedFields: [], bookingCancelled: false, mcMissing: false,
       isRemoved: false, approvalStatus: 'PENDING', approvalNote: null, approvedRate: null, approvedByName: null,
-      approvedAt: null, updatedByName: null, updatedAt: null,
+      approvedAt: null, importedFrom: null, importRow: null, updatedByName: null, updatedAt: null,
     }])
     setExpanded(null)
   }
@@ -539,11 +549,18 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                 {sheet.lastSyncedAt ? `MC refreshed ${new Date(sheet.lastSyncedAt).toLocaleString('en-GB')}` : 'Never refreshed'}
                 {sheet.submittedAt ? ` · sent to Accounts by ${sheet.submittedByName ?? '—'} ${new Date(sheet.submittedAt).toLocaleDateString('en-GB')}` : ''}
                 {sheet.lockedAt ? ` · locked by ${sheet.lockedByName ?? 'Accounts'}` : ''}
+                {sheet.lastImportFile ? ` · Excel “${sheet.lastImportFile}” imported${sheet.lastImportBy ? ` by ${sheet.lastImportBy}` : ''}${sheet.lastImportAt ? ` ${new Date(sheet.lastImportAt).toLocaleDateString('en-GB')}` : ''}` : ''}
               </div>
             </div>
             <StatusChip status={sheet.status} />
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2">
+            {editable && (
+              <button onClick={() => { if (dirty) { toast.message('Save your changes before importing.'); return } setImporting(true) }} disabled={busy !== null}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50 disabled:opacity-50">
+                <Upload className="h-3.5 w-3.5" /> Import Excel
+              </button>
+            )}
             {editable && (
               <button onClick={sync} disabled={busy !== null}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">
@@ -705,6 +722,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                               onChange={ev => ev.target.value && setField(l, 'serviceDate', ev.target.value)} className={cn(CELL, changed('serviceDate') && 'bg-amber-50')} />
                             <div className="flex flex-wrap gap-1 px-1.5">
                               {l.source === 'MANUAL' && <span className="rounded bg-emerald-100 px-1 text-[9px] font-bold text-emerald-700">MANUAL</span>}
+                              {l.importRow != null && <span className="rounded bg-sky-100 px-1 text-[9px] font-bold text-sky-700" title={`From ${l.importedFrom ?? 'the Excel'}, row ${l.importRow}`}>XLS r{l.importRow}</span>}
                               {l.mcMissing && <span className="rounded bg-amber-100 px-1 text-[9px] font-bold text-amber-700" title="This movement is no longer on the MC Report for this half and country">NOT ON MC</span>}
                             </div>
                           </td>
@@ -807,6 +825,10 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
           </div>
         )}
       </div>
+
+      <ImportDialog open={importing} onClose={() => setImporting(false)} allowed={[sheet.country]}
+        fixed={{ country: sheet.country, year: sheet.periodYear, month: sheet.periodMonth, half: sheet.half }}
+        onDone={() => load()} />
 
       {/* Save bar */}
       {dirty > 0 && (

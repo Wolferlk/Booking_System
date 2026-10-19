@@ -167,6 +167,8 @@ export interface ReconLine {
   approvedRate: number | null
   approvedByName: string | null
   approvedAt: string | null
+  importedFrom: string | null
+  importRow: number | null
   updatedByName: string | null
   updatedAt: string | null
 }
@@ -191,6 +193,9 @@ export interface ReconSheet {
   lockedAt: string | null
   lockedByName: string | null
   lastSyncedAt: string | null
+  lastImportAt: string | null
+  lastImportFile: string | null
+  lastImportBy: string | null
   updatedByName: string | null
   updatedAt: string | null
 }

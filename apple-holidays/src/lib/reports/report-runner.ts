@@ -811,7 +811,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
         content: archivedEmailHtml(built.html, { subject: built.subject, to: s.to, cc: s.cc, sentAt }),
       })
       await archiveSentReport({
-        category: s.reportType === 'RECONCILIATION' ? 'OPS Reconciliation' : `OPS ${s.period === 'daily' ? 'Daily' : s.period.charAt(0).toUpperCase() + s.period.slice(1)} Report`,
+        category: s.reportType === 'RECONCILIATION' ? 'OPS Reconciliation' : `OPS ${PERIOD_LABEL[s.period] ?? 'Daily'} Report`,
         periodFrom: built.window.fromDate,
         periodTo: built.window.toDate,
         sentAt,

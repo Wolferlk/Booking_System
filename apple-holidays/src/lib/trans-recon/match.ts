@@ -64,7 +64,7 @@ const STOP = new Set([
   'guest', 'guests', 'one', 'two', 'way', 'only', 'basis', 'adult', 'child', 'drop', 'pick',
 ])
 
-function tokens(text: string): Set<string> {
+export function tokens(text: string): Set<string> {
   let s = ` ${text.toLowerCase()} `
   for (const [re, rep] of SYNONYMS) s = s.replace(re, rep)
   s = s.replace(/[^a-z0-9 ]+/g, ' ')

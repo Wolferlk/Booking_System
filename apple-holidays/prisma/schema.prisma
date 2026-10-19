@@ -3758,6 +3758,10 @@ model TransReconSheet {
   lockedAt        DateTime?
   lockedByName    String?
   lastSyncedAt    DateTime?
+  /// The desk's own workbook, when the sheet was filled from one.
+  lastImportAt    DateTime?
+  lastImportFile  String?          @db.VarChar(191)
+  lastImportBy    String?          @db.VarChar(191)
   updatedByName   String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @default(now()) @updatedAt
@@ -3813,6 +3817,9 @@ model TransReconLine {
   approvedRate     Decimal?        @db.Decimal(14, 2)
   approvedByName   String?
   approvedAt       DateTime?
+  /// Excel import: the workbook and row this line was last read from.
+  importedFrom     String?         @db.VarChar(191)
+  importRow        Int?
   updatedByName    String?
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @default(now()) @updatedAt
