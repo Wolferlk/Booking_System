@@ -40,12 +40,22 @@
  *     none. AppleSystem sends the lead guest name alone, so overwriting a
  *     manually-built pax list with one name would be pure data loss.
  *
+ * ── Preview, then pick ───────────────────────────────────────────────────────
+ * The manual button runs this twice. `preview: true` computes every change and
+ * writes nothing; the operator ticks the ones to keep, and the second run
+ * carries that `selection`. Anything not ticked is left exactly as it is.
+ * Upstream is re-fetched on the apply run, so the selection is pinned to the
+ * preview by a fingerprint: if AppleSystem or the booking moved in between, the
+ * apply is refused instead of writing changes nobody looked at. Automated
+ * callers pass no selection and get the old apply-everything behaviour.
+ *
  * ── Sync state storage ───────────────────────────────────────────────────────
  * The "last updated from API" marker lives in `system_settings` under
  * `as_sync_state:<bookingRef>` — deliberately **no schema change and no
  * migration**, because the live DB carries drift and must not be pushed to.
  */
 
+import { createHash } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
@@ -56,6 +66,7 @@ import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
 import {
   getFieldEdits,
   writePendingConflicts,
+  clearFieldEdits,
   type PackageNoteField,
   type SyncConflict,
 } from '@/lib/booking-field-edits'
@@ -180,6 +191,46 @@ export interface SectionChange {
   skipped?: string
 }
 
+export type SyncSection = SectionChange['section']
+
+/** One row of the before/after itinerary preview. */
+export interface ItinRowPreview {
+  dayNo: number
+  date: string
+  title: string
+  description?: string | null
+}
+
+/** One row of the before/after hotel preview. */
+export interface AccRowPreview {
+  city: string
+  hotel: string
+  checkIn: string
+  checkOut: string
+  nights: number
+  roomType?: string | null
+  mealType?: string | null
+  ownArrangement?: boolean
+}
+
+/** What the operator ticked on the preview. Everything else is left alone. */
+export interface SyncSelection {
+  /** Scalar fields (`FieldChange.field`) to write. */
+  fields: string[]
+  /** Collections to replace (itinerary, hotels) or seed (guests, contacts). */
+  sections: SyncSection[]
+  /** Hand-edited fields to overwrite with AppleSystem's text anyway. */
+  conflicts: string[]
+  /**
+   * Hand-edited fields the operator saw and chose to keep. They are not parked
+   * for a decision; any other unticked conflict is (e.g. on an itinerary-only
+   * run, where the operator never saw it).
+   */
+  keptConflicts?: string[]
+  /** `AsSyncResult.fingerprint` of the preview the choice was made on. */
+  fingerprint: string
+}
+
 export interface AsSyncResult {
   bookingRef: string
   quotationNo: string | null
@@ -196,6 +247,25 @@ export interface AsSyncResult {
   /** True when nothing at all differed from what we already had. */
   unchanged: boolean
   syncedAt: string
+  /** True when this was a dry run — nothing was written. */
+  preview: boolean
+  /** Identifies the full set of proposed changes; echoed back with a selection. */
+  fingerprint: string
+  /** Proposed changes the operator did not tick (apply runs only). */
+  declined: string[]
+  /** Before/after rows, present only when that collection would change. */
+  itinerary?: { previous: ItinRowPreview[]; next: ItinRowPreview[] }
+  accommodations?: { previous: AccRowPreview[]; next: AccRowPreview[] }
+  /** Names that would be seeded into an empty guest / contact list. */
+  seed?: { passengers: string[]; emergencyContacts: string[] }
+}
+
+/** Thrown when the apply run no longer matches the preview the operator saw. */
+export class AsSyncStaleError extends AsSyncError {
+  constructor(public fresh: AsSyncResult) {
+    super('AppleSystem or this booking changed since you reviewed it. Nothing was written — please review the changes again.', 409)
+    this.name = 'AsSyncStaleError'
+  }
 }
 
 // ── Core ─────────────────────────────────────────────────────────────────────
@@ -206,6 +276,10 @@ export interface SyncOptions {
   /** Display name recorded in the sync marker. */
   actorName: string
   mode: 'manual' | 'prearrival'
+  /** Compute and return the proposed changes without writing anything. */
+  preview?: boolean
+  /** Apply only these changes. Omitted → apply every change (automated runs). */
+  selection?: SyncSelection
 }
 
 /**
@@ -446,7 +520,7 @@ export async function syncBookingFromAs(
   const itinSig = (i: { dayNo: number; date: string; title: string; description?: string | null }) =>
     [i.dayNo, i.date, norm(i.title), norm(i.description)].join('\u0000')
 
-  const itinChanged =
+  const itinChangedAll =
     mapped.itineraryItems.length > 0 &&
     !sameRows(prevItin.map(itinSig), mapped.itineraryItems.map(itinSig))
 
@@ -462,7 +536,7 @@ export async function syncBookingFromAs(
       section: 'itinerary',
       previousCount: prevItin.length,
       newCount: mapped.itineraryItems.length,
-      ...(itinChanged ? {} : { skipped: 'Already identical to AppleSystem.' }),
+      ...(itinChangedAll ? {} : { skipped: 'Already identical to AppleSystem.' }),
     })
   }
 
@@ -500,7 +574,7 @@ export async function syncBookingFromAs(
     norm(a.roomType), norm(a.mealType), a.ownArrangement ? '1' : '0',
   ].join('\u0000')
 
-  const accChanged =
+  const accChangedAll =
     mapped.accommodations.length > 0 &&
     !sameRows(prevAcc.map(accSig), mapped.accommodations.map(accSig))
 
@@ -516,7 +590,7 @@ export async function syncBookingFromAs(
       section: 'accommodations',
       previousCount: prevAcc.length,
       newCount: mapped.accommodations.length,
-      ...(accChanged ? {} : { skipped: 'Already identical to AppleSystem.' }),
+      ...(accChangedAll ? {} : { skipped: 'Already identical to AppleSystem.' }),
     })
   }
 
@@ -548,6 +622,116 @@ export async function syncBookingFromAs(
             : 'AppleSystem sent no emergency contact.',
         }),
   })
+
+  // ── Preview / selection ──────────────────────────────────────────────────
+  // The fingerprint covers every proposed change, taken before any selection is
+  // applied, so a preview and its apply run hash identically unless upstream or
+  // the stored booking moved in between.
+  let itinChanged = itinChangedAll
+  let accChanged = accChangedAll
+  let doSeedPassengers = seedPassengers
+  let doSeedEmergency = seedEmergency
+
+  const itinPreview = (i: { dayNo: number; date: string; title: string; description?: string | null }): ItinRowPreview =>
+    ({ dayNo: i.dayNo, date: i.date, title: i.title, description: i.description ?? null })
+  const accPreview = (a: AccRowPreview): AccRowPreview => ({
+    city: a.city, hotel: a.hotel, checkIn: a.checkIn, checkOut: a.checkOut, nights: a.nights,
+    roomType: a.roomType ?? null, mealType: a.mealType ?? null, ownArrangement: !!a.ownArrangement,
+  })
+
+  const fingerprint = createHash('sha1').update(JSON.stringify({
+    fields,
+    conflicts: conflicts.map((c) => [c.field, c.stored, c.incoming]),
+    itinerary: itinChanged ? [prevItin.map(itinSig).sort(), mapped.itineraryItems.map(itinSig).sort()] : null,
+    accommodations: accChanged ? [prevAcc.map(accSig).sort(), mapped.accommodations.map(accSig).sort()] : null,
+    passengers: seedPassengers ? mapped.passengers.map((p) => p.name) : null,
+    emergencyContacts: seedEmergency ? mapped.emergencyContacts.map((e) => e.name) : null,
+  })).digest('hex').slice(0, 16)
+
+  // Read at return time, so an apply run only describes what it actually wrote.
+  const detail = () => ({
+    ...(itinChanged && {
+      itinerary: { previous: prevItin.map(itinPreview), next: mapped.itineraryItems.map(itinPreview) },
+    }),
+    ...(accChanged && {
+      accommodations: { previous: prevAcc.map(accPreview), next: mapped.accommodations.map(accPreview) },
+    }),
+    ...((doSeedPassengers || doSeedEmergency) && {
+      seed: {
+        passengers: doSeedPassengers ? mapped.passengers.map((p) => p.name) : [],
+        emergencyContacts: doSeedEmergency ? mapped.emergencyContacts.map((e) => e.name) : [],
+      },
+    }),
+  })
+
+  if (opts.preview) {
+    return {
+      bookingRef: booking.bookingRef,
+      quotationNo: nonEmpty(row.quotation_no),
+      revision: mapped.source.revision,
+      fields,
+      sections,
+      conflicts,
+      unchanged: fields.length === 0 && conflicts.length === 0 &&
+        !itinChanged && !accChanged && !seedPassengers && !seedEmergency,
+      syncedAt: new Date().toISOString(),
+      preview: true,
+      fingerprint,
+      declined: [],
+      ...detail(),
+    }
+  }
+
+  const declined: string[] = []
+  // Hand-edited fields the operator chose to overwrite. Cleared of their edit
+  // mark after the write, same as "replace" in the resolve route.
+  const overridden: PackageNoteField[] = []
+  let parkConflicts = conflicts
+
+  if (opts.selection) {
+    const sel = opts.selection
+    if (sel.fingerprint !== fingerprint) {
+      throw new AsSyncStaleError(
+        await syncBookingFromAs(bookingRef, { ...opts, preview: true, selection: undefined }),
+      )
+    }
+    const keepField = new Set(sel.fields)
+    const keepSection = new Set(sel.sections)
+    const keepConflict = new Set(sel.conflicts)
+    const keptConflict = new Set(sel.keptConflicts ?? [])
+
+    for (const f of [...fields]) {
+      if (keepField.has(f.field)) continue
+      delete data[f.field]
+      fields.splice(fields.indexOf(f), 1)
+      declined.push(f.field)
+    }
+    for (const c of conflicts) {
+      if (!keepConflict.has(c.field)) {
+        if (keptConflict.has(c.field)) declined.push(c.field)
+        continue
+      }
+      data[c.field] = c.incoming
+      fields.push({ field: c.field, from: c.stored, to: c.incoming })
+      overridden.push(c.field)
+    }
+    // A conflict answered "keep" is not parked — it keeps its edit mark and is
+    // asked about again next sync. One nobody was shown stays parked.
+    parkConflicts = conflicts.filter((c) => !keepConflict.has(c.field) && !keptConflict.has(c.field))
+
+    const decline = (section: SyncSection) => {
+      declined.push(section)
+      const sec = sections.find((s) => s.section === section)
+      if (sec) {
+        sec.newCount = sec.previousCount
+        sec.skipped = 'Not accepted — kept as it was.'
+      }
+    }
+    if (itinChanged && !keepSection.has('itinerary')) { itinChanged = false; decline('itinerary') }
+    if (accChanged && !keepSection.has('accommodations')) { accChanged = false; decline('accommodations') }
+    if (doSeedPassengers && !keepSection.has('passengers')) { doSeedPassengers = false; decline('passengers') }
+    if (doSeedEmergency && !keepSection.has('emergencyContacts')) { doSeedEmergency = false; decline('emergencyContacts') }
+  }
 
   // ── Write ─────────────────────────────────────────────────────────────────
   const ops: Prisma.PrismaPromise<unknown>[] = []
@@ -604,7 +788,7 @@ export async function syncBookingFromAs(
     )
   }
 
-  if (seedPassengers) {
+  if (doSeedPassengers) {
     ops.push(
       prisma.passenger.createMany({
         data: mapped.passengers.map((p) => ({
@@ -622,7 +806,7 @@ export async function syncBookingFromAs(
     )
   }
 
-  if (seedEmergency) {
+  if (doSeedEmergency) {
     ops.push(
       prisma.emergencyContact.createMany({
         data: mapped.emergencyContacts.map((e) => ({
@@ -636,6 +820,7 @@ export async function syncBookingFromAs(
   }
 
   if (ops.length > 0) await prisma.$transaction(ops)
+  if (overridden.length > 0) await clearFieldEdits(booking.bookingRef, overridden)
 
   // Agent id, sales person and day routes have no column — refreshed every
   // sync so a booking imported before they were read picks them up.
@@ -646,8 +831,8 @@ export async function syncBookingFromAs(
     ...fields.map((f) => f.field),
     ...(itinChanged ? ['itinerary'] : []),
     ...(accChanged ? ['accommodations'] : []),
-    ...(seedPassengers ? ['passengers'] : []),
-    ...(seedEmergency ? ['emergencyContacts'] : []),
+    ...(doSeedPassengers ? ['passengers'] : []),
+    ...(doSeedEmergency ? ['emergencyContacts'] : []),
   ]
   const syncedAt = new Date().toISOString()
 
@@ -657,12 +842,12 @@ export async function syncBookingFromAs(
   // stale, and one of them may well have just been applied cleanly above.
   await writePendingConflicts(
     booking.bookingRef,
-    conflicts.length > 0
+    parkConflicts.length > 0
       ? {
           at: syncedAt,
           quotationNo: nonEmpty(row.quotation_no),
           revision: mapped.source.revision,
-          items: conflicts,
+          items: parkConflicts,
         }
       : null,
   )
@@ -674,12 +859,12 @@ export async function syncBookingFromAs(
     quotationNo: nonEmpty(row.quotation_no),
     revision: mapped.source.revision,
     changed,
-    ...(conflicts.length > 0 && { pending: conflicts.map((c) => c.field) }),
+    ...(parkConflicts.length > 0 && { pending: parkConflicts.map((c) => c.field) }),
   })
 
   // Activity log, never a StatusEvent — the status timeline is the append-only
   // record of workflow transitions, and a content refresh is not one.
-  if ((changed.length > 0 || conflicts.length > 0) && opts.actorId) {
+  if ((changed.length > 0 || parkConflicts.length > 0 || declined.length > 0) && opts.actorId) {
     await logActivity({
       userId: opts.actorId,
       action: ACTION.BOOKING_UPDATED,
@@ -691,11 +876,13 @@ export async function syncBookingFromAs(
         bookingRef: booking.bookingRef,
         quotationNo: row.quotation_no,
         fields,
-        conflicts: conflicts.map((c) => ({ field: c.field, editedBy: c.editedBy, editedAt: c.editedAt })),
+        conflicts: parkConflicts.map((c) => ({ field: c.field, editedBy: c.editedBy, editedAt: c.editedAt })),
+        overriddenEdits: overridden,
+        declined,
         itinerary: itinChanged ? { previous: prevItin, created: mapped.itineraryItems.length } : null,
         accommodations: accChanged ? { previous: prevAcc, created: mapped.accommodations.length } : null,
-        seededPassengers: seedPassengers ? mapped.passengers.length : 0,
-        seededEmergencyContacts: seedEmergency ? mapped.emergencyContacts.length : 0,
+        seededPassengers: doSeedPassengers ? mapped.passengers.length : 0,
+        seededEmergencyContacts: doSeedEmergency ? mapped.emergencyContacts.length : 0,
       },
     }).catch((err) => {
       console.error('[as-sync] activity log failed:', err instanceof Error ? err.message : err)
@@ -708,8 +895,12 @@ export async function syncBookingFromAs(
     revision: mapped.source.revision,
     fields,
     sections,
-    conflicts,
-    unchanged: changed.length === 0 && conflicts.length === 0,
+    conflicts: parkConflicts,
+    unchanged: changed.length === 0 && parkConflicts.length === 0,
     syncedAt,
+    preview: false,
+    fingerprint,
+    declined,
+    ...detail(),
   }
 }

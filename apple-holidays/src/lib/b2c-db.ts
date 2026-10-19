@@ -552,6 +552,98 @@ export async function fetchPassengerDetails(passengerIds: number[]): Promise<B2c
 }
 
 /**
+ * One place the store recorded who an order is *for*, as opposed to the
+ * account that placed it. `lead_passenger` is the raw JSON object when the
+ * source keeps one; `name` / `email` / `phone` are plain cells.
+ */
+export interface B2cLeadSourceRow extends mysql.RowDataPacket {
+  order_id: number
+  source: 'confirmation' | 'payment-link' | 'flow-booking'
+  lead_passenger: string | null
+  name: string | null
+  email: string | null
+  phone: string | null
+}
+
+/** Column sets the lead sources need; probed once, since the tables belong to other apps. */
+const LEAD_SOURCE_TABLES = {
+  travel_ai_checkout_sessions: ['order_id', 'meta'],
+  booking_payment_links: ['order_id', 'meta', 'customer_name', 'recipient'],
+  ai_flow_booking: ['order_id', 'customer_name', 'customer_email', 'customer_phone'],
+} as const
+
+let leadSourceTables: { at: number; usable: Set<string> } | null = null
+
+async function usableLeadSourceTables(): Promise<Set<string>> {
+  if (leadSourceTables && Date.now() - leadSourceTables.at < 30 * 60_000) return leadSourceTables.usable
+  const names = Object.keys(LEAD_SOURCE_TABLES)
+  const rows = await b2cQuery<mysql.RowDataPacket & { t: string; c: string }>(
+    `SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+    [names],
+  )
+  const usable = new Set<string>()
+  for (const [table, needed] of Object.entries(LEAD_SOURCE_TABLES)) {
+    const have = new Set(rows.filter((r) => r.t === table).map((r) => String(r.c).toLowerCase()))
+    if (needed.every((c) => have.has(c))) usable.add(table)
+  }
+  leadSourceTables = { at: Date.now(), usable }
+  return usable
+}
+
+/**
+ * Who each order was booked under, from the same three places AahaasFlow reads
+ * (n8n-project `flow.lead.js`), newest row first within each source:
+ *
+ *   1. `travel_ai_checkout_sessions.meta.lead_passenger` — the console's Confirm panel
+ *   2. `booking_payment_links` — `meta.lead_passenger`, else its `customer_name`
+ *      (WhatsApp / social orders placed on the shared `admin6611` login)
+ *   3. `ai_flow_booking` — AahaasFlow's own intake row
+ *
+ * Only the `lead_passenger` JSON path is lifted out — the blobs are never read
+ * whole. A table that is missing (or lacks a column) is skipped, and one source
+ * failing never hides the others. Which row wins is decided in
+ * `b2c-confirmed-lead.ts`, not here.
+ */
+export async function fetchOrderLeadSources(orderIds: number[]): Promise<B2cLeadSourceRow[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const usable = await usableLeadSourceTables()
+  const lp = (col: string) => `CASE WHEN JSON_VALID(${col}) THEN JSON_EXTRACT(${col}, '$.lead_passenger') END`
+
+  const queries: Array<Promise<B2cLeadSourceRow[]>> = []
+  if (usable.has('travel_ai_checkout_sessions')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'confirmation' AS source, ${lp('meta')} AS lead_passenger,
+              NULL AS name, NULL AS email, NULL AS phone
+         FROM travel_ai_checkout_sessions WHERE order_id IN (${ids}) ORDER BY id DESC`,
+    ))
+  }
+  if (usable.has('booking_payment_links')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'payment-link' AS source, ${lp('meta')} AS lead_passenger,
+              customer_name AS name, NULL AS email, recipient AS phone
+         FROM booking_payment_links WHERE order_id IN (${ids}) ORDER BY id DESC`,
+    ))
+  }
+  if (usable.has('ai_flow_booking')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'flow-booking' AS source, NULL AS lead_passenger,
+              customer_name AS name, customer_email AS email, customer_phone AS phone
+         FROM ai_flow_booking WHERE order_id IN (${ids})`,
+    ))
+  }
+
+  const settled = await Promise.allSettled(queries)
+  const rows: B2cLeadSourceRow[] = []
+  for (const s of settled) {
+    if (s.status === 'fulfilled') rows.push(...s.value)
+    else console.error('[b2c-db] a lead-passenger source could not be read (non-fatal):', s.reason)
+  }
+  return rows
+}
+
+/**
  * Order ids are inlined rather than bound, so they must be provably numeric.
  * Anything non-integer is a programming error and throws rather than being
  * coerced — this is the one place SQL could otherwise be injected.

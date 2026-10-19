@@ -3,7 +3,10 @@
  *
  * B2C bookings imported before checkout travellers were read have the store
  * *account* as their lead passenger (e.g. "admin6611"), while AahaasFlow shows
- * the real traveller ("Rithika Annadurai"). This sweeps every B2C booking and
+ * the real traveller ("Rithika Annadurai"). The name comes from the same places
+ * AahaasFlow reads — the Confirm panel, the WhatsApp payment link, Flow's own
+ * intake row — then the flight manifest and checkout travellers (see
+ * `resolveLeadPassenger`). This sweeps every B2C booking and
  * renames the lead passenger only where it still equals the account name, so
  * anything ops has edited by hand is never touched.
  *

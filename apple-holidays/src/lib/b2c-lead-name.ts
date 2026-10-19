@@ -11,7 +11,8 @@
  * ops has typed since then is left exactly as it is.
  */
 import { prisma } from './prisma'
-import { fetchOrderLineBookingNames, fetchOrderLineTravellers, fetchPassengerDetails } from './b2c-db'
+import { fetchOrderLeadSources, fetchOrderLineBookingNames, fetchOrderLineTravellers, fetchPassengerDetails } from './b2c-db'
+import { rankConfirmedLeads } from './b2c-confirmed-lead'
 import type { B2cOrderLineBookingNames, B2cOrderLineTravellers, B2cPassengerDetail } from './b2c-db'
 import { bookingRowNames, collectPassengerIds, resolveOrderTravellers, withBookingRowNames } from './b2c-travellers'
 import type { OrderTravellers } from './b2c-travellers'
@@ -63,11 +64,28 @@ export async function loadOrderTravellers(
     } catch (err) {
       console.error('[b2c-lead-name] booking-row names unavailable (non-fatal):', err)
     }
+
+    // Who the desk confirmed the order for, or the WhatsApp payment link was
+    // made out to — what AahaasFlow shows. Orders on the shared admin6611
+    // login often have nothing else, so this is what puts a real name on them.
+    try {
+      rankConfirmedLeads(await fetchOrderLeadSources(orderIds)).forEach((leads, orderId) => {
+        const t = byOrder.get(orderId)
+        byOrder.set(orderId, { leadName: t?.leadName ?? null, adults: t?.adults ?? [], ...t, confirmedLeads: leads })
+      })
+    } catch (err) {
+      console.error('[b2c-lead-name] confirmed lead passengers unavailable (non-fatal):', err)
+    }
     return { byOrder, error: null }
   } catch (err) {
     return { byOrder, error: err instanceof Error ? err.message : String(err) }
   }
 }
+
+/** `resolveLeadPassenger` sources that name a real traveller — never the account fallback. */
+const TRAVELLER_SOURCES = new Set([
+  'confirmation', 'payment-link', 'flow-booking', 'flight-manifest', 'checkout-travellers',
+])
 
 export interface LeadNameRepair {
   bookingRef: string
@@ -97,7 +115,7 @@ export async function repairB2cLeadName(params: {
   const { bookingRef, newName, via, accountName, apply, actorId } = params
   const unchanged = (reason: string): LeadNameRepair => ({ bookingRef, status: 'unchanged', reason })
 
-  if (!newName || (via !== 'checkout-travellers' && via !== 'flight-manifest')) {
+  if (!newName || !TRAVELLER_SOURCES.has(via)) {
     return unchanged('store has no traveller name for this order')
   }
   const accountKey = accountName ? passengerNameKey(accountName) : ''

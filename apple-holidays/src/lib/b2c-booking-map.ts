@@ -17,6 +17,8 @@ import { describeRoute } from './b2c-flight'
 import type { OperationCountry } from './country-detection'
 import type { ParsedFlightBooking } from './b2c-flight'
 import type { OrderTravellers } from './b2c-travellers'
+import { firstConfirmedLead, looksLikeAccountName } from './b2c-confirmed-lead'
+import type { ConfirmedLeadSource } from './b2c-confirmed-lead'
 import type {
   B2cOrderCustomer,
   B2cOrderHeader,
@@ -395,6 +397,7 @@ export function mapB2cOrder(input: {
   // Prefer a product city/location; fall back to the flight route so a
   // Colombo→Tokyo ticket still says where it is going.
   const lead = resolveLeadPassenger(flights, travellers, customer)
+  const sharedAccount = looksLikeAccountName(customer?.customer_name)
 
   const destination =
     products.map((p) => p.product_city || p.service_location).find((v) => v && v.trim()) ??
@@ -416,8 +419,10 @@ export function mapB2cOrder(input: {
       quotedTotal,
       currency,
       operationCountry: country,
-      contactEmail: customer?.customer_email?.trim() || null,
-      contactPhone: customer?.customer_phone?.trim() || null,
+      // On the shared admin6611 login the account's address is the desk's own
+      // inbox; the traveller's, when the desk gave one, is who to contact.
+      contactEmail: (sharedAccount && lead.email) || customer?.customer_email?.trim() || null,
+      contactPhone: (sharedAccount && lead.phone) || customer?.customer_phone?.trim() || null,
       contactCountry: customer?.customer_nationality?.trim() || null,
       tourDestination: destination ? destination.trim().slice(0, 191) : null,
       leadPassengerName: lead.name,
@@ -452,14 +457,22 @@ export function mapB2cOrder(input: {
 
 /**
  * The store account name is often a username ("admin6611"), so it is the last
- * resort. A flight manifest is the most authoritative (it is what is on the
- * ticket); otherwise the travellers entered at checkout name the real guest.
+ * resort. First comes who the order was booked under — the Confirm panel or the
+ * payment link, exactly what AahaasFlow shows. Then the flight manifest (what is
+ * on the ticket), then the travellers entered at checkout.
  */
 export function resolveLeadPassenger(
   flights: ParsedFlightBooking[],
   travellers: OrderTravellers | undefined,
   customer: B2cOrderCustomer | undefined,
-): { name: string | null; via: 'flight-manifest' | 'checkout-travellers' | 'store-account' | 'none' } {
+): {
+  name: string | null
+  via: ConfirmedLeadSource | 'flight-manifest' | 'checkout-travellers' | 'store-account' | 'none'
+  email?: string | null
+  phone?: string | null
+} {
+  const confirmed = firstConfirmedLead(travellers?.confirmedLeads, customer?.customer_name)
+  if (confirmed) return { name: confirmed.name, via: confirmed.source, email: confirmed.email, phone: confirmed.phone }
   const fromFlight = flights.find((f) => f.leadPassengerName)?.leadPassengerName
   if (fromFlight) return { name: fromFlight, via: 'flight-manifest' }
   if (travellers?.leadName) return { name: travellers.leadName, via: 'checkout-travellers' }
