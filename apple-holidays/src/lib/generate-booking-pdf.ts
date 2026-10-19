@@ -5,6 +5,7 @@ import { localUploadRelativePath } from './upload-path'
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
 import { withoutRetiredContacts } from './emergency-contacts'
 import { serviceTypeShortLabel } from './service-types'
+import { filledPackageNotes } from './booking-package-notes'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -542,22 +543,17 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
         }
       }
 
-      // ── 10. Terms & Conditions ─────────────────────────────────────────────
-      if (booking.terms) {
+      // ── 10. Package details & notes (Value Added Services … Client Request) ─
+      const notes = filledPackageNotes(booking)
+      if (notes.length) {
         doc.addPage()
         doc.y = MARGIN
-        sectionTitle('Terms & Conditions')
-        doc.font('Helvetica').fontSize(8.5).fillColor(DARK)
-          .text(booking.terms, MARGIN + 5, doc.y, { width: CONTENT_W - 10, lineGap: 2 })
-        doc.moveDown()
-      }
-
-      // ── 11. Exclusions ────────────────────────────────────────────────────
-      if (booking.exclusions) {
-        if (!booking.terms) { doc.addPage(); doc.y = MARGIN }
-        sectionTitle('Not Included — Exclusions')
-        doc.font('Helvetica').fontSize(8.5).fillColor(DARK)
-          .text(booking.exclusions, MARGIN + 5, doc.y, { width: CONTENT_W - 10, lineGap: 2 })
+        for (const n of notes) {
+          sectionTitle(n.label)
+          doc.font('Helvetica').fontSize(8.5).fillColor(DARK)
+            .text(n.text, MARGIN + 5, doc.y, { width: CONTENT_W - 10, lineGap: 2 })
+          doc.moveDown()
+        }
       }
 
       // ── Footer on every page ──────────────────────────────────────────────

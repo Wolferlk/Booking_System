@@ -17,6 +17,7 @@ import {
 } from './local-upload'
 import { withoutRetiredContacts } from './emergency-contacts'
 import { serviceTypeShortLabel } from './service-types'
+import { filledPackageNotes } from './booking-package-notes'
 
 // ── Colours (same palette as the PDF) ────────────────────────────────────────
 const CLR = {
@@ -504,18 +505,14 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
     }
   }
 
-  // ── 10. Terms & Conditions ────────────────────────────────────────────────
-  if (booking.terms) {
+  // ── 10. Package details & notes (Value Added Services … Client Request) ───
+  const notes = filledPackageNotes(booking)
+  if (notes.length) {
     children.push(new Paragraph({ children: [new PageBreak()] }))
-    children.push(sectionTitle('Terms & Conditions'))
-    children.push(...body(booking.terms))
-  }
-
-  // ── 11. Exclusions ────────────────────────────────────────────────────────
-  if (booking.exclusions) {
-    if (!booking.terms) children.push(new Paragraph({ children: [new PageBreak()] }))
-    children.push(sectionTitle('Not Included — Exclusions'))
-    children.push(...body(booking.exclusions))
+    for (const n of notes) {
+      children.push(sectionTitle(n.label))
+      children.push(...body(n.text))
+    }
   }
 
   // ── Footer ────────────────────────────────────────────────────────────────
