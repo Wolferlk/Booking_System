@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
 import { ImportDialog } from '@/components/trans-recon/import-dialog'
+import { PnlPicker, type PnlChoice } from '@/components/trans-recon/pnl-picker'
 import { cn, readApiResponse } from '@/lib/utils'
 import {
   NOT_INSTALLED, RECON_COUNTRIES, RECON_COUNTRY_META, RECON_CURRENCIES, breakdown, byBooking, byDay, byVendor,
@@ -31,13 +32,26 @@ import {
 interface BoardRow { sheet: ReconSheet; totals: SheetTotals }
 interface BoardData { installed: boolean; allowed: ReconCountry[]; canEdit: boolean; sheets: BoardRow[] }
 interface SheetData { sheet: ReconSheet; lines: ReconLine[]; canEdit?: boolean }
-interface PnlOption { id: string; activity: string; category: string; value: number }
-interface PnlOptions { bookingRef: string; currency: string | null; lines: PnlOption[] }
+type CustomPnl = { id: string; description: string; value: number; currency: string }
 
 /** What the page holds for a line before Save. P&L preview fields are display only. */
 type Edit = Partial<Record<EditableField, string | null>> & {
   pnlLineItemId?: string | null
+  /** A P&L figure typed in the picker; saved as a typed P&L line. */
+  pnlCustom?: CustomPnl
   _pnl?: { description: string | null; value: number | null; category: string | null; currency: string | null }
+}
+type AddedLine = ReconLine & { tempId: string; pnlCustom?: CustomPnl }
+
+/** Where a line's P&L came from, read off its id and match type. */
+function pnlSource(l: Pick<ReconLine, 'pnlLineItemId' | 'pnlMatch'>): { label: string; cls: string; title: string } | null {
+  const id = l.pnlLineItemId ?? ''
+  if (!id) return null
+  if (id.startsWith('custom:')) return { label: 'typed', cls: 'bg-amber-50 text-amber-700', title: 'P&L value typed on this sheet' }
+  if (l.pnlMatch === 'EXCEL') return { label: 'from Excel', cls: 'bg-sky-50 text-sky-700', title: "Named in the DETAILS column of the desk's Excel" }
+  const where = id.startsWith('acc:') ? 'Accounts P&L' : 'OPS P&L'
+  if (l.pnlMatch === 'AUTO') return { label: `${where} · auto`, cls: 'bg-emerald-50 text-emerald-700', title: 'Paired automatically — open to confirm or change' }
+  return { label: where, cls: 'bg-indigo-50 text-indigo-700', title: 'Picked on this sheet' }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -275,7 +289,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [edits, setEdits] = useState<Record<string, Edit>>({})
-  const [added, setAdded] = useState<(ReconLine & { tempId: string })[]>([])
+  const [added, setAdded] = useState<AddedLine[]>([])
   const [removed, setRemoved] = useState<Set<string>>(new Set())
   const [restored, setRestored] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState<'save' | 'sync' | 'submit' | 'header' | null>(null)
@@ -286,7 +300,6 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [showRemoved, setShowRemoved] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [picker, setPicker] = useState<string | null>(null)
-  const [pnlCache, setPnlCache] = useState<Record<string, PnlOptions | 'loading' | 'error'>>({})
   const [importing, setImporting] = useState(false)
   const tempSeq = useRef(0)
 
@@ -322,7 +335,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
       const e = edits[l.id]
       let out: ReconLine = l
       if (e) {
-        const { _pnl, pnlLineItemId, ...fields } = e
+        const { _pnl, pnlLineItemId, pnlCustom: _custom, ...fields } = e
         out = { ...l, ...fields } as ReconLine
         if ('rateText' in e) out.rate = parseRate(e.rateText)
         if (pnlLineItemId !== undefined) {
@@ -403,14 +416,38 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
       return next
     })
   }
-  const setPnl = (line: ReconLine, opt: PnlOption | null, currency: string | null) => {
-    const preview = { description: opt?.activity ?? null, value: opt?.value ?? null, category: opt?.category ?? null, currency: opt ? currency : null }
-    if (isAdded(line.id)) {
-      setAdded(a => a.map(r => r.id === line.id ? { ...r, pnlLineItemId: opt?.id ?? null, pnlDescription: preview.description, pnlValue: preview.value, pnlCategory: preview.category, pnlCurrency: preview.currency, pnlMatch: opt ? 'MANUAL' : 'NONE' } : r))
-    } else {
-      setEdits(prev => ({ ...prev, [line.id]: { ...(prev[line.id] ?? {}), pnlLineItemId: opt?.id ?? '', _pnl: preview } }))
+  /**
+   * Apply a picker choice to a line and any lines ticked "use for these too".
+   * A typed figure gets one id for all of them, so they split it like a
+   * shared P&L line rather than each counting it in full.
+   */
+  const setPnl = (lineIds: string[], choice: PnlChoice) => {
+    const custom: CustomPnl | undefined = choice?.kind === 'custom'
+      ? { id: `custom:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, description: choice.description, value: choice.value, currency: choice.currency }
+      : undefined
+    const pnlId = choice ? (custom ? custom.id : (choice as { id: string }).id) : null
+    const preview = {
+      description: custom ? custom.description : choice?.kind === 'line' ? choice.activity : null,
+      value: choice ? choice.value : null,
+      category: custom ? 'CUSTOM' : choice?.kind === 'line' ? choice.category : null,
+      currency: choice ? choice.currency : null,
     }
+    const ids = new Set(lineIds)
+    setAdded(a => a.map(r => !ids.has(r.id) ? r : {
+      ...r, pnlLineItemId: pnlId, pnlDescription: preview.description, pnlValue: preview.value, pnlCategory: preview.category,
+      pnlCurrency: preview.currency, pnlMatch: choice ? 'MANUAL' : 'NONE', pnlCustom: custom,
+    }))
+    setEdits(prev => {
+      const next = { ...prev }
+      for (const lid of lineIds) {
+        if (isAdded(lid)) continue
+        const { pnlCustom: _old, ...rest } = next[lid] ?? {}
+        next[lid] = { ...rest, pnlLineItemId: pnlId ?? '', _pnl: preview, ...(custom ? { pnlCustom: custom } : {}) }
+      }
+      return next
+    })
     setPicker(null)
+    if (lineIds.length > 1) toast.message(`P&L line set on ${lineIds.length} lines — they share its value. Save to keep it.`)
   }
   const addRow = (date?: string) => {
     if (!sheet) return
@@ -445,13 +482,14 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     try {
       const lines = [
         ...Object.entries(edits).map(([lid, e]) => {
-          const { _pnl: _ignored, ...rest } = e
-          return { id: lid, ...rest }
+          const { _pnl: _ignored, pnlCustom, pnlLineItemId, ...rest } = e
+          // A typed figure travels as pnlCustom; its id only groups the preview.
+          return { id: lid, ...rest, ...(pnlCustom ? { pnlCustom } : pnlLineItemId !== undefined ? { pnlLineItemId } : {}) }
         }),
         ...added.map(a => ({
           tempId: a.tempId, serviceDate: a.serviceDate, tourNo: a.tourNo, guestName: a.guestName, pax: a.pax,
           pickUp: a.pickUp, dropOff: a.dropOff, time: a.time, details: a.details, rateText: a.rateText,
-          remarks: a.remarks, pnlLineItemId: a.pnlLineItemId,
+          remarks: a.remarks, ...(a.pnlCustom ? { pnlCustom: a.pnlCustom } : { pnlLineItemId: a.pnlLineItemId }),
         })),
       ]
       const out = await api<SheetData & { saved: number }>(`/api/trans-recon/${id}/lines`, {
@@ -494,18 +532,25 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     } finally { setBusy(null) }
   }
 
-  const openPicker = async (line: ReconLine) => {
-    const ref = line.bookingRef || (isAdded(line.id) ? String(line.tourNo ?? '').trim() : '')
-    if (!ref) { toast.message('Type the tour number first — the P&L is looked up by it.'); return }
+  const refOf = (line: ReconLine) => line.bookingRef || (isAdded(line.id) ? String(line.tourNo ?? '').trim() : '')
+  const openPicker = (line: ReconLine) => {
+    if (!refOf(line)) { toast.message('Type the tour number first — the P&L is looked up by it.'); return }
     setPicker(line.id)
-    if (pnlCache[ref] && pnlCache[ref] !== 'error') return
-    setPnlCache(c => ({ ...c, [ref]: 'loading' }))
+  }
+
+  /** Pair every line with no P&L against its booking's Accounts P&L, in one go. */
+  const pairAccounts = async () => {
+    if (dirty) { toast.message('Save your changes first.'); return }
+    setBusy('sync')
     try {
-      const opts = await api<PnlOptions>(`/api/trans-recon/${id}/pnl-options?bookingRef=${encodeURIComponent(ref)}`)
-      setPnlCache(c => ({ ...c, [ref]: opts }))
-    } catch {
-      setPnlCache(c => ({ ...c, [ref]: 'error' }))
-    }
+      const out = await api<SheetData & { result: { paired: number; bookings: number; noAccountsPnl: string[] } }>(`/api/trans-recon/${id}/pair-accounts`, { method: 'POST' })
+      apply(out)
+      const r = out.result
+      toast.success(`${r.paired} line${r.paired === 1 ? '' : 's'} paired from the Accounts P&L`)
+      if (r.noAccountsPnl.length) toast.message(`No Accounts P&L for ${r.noAccountsPnl.slice(0, 6).join(', ')}${r.noAccountsPnl.length > 6 ? '…' : ''} — pick or type those by hand.`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not pair')
+    } finally { setBusy(null) }
   }
 
   if (loading && !data) {
@@ -559,6 +604,12 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
               <button onClick={() => { if (dirty) { toast.message('Save your changes before importing.'); return } setImporting(true) }} disabled={busy !== null}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50 disabled:opacity-50">
                 <Upload className="h-3.5 w-3.5" /> Import Excel
+              </button>
+            )}
+            {editable && counts.NO_PNL > 0 && (
+              <button onClick={pairAccounts} disabled={busy !== null} title="Pair every line that has no P&L with its booking's Accounts (Detailed) P&L"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 disabled:opacity-50">
+                <Sparkles className="h-3.5 w-3.5" /> Pair {counts.NO_PNL} from Accounts P&amp;L
               </button>
             )}
             {editable && (
@@ -626,7 +677,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
           </label>
           {foreignCurrencies.length > 0 && <span className="text-slate-300">|</span>}
           {foreignCurrencies.map(c => (
-            <FxInput key={c} from={c} to={cur} value={sheet.fxRates[c]} disabled={!editable || busy !== null}
+            <FxInput key={c} sheetId={id} from={c} to={cur} value={sheet.fxRates[c]} disabled={!editable || busy !== null}
               onSave={v => patchSheet({ fxRates: { ...sheet.fxRates, [c]: v } })} />
           ))}
           {foreignCurrencies.length > 0 && <span className="text-[11px] text-slate-400">P&amp;L lines are converted at these rates before the difference is taken.</span>}
@@ -697,8 +748,6 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                     const changed = (k: string) => k in e || isAdded(l.id)
                     const ro = !editable || l.isRemoved
                     const isOpen = expanded === l.id
-                    const ref = l.bookingRef || String(l.tourNo ?? '').trim()
-                    const opts = ref ? pnlCache[ref] : undefined
                     return (
                       <Fragment key={l.id}>
                         {newDay && (
@@ -741,29 +790,28 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                               ? <button onClick={() => setExpanded(isOpen ? null : l.id)} className={cn('text-left text-[11px] leading-snug text-slate-500 hover:text-slate-700', !isOpen && 'line-clamp-3')} title={isOpen ? 'Collapse' : 'Show all'}>{l.mcDescription}</button>
                               : <span className="text-[11px] text-slate-300">{l.source === 'MANUAL' ? 'added by hand' : '—'}</span>}
                           </td>
-                          <td className="relative w-[220px] px-2 py-1.5">
-                            <button disabled={ro} onClick={() => openPicker(l)} className="w-full rounded-md px-1.5 py-1 text-left hover:bg-indigo-50 disabled:hover:bg-transparent">
-                              {l.pnlDescription
-                                ? <div className={cn('text-[11px] leading-snug text-slate-700', !isOpen && 'line-clamp-2')}>{l.pnlDescription}</div>
-                                : <div className="text-[11px] text-slate-300">{editable ? 'pick a P&L line…' : 'none'}</div>}
-                              <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                                {l.pnlCategory && <span className="rounded bg-slate-100 px-1 text-[9px] font-bold text-slate-500">{l.pnlCategory}</span>}
-                                {l.pnlMatch === 'AUTO' && l.pnlValue != null && (
-                                  <span className={cn('inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-bold', (l.pnlScore ?? 0) >= 0.5 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-700')}
-                                    title="Paired automatically — open to confirm or change"><Sparkles className="h-2.5 w-2.5" />auto {Math.round((l.pnlScore ?? 0) * 100)}%</span>
-                                )}
-                                {l.pnlMatch === 'EXCEL' && l.pnlValue != null && (
-                                  <span className="inline-flex items-center gap-0.5 rounded bg-sky-50 px-1 text-[9px] font-bold text-sky-700" title="Named in the DETAILS column of the desk's Excel">
-                                    <FileSpreadsheet className="h-2.5 w-2.5" />from Excel</span>
-                                )}
-                                {l.pnlMatch === 'MANUAL' && l.pnlValue != null && <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1 text-[9px] font-bold text-indigo-600"><Link2 className="h-2.5 w-2.5" />picked</span>}
-                                {f && f.sharedBy > 1 && <span className="rounded bg-violet-50 px-1 text-[9px] font-bold text-violet-600" title="Several movements share this P&L line; its value is split between them">shared ×{f.sharedBy}</span>}
-                              </div>
-                            </button>
-                            {picker === l.id && (
-                              <PnlPicker opts={opts} current={l.pnlLineItemId} onClose={() => setPicker(null)}
-                                onPick={o => setPnl(l, o, opts && typeof opts === 'object' ? opts.currency : null)} />
-                            )}
+                          <td className="w-[230px] px-2 py-1.5">
+                            {l.pnlDescription || l.pnlValue != null ? (
+                              <button disabled={ro} onClick={() => openPicker(l)} className="w-full rounded-md px-1.5 py-1 text-left hover:bg-indigo-50 disabled:hover:bg-transparent" title={editable ? 'Change the P&L line' : undefined}>
+                                <div className={cn('text-[11px] leading-snug text-slate-700', !isOpen && 'line-clamp-2')}>{l.pnlDescription ?? '—'}</div>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                                  {l.pnlCategory && <span className="rounded bg-slate-100 px-1 text-[9px] font-bold text-slate-500">{l.pnlCategory}</span>}
+                                  {(() => { const s = pnlSource(l); return s ? (
+                                    <span className={cn('inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-bold', s.cls)} title={s.title}>
+                                      {l.pnlMatch === 'EXCEL' ? <FileSpreadsheet className="h-2.5 w-2.5" /> : l.pnlMatch === 'AUTO' ? <Sparkles className="h-2.5 w-2.5" /> : <Link2 className="h-2.5 w-2.5" />}
+                                      {s.label}{l.pnlMatch === 'AUTO' && l.pnlScore != null ? ` ${Math.round(l.pnlScore * 100)}%` : ''}
+                                    </span>
+                                  ) : null })()}
+                                  {f && f.sharedBy > 1 && <span className="rounded bg-violet-50 px-1 text-[9px] font-bold text-violet-600" title="Several movements share this P&L line; its value is split between them by rate">shared ×{f.sharedBy}</span>}
+                                  {changed('pnlLineItemId') || 'pnlLineItemId' in e ? <span className="rounded bg-amber-100 px-1 text-[9px] font-bold text-amber-700">unsaved</span> : null}
+                                </div>
+                              </button>
+                            ) : editable && !l.isRemoved ? (
+                              <button onClick={() => openPicker(l)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-dashed border-indigo-300 bg-indigo-50/50 px-2 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-100">
+                                <Plus className="h-3 w-3" /> Add P&amp;L line
+                              </button>
+                            ) : <span className="text-[11px] text-slate-300">none</span>}
                           </td>
                           <td className="w-[120px] px-1 py-1 text-right">
                             <input disabled={ro} value={l.rateText ?? ''} onChange={ev => setField(l, 'rateText', ev.target.value)} placeholder="e.g. 100+58"
@@ -830,6 +878,17 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
         )}
       </div>
 
+      {picker && (() => {
+        const line = effective.find(l => l.id === picker)
+        if (!line) return null
+        const ref = refOf(line)
+        const siblings = effective.filter(o => o.id !== line.id && refOf(o) === ref && !o.isRemoved && !o.bookingCancelled && o.pnlValue == null)
+        return (
+          <PnlPicker sheetId={id} line={line} bookingRef={ref} sheetCurrency={cur} siblings={siblings}
+            onClose={() => setPicker(null)} onPick={(choice, also) => setPnl([line.id, ...also], choice)} />
+        )
+      })()}
+
       <ImportDialog open={importing} onClose={() => setImporting(false)} allowed={[sheet.country]}
         fixed={{ country: sheet.country, year: sheet.periodYear, month: sheet.periodMonth, half: sheet.half }}
         onDone={() => load()} />
@@ -850,54 +909,33 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
   )
 }
 
-function FxInput({ from, to, value, disabled, onSave }: { from: string; to: string; value: number | undefined; disabled: boolean; onSave: (v: number) => void }) {
+function FxInput({ sheetId, from, to, value, disabled, onSave }: { sheetId: string; from: string; to: string; value: number | undefined; disabled: boolean; onSave: (v: number) => void }) {
   const [v, setV] = useState(value != null ? String(value) : '')
+  const [live, setLive] = useState<{ rate: number; fetchedAt: string } | null>(null)
   useEffect(() => { setV(value != null ? String(value) : '') }, [value])
+  // Today's rate as a suggestion — the sheet only ever uses the rate the desk saves.
+  useEffect(() => {
+    let on = true
+    api<{ suggestion: { rate: number; fetchedAt: string } | null }>(`/api/trans-recon/${sheetId}/fx?from=${from}`)
+      .then(d => on && setLive(d.suggestion)).catch(() => {})
+    return () => { on = false }
+  }, [sheetId, from, to])
   const commit = () => { const n = Number(v); if (Number.isFinite(n) && n > 0 && n !== value) onSave(n) }
   return (
-    <label className={cn('flex items-center gap-1.5 rounded-lg px-2 py-1 ring-1', value ? 'ring-slate-200' : 'bg-amber-50 ring-amber-200')}>
-      <span className="font-semibold text-slate-500">1 {from} =</span>
-      <input disabled={disabled} value={v} onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => e.key === 'Enter' && commit()}
-        placeholder="rate" className="w-20 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:border-indigo-300" />
-      <span className="font-semibold text-slate-500">{to}</span>
-    </label>
-  )
-}
-
-function PnlPicker({ opts, current, onPick, onClose }: {
-  opts: PnlOptions | 'loading' | 'error' | undefined; current: string | null
-  onPick: (o: PnlOption | null) => void; onClose: () => void
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [onClose])
-  return (
-    <div ref={ref} className="absolute left-0 top-full z-30 mt-1 w-[360px] rounded-xl bg-white p-2 shadow-2xl ring-1 ring-slate-200">
-      {opts === 'loading' || opts === undefined ? (
-        <div className="flex items-center gap-2 p-3 text-xs text-slate-500"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading the P&amp;L…</div>
-      ) : opts === 'error' ? (
-        <div className="p-3 text-xs text-rose-600">Could not load the P&amp;L for this booking.</div>
-      ) : (
-        <>
-          <div className="px-2 pb-1.5 pt-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">P&amp;L of {opts.bookingRef} {opts.currency ? `· ${opts.currency}` : ''}</div>
-          <div className="max-h-72 overflow-auto">
-            {opts.lines.length === 0 && <div className="p-3 text-xs text-slate-400">This booking has no P&amp;L lines.</div>}
-            {opts.lines.map(o => (
-              <button key={o.id} onClick={() => onPick(o)}
-                className={cn('flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-indigo-50', o.id === current && 'bg-indigo-50 ring-1 ring-indigo-200', o.category === 'HOTEL' && 'opacity-50')}>
-                <span className="mt-0.5 shrink-0 rounded bg-slate-100 px-1 text-[9px] font-bold text-slate-500">{o.category}</span>
-                <span className="flex-1 text-[11px] leading-snug text-slate-700">{o.activity}</span>
-                <span className="shrink-0 text-[11px] font-bold tabular-nums text-slate-800">{fmtMoney(o.value)}</span>
-              </button>
-            ))}
-          </div>
-          <button onClick={() => onPick(null)} className="mt-1 w-full rounded-lg px-2 py-1.5 text-left text-[11px] font-semibold text-slate-500 hover:bg-slate-50">No P&amp;L line for this movement</button>
-        </>
+    <span className="inline-flex items-center gap-1.5">
+      <label className={cn('flex items-center gap-1.5 rounded-lg px-2 py-1 ring-1', value ? 'ring-slate-200' : 'bg-amber-50 ring-amber-200')}>
+        <span className="font-semibold text-slate-500">1 {from} =</span>
+        <input disabled={disabled} value={v} onChange={e => setV(e.target.value)} onBlur={commit} onKeyDown={e => e.key === 'Enter' && commit()}
+          placeholder="rate" className="w-20 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-right text-xs tabular-nums outline-none focus:border-indigo-300" />
+        <span className="font-semibold text-slate-500">{to}</span>
+      </label>
+      {live && !disabled && Math.abs((value ?? 0) - live.rate) > 1e-6 && (
+        <button onClick={() => onSave(live.rate)} title={`Live rate, fetched ${new Date(live.fetchedAt).toLocaleString('en-GB')}`}
+          className="rounded-lg bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100">
+          use today&apos;s {live.rate}
+        </button>
       )}
-    </div>
+    </span>
   )
 }
 

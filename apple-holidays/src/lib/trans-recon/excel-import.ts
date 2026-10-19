@@ -27,6 +27,7 @@ import openai, { logAiUsage } from '@/lib/openai'
 import { prisma } from '@/lib/prisma'
 import { computePNLLineTotal } from '@/lib/utils'
 import { matchMovements, tokens, type MatchMovement } from './match'
+import { accountsPnlLines } from './accounts-pnl'
 import {
   IMPORT_FIELDS, detectContext, gridSample, parseWorkbook,
   type ColumnMap, type DetectedContext, type ImportRow,
@@ -234,6 +235,14 @@ async function loadPnls(refs: string[]): Promise<Map<string, PnlChoice[]>> {
       id: li.id, activity: li.activity, category: li.category, currency: b.currency || 'USD',
       value: Math.round(computePNLLineTotal(li, b.pnl!.paxAdults, b.pnl!.paxChildren) * 100) / 100,
     })))
+  }
+  // A booking with no OPS P&L is usually costed in the Accounts system — its
+  // Detailed P&L rows are what DETAILS was copied from.
+  for (const ref of refs.filter(r => !(out.get(r)?.length)).slice(0, 40)) {
+    const acc = await accountsPnlLines(ref)
+    if (acc.available && acc.lines.length) {
+      out.set(ref, acc.lines.map(a => ({ id: a.id, activity: a.activity, category: a.category, value: a.value, currency: acc.currency || 'USD' })))
+    }
   }
   return out
 }

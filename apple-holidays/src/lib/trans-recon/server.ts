@@ -13,7 +13,9 @@ import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
-import { matchMovements, type MatchMovement, type MatchPnlLine } from './match'
+import { matchMovements, scorePair, type MatchMovement, type MatchPnlLine } from './match'
+import { accountsPnlLines, resolveAccountsLine } from './accounts-pnl'
+import { getConversionRate, isExchangeConfigured } from '@/lib/currency'
 import {
   EDITABLE_FIELDS, RECON_COUNTRIES, RECON_COUNTRY_META, formatPax, parseRate, periodOf, sheetTitle, sortLines,
   type ApprovalStatus, type EditableField, type Half, type LineSource, type PnlMatch, type ReconCountry,
@@ -159,23 +161,120 @@ export async function loadSheet(id: string, allowed: ReconCountry[]) {
   return { sheet: toSheet(s), lines: sortLines(lines.map(toLine)) }
 }
 
-/** The P&L lines a desk can point a movement at, with their computed values. */
-export async function pnlOptions(bookingRef: string) {
-  const b = await prisma.booking.findUnique({
-    where: { bookingRef },
-    select: { bookingRef: true, currency: true, pnl: { select: { paxAdults: true, paxChildren: true, lineItems: { orderBy: { sortOrder: 'asc' } } } } },
-  })
-  if (!b) return { bookingRef, currency: null, lines: [] }
-  return {
-    bookingRef: b.bookingRef,
-    currency: b.currency,
-    lines: (b.pnl?.lineItems ?? []).map(li => ({
-      id: li.id,
-      activity: li.activity,
-      category: li.category,
-      value: Math.round(computePNLLineTotal(li, b.pnl!.paxAdults, b.pnl!.paxChildren) * 100) / 100,
-    })),
+/**
+ * The P&L lines a desk can point a movement at, from both places a booking's
+ * costing can live: OPS's own P&L, and the Accounts system's Detailed P&L.
+ * With a line id, each option is scored against that movement (the same
+ * scorer the automatic pairing uses) and counted by how many live lines of
+ * the sheet already point at it — so a shared transport line reads as such.
+ */
+export async function pnlOptions(bookingRef: string, sheetId?: string, lineId?: string) {
+  const [b, accounts, line, sheetLines] = await Promise.all([
+    prisma.booking.findUnique({
+      where: { bookingRef },
+      select: { bookingRef: true, currency: true, arrivalDate: true, pnl: { select: { paxAdults: true, paxChildren: true, lineItems: { orderBy: { sortOrder: 'asc' } } } } },
+    }),
+    accountsPnlLines(bookingRef),
+    lineId ? prisma.transReconLine.findUnique({ where: { id: lineId } }) : Promise.resolve(null),
+    sheetId ? prisma.transReconLine.findMany({ where: { sheetId, isRemoved: false, bookingCancelled: false, pnlLineItemId: { not: null } }, select: { pnlLineItemId: true } }) : Promise.resolve([]),
+  ])
+  const ops = (b?.pnl?.lineItems ?? []).map(li => ({
+    id: li.id, activity: li.activity, category: li.category,
+    value: Math.round(computePNLLineTotal(li, b!.pnl!.paxAdults, b!.pnl!.paxChildren) * 100) / 100,
+  }))
+
+  const usedBy: Record<string, number> = {}
+  for (const l of sheetLines) usedBy[l.pnlLineItemId!] = (usedBy[l.pnlLineItemId!] ?? 0) + 1
+
+  let suggested: { id: string; score: number }[] = []
+  if (line) {
+    const arrival = b?.arrivalDate ? day(b.arrivalDate) : null
+    const mv: MatchMovement = {
+      key: line.id, date: day(line.serviceDate)!,
+      dayNumber: arrival ? Math.round((line.serviceDate.getTime() - dateOnly(arrival).getTime()) / 86_400_000) + 1 : null,
+      fromPoint: line.pickUp, toPoint: line.dropOff, details: [line.details, line.mcDescription].filter(Boolean).join(' '),
+      location: null, serviceType: line.serviceType,
+    }
+    suggested = [...ops, ...accounts.lines]
+      .map(o => ({ id: o.id, score: scorePair(mv, { id: o.id, activity: o.activity, category: o.category }) }))
+      .filter(s => s.score >= 0.16)
+      .sort((x, y) => y.score - x.score)
+      .slice(0, 3)
   }
+
+  return {
+    bookingRef,
+    currency: b?.currency ?? null,
+    lines: ops,
+    accounts,
+    usedBy,
+    suggested,
+  }
+}
+
+/** Today's rate for converting a P&L currency into the sheet's, when one is configured. */
+export async function suggestFx(from: string, to: string): Promise<{ rate: number; fetchedAt: string } | null> {
+  try {
+    if (!isExchangeConfigured()) return null
+    const r = await getConversionRate(from, to)
+    return { rate: Math.round(r.rate * 1e6) / 1e6, fetchedAt: r.fetchedAt }
+  } catch (err) {
+    console.error('[trans-recon] FX lookup failed:', err)
+    return null
+  }
+}
+
+/**
+ * Pair every line that has no P&L with its booking's Accounts P&L, in one
+ * go — the movement matcher over the Detailed P&L's rows instead of OPS's.
+ * Lines a person paired, and lines the Excel named, are left alone.
+ */
+export async function pairFromAccounts(sheetId: string, actor: Actor) {
+  const sheet = await prisma.transReconSheet.findUnique({ where: { id: sheetId } })
+  if (!sheet) throw new ReconError('Sheet not found', 404)
+  if (sheet.status === 'LOCKED') throw new ReconError('This sheet is locked by Accounts.', 409)
+
+  const lines = await prisma.transReconLine.findMany({ where: { sheetId, isRemoved: false, bookingRef: { not: null } } })
+  const todo = lines.filter(l => l.pnlValue == null && l.pnlMatch !== 'MANUAL' && l.pnlMatch !== 'EXCEL')
+  const refs = Array.from(new Set(todo.map(l => l.bookingRef!)))
+  const result = { paired: 0, bookings: refs.length, noAccountsPnl: [] as string[] }
+  if (!refs.length) return result
+
+  const bookings = await prisma.booking.findMany({ where: { bookingRef: { in: refs } }, select: { bookingRef: true, arrivalDate: true } })
+  const arrivalBy = new Map(bookings.map(b => [b.bookingRef, day(b.arrivalDate)]))
+  const ops: Prisma.PrismaPromise<unknown>[] = []
+
+  for (const ref of refs) {
+    const acc = await accountsPnlLines(ref)
+    if (!acc.available || !acc.lines.length) { result.noAccountsPnl.push(ref); continue }
+    const arrival = arrivalBy.get(ref)
+    // Every live line of the booking takes part, so a row one line already
+    // holds is not handed out twice.
+    const mine = lines.filter(l => l.bookingRef === ref && !l.bookingCancelled)
+    const movements: MatchMovement[] = mine.map(l => ({
+      key: l.id, date: day(l.serviceDate)!,
+      dayNumber: arrival ? Math.round((l.serviceDate.getTime() - dateOnly(arrival).getTime()) / 86_400_000) + 1 : null,
+      fromPoint: l.pickUp, toPoint: l.dropOff, details: [l.details, l.mcDescription].filter(Boolean).join(' '),
+      location: null, serviceType: l.serviceType,
+    }))
+    const picks = matchMovements(movements, acc.lines.map(a => ({ id: a.id, activity: a.activity, category: a.category })))
+    for (const l of todo.filter(t => t.bookingRef === ref)) {
+      const m = picks.get(l.id)
+      if (!m) continue
+      const a = acc.lines.find(x => x.id === m.pnlLineId)!
+      ops.push(prisma.transReconLine.update({
+        where: { id: l.id },
+        data: {
+          pnlLineItemId: a.id, pnlDescription: a.activity, pnlCategory: a.category, pnlValue: a.value,
+          pnlCurrency: acc.currency || 'USD', pnlMatch: 'AUTO', pnlScore: m.score, updatedByName: actor.name ?? null,
+          ...approvalReset(l, actor, 'A P&L line was added from the Accounts P&L'),
+        },
+      }))
+      result.paired++
+    }
+  }
+  for (let i = 0; i < ops.length; i += 100) await prisma.$transaction(ops.slice(i, i + 100))
+  return result
 }
 
 // ── Building lines from the MC Report ───────────────────────────────────────
@@ -497,7 +596,12 @@ export async function syncSheet(sheetId: string, actor: Actor): Promise<SyncResu
     // P&L: a hand pick, or one the desk's workbook named, is kept (and
     // re-valued if the P&L moved); an automatic pairing follows the matcher.
     let next: PnlPick | null
-    if (line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL') {
+    // Accounts-P&L rows and typed figures are not in OPS's P&L at all, so the
+    // matcher below could only ever take them away: they are kept as they are.
+    const offOps = !!line.pnlLineItemId && (line.pnlLineItemId.startsWith(ACCOUNTS_PREFIX) || line.pnlLineItemId.startsWith(CUSTOM_PREFIX))
+    if (offOps) {
+      next = null
+    } else if (line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL') {
       next = line.pnlLineItemId ? pnlById.get(line.pnlLineItemId) ?? null : null
       if (line.pnlLineItemId && !next) {
         // The P&L was re-imported under new ids: find the same activity again.
@@ -509,7 +613,7 @@ export async function syncSheet(sheetId: string, actor: Actor): Promise<SyncResu
       next = auto
       Object.assign(data, pnlData(next, next ? 'AUTO' : 'NONE'))
     }
-    const kept = line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL'
+    const kept = offOps || line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL'
     const newValue = next ? next.value : (kept ? dec(line.pnlValue) : null)
     if (newValue !== dec(line.pnlValue)) Object.assign(data, approvalReset(line, actor, 'The P&L value changed'))
 
@@ -613,6 +717,8 @@ export interface LineInput {
   remarks?: string | null
   /** '' clears the pairing; an id picks that P&L line by hand. */
   pnlLineItemId?: string | null
+  /** A P&L line typed by hand — used when neither OPS nor Accounts holds one. Wins over pnlLineItemId. */
+  pnlCustom?: { description: string; value: number | string; currency: string; id?: string } | null
   /** New rows only: the booking this row belongs to, when the tour cell names it by an alias. */
   bookingRef?: string | null
   /** Excel import: the workbook row this line was read from. */
@@ -624,7 +730,33 @@ const LIMITS: Record<EditableField, number> = {
   details: 4000, rateText: 191, remarks: 2000,
 }
 
+export const CUSTOM_PREFIX = 'custom:'
+export const ACCOUNTS_PREFIX = 'acc:'
+
+/** A P&L figure typed on the page because neither system holds one. */
+function customPnl(c: { description?: unknown; value?: unknown; currency?: unknown; id?: unknown }): PnlPick {
+  // One typed figure given to several movements carries one id, so they split
+  // it like any shared P&L line instead of each counting it in full.
+  const given = typeof c.id === 'string' && /^custom:[a-z0-9]{6,24}$/.test(c.id) ? c.id : null
+  const description = String(c.description ?? '').replace(/\s+/g, ' ').trim().slice(0, 500)
+  const value = Number(String(c.value ?? '').replace(/,/g, ''))
+  const currency = String(c.currency ?? '').trim().toUpperCase()
+  if (!description) throw new ReconError('Give the P&L line a description')
+  if (!Number.isFinite(value) || value < 0 || value > 1e10) throw new ReconError('The P&L value must be a positive number')
+  if (!/^[A-Z]{3}$/.test(currency)) throw new ReconError('The P&L currency must be a 3-letter code')
+  return {
+    id: given ?? `${CUSTOM_PREFIX}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    activity: description, category: 'CUSTOM', value: Math.round(value * 100) / 100, currency, score: null,
+  }
+}
+
 async function resolvePnl(bookingRef: string | null, pnlLineItemId: string): Promise<PnlPick> {
+  if (pnlLineItemId.startsWith(ACCOUNTS_PREFIX)) {
+    if (!bookingRef) throw new ReconError('Name the booking (tour no) before picking from its Accounts P&L.')
+    const a = await resolveAccountsLine(bookingRef, pnlLineItemId)
+    if (!a) throw new ReconError('That Accounts P&L row changed since the picker opened — open it again.')
+    return { id: a.id, activity: a.activity, category: a.category, value: a.value, currency: a.currency, score: null }
+  }
   const li = await prisma.pNLLineItem.findUnique({
     where: { id: pnlLineItemId },
     include: { pnl: { select: { paxAdults: true, paxChildren: true, booking: { select: { bookingRef: true, currency: true } } } } },
@@ -687,7 +819,8 @@ export async function saveLines(
       const hint = clean(input.bookingRef)
       const bookingRef = hint && knownRefs.has(hint) ? hint : tourNo && knownRefs.has(tourNo) ? tourNo : null
       const rateText = val('rateText', input.rateText)
-      const pnl = input.pnlLineItemId ? await resolvePnl(bookingRef, input.pnlLineItemId) : null
+      const pnl = input.pnlCustom ? customPnl(input.pnlCustom)
+        : input.pnlLineItemId ? await resolvePnl(bookingRef, input.pnlLineItemId) : null
       ops.push(prisma.transReconLine.create({
         data: {
           sheetId, position: ++position, source: 'MANUAL', bookingRef,
@@ -720,7 +853,13 @@ export async function saveLines(
     }
     if ('rateText' in data) data.rate = parseRate(data.rateText as string | null)
 
-    if (input.pnlLineItemId !== undefined && (input.pnlLineItemId || null) !== (line.pnlLineItemId || null)) {
+    if (input.pnlCustom) {
+      // A typed figure replaces whatever the line pointed at — or edits the
+      // one typed before, keeping its id so a shared group stays together.
+      const c = customPnl(input.pnlCustom)
+      if (!input.pnlCustom.id && line.pnlLineItemId?.startsWith(CUSTOM_PREFIX)) c.id = line.pnlLineItemId
+      Object.assign(data, pnlData(c, 'MANUAL'))
+    } else if (input.pnlLineItemId !== undefined && (input.pnlLineItemId || null) !== (line.pnlLineItemId || null)) {
       const pnl = input.pnlLineItemId ? await resolvePnl(line.bookingRef, input.pnlLineItemId) : null
       Object.assign(data, pnlData(pnl, 'MANUAL'))
       if (!pnl) data.pnlMatch = 'MANUAL' // "no P&L line" is a decision too — keep the matcher off it

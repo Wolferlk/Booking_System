@@ -13,7 +13,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!ref) return buildApiError('Which booking?')
   try {
     await loadSheet(params.id, s.allowed) // scope check
-    return buildApiSuccess(await pnlOptions(ref))
+    const lineId = req.nextUrl.searchParams.get('lineId')?.trim() || undefined
+    return buildApiSuccess(await pnlOptions(ref, params.id, lineId))
   } catch (err) {
     return reconFailure(err, 'pnl-options')
   }
