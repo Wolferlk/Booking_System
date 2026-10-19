@@ -24,6 +24,7 @@ import type { AgendaInclude } from '@/lib/vn-includes/shared'
 import { normaliseServiceType } from '@/lib/service-types'
 import { carryTicketsControl } from '@/lib/tickets-control'
 import { carryMcDetails } from '@/lib/mc-details'
+import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
 import type { UserRole } from '@prisma/client'
 
@@ -327,6 +328,8 @@ export async function POST(
   }
   await carryMcDetails(booking.bookingRef, movedIds)
   await carryMcDone(booking.bookingRef, movedIds)
+  // Trans-Reconsultation lines point at movements the same way.
+  await carryTransRecon(booking.bookingRef, movedIds)
   // Movement WhatsApp history is tagged by agenda item id too — move it across
   // so the chart's "sent" badges and the duplicate guard survive a Save.
   try {

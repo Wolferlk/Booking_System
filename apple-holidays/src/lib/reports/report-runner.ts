@@ -19,6 +19,7 @@ import {
   renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
 } from './reconcile-report-html'
 import { sendReportMail } from './report-mailer'
+import { archiveSentReport, archivedEmailHtml, type ArchiveFile } from './report-archive'
 import {
   appendRun, claimRunSlot, isAutoReportEnabled, listSchedules, recordScheduleRun,
   releaseRunSlot, type ReportRunLog, type ReportSchedule,
@@ -793,6 +794,30 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
     })
 
     console.log(`[Reports] "${s.name}" (${s.reportType} ${s.period}) sent to ${sent.recipients} recipient(s) — ${JSON.stringify(counts)}`)
+
+    // File it in the SharePoint report archive beside the Accounts reports:
+    // the workbook plus the email as sent. Only a real send to the schedule's
+    // own recipients — not a test, not a "send to me". Never throws, time-boxed.
+    if (!opts.testSend && !opts.overrideTo?.length) {
+      const sentAt = new Date()
+      const files: ArchiveFile[] = []
+      if (built.workbook) {
+        files.push({ ext: 'xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: built.workbook.buffer })
+      } else if (s.attachCsv && built.csv) {
+        files.push({ ext: 'csv', contentType: 'text/csv', content: built.csv })
+      }
+      files.push({
+        ext: 'html', suffix: ' - email', contentType: 'text/html; charset=utf-8',
+        content: archivedEmailHtml(built.html, { subject: built.subject, to: s.to, cc: s.cc, sentAt }),
+      })
+      await archiveSentReport({
+        category: s.reportType === 'RECONCILIATION' ? 'OPS Reconciliation' : `OPS ${s.period === 'daily' ? 'Daily' : s.period.charAt(0).toUpperCase() + s.period.slice(1)} Report`,
+        periodFrom: built.window.fromDate,
+        periodTo: built.window.toDate,
+        sentAt,
+        files,
+      })
+    }
     return finish('ok', { recipients: sent.recipients, subject: built.subject, counts })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

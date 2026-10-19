@@ -33,6 +33,7 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
   '/dashboard/accounts/reports',  // Ops Board
   '/dashboard/mc-report',         // MC Report
+  '/dashboard/trans-reconsultation', // Trans-Reconsultation — the half-month transport sheet built from it
   '/dashboard/checklist-vn',      // Check List VN — costing sheets (also opened per booking)
   '/dashboard/driver-auto',       // Driver-Auto — open trips, driver requests, approvals
   '/dashboard/ground/drivers',    // Driver management

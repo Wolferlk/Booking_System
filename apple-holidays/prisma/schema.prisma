@@ -3728,3 +3728,98 @@ model MobileDriverRequest {
   @@index([driverId, createdAt], map: "mobile_driver_requests_driver_idx")
   @@map("mobile_driver_requests")
 }
+
+/// Trans-Reconsultation — one half-month transport sheet per country (1st–15th,
+/// 16th–end), built from MC Report lines. Shared with the Accounts system, which
+/// writes only the approval columns (see TransReconService.php there).
+/// Created by prisma/sql/2026-10-19-trans-recon.sql — never `db push`.
+model TransReconSheet {
+  id              String           @id @default(cuid())
+  /// MALAYSIA | SINGAPORE | VIETNAM | SRILANKA
+  country         String           @db.VarChar(24)
+  periodYear      Int
+  periodMonth     Int
+  /// 1 = 1st–15th, 2 = 16th–end of month
+  half            Int
+  periodStart     DateTime         @db.Date
+  periodEnd       DateTime         @db.Date
+  title           String           @db.VarChar(191)
+  currency        String           @default("USD") @db.VarChar(8)
+  /// { "USD": 4.45 } — how many sheet-currency units one P&L-currency unit is.
+  fxRates         Json?
+  /// DRAFT | SUBMITTED | LOCKED
+  status          String           @default("DRAFT") @db.VarChar(16)
+  note            String?          @db.Text
+  accountsNote    String?          @db.Text
+  createdById     String?
+  createdByName   String?
+  submittedAt     DateTime?
+  submittedByName String?
+  lockedAt        DateTime?
+  lockedByName    String?
+  lastSyncedAt    DateTime?
+  updatedByName   String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @default(now()) @updatedAt
+  lines           TransReconLine[]
+
+  @@unique([country, periodYear, periodMonth, half], map: "trans_recon_sheets_period_key")
+  @@index([periodYear, periodMonth], map: "trans_recon_sheets_month_idx")
+  @@map("trans_recon_sheets")
+}
+
+model TransReconLine {
+  id               String          @id @default(cuid())
+  sheetId          String
+  position         Int             @default(0)
+  /// MC (from an MC Report movement) | MANUAL (added by hand)
+  source           String          @default("MC") @db.VarChar(8)
+  /// Soft link — agenda items are recreated on every chart save (carried by
+  /// carryTransRecon). No foreign key on purpose.
+  agendaItemId     String?         @db.VarChar(191)
+  bookingRef       String?         @db.VarChar(191)
+  serviceDate      DateTime        @db.Date
+  tourNo           String?         @db.VarChar(191)
+  guestName        String?         @db.VarChar(191)
+  pax              String?         @db.VarChar(32)
+  pickUp           String?         @db.Text
+  dropOff          String?         @db.Text
+  time             String?         @db.VarChar(32)
+  details          String?         @db.Text
+  mcDescription    String?         @db.Text
+  serviceType      String?         @db.VarChar(64)
+  vendorName       String?         @db.VarChar(191)
+  mcDriverRate     Decimal?        @db.Decimal(14, 2)
+  mcRateCurrency   String?         @db.VarChar(8)
+  pnlLineItemId    String?         @db.VarChar(191)
+  pnlDescription   String?         @db.Text
+  pnlCategory      String?         @db.VarChar(32)
+  pnlValue         Decimal?        @db.Decimal(14, 2)
+  pnlCurrency      String?         @db.VarChar(8)
+  /// AUTO | MANUAL | NONE
+  pnlMatch         String          @default("NONE") @db.VarChar(8)
+  pnlScore         Decimal?        @db.Decimal(5, 3)
+  rateText         String?         @db.VarChar(191)
+  rate             Decimal?        @db.Decimal(14, 2)
+  remarks          String?         @db.Text
+  /// Fields the desk typed over — a refresh from the MC Report leaves them alone.
+  editedFields     Json?
+  bookingCancelled Boolean         @default(false)
+  mcMissing        Boolean         @default(false)
+  isRemoved        Boolean         @default(false)
+  /// PENDING | APPROVED | REJECTED — written by the Accounts system.
+  approvalStatus   String          @default("PENDING") @db.VarChar(16)
+  approvalNote     String?         @db.Text
+  approvedRate     Decimal?        @db.Decimal(14, 2)
+  approvedByName   String?
+  approvedAt       DateTime?
+  updatedByName    String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
+  sheet            TransReconSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId], map: "trans_recon_lines_sheet_idx")
+  @@index([agendaItemId], map: "trans_recon_lines_agenda_idx")
+  @@index([bookingRef], map: "trans_recon_lines_booking_idx")
+  @@map("trans_recon_lines")
+}
