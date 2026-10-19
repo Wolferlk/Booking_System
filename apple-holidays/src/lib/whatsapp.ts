@@ -891,7 +891,22 @@ export interface BriefingMovement {
   driverPhone:  string | null
   vehicleType:  string | null
   vehiclePlate: string | null
+  guideName?:       string | null
+  guidePhone?:      string | null
+  tourVendorName?:  string | null
+  tourVendorPhone?: string | null
   tickets:      BriefingTicket[]
+}
+
+/**
+ * The long date stamped into every daily briefing ("Saturday, 3 October 2026").
+ * Pinned to UTC because trip days are stored as UTC midnights — the dedupe and
+ * the per-booking panel find past sends by searching message bodies for it.
+ */
+export function briefingDayLabel(date: Date | string): string {
+  return new Date(date).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+  })
 }
 
 const SERVICE_LABEL: Record<string, string> = {
@@ -942,8 +957,7 @@ export function formatCustomerDailyBriefingMessage(params: {
   movements:       BriefingMovement[]
   attachmentCount: number          // ticket/voucher images sent right after this text
 }): string {
-  const d = new Date(params.date)
-  const dateStr  = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const dateStr  = briefingDayLabel(params.date)
   const name     = params.leadName ?? 'traveller'
   const totalPax = params.paxAdults + params.paxChildren + params.paxInfants
 
@@ -1004,6 +1018,12 @@ export function formatCustomerDailyBriefingMessage(params: {
       if (m.driverName) {
         const vehicle = [m.vehicleType, m.vehiclePlate].filter(Boolean).join(' · ')
         lines.push(`   🚗 Driver: *${m.driverName}*${m.driverPhone ? ` (${m.driverPhone})` : ''}${vehicle ? ` — ${vehicle}` : ''}`)
+      }
+      if (m.guideName) {
+        lines.push(`   🧑‍🏫 Guide: *${m.guideName}*${m.guidePhone ? ` (${m.guidePhone})` : ''}`)
+      }
+      if (m.tourVendorName) {
+        lines.push(`   🏢 Tour vendor: *${m.tourVendorName}*${m.tourVendorPhone ? ` (${m.tourVendorPhone})` : ''}`)
       }
       for (const t of m.tickets) {
         const status = t.confirmed ? '✅ Confirmed' : '🕓 Reserved'

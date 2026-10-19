@@ -15,7 +15,13 @@ import {
   sendFeedbackRequestForBooking,
   TAG_DAILY_BRIEFING,
   TAG_FEEDBACK_REQUEST,
+  getDefaultBriefingTime,
+  getBookingBriefingTime,
+  setBookingBriefingTime,
+  normaliseBriefingTime,
+  briefingTimezone,
 } from '@/lib/customer-whatsapp-automation'
+import { briefingDayLabel } from '@/lib/whatsapp'
 import {
   sendPortalLinkForBooking,
   portalSendStatus,
@@ -81,8 +87,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   const briefingSends = sends.filter(s => s.senderName?.startsWith(TAG_DAILY_BRIEFING))
   // The formatter stamps each briefing body with the target day in long format,
   // so we can tell which day a past send was actually about.
-  const longDate = (ds: string) =>
-    new Date(ds + 'T00:00:00.000Z').toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const longDate = (ds: string) => briefingDayLabel(ds + 'T00:00:00.000Z')
 
   const MAX_DAYS = 60
   let dayNo = 1
@@ -105,7 +110,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   }
 
   const feedbackSend = sends.find(s => s.senderName?.startsWith(TAG_FEEDBACK_REQUEST))
-  const portal = await portalSendStatus(params.ref)
+  const [portal, defaultTime, timeOverride] = await Promise.all([
+    portalSendStatus(params.ref),
+    getDefaultBriefingTime(),
+    getBookingBriefingTime(params.ref),
+  ])
 
   return buildApiSuccess({
     bookingRef:   booking.bookingRef,
@@ -116,6 +125,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     departureDate: dateStr(booking.departureDate),
     days,
     feedbackRequestSentAt: feedbackSend?.createdAt.toISOString() ?? null,
+    // Auto-send time: the global default, this booking's override ("HH:MM" / "OFF"
+    // / null), and the timezone both are read in.
+    briefingDefaultTime:  defaultTime,
+    briefingTimeOverride: timeOverride,
+    briefingTimezone:     briefingTimezone(booking.operationCountry, booking.bookingRef),
     feedback: booking.guestFeedback,
     // Customer trip-portal link: the URL itself plus when each stage last went out.
     // With no guest number the link is instead pushed to the ops fallback numbers.
@@ -142,6 +156,7 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
     | { action: 'briefing'; date: string }
     | { action: 'feedback' }
     | { action: 'portal'; stage: 'welcome' | 'reminder'; to?: string }
+    | { action: 'briefing-time'; time: string | null }
     | null
   if (!body) return buildApiError('Invalid request body')
 
@@ -157,6 +172,22 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
       r.usedFallback
         ? `No guest number on this booking — the portal link was sent to the ops numbers (${r.sentTo?.join(', ')}) to pass on to the guest.`
         : `Portal link sent to ${r.sentTo?.join(', ')}`,
+    )
+  }
+
+  if (body.action === 'briefing-time') {
+    const exists = await prisma.booking.findUnique({ where: { bookingRef: params.ref }, select: { id: true } })
+    if (!exists) return buildApiError('Booking not found', 404)
+    if (body.time === null || body.time === '') {
+      await setBookingBriefingTime(params.ref, null)
+      return buildApiSuccess({ briefingTimeOverride: null }, 'Using the default send time')
+    }
+    const value = body.time === 'OFF' ? 'OFF' : normaliseBriefingTime(body.time)
+    if (!value) return buildApiError('Time must be HH:MM (24-hour)')
+    await setBookingBriefingTime(params.ref, value)
+    return buildApiSuccess(
+      { briefingTimeOverride: value },
+      value === 'OFF' ? 'Auto daily details turned off for this booking' : `Daily details will go out at ${value}`,
     )
   }
 

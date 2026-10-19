@@ -46,6 +46,9 @@ interface PanelData {
   departureDate: string
   days: TripDay[]
   feedbackRequestSentAt: string | null
+  briefingDefaultTime: string
+  briefingTimeOverride: string | null   // "HH:MM", "OFF", or null = default
+  briefingTimezone: string
   feedback: GuestFeedback | null
   portalLink: string
   portalWelcomeSentAt: string | null
@@ -93,6 +96,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
   const [sendingDate, setSendingDate] = useState<string | null>(null)
   const [sendingFeedback, setSendingFeedback] = useState(false)
   const [sendingPortal, setSendingPortal] = useState<'welcome' | 'reminder' | null>(null)
+  const [savingTime, setSavingTime] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -114,6 +118,20 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
       if (res.success) { toast.success(res.message ?? `Trip details for ${fmtDay(date)} sent to the guest`); load() }
       else toast.error(res.error ?? 'Send failed')
     } catch { toast.error('Send failed') } finally { setSendingDate(null) }
+  }
+
+  async function saveBriefingTime(time: string | null) {
+    setSavingTime(true)
+    try {
+      const res = await fetch(`/api/bookings/${bookingRef}/whatsapp-customer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'briefing-time', time }),
+      }).then(r => r.json())
+      if (res.success) {
+        toast.success(res.message ?? 'Saved')
+        setData(d => d ? { ...d, briefingTimeOverride: res.data.briefingTimeOverride } : d)
+      } else toast.error(res.error ?? 'Save failed')
+    } catch { toast.error('Save failed') } finally { setSavingTime(false) }
   }
 
   async function sendFeedback() {
@@ -253,6 +271,13 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                 <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5" /> Daily Trip Details
                 </p>
+                <AutoSendTime
+                  defaultTime={data.briefingDefaultTime}
+                  override={data.briefingTimeOverride}
+                  timezone={data.briefingTimezone}
+                  saving={savingTime}
+                  onSave={saveBriefingTime}
+                />
                 <div className="space-y-1.5">
                   {data.days.map(day => {
                     const parts: string[] = []
@@ -339,6 +364,59 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+/** Auto-send time for this booking's daily trip details: default, own time, or off. */
+function AutoSendTime({ defaultTime, override, timezone, saving, onSave }: {
+  defaultTime: string
+  override: string | null
+  timezone: string
+  saving: boolean
+  onSave: (time: string | null) => void
+}) {
+  const mode = override === 'OFF' ? 'off' : override ? 'custom' : 'default'
+  const effective = mode === 'custom' ? override! : defaultTime
+  const city = timezone.split('/').pop()?.replace(/_/g, ' ')
+  const which = Number(effective.slice(0, 2)) < 12 ? "that day's" : "the next day's"
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-600">
+      <Clock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+      <span className="font-semibold">Auto-send</span>
+      <select
+        value={mode}
+        disabled={saving}
+        onChange={e => {
+          const v = e.target.value
+          if (v === 'default') onSave(null)
+          else if (v === 'off') onSave('OFF')
+          else onSave(defaultTime)
+        }}
+        className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] disabled:opacity-50"
+      >
+        <option value="default">Default ({defaultTime})</option>
+        <option value="custom">Own time for this booking</option>
+        <option value="off">Off for this booking</option>
+      </select>
+      {mode === 'custom' && (
+        <input
+          type="time"
+          key={override}
+          defaultValue={override!}
+          disabled={saving}
+          onBlur={e => { if (e.target.value && e.target.value !== override) onSave(e.target.value) }}
+          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          className="px-2 py-1 rounded-lg border border-slate-200 bg-white text-[11px] disabled:opacity-50"
+        />
+      )}
+      {saving && <Loader2 className="w-3 h-3 animate-spin text-slate-400" />}
+      <span className="text-slate-400">
+        {mode === 'off'
+          ? 'Daily details will only go out when sent manually below.'
+          : `Daily at ${effective} ${city} time with ${which} plan.`}
+      </span>
+    </div>
+  )
+}
 
 function Tag({ color, icon, children }: { color: 'blue' | 'violet'; icon?: React.ReactNode; children: React.ReactNode }) {
   const cls = color === 'blue' ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-violet-100 text-violet-700 border-violet-200'

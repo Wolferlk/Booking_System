@@ -15,6 +15,9 @@ import {
   TAG_FEEDBACK_REQUEST,
   runCustomerDailyBriefing,
   runCustomerFeedbackRequest,
+  SETTING_DAILY_BRIEFING_TIME,
+  getDefaultBriefingTime,
+  normaliseBriefingTime,
 } from '@/lib/customer-whatsapp-automation'
 
 export const dynamic = 'force-dynamic'
@@ -25,7 +28,7 @@ export async function GET() {
   if (!session) return buildApiError('Unauthorized', 401)
   if (!ALLOWED_ROLES.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  const [settings, recentSends, feedbackCount] = await Promise.all([
+  const [settings, recentSends, feedbackCount, sendTime] = await Promise.all([
     prisma.systemSetting.findMany({
       where: { key: { in: [SETTING_DAILY_BRIEFING, SETTING_FEEDBACK_REQUEST] } },
     }),
@@ -42,6 +45,7 @@ export async function GET() {
       select: { id: true, bookingRef: true, phone: true, senderName: true, status: true, createdAt: true, body: true },
     }),
     prisma.guestFeedbackForm.count(),
+    getDefaultBriefingTime(),
   ])
 
   const map: Record<string, string> = {}
@@ -50,8 +54,7 @@ export async function GET() {
   return buildApiSuccess({
     briefingEnabled:  map[SETTING_DAILY_BRIEFING]  !== 'false',
     feedbackEnabled:  map[SETTING_FEEDBACK_REQUEST] !== 'false',
-    sendHour:         Number(process.env.CUSTOMER_MSG_SEND_HOUR ?? '18'),
-    tzOffsetHours:    Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7'),
+    sendTime,         // "HH:MM", guest's local time; per-booking overrides win
     feedbackCount,
     recentSends: recentSends.map(m => ({
       id:         m.id,
@@ -74,6 +77,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as
     | { action: 'toggle'; key: 'briefing' | 'feedback'; enabled: boolean }
     | { action: 'run'; job: 'briefing' | 'feedback' }
+    | { action: 'time'; time: string }
     | null
   if (!body) return buildApiError('Invalid request body')
 
@@ -85,6 +89,17 @@ export async function POST(req: NextRequest) {
       update: { value: String(body.enabled) },
     })
     return buildApiSuccess(null, `${body.key === 'briefing' ? 'Daily briefing' : 'Feedback request'} ${body.enabled ? 'enabled' : 'disabled'}`)
+  }
+
+  if (body.action === 'time') {
+    const time = normaliseBriefingTime(body.time)
+    if (!time) return buildApiError('Time must be HH:MM (24-hour)')
+    await prisma.systemSetting.upsert({
+      where:  { key: SETTING_DAILY_BRIEFING_TIME },
+      create: { key: SETTING_DAILY_BRIEFING_TIME, value: time },
+      update: { value: time },
+    })
+    return buildApiSuccess({ sendTime: time }, `Daily briefing time set to ${time}`)
   }
 
   if (body.action === 'run') {
