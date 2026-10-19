@@ -752,6 +752,10 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                                   <span className={cn('inline-flex items-center gap-0.5 rounded px-1 text-[9px] font-bold', (l.pnlScore ?? 0) >= 0.5 ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-700')}
                                     title="Paired automatically — open to confirm or change"><Sparkles className="h-2.5 w-2.5" />auto {Math.round((l.pnlScore ?? 0) * 100)}%</span>
                                 )}
+                                {l.pnlMatch === 'EXCEL' && l.pnlValue != null && (
+                                  <span className="inline-flex items-center gap-0.5 rounded bg-sky-50 px-1 text-[9px] font-bold text-sky-700" title="Named in the DETAILS column of the desk's Excel">
+                                    <FileSpreadsheet className="h-2.5 w-2.5" />from Excel</span>
+                                )}
                                 {l.pnlMatch === 'MANUAL' && l.pnlValue != null && <span className="inline-flex items-center gap-0.5 rounded bg-indigo-50 px-1 text-[9px] font-bold text-indigo-600"><Link2 className="h-2.5 w-2.5" />picked</span>}
                                 {f && f.sharedBy > 1 && <span className="rounded bg-violet-50 px-1 text-[9px] font-bold text-violet-600" title="Several movements share this P&L line; its value is split between them">shared ×{f.sharedBy}</span>}
                               </div>

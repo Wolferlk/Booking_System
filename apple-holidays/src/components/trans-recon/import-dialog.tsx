@@ -25,6 +25,9 @@ interface Row {
   pickUp: string | null; dropOff: string | null; time: string | null; details: string | null
   rateText: string | null; rate: number | null; remarks: string | null; notes: string[]
   inPeriod: boolean; booking: { bookingRef: string; cancelled: boolean } | null; match: Match | null; warnings: string[]
+  /** The P&L line DETAILS names, in the booking's P&L currency. */
+  pnl: { id: string; activity: string; category: string; value: number; currency: string; score: number; via: 'exact' | 'words' } | null
+  pnlBooking: string | null
 }
 interface Candidate { key: string; kind: 'MC' | 'MANUAL'; date: string; bookingRef: string | null; tourNo: string | null; guestName: string | null; pickUp: string | null; dropOff: string | null; time: string | null; details: string | null; rate: number | null; approvalStatus: string }
 interface Preview {
@@ -37,7 +40,7 @@ interface Preview {
   rows: Row[]
   candidates?: Candidate[]
   mcOnly?: string[]
-  summary?: { rows: number; importable: number; paired: number; newLines: number; outside: number; mcOnly: number; totalRate: number; unrated: number; rateChanges: number; approvedChanges: number }
+  summary?: { rows: number; importable: number; paired: number; newLines: number; outside: number; mcOnly: number; totalRate: number; unrated: number; rateChanges: number; approvedChanges: number; pnlNamed: number }
 }
 
 export interface ImportTarget { country: ReconCountry; year: number; month: number; half: Half }
@@ -86,7 +89,7 @@ export function ImportDialog({ open, onClose, allowed, fixed, onDone }: {
       links, applyText, unmatchedMc, ...extra,
     }))
     const res = await fetch('/api/trans-recon/import', { method: 'POST', body: fd })
-    const json = await readApiResponse<Preview & { sheetId: string; updated: number; added: number; removed: number; skipped: number; pnlPaired: number }>(res)
+    const json = await readApiResponse<Preview & { sheetId: string; updated: number; added: number; removed: number; skipped: number; pnlPaired: number; pnlFromDetails: number }>(res)
     if (!json.success) throw new Error(json.error || 'Import failed')
     return json.data!
   }, [file, target, sheet, columns, links, applyText, unmatchedMc, pv?.headerRow])
@@ -133,7 +136,7 @@ export function ImportDialog({ open, onClose, allowed, fixed, onDone }: {
     try {
       const out = await send('commit')
       if (!out) return
-      toast.success(`Imported — ${out.updated} line${out.updated === 1 ? '' : 's'} updated, ${out.added} added${out.removed ? `, ${out.removed} struck off` : ''}${out.pnlPaired ? `, ${out.pnlPaired} paired with the P&L` : ''}`)
+      toast.success(`Imported — ${out.updated} line${out.updated === 1 ? '' : 's'} updated, ${out.added} added${out.removed ? `, ${out.removed} struck off` : ''}${out.pnlFromDetails ? `, ${out.pnlFromDetails} P&L line${out.pnlFromDetails === 1 ? '' : 's'} taken from DETAILS` : ''}${out.pnlPaired ? `, ${out.pnlPaired} more paired with the P&L` : ''}`)
       onDone(out.sheetId)
       onClose()
     } catch (e) {
@@ -154,6 +157,7 @@ export function ImportDialog({ open, onClose, allowed, fixed, onDone }: {
   const ready = pv?.ready && s
   const unpaired = pv?.rows.filter(r => r.inPeriod && !r.match?.key && links[String(r.row)] !== 'NEW' && links[String(r.row)] !== 'SKIP').length ?? 0
   const monthValue = target.year && target.month ? `${target.year}-${pad(target.month)}` : ''
+  const sheetCur = target.country ? RECON_COUNTRY_META[target.country].currency : ''
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/50 p-4 backdrop-blur-sm" onMouseDown={e => e.target === e.currentTarget && !busy && onClose()}>
@@ -266,10 +270,10 @@ export function ImportDialog({ open, onClose, allowed, fixed, onDone }: {
                       : <span>— no sheet yet. It will be generated from the MC Report first, then the Excel applied.</span>}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 md:grid-cols-7">
+                  <div className="grid grid-cols-3 gap-2 md:grid-cols-8">
                     {[
-                      ['Rows read', s.rows], ['Paired with MC', s.paired], ['New lines', s.newLines], ['Outside period', s.outside],
-                      ['MC not in Excel', s.mcOnly], ['Total rate', fmtMoney(s.totalRate)], ['Without a rate', s.unrated],
+                      ['Rows read', s.rows], ['Paired with MC', s.paired], ['New lines', s.newLines], ['P&L from DETAILS', `${s.pnlNamed}/${s.importable}`],
+                      ['Outside period', s.outside], ['MC not in Excel', s.mcOnly], ['Total rate', fmtMoney(s.totalRate)], ['Without a rate', s.unrated],
                     ].map(([l, v]) => (
                       <div key={String(l)} className="rounded-xl bg-white px-3 py-2 ring-1 ring-slate-200">
                         <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">{l}</div>
@@ -309,7 +313,29 @@ export function ImportDialog({ open, onClose, allowed, fixed, onDone }: {
                                 <td className="px-2 py-1.5 text-slate-600">{r.guestName}<div className="text-[10px] text-slate-400">{r.pax}</div></td>
                                 <td className="max-w-[240px] px-2 py-1.5 text-slate-600">{r.pickUp ?? '—'} <span className="text-slate-300">→</span> {r.dropOff ?? '—'}</td>
                                 <td className="px-2 py-1.5 tabular-nums text-slate-600">{r.time}</td>
-                                <td className="max-w-[260px] px-2 py-1.5"><div className="line-clamp-2 text-slate-500" title={r.details ?? ''}>{r.details}</div></td>
+                                <td className="max-w-[280px] px-2 py-1.5">
+                                  <div className="line-clamp-2 text-slate-500" title={r.details ?? ''}>{r.details}</div>
+                                  {r.pnl && (
+                                    <div className="mt-1 rounded-md bg-emerald-50 px-1.5 py-1 ring-1 ring-emerald-200" title={`${r.pnlBooking} P&L · ${r.pnl.category} · ${r.pnl.via === 'exact' ? 'named exactly' : 'matched on words'} ${Math.round(r.pnl.score * 100)}%`}>
+                                      <div className="flex items-start gap-1 text-[10px] font-semibold text-emerald-800">
+                                        <CheckCircle2 className="mt-px h-3 w-3 shrink-0" />
+                                        <span className="line-clamp-2 flex-1">P&amp;L: {r.pnl.activity}</span>
+                                        <span className="shrink-0 tabular-nums">{fmtMoney(r.pnl.value, r.pnl.currency)}</span>
+                                      </div>
+                                      {r.rate != null && (() => {
+                                        const d = Math.round((r.rate - r.pnl.value) * 100) / 100
+                                        return r.pnl.currency === sheetCur ? (
+                                          <div className="pl-4 text-[10px] tabular-nums text-emerald-700">
+                                            Excel {fmtMoney(r.rate)} − P&amp;L {fmtMoney(r.pnl.value)} =
+                                            <b className={cn('ml-1', d > 0.005 ? 'text-rose-600' : d < -0.005 ? 'text-emerald-700' : '')}>{d > 0 ? '+' : ''}{fmtMoney(d)}</b>
+                                          </div>
+                                        ) : (
+                                          <div className="pl-4 text-[10px] text-amber-700">P&amp;L is in {r.pnl.currency}; the sheet compares it in {sheetCur} at its FX rate</div>
+                                        )
+                                      })()}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="px-2 py-1.5 text-right tabular-nums"><b className="text-slate-800">{r.rate != null ? fmtMoney(r.rate) : '—'}</b>{r.rateText && /[+\s]/.test(r.rateText.trim()) && <div className="text-[10px] text-slate-400">{r.rateText}</div>}</td>
                                 <td className="w-[300px] px-2 py-1.5">
                                   {state === 'OUT' ? <span className="text-[11px] text-slate-400">skipped</span> : (

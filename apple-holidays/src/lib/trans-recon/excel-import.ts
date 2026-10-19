@@ -32,7 +32,7 @@ import {
   type ColumnMap, type DetectedContext, type ImportRow,
 } from './excel-parse'
 import {
-  ReconError, collectMovements, createSheet, saveLines,
+  ReconError, approvalReset, collectMovements, createSheet, saveLines,
   type Actor, type LineInput,
 } from './server'
 import {
@@ -175,6 +175,66 @@ export function pairRows(rows: ImportRow[], cands: Candidate[]): Map<number, Row
     used.add(p.key)
   }
   for (const r of rows) if (!out.has(r.row)) out.set(r.row, { key: null, score: 0, why: [], by: null, alternatives: alts.get(r.row) ?? [] })
+  return out
+}
+
+// ── The P&L line the desk wrote into DETAILS ────────────────────────────────
+
+export interface PnlChoice { id: string; activity: string; category: string; value: number; currency: string }
+export interface PnlHit extends PnlChoice { score: number; via: 'exact' | 'words' }
+
+const NOT_TRANSPORT_PNL = new Set(['HOTEL', 'FLIGHT_TICKETS', 'TAX_FEES'])
+const norm = (s: string | null | undefined) => clean(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+/**
+ * The desks copy the P&L line's own wording into DETAILS ("Private Kuala Lumpur
+ * Half Day City Tour", "Full-Day Genting Highlands Day Trip with Two-Way Cable
+ * Car…"), sometimes with a flight or a dinner tacked on after a " - ". So the
+ * text is tried whole and segment by segment: an activity contained in it (or
+ * containing it) is an exact hit; otherwise shared words decide, after the same
+ * synonyms the movement matcher uses (KLIA = airport, H/D = half day, PVT = private).
+ */
+export function pnlFromDetails(details: string | null, lines: PnlChoice[]): PnlHit | null {
+  const whole = norm(details)
+  if (whole.length < 6 || !lines.length) return null
+  const segments = Array.from(new Set([clean(details), ...clean(details).split(/\s+[-–|]\s+|>>|\s\+\s|;|\n/)].map(s => s.trim()).filter(s => norm(s).length >= 6)))
+  let best: PnlHit | null = null
+  for (const l of lines) {
+    if (NOT_TRANSPORT_PNL.has(l.category)) continue
+    const a = norm(l.activity)
+    if (a.length < 4) continue
+    let score = 0, via: PnlHit['via'] = 'words'
+    for (const seg of segments) {
+      const s = norm(seg)
+      if ((a.length >= 8 && s.includes(a)) || (s.length >= 12 && a.includes(s))) { score = Math.max(score, 0.96); via = 'exact'; continue }
+      const x = tokens(seg), y = tokens(l.activity)
+      if (!x.size || !y.size) continue
+      let n = 0
+      y.forEach(w => { if (x.has(w)) n++ })
+      // Both directions count: the activity's words must be in the text, and
+      // a one-word activity must not win on a long description.
+      const cover = n / y.size, precision = n / x.size
+      score = Math.max(score, Math.round((0.7 * cover + 0.3 * precision) * 1000) / 1000)
+    }
+    if (l.category === 'TRANSPORT' && score > 0) score = Math.min(1, Math.round((score + 0.03) * 1000) / 1000)
+    if (!best || score > best.score) best = { ...l, score, via }
+  }
+  return best && best.score >= 0.55 ? best : null
+}
+
+async function loadPnls(refs: string[]): Promise<Map<string, PnlChoice[]>> {
+  const out = new Map<string, PnlChoice[]>()
+  if (!refs.length) return out
+  const bs = await prisma.booking.findMany({
+    where: { bookingRef: { in: refs } },
+    select: { bookingRef: true, currency: true, pnl: { select: { paxAdults: true, paxChildren: true, lineItems: { orderBy: { sortOrder: 'asc' } } } } },
+  })
+  for (const b of bs) {
+    out.set(b.bookingRef, (b.pnl?.lineItems ?? []).map(li => ({
+      id: li.id, activity: li.activity, category: li.category, currency: b.currency || 'USD',
+      value: Math.round(computePNLLineTotal(li, b.pnl!.paxAdults, b.pnl!.paxChildren) * 100) / 100,
+    })))
+  }
   return out
 }
 
@@ -325,7 +385,7 @@ export async function previewImport(buffer: Buffer, fileName: string, opts: Impo
     sheetName: sheet.name, headerRow: sheet.headerRow, columns: sheet.columns, headers: sheet.headers, usedAi, detected,
   }
   if (!country || !year || !month || !half) {
-    return { ...base, ready: false as const, chosen: { country, year, month, half }, rows: sheet.rows.map(r => ({ ...r, inPeriod: false, booking: null, match: null, warnings: [] as string[] })) }
+    return { ...base, ready: false as const, chosen: { country, year, month, half }, rows: sheet.rows.map(r => ({ ...r, inPeriod: false, booking: null, match: null, pnl: null as PnlHit | null, pnlBooking: null as string | null, warnings: [] as string[] })) }
   }
 
   // 3. The MC side: the sheet's own lines when it exists, the MC Report otherwise.
@@ -366,6 +426,14 @@ export async function previewImport(buffer: Buffer, fileName: string, opts: Impo
   const booking = await resolveBookings(sheet.rows)
   const usedKeys = new Set(Array.from(matches.values()).map(m => m.key).filter((k): k is string => !!k))
 
+  // The booking each row belongs to — its paired movement's, else the one its
+  // tour cell names — and the P&L line its DETAILS text names.
+  const refFor = (r: ImportRow) => {
+    const m = matches.get(r.row)
+    return (m?.key ? candBy.get(m.key)?.bookingRef : null) ?? booking.get(r.row)?.bookingRef ?? null
+  }
+  const pnls = await loadPnls(Array.from(new Set(sheet.rows.map(refFor).filter((v): v is string => !!v))))
+
   let approvedChanges = 0, rateChanges = 0
   const rows = sheet.rows.map(r => {
     const warnings: string[] = []
@@ -384,7 +452,13 @@ export async function previewImport(buffer: Buffer, fileName: string, opts: Impo
       if (c.approvalStatus !== 'PENDING') { approvedChanges++; warnings.push(`changes a rate Accounts already ${c.approvalStatus === 'APPROVED' ? 'approved' : 'refused'} (${c.rate} → ${r.rate}) — it goes back to them`) }
     }
     if (opts.links?.[String(r.row)] === 'SKIP') warnings.push('you chose to skip this row')
-    return { ...r, inPeriod: inside, booking: b, match: m, warnings }
+
+    const ref = refFor(r)
+    const choices = ref ? pnls.get(ref) ?? [] : []
+    const pnl = inside ? pnlFromDetails(r.details, choices) : null
+    if (inside && ref && !choices.length) warnings.push(`booking ${ref} has no P&L lines in OPS`)
+    else if (inside && ref && !pnl && r.details) warnings.push('DETAILS does not name a P&L line of this booking — the movement matcher will pair it')
+    return { ...r, inPeriod: inside, booking: b, match: m, pnl, pnlBooking: ref, warnings }
   })
 
   // Duplicate rows inside the workbook.
@@ -413,6 +487,7 @@ export async function previewImport(buffer: Buffer, fileName: string, opts: Impo
       outside: rows.filter(r => !r.inPeriod).length,
       mcOnly: mcOnly.length,
       totalRate: Math.round(live.reduce((s, r) => s + (r.rate ?? 0), 0) * 100) / 100,
+      pnlNamed: live.filter(r => r.pnl).length,
       unrated: live.filter(r => r.rate == null).length,
       rateChanges, approvedChanges,
     },
@@ -470,6 +545,7 @@ export async function commitImport(buffer: Buffer, fileName: string, opts: Commi
     : []
 
   await saveLines(sheetId, { lines: inputs, remove }, actor, { importedFrom: fileName })
+  const fromDetails = await applyDetailsPnl(sheetId, fileName, pv.rows, actor)
   const paired = await pairManualLines(sheetId)
   await prisma.transReconSheet.update({
     where: { id: sheetId },
@@ -484,7 +560,49 @@ export async function commitImport(buffer: Buffer, fileName: string, opts: Commi
     removed: remove.length,
     skipped: skipped.length,
     pnlPaired: paired,
+    pnlFromDetails: fromDetails,
   }
+}
+
+/**
+ * Put the P&L line each row's DETAILS named onto the line the row became.
+ * It outranks an automatic guess — the desk wrote it — but never a pick made
+ * by hand on the page. A decided line whose P&L value moves goes back to
+ * Accounts as pending, as any other change would.
+ */
+async function applyDetailsPnl(
+  sheetId: string, fileName: string,
+  rows: { row: number; inPeriod: boolean; pnl: PnlHit | null; pnlBooking: string | null }[],
+  actor: Actor,
+): Promise<number> {
+  const named = rows.filter(r => r.inPeriod && r.pnl)
+  if (!named.length) return 0
+  const lines = await prisma.transReconLine.findMany({
+    where: { sheetId, importedFrom: fileName.slice(0, 191), importRow: { in: named.map(r => r.row) } },
+    select: { id: true, importRow: true, bookingRef: true, pnlMatch: true, pnlLineItemId: true, pnlValue: true, approvalStatus: true, approvedByName: true, approvalNote: true },
+  })
+  const byRow = new Map(lines.map(l => [l.importRow!, l]))
+  const ops = []
+  for (const r of named) {
+    const l = byRow.get(r.row)
+    const p = r.pnl!
+    if (!l || l.pnlMatch === 'MANUAL') continue
+    // Only a P&L line of the booking this line belongs to.
+    if (l.bookingRef && r.pnlBooking && l.bookingRef !== r.pnlBooking) continue
+    if (l.pnlLineItemId === p.id && l.pnlMatch === 'EXCEL') continue
+    const valueMoved = (l.pnlValue == null ? null : Number(l.pnlValue)) !== p.value
+    ops.push(prisma.transReconLine.update({
+      where: { id: l.id },
+      data: {
+        pnlLineItemId: p.id, pnlDescription: p.activity, pnlCategory: p.category, pnlValue: p.value,
+        pnlCurrency: p.currency, pnlMatch: 'EXCEL', pnlScore: p.score,
+        ...(l.bookingRef ? {} : { bookingRef: r.pnlBooking }),
+        ...(valueMoved ? approvalReset(l, actor, `P&L line set from the Excel ("${p.activity.slice(0, 80)}")`) : {}),
+      },
+    }))
+  }
+  if (ops.length) await prisma.$transaction(ops)
+  return ops.length
 }
 
 /**

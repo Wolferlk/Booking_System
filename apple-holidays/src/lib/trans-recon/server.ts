@@ -115,7 +115,7 @@ function toLine(r: LineRow): ReconLine {
     pnlCategory: r.pnlCategory,
     pnlValue: dec(r.pnlValue),
     pnlCurrency: r.pnlCurrency,
-    pnlMatch: (['AUTO', 'MANUAL'].includes(r.pnlMatch) ? r.pnlMatch : 'NONE') as PnlMatch,
+    pnlMatch: (['AUTO', 'MANUAL', 'EXCEL'].includes(r.pnlMatch) ? r.pnlMatch : 'NONE') as PnlMatch,
     pnlScore: dec(r.pnlScore),
     rateText: r.rateText,
     rate: dec(r.rate),
@@ -403,7 +403,7 @@ export async function collectMovements(country: ReconCountry, start: string, end
   return { snapshots, pick, pnlById, unplaced }
 }
 
-function approvalReset(line: LineRow, actor: Actor, why: string) {
+export function approvalReset(line: Pick<LineRow, 'approvalStatus' | 'approvedByName' | 'approvalNote'>, actor: Actor, why: string) {
   if (line.approvalStatus === 'PENDING') return {}
   return {
     approvalStatus: 'PENDING',
@@ -494,22 +494,23 @@ export async function syncSheet(sheetId: string, actor: Actor): Promise<SyncResu
       if (f === 'serviceDate') { if (v) data.serviceDate = dateOnly(v) } else (data as Record<string, unknown>)[f] = v
     }
 
-    // P&L: a hand pick is kept (and re-valued if the P&L moved); an automatic
-    // pairing follows the matcher.
+    // P&L: a hand pick, or one the desk's workbook named, is kept (and
+    // re-valued if the P&L moved); an automatic pairing follows the matcher.
     let next: PnlPick | null
-    if (line.pnlMatch === 'MANUAL') {
+    if (line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL') {
       next = line.pnlLineItemId ? pnlById.get(line.pnlLineItemId) ?? null : null
       if (line.pnlLineItemId && !next) {
         // The P&L was re-imported under new ids: find the same activity again.
         const same = Array.from(pnlById.values()).find(p => clean(p.activity).toLowerCase() === clean(line!.pnlDescription).toLowerCase())
         next = same ?? null
       }
-      Object.assign(data, next ? pnlData(next, 'MANUAL') : {})
+      Object.assign(data, next ? { ...pnlData(next, line.pnlMatch as PnlMatch), pnlScore: line.pnlScore } : {})
     } else {
       next = auto
       Object.assign(data, pnlData(next, next ? 'AUTO' : 'NONE'))
     }
-    const newValue = next ? next.value : (line.pnlMatch === 'MANUAL' ? dec(line.pnlValue) : null)
+    const kept = line.pnlMatch === 'MANUAL' || line.pnlMatch === 'EXCEL'
+    const newValue = next ? next.value : (kept ? dec(line.pnlValue) : null)
     if (newValue !== dec(line.pnlValue)) Object.assign(data, approvalReset(line, actor, 'The P&L value changed'))
 
     if (s.cancelled && !line.bookingCancelled) res.cancelled++

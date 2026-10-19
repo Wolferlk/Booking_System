@@ -29,7 +29,8 @@ export const RECON_CURRENCIES = ['MYR', 'SGD', 'USD', 'VND', 'LKR', 'INR', 'EUR'
 export type SheetStatus = 'DRAFT' | 'SUBMITTED' | 'LOCKED'
 export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
 export type LineSource = 'MC' | 'MANUAL'
-export type PnlMatch = 'AUTO' | 'MANUAL' | 'NONE'
+/** AUTO = guessed by the matcher, MANUAL = picked on the page, EXCEL = named in the desk's workbook. */
+export type PnlMatch = 'AUTO' | 'MANUAL' | 'EXCEL' | 'NONE'
 
 /** The fields a desk can type over. A typed field is never overwritten by a refresh. */
 export const EDITABLE_FIELDS = [
