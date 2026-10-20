@@ -8,6 +8,7 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import Svg, { Circle, Defs, LinearGradient as SvgLinear, Path, RadialGradient, Rect, Stop } from 'react-native-svg';
 import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { C } from '@/lib/theme';
 import { CountUp } from './live-day';
@@ -15,7 +16,59 @@ import type { IconName } from './ui';
 
 const WORDMARK_WHITE = require('../../assets/images/aahaas-wordmark-white.png');
 
-export function PageHeader({ title, sub, icon, colors = ['#0A1640', '#122B78', '#1D3FA0'], right, children }: {
+/**
+ * The app-icon look behind a header: dark corners (top-right, bottom-left), a blue
+ * glow top-left and a red glow bottom-right, and the logo's orbit arc with its two dots.
+ */
+function BrandBackdrop({ w, h }: { w: number; h: number }) {
+  if (!w || !h) return null;
+  const cx = w * 0.74, cy = h * 0.5, rx = w * 0.26, ry = h * 0.62;
+  const at = (deg: number) => {
+    const a = (deg * Math.PI) / 180;
+    return { x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) };
+  };
+  const blue = at(-150), red = at(35);
+  const r = Math.max(w, h);
+  return (
+    <Svg width={w} height={h} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Defs>
+        <RadialGradient id="darkTR" cx={w} cy={0} rx={r * 0.55} ry={r * 0.55} fx={w} fy={0} gradientUnits="userSpaceOnUse">
+          <Stop offset="0" stopColor="#020617" stopOpacity="0.75" />
+          <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+        </RadialGradient>
+        <RadialGradient id="darkBL" cx={0} cy={h} rx={r * 0.5} ry={r * 0.5} fx={0} fy={h} gradientUnits="userSpaceOnUse">
+          <Stop offset="0" stopColor="#020617" stopOpacity="0.7" />
+          <Stop offset="1" stopColor="#020617" stopOpacity="0" />
+        </RadialGradient>
+        <RadialGradient id="glowBlue" cx={0} cy={0} rx={r * 0.38} ry={r * 0.38} fx={0} fy={0} gradientUnits="userSpaceOnUse">
+          <Stop offset="0" stopColor="#3B82F6" stopOpacity="0.55" />
+          <Stop offset="1" stopColor="#3B82F6" stopOpacity="0" />
+        </RadialGradient>
+        <RadialGradient id="glowRed" cx={w} cy={h} rx={r * 0.42} ry={r * 0.42} fx={w} fy={h} gradientUnits="userSpaceOnUse">
+          <Stop offset="0" stopColor="#FF2D55" stopOpacity="0.6" />
+          <Stop offset="0.45" stopColor="#A21CAF" stopOpacity="0.22" />
+          <Stop offset="1" stopColor="#A21CAF" stopOpacity="0" />
+        </RadialGradient>
+        <SvgLinear id="orbit" x1={blue.x} y1={blue.y} x2={red.x} y2={red.y} gradientUnits="userSpaceOnUse">
+          <Stop offset="0" stopColor="#60A5FA" stopOpacity="0.9" />
+          <Stop offset="0.5" stopColor="#818CF8" stopOpacity="0.35" />
+          <Stop offset="1" stopColor="#FF4D6D" stopOpacity="0.9" />
+        </SvgLinear>
+      </Defs>
+      <Rect width={w} height={h} fill="url(#darkTR)" />
+      <Rect width={w} height={h} fill="url(#darkBL)" />
+      <Rect width={w} height={h} fill="url(#glowBlue)" />
+      <Rect width={w} height={h} fill="url(#glowRed)" />
+      <Path d={`M ${blue.x} ${blue.y} A ${rx} ${ry} 0 1 1 ${red.x} ${red.y}`} stroke="url(#orbit)" strokeWidth={1.6} fill="none" strokeLinecap="round" />
+      <Circle cx={blue.x} cy={blue.y} r={7} fill="#3B82F6" opacity={0.25} />
+      <Circle cx={blue.x} cy={blue.y} r={3.6} fill="#7DB4FF" />
+      <Circle cx={red.x} cy={red.y} r={7} fill="#FF2D55" opacity={0.25} />
+      <Circle cx={red.x} cy={red.y} r={3.6} fill="#FF5A75" />
+    </Svg>
+  );
+}
+
+export function PageHeader({ title, sub, icon, colors = ['#0A1A5C', '#0D2A8A', '#0B1F6B'], right, children }: {
   title: string
   sub?: string
   icon: IconName
@@ -23,11 +76,12 @@ export function PageHeader({ title, sub, icon, colors = ['#0A1640', '#122B78', '
   right?: ReactNode
   children?: ReactNode
 }) {
+  const [size, setSize] = useState({ w: 0, h: 0 });
   return (
     <Animated.View entering={FadeInDown.springify().damping(18)}>
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}>
-        <View style={styles.circleA} />
-        <View style={styles.circleB} />
+      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.header}
+        onLayout={(e: LayoutChangeEvent) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+        <BrandBackdrop w={size.w} h={size.h} />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Image source={WORDMARK_WHITE} style={{ width: 74, height: 24, opacity: 0.9 }} contentFit="contain" alt="Aahaas" />
           {right}
@@ -114,10 +168,8 @@ export function StatTile({ value, label, icon, colors, accent, delay = 0, suffix
 }
 
 const styles = StyleSheet.create({
-  header: { borderRadius: 28, padding: 16, gap: 14, overflow: 'hidden' },
-  circleA: { position: 'absolute', width: 180, height: 180, borderRadius: 90, backgroundColor: 'rgba(255,255,255,0.06)', right: -50, top: -60 },
-  circleB: { position: 'absolute', width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(255,255,255,0.05)', right: 40, bottom: -70 },
-  headerIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center' },
+  header: { borderRadius: 28, padding: 16, gap: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(147,197,253,0.22)' },
+  headerIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' },
   headerTitle: { color: '#fff', fontSize: 26, fontWeight: '900', letterSpacing: -0.4 },
   headerSub: { color: '#C7D2FE', fontSize: 13, fontWeight: '700' },
   seg: { flexDirection: 'row', backgroundColor: C.card, borderRadius: 18, padding: 4, borderWidth: 1, borderColor: C.line },
