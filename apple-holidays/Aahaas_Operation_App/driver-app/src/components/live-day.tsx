@@ -221,5 +221,55 @@ const styles = StyleSheet.create({
   nextIcon: { width: 36, height: 36, borderRadius: 12, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center' },
   nextText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   navBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  mistake: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 99, backgroundColor: 'rgba(255,255,255,0.16)' },
   carBubble: { width: 58, height: 58, borderRadius: 20, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
 });
+
+function Star({ x, y, size, delay }: { x: number; y: number; size: number; delay: number }) {
+  const o = useSharedValue(0.2);
+  useEffect(() => {
+    const t = setTimeout(() => { o.value = withRepeat(withSequence(withTiming(1, { duration: 900 }), withTiming(0.2, { duration: 900 })), -1, false); }, delay);
+    return () => clearTimeout(t);
+  }, [o, delay]);
+  const st = useAnimatedStyle(() => ({ opacity: o.value, transform: [{ scale: 0.7 + o.value * 0.5 }] }));
+  return <Animated.View style={[{ position: 'absolute', left: `${x}%`, top: `${y}%` }, st]}><Ionicons name="sparkles" size={size} color="#FDE68A" /></Animated.View>;
+}
+
+/** Day over: a calm dusk card. Re-opening the day is a small, confirmed link — not a second big swipe. */
+export function DayDoneCard({ km, dayNo, lastDay, onContinue, busy }: {
+  km: number
+  dayNo?: number | null
+  lastDay: boolean
+  onContinue?: () => void
+  busy?: boolean
+}) {
+  return (
+    <Animated.View entering={FadeInDown.springify().damping(16)} style={styles.liveWrap}>
+      <LinearGradient colors={lastDay ? ['#78350F', '#B45309', '#F59E0B'] : ['#1E1B4B', '#4C1D95', '#7C3AED']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.live, { gap: 10 }]}>
+        <Star x={70} y={10} size={14} delay={0} />
+        <Star x={84} y={30} size={10} delay={400} />
+        <Star x={60} y={34} size={8} delay={800} />
+        <Star x={90} y={8} size={9} delay={1200} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={[styles.carBubble, { width: 48, height: 48, borderRadius: 16 }]}>
+            <Ionicons name={lastDay ? 'flag' : 'moon'} size={24} color={lastDay ? '#B45309' : '#6D28D9'} />
+          </View>
+          <Text style={[styles.tileLabel, { color: lastDay ? '#FDE68A' : '#DDD6FE', fontSize: 13 }]}>{dayNo ? `DAY ${dayNo} DONE` : 'DAY DONE'}</Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
+          <CountUp value={km} style={[styles.km, { fontSize: 50, lineHeight: 54 }]} />
+          <Text style={[styles.kmUnit, { color: lastDay ? '#FDE68A' : '#C4B5FD' }]}>km today</Text>
+        </View>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+          {lastDay ? 'Last day done! Show the guest the feedback QR to finish the trip.' : 'Great driving! Rest well — see you tomorrow 🌙'}
+        </Text>
+        {onContinue && (
+          <Pressable onPress={onContinue} disabled={busy} hitSlop={8} style={({ pressed }) => [styles.mistake, pressed && { opacity: 0.7 }]}>
+            <Ionicons name="refresh" size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{busy ? 'Opening…' : 'Ended by mistake? Continue today'}</Text>
+          </Pressable>
+        )}
+      </LinearGradient>
+    </Animated.View>
+  );
+}

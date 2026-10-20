@@ -1,12 +1,13 @@
 /** "Read my day" — an AI summary of today in the driver's language, read aloud on request. */
 import * as Speech from 'expo-speech';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { Text } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { api, ApiError } from '@/lib/api';
 import { useT, type Lang } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth';
 import { C, S } from '@/lib/theme';
-import { Button, Card, Ionicons, Row } from './ui';
+import { Card, Ionicons, Row } from './ui';
 
 const VOICE: Record<Lang, string> = { en: 'en-US', si: 'si-LK', ta: 'ta-IN', vi: 'vi-VN' };
 
@@ -40,7 +41,19 @@ export function AiBrief({ bookingRef }: { bookingRef: string }) {
 
   if (!text) {
     return (
-      <Button title={t('aiBrief')} kind="secondary" icon="sparkles" onPress={load} loading={busy} />
+      <Pressable onPress={load} disabled={busy} style={({ pressed }) => [{ borderRadius: 20, overflow: 'hidden' }, pressed && { transform: [{ scale: 0.98 }] }]}>
+        <LinearGradient colors={['#7C3AED', '#2563EB']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14 }}>
+          <View style={{ width: 42, height: 42, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+            {busy ? <ActivityIndicator color="#fff" /> : <Ionicons name="sparkles" size={22} color="#fff" />}
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>{t('aiBrief')}</Text>
+            <Text style={{ color: '#E0E7FF', fontSize: 13 }}>Tap and listen — your day, read aloud</Text>
+          </View>
+          <Ionicons name="volume-high" size={22} color="#fff" />
+        </LinearGradient>
+      </Pressable>
     );
   }
   return (

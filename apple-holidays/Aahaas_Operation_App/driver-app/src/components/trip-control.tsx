@@ -8,6 +8,7 @@
  *   last day ended     → Swipe to finish trip  (opens the feedback QR)
  *   day ended          → "See you tomorrow"
  */
+import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Text, View } from 'react-native';
@@ -17,7 +18,7 @@ import { useT } from '@/lib/i18n';
 import { currentPosition, flushPoints, LocationError, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
 import { C, S } from '@/lib/theme';
 import type { DayPlan, Progress } from '@/lib/types';
-import { LiveDayCard, ReadyCard } from './live-day';
+import { DayDoneCard, LiveDayCard, ReadyCard } from './live-day';
 import { SwipeButton } from './swipe-button';
 import { Button, Card, Ionicons, Row } from './ui';
 
@@ -106,9 +107,7 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     return (
       <Animated.View entering={FadeInDown.springify().damping(16)}>
         <Card tone="green" style={{ gap: S.sm, alignItems: 'center', paddingVertical: S.xl }}>
-          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center' }}>
-            <Ionicons name="trophy" size={32} color="#fff" />
-          </View>
+          <Image source={require('../../assets/images/illustrations/trip-done.png')} alt="" accessibilityIgnoresInvertColors style={{ width: 150, height: 150 }} contentFit="contain" />
           <Text style={{ color: C.text, fontSize: 20, fontWeight: '900' }}>{t('completed')}</Text>
           <Text style={{ color: C.sub, textAlign: 'center' }}>{Math.round(session.totalKm)} km driven on this trip. Thank you!</Text>
         </Card>
@@ -144,20 +143,18 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     if (isLastDay) {
       return (
         <View style={{ gap: S.md }}>
-          <Card tone="gold"><Text style={{ color: C.text, fontSize: 16 }}>Last day done — {todayDay.km.toFixed(1)} km. Show the guest the feedback QR to close the trip.</Text></Card>
+          <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay />
           <SwipeButton label={t('finishTrip')} icon="star" colors={[C.gold, '#B45309']}
             onComplete={() => router.push({ pathname: '/trip/finish', params: { ref: bookingRef } })} />
         </View>
       );
     }
     return (
-      <Card style={{ gap: S.xs }}>
-        <Row><Ionicons name="moon" size={20} color={C.gold} /><Text style={{ color: C.text, fontSize: 17, fontWeight: '800' }}>Day done · {todayDay.km.toFixed(1)} km</Text></Row>
-        <Text style={{ color: C.sub }}>See you tomorrow. Started by mistake? Swipe start again to continue counting.</Text>
-        <View style={{ marginTop: S.sm }}>
-          <SwipeButton label={t('startDay')} onComplete={startDay} loading={busy} colors={[C.cardHi, C.line]} />
-        </View>
-      </Card>
+      <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay={false} busy={busy}
+        onContinue={() => Alert.alert('Continue today?', 'Kilometres will keep counting on today. Only do this if you ended the day by mistake.', [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Continue', onPress: startDay },
+        ])} />
     );
   }
 

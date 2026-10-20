@@ -18,7 +18,7 @@ import { appBaseUrl } from '@/lib/driver-auto/server'
 import { MobileError } from './http'
 import { accumulate, isValidPoint, MAX_ACCURACY_M, type Anchor, type GeoPoint } from './geo'
 import { localTodayFor, type DriverTrip } from './trips'
-import { notifyStaff } from './notify'
+import { notify, notifyStaff } from './notify'
 import { isSandboxBookingId } from './sandbox'
 
 export function guestLinks(bookingRef: string) {
@@ -71,6 +71,15 @@ export async function tripProgress(driverId: string, trip: DriverTrip) {
   }
 }
 
+/** The driver's own feed (bell + push). Never blocks or fails the action. */
+async function tellDriver(driverId: string, kind: string, title: string, body: string, bookingRef: string, dedupeKey?: string) {
+  // Awaited by the callers: on serverless a floating promise can be frozen mid-send.
+  await notify({ actorType: 'DRIVER', actorId: driverId, kind, title, body, data: { bookingRef, screen: 'trip' }, dedupeKey })
+    .catch(err => console.error('[mobile tellDriver]', err))
+}
+
+const dayNoOf = (trip: DriverTrip, date: string) => trip.days.find(d => d.date === date)?.dayNo ?? null
+
 export async function startTrip(driverId: string, trip: DriverTrip, opts: { portalShown: boolean; portalSkipped: boolean }) {
   const existing = await sessionFor(driverId, trip.bookingId)
   if (existing) {
@@ -84,12 +93,16 @@ export async function startTrip(driverId: string, trip: DriverTrip, opts: { port
   if (today < trip.startDate) {
     throw new MobileError(`This trip starts on ${trip.startDate}. You can start it on that day.`, 409, 'too_early')
   }
-  return prisma.mobileTripSession.create({
+  const created = await prisma.mobileTripSession.create({
     data: {
       driverId, bookingId: trip.bookingId, bookingRef: trip.bookingRef, country: trip.country,
       portalShownAt: opts.portalShown ? new Date() : null, portalSkipped: opts.portalSkipped,
     },
   })
+  await tellDriver(driverId, 'TRIP_STARTED', `Trip started · ${trip.fileNo} 🚗`,
+    `${trip.leadGuest ?? 'Guest'} · ${trip.days.length} day${trip.days.length === 1 ? '' : 's'}. Swipe "Start day" when you leave.`,
+    trip.bookingRef, `trip-start:${created.id}`)
+  return created
 }
 
 export interface DayActionInput {
@@ -114,6 +127,11 @@ export async function startDay(driverId: string, trip: DriverTrip, input: DayAct
     // Re-opening the same day keeps counting onto it (e.g. ended by mistake).
     return prisma.mobileTripDay.update({ where: { id: existing.id }, data: { status: 'STARTED', endedAt: null } })
   }
+  const dayNo = dayNoOf(trip, today)
+  const first = trip.days.find(d => d.date === today)?.movements.find(m => m.mine && !m.noDriverNeeded)
+  await tellDriver(driverId, 'DAY_STARTED', `Day ${dayNo ?? ''} started · ${trip.fileNo}`.replace('Day  ', 'Day '),
+    first ? `Next: ${first.time ? `${first.time} · ` : ''}${first.from ?? first.location}${first.to ? ` → ${first.to}` : ''}. Drive safe!` : 'Kilometres are counting. Drive safe!',
+    trip.bookingRef, `day-start:${session.id}:${today}`)
   return prisma.mobileTripDay.create({
     data: {
       sessionId: session.id, driverId, bookingRef: trip.bookingRef, dayDate: today,
@@ -139,6 +157,10 @@ export async function endDay(driverId: string, trip: DriverTrip, input: DayActio
     data: { status: 'ENDED', endedAt: new Date(), endLat: input.lat ?? day.lastLat, endLng: input.lng ?? day.lastLng, endOdometer: input.odometer ?? null },
   })
   await recomputeSessionKm(session.id)
+  const dayNo = dayNoOf(trip, ended.dayDate)
+  await tellDriver(driverId, 'DAY_ENDED', `Day ${dayNo ?? ended.dayDate} done · ${Number(ended.distanceKm).toFixed(1)} km`,
+    trip.endDate <= ended.dayDate ? 'Last day — show the guest the feedback QR to finish the trip.' : 'Rest well! See you tomorrow.',
+    trip.bookingRef)
   return ended
 }
 
@@ -226,6 +248,8 @@ export async function completeTrip(driverId: string, trip: DriverTrip) {
     where: { id: session.id },
     data: { status: 'COMPLETED', completedAt: new Date(), feedbackStatus: fb.submitted ? 'SUBMITTED' : session.feedbackStatus },
   })
+  await tellDriver(driverId, 'TRIP_DONE', `Trip finished · ${trip.fileNo} 🏆`,
+    `${Number(done.totalKm).toFixed(0)} km driven. Thank you!`, trip.bookingRef, `trip-done-driver:${session.id}`)
   if (!isSandboxBookingId(trip.bookingId)) await notifyStaff(trip.country, {
     kind: 'TRIP_COMPLETED',
     title: `Trip finished · ${trip.fileNo}`,
