@@ -20,6 +20,7 @@ import { PROFILE_FIELDS } from './profile'
 import { localTodayFor } from './trips'
 import { notify } from './notify'
 import { MobileError } from './http'
+import { SANDBOX_REF_PREFIX } from './sandbox'
 
 export interface OpsViewer {
   name: string
@@ -45,7 +46,7 @@ export async function liveBoard(viewer: OpsViewer) {
   const today = localTodayFor(viewer.country ?? 'SRILANKA')
   const yesterday = new Date(Date.now() - 36 * 3_600_000)
   const days = await prisma.mobileTripDay.findMany({
-    where: { OR: [{ status: 'STARTED' }, { dayDate: today }], startedAt: { gte: new Date(Date.now() - 7 * 86_400_000) } },
+    where: { OR: [{ status: 'STARTED' }, { dayDate: today }], startedAt: { gte: new Date(Date.now() - 7 * 86_400_000) }, NOT: { bookingRef: { startsWith: SANDBOX_REF_PREFIX } } },
     orderBy: { startedAt: 'desc' },
     take: 300,
   })

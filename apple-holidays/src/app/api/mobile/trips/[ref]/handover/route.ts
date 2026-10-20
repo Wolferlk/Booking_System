@@ -15,6 +15,7 @@ import { buildApiSuccess } from '@/lib/utils'
 import { requireDriver } from '@/lib/mobile/auth'
 import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { notifyStaff } from '@/lib/mobile/notify'
+import { refuseForSandbox } from '@/lib/mobile/sandbox'
 import { requireTrip } from '../_trip'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +25,7 @@ const KINDS = ['HANDOVER', 'FEEDBACK_WAIVER'] as const
 export const POST = mobileRoute('trip-handover', async (req: NextRequest, { params }: { params: { ref: string } }) => {
   const actor = await requireDriver(req)
   const trip = await requireTrip(actor.driverId, params.ref)
+  await refuseForSandbox(actor.driverId, 'a hand-over request')
   const body = await readJson<{ kind?: string; reason?: string }>(req)
   const kind = KINDS.includes(body.kind as never) ? (body.kind as (typeof KINDS)[number]) : 'HANDOVER'
   const reason = String(body.reason ?? '').trim()

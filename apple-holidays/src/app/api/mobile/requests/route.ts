@@ -13,6 +13,7 @@ import { buildApiSuccess } from '@/lib/utils'
 import { requireDriver } from '@/lib/mobile/auth'
 import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { notifyStaff } from '@/lib/mobile/notify'
+import { refuseForSandbox } from '@/lib/mobile/sandbox'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,6 +32,7 @@ export const POST = mobileRoute('requests-create', async (req: NextRequest) => {
   const actor = await requireDriver(req)
   const body = await readJson<{ kind?: string; topic?: string; reason?: string; lat?: number; lng?: number; bookingRef?: string }>(req)
   if (body.kind !== 'HELP') throw new MobileError('Unknown request.')
+  await refuseForSandbox(actor.driverId, 'a help request')
   const topic = TOPICS.includes(String(body.topic)) ? String(body.topic) : 'OTHER'
   const lat = Number(body.lat), lng = Number(body.lng)
   const hasPos = Number.isFinite(lat) && Number.isFinite(lng) && !(lat === 0 && lng === 0)

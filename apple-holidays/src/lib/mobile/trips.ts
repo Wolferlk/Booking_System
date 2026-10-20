@@ -16,6 +16,7 @@
 import { prisma } from '@/lib/prisma'
 import type { BookingStatus } from '@prisma/client'
 import { fileNumberOf } from '@/lib/driver-auto/shared'
+import { sandboxTrip, sandboxTrips } from './sandbox'
 
 const HIDDEN_STATUSES: BookingStatus[] = ['DRAFT', 'CANCELLED', 'PENDING_CANCELLATION', 'AMENDED']
 
@@ -87,6 +88,10 @@ export interface DriverTrip {
  * All trips for a driver whose dates touch [from, to]. Ordered by start date.
  */
 export async function loadDriverTrips(driverId: string, from: string, to: string): Promise<DriverTrip[]> {
+  // Test drivers get generated trips and never see real bookings.
+  const test = await sandboxTrips(driverId, from, to, localTodayFor)
+  if (test) return test
+
   const fromD = new Date(`${from}T00:00:00.000Z`)
   const toD = new Date(`${to}T23:59:59.999Z`)
 
@@ -204,6 +209,9 @@ export async function loadDriverTrips(driverId: string, from: string, to: string
 
 /** One trip, if this driver is (still) on it. */
 export async function loadDriverTrip(driverId: string, bookingRef: string): Promise<DriverTrip | null> {
+  const test = await sandboxTrip(driverId, bookingRef, localTodayFor)
+  if (test !== null) return test ?? null
+
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
     select: { arrivalDate: true, departureDate: true },

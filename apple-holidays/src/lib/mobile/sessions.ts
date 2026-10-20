@@ -19,6 +19,7 @@ import { MobileError } from './http'
 import { accumulate, isValidPoint, MAX_ACCURACY_M, type Anchor, type GeoPoint } from './geo'
 import { localTodayFor, type DriverTrip } from './trips'
 import { notifyStaff } from './notify'
+import { isSandboxBookingId } from './sandbox'
 
 export function guestLinks(bookingRef: string) {
   const base = appBaseUrl()
@@ -30,6 +31,8 @@ export async function sessionFor(driverId: string, bookingId: string) {
 }
 
 export async function feedbackSubmitted(bookingId: string): Promise<{ submitted: boolean; at: string | null; overall: string | null }> {
+  // Test trips have no guest — treat the form as in so the trip can be finished.
+  if (isSandboxBookingId(bookingId)) return { submitted: true, at: new Date().toISOString(), overall: 'TEST' }
   const f = await prisma.guestFeedbackForm.findUnique({
     where: { bookingId }, select: { submittedAt: true, overallExperience: true },
   })
@@ -223,7 +226,7 @@ export async function completeTrip(driverId: string, trip: DriverTrip) {
     where: { id: session.id },
     data: { status: 'COMPLETED', completedAt: new Date(), feedbackStatus: fb.submitted ? 'SUBMITTED' : session.feedbackStatus },
   })
-  await notifyStaff(trip.country, {
+  if (!isSandboxBookingId(trip.bookingId)) await notifyStaff(trip.country, {
     kind: 'TRIP_COMPLETED',
     title: `Trip finished · ${trip.fileNo}`,
     body: `${trip.leadGuest ?? 'Guest'} — ${Number(done.totalKm).toFixed(0)} km driven.`,

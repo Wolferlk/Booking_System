@@ -16,6 +16,7 @@ import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { vehicleCheckState } from '@/lib/mobile/profile'
 import { reviewVehiclePhotos, type VehicleAiReview } from '@/lib/mobile/ai'
 import { notifyStaff } from '@/lib/mobile/notify'
+import { refuseForSandbox } from '@/lib/mobile/sandbox'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -38,6 +39,7 @@ export const GET = mobileRoute('vehicle-check', async (req: NextRequest) => {
 
 export const POST = mobileRoute('vehicle-check-submit', async (req: NextRequest) => {
   const actor = await requireDriver(req)
+  await refuseForSandbox(actor.driverId, 'the vehicle check')
   const body = await readJson<{ photos?: Record<string, string>; odometer?: number }>(req)
   const photos: Record<string, string> = {}
   for (const s of SLOTS) {

@@ -12,6 +12,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiSuccess } from '@/lib/utils'
 import { requireDriver } from '@/lib/mobile/auth'
+import { refuseForSandbox } from '@/lib/mobile/sandbox'
 import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { listOpenTrips, publicTrip } from '@/lib/driver-auto/open-trips'
 import { DaError, partyCommitments, requestTrip, toClaimView, withdrawClaim } from '@/lib/driver-auto/claims'
@@ -99,6 +100,7 @@ export const GET = mobileRoute('open-trips', async (req: NextRequest) => {
 
 export const POST = mobileRoute('open-trips-action', async (req: NextRequest) => {
   const p = await party(req)
+  await refuseForSandbox(p.id, 'claiming an open trip')
   const body = await readJson<{ action?: string; tripKey?: string; claimId?: string; note?: string }>(req)
   try {
     if (body.action === 'request') {

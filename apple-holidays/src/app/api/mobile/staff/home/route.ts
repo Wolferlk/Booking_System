@@ -11,6 +11,7 @@ import { MOBILE_STAFF_ROLES, requireStaff } from '@/lib/mobile/auth'
 import { mobileRoute } from '@/lib/mobile/http'
 import { localTodayFor } from '@/lib/mobile/trips'
 import { viewerCountry } from '@/lib/mobile/ops'
+import { SANDBOX_REF_PREFIX } from '@/lib/mobile/sandbox'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,7 +37,7 @@ export const GET = mobileRoute('staff-home', async (req: NextRequest) => {
     prisma.booking.count({ where: { ...scope, status: { in: LIVE as never[] }, arrivalDate: { lte: end }, departureDate: { gte: start } } }),
     prisma.whatsAppMessage.count({ where: { direction: 'inbound', read: false, createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } } }),
     MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileDriverRequest.count({ where: { status: 'PENDING' } }).catch(() => 0) : Promise.resolve(0),
-    MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileTripDay.count({ where: { status: 'STARTED' } }).catch(() => 0) : Promise.resolve(0),
+    MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileTripDay.count({ where: { status: 'STARTED', NOT: { bookingRef: { startsWith: SANDBOX_REF_PREFIX } } } }).catch(() => 0) : Promise.resolve(0),
   ])
   const shape = (b: (typeof arrivals)[number]) => ({
     bookingRef: b.bookingRef, fileNo: b.isNumber || b.bookingRef, status: b.status, country: b.operationCountry,

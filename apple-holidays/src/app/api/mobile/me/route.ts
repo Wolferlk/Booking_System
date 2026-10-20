@@ -17,6 +17,7 @@ import { requireActor, requireDriver } from '@/lib/mobile/auth'
 import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { PROFILE_FIELDS, driverProfile, staffProfile } from '@/lib/mobile/profile'
 import { notifyStaff } from '@/lib/mobile/notify'
+import { refuseForSandbox } from '@/lib/mobile/sandbox'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +43,7 @@ export const PATCH = mobileRoute('me-update', async (req: NextRequest) => {
 
   let requestId: string | null = null
   if (body.changes && typeof body.changes === 'object') {
+    await refuseForSandbox(actor.driverId, 'a profile change')
     const clean: Record<string, string> = {}
     for (const k of PROFILE_FIELDS) {
       const v = body.changes[k]
