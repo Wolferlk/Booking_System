@@ -11,31 +11,30 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, Linking, Text, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { api, ApiError } from '@/lib/api';
 import { useT } from '@/lib/i18n';
 import { currentPosition, flushPoints, LocationError, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
 import { C, S } from '@/lib/theme';
-import type { Progress } from '@/lib/types';
+import type { DayPlan, Progress } from '@/lib/types';
+import { LiveDayCard, ReadyCard } from './live-day';
 import { SwipeButton } from './swipe-button';
-import { Button, Card, Ionicons, Pill, Row } from './ui';
+import { Button, Card, Ionicons, Row } from './ui';
 
-function elapsed(fromIso: string) {
-  const m = Math.max(0, Math.floor((Date.now() - new Date(fromIso).getTime()) / 60_000));
-  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
-}
-
-export function TripControl({ bookingRef, progress, isLastDay, onChange, startsLater }: {
+export function TripControl({ bookingRef, progress, isLastDay, onChange, startsLater, dayNo, todayPlan }: {
   bookingRef: string
   progress: Progress
   isLastDay: boolean
   onChange: (p: Progress) => void
   /** trip begins on a later day — nothing to swipe yet */
   startsLater?: boolean
+  /** today's day number in the trip and its plan, for the live / ready cards */
+  dayNo?: number | null
+  todayPlan?: DayPlan | null
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [liveKm, setLiveKm] = useState<number | null>(null);
-  const [, tick] = useState(0);
   const [mode, setMode] = useState<'background' | 'foreground' | null>(null);
 
   const running = progress.days.find(d => d.status === 'STARTED');
@@ -49,10 +48,7 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     // The GPS task usually sends points before this timer does, so km comes
     // from whichever send got the server's answer.
     const unsub = onDayKm(setLiveKm);
-    const timer = setInterval(() => {
-      tick(x => x + 1);
-      flushPoints();
-    }, 30_000);
+    const timer = setInterval(() => { flushPoints(); }, 30_000);
     return () => { clearInterval(timer); unsub(); };
   }, [running?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -108,10 +104,15 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
 
   if (session?.status === 'COMPLETED') {
     return (
-      <Card tone="green" style={{ gap: S.sm }}>
-        <Row><Ionicons name="checkmark-circle" size={26} color={C.green} /><Text style={{ color: C.text, fontSize: 18, fontWeight: '800' }}>{t('completed')}</Text></Row>
-        <Text style={{ color: C.sub }}>{Math.round(session.totalKm)} km driven on this trip. Thank you!</Text>
-      </Card>
+      <Animated.View entering={FadeInDown.springify().damping(16)}>
+        <Card tone="green" style={{ gap: S.sm, alignItems: 'center', paddingVertical: S.xl }}>
+          <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: C.green, alignItems: 'center', justifyContent: 'center' }}>
+            <Ionicons name="trophy" size={32} color="#fff" />
+          </View>
+          <Text style={{ color: C.text, fontSize: 20, fontWeight: '900' }}>{t('completed')}</Text>
+          <Text style={{ color: C.sub, textAlign: 'center' }}>{Math.round(session.totalKm)} km driven on this trip. Thank you!</Text>
+        </Card>
+      </Animated.View>
     );
   }
   if (session?.status === 'HANDED_OVER') {
@@ -128,25 +129,12 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
 
   if (running) {
     const km = liveKm ?? running.km;
+    // Trip total = ended days (server) + today's live km.
+    const tripKm = (session?.totalKm ?? 0) - running.km + km;
     return (
       <View style={{ gap: S.md }}>
-        <Card tone="green" style={{ gap: S.sm }}>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <Row><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: C.green }} /><Text style={{ color: C.green, fontWeight: '800' }}>{t('dayRunning')}</Text></Row>
-            <Pill text={mode === 'background' ? 'GPS · screen off OK' : 'GPS · keep app open'} tone={mode === 'background' ? 'green' : 'gold'} icon="navigate" />
-          </Row>
-          <Row style={{ alignItems: 'flex-end', gap: S.lg }}>
-            <View>
-              <Text style={{ color: C.text, fontSize: 48, fontWeight: '900', lineHeight: 52 }}>{km.toFixed(1)}</Text>
-              <Text style={{ color: C.sub }}>{t('kmToday')}</Text>
-            </View>
-            <View style={{ marginBottom: 4 }}>
-              <Text style={{ color: C.text, fontSize: 22, fontWeight: '800' }}>{elapsed(running.startedAt)}</Text>
-              <Text style={{ color: C.sub }}>on the road</Text>
-            </View>
-          </Row>
-          {session && <Text style={{ color: C.sub }}>{Math.round(session.totalKm)} {t('kmTrip')}</Text>}
-        </Card>
+        <LiveDayCard dayNo={dayNo} startedAt={running.startedAt} km={km} tripKm={tripKm}
+          background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} />
         <SwipeButton label={t('endDay')} icon="flag" colors={[C.gold, '#B45309']} onComplete={endDay} loading={busy} />
       </View>
     );
@@ -176,6 +164,7 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
   if (startsLater) return null;
   return (
     <View style={{ gap: S.md }}>
+      <ReadyCard dayNo={dayNo} todayPlan={todayPlan} title={dayNo && dayNo > 1 ? 'Ready for another day?' : 'Ready to roll?'} />
       <SwipeButton label={t('startDay')} icon="play" colors={[C.green, '#047857']} onComplete={startDay} loading={busy} />
       {(isLastDay || progress.today > (progress.days[progress.days.length - 1]?.date ?? progress.today)) && (
         <Button title="No driving today — finish trip" kind="ghost" icon="flag-outline"

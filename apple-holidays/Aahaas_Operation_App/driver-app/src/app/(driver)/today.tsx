@@ -1,7 +1,10 @@
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { AiBrief } from '@/components/ai-brief';
 import { DayPlanView } from '@/components/day-plan';
+import { NAVY } from '@/components/live-day';
 import { TripControl } from '@/components/trip-control';
 import { Card, ErrorBox, H1, IconButton, Ionicons, Label, Loading, P, Pill, Row, Screen, Stat } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
@@ -50,23 +53,39 @@ export default function Today() {
 
       {cur ? (
         <>
-          <Card onPress={() => router.push({ pathname: '/trip/[ref]', params: { ref: cur.trip.bookingRef } })} style={{ gap: S.sm }}>
-            <Row style={{ justifyContent: 'space-between' }}>
-              <Label>{cur.dayIndex ? `${t('day')} ${cur.dayIndex} ${t('of')} ${cur.dayCount}` : fmtRange(cur.trip.startDate, cur.trip.endDate)}</Label>
-              <Pill text={cur.trip.mode === 'ROUND_TRIP' ? 'Round trip' : 'Transfers'} tone="gold" />
-            </Row>
-            <Text style={{ color: C.text, fontSize: 24, fontWeight: '900' }}>{cur.trip.fileNo}</Text>
-            <Row gap={S.lg}>
-              <Row gap={6}><Ionicons name="person" size={16} color={C.sub} /><Text style={{ color: C.text, fontSize: 16 }}>{cur.trip.leadGuest ?? 'Guest'}</Text></Row>
-              <Row gap={6}><Ionicons name="people" size={16} color={C.sub} /><Text style={{ color: C.text, fontSize: 16 }}>{cur.trip.pax.adults + cur.trip.pax.children} {t('pax')}</Text></Row>
-            </Row>
-            {cur.trip.specialNotes && <Row gap={6}><Ionicons name="gift" size={16} color={C.gold} /><Text style={{ color: C.gold, flex: 1 }}>{cur.trip.specialNotes}</Text></Row>}
-          </Card>
+          <Animated.View entering={FadeInDown.springify().damping(18)}>
+            <Pressable onPress={() => router.push({ pathname: '/trip/[ref]', params: { ref: cur.trip.bookingRef } })}
+              style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
+              <LinearGradient colors={NAVY} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 24, padding: 16, gap: 10 }}>
+                <Row style={{ justifyContent: 'space-between' }}>
+                  <Text style={{ color: '#93C5FD', fontWeight: '800', letterSpacing: 0.6 }}>
+                    {cur.dayIndex ? `${t('day').toUpperCase()} ${cur.dayIndex} ${t('of')} ${cur.dayCount}` : fmtRange(cur.trip.startDate, cur.trip.endDate)}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={20} color="#93C5FD" />
+                </Row>
+                <Text style={{ color: '#fff', fontSize: 24, fontWeight: '900' }} numberOfLines={1} adjustsFontSizeToFit>{cur.trip.fileNo}</Text>
+                <Row gap={S.lg}>
+                  <Row gap={6}><Ionicons name="person" size={16} color="#BFDBFE" /><Text style={{ color: '#fff', fontSize: 15 }}>{cur.trip.leadGuest ?? 'Guest'}</Text></Row>
+                  <Row gap={6}><Ionicons name="people" size={16} color="#BFDBFE" /><Text style={{ color: '#fff', fontSize: 15 }}>{cur.trip.pax.adults + cur.trip.pax.children} {t('pax')}</Text></Row>
+                </Row>
+                {cur.dayCount > 1 && (
+                  <View style={{ flexDirection: 'row', gap: 4 }}>
+                    {Array.from({ length: cur.dayCount }, (_, i) => (
+                      <View key={i} style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: cur.dayIndex && i < cur.dayIndex - 1 ? '#22C55E' : cur.dayIndex === i + 1 ? C.red : 'rgba(255,255,255,0.18)' }} />
+                    ))}
+                  </View>
+                )}
+                {cur.trip.specialNotes && <Row gap={6}><Ionicons name="gift" size={15} color="#FCD34D" /><Text style={{ color: '#FDE68A', flex: 1 }} numberOfLines={2}>{cur.trip.specialNotes}</Text></Row>}
+              </LinearGradient>
+            </Pressable>
+          </Animated.View>
 
           <TripControl
             bookingRef={cur.trip.bookingRef}
             progress={cur.progress}
             isLastDay={cur.isLastDay}
+            dayNo={cur.dayIndex}
+            todayPlan={cur.todayPlan}
             onChange={p => setData(d => (d && d.current ? { ...d, current: { ...d.current, progress: p } } : d))}
           />
 

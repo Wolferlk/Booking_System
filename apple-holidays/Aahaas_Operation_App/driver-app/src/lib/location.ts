@@ -19,7 +19,9 @@ import { api } from './api';
 
 export const LOCATION_TASK = 'aahaas-trip-location';
 const QUEUE_KEY = 'aahaas.gps.queue';
+const PATH_KEY = 'aahaas.gps.path';
 const MAX_QUEUE = 20_000;
+const MAX_PATH = 4_000;
 
 export interface QueuedPoint { lat: number; lng: number; accuracy: number | null; speed: number | null; t: number }
 
@@ -61,6 +63,14 @@ async function enqueue(locs: Location.LocationObject[]) {
     const q: QueuedPoint[] = raw ? JSON.parse(raw) : [];
     q.push(...pts);
     await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-MAX_QUEUE)));
+    // Today's route for the on-phone map (good fixes only).
+    const good = pts.filter(p => p.accuracy == null || p.accuracy <= 65).map(p => [p.lat, p.lng, p.t, p.speed ?? -1]);
+    if (good.length) {
+      const rawPath = await AsyncStorage.getItem(PATH_KEY).catch(() => null);
+      const path: number[][] = rawPath ? JSON.parse(rawPath) : [];
+      path.push(...good);
+      await AsyncStorage.setItem(PATH_KEY, JSON.stringify(path.slice(-MAX_PATH)));
+    }
   });
   pts.forEach(p => listeners.forEach(l => l(p)));
 }
@@ -165,9 +175,27 @@ export async function resumeTracking(): Promise<TrackingMode | null> {
   }
 }
 
+export interface PathPoint { lat: number; lng: number; t: number; speed: number | null }
+
+/** The route driven since "Start day" on this phone. */
+export async function loadPath(): Promise<PathPoint[]> {
+  try {
+    const raw = await AsyncStorage.getItem(PATH_KEY);
+    const path: number[][] = raw ? JSON.parse(raw) : [];
+    return path.map(([lat, lng, t, sp]) => ({ lat, lng, t, speed: sp >= 0 ? sp : null }));
+  } catch {
+    return [];
+  }
+}
+
+export async function clearPath(): Promise<void> {
+  await withQueue(() => AsyncStorage.removeItem(PATH_KEY)).catch(() => {});
+}
+
 export async function stopTracking(): Promise<void> {
   watcher?.remove();
   watcher = null;
+  await clearPath();
   try {
     if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK)) await Location.stopLocationUpdatesAsync(LOCATION_TASK);
   } catch { /* not running */ }
