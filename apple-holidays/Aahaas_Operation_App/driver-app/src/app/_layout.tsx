@@ -36,6 +36,7 @@ function Root() {
       <Stack.Screen name="trip/start" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="trip/finish" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="help" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="live-map" options={{ presentation: 'fullScreenModal', animation: 'fade_from_bottom', gestureEnabled: true }} />
     </Stack>
   );
 }

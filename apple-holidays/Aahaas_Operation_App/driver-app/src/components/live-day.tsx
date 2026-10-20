@@ -4,6 +4,7 @@
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
@@ -79,13 +80,15 @@ export function nextMovement(day: DayPlan | null | undefined): Movement | null {
   return moves.find(m => (m.time ?? '99:99') >= hhmm) ?? moves[moves.length - 1];
 }
 
-export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPlan }: {
+export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPlan, title }: {
   dayNo?: number | null
   startedAt: string
   km: number
   tripKm: number
   background: boolean | null
   todayPlan?: DayPlan | null
+  /** shown on the full-screen map */
+  title?: string
 }) {
   const [path, setPath] = useState<PathPoint[]>([]);
   const [, tick] = useState(0);
@@ -123,7 +126,13 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
           </View>
         </View>
 
-        <RouteMap path={path} />
+        <RouteMap path={path} onExpand={() => router.push({
+          pathname: '/live-map',
+          params: {
+            startedAt, dayNo: dayNo ? String(dayNo) : '', km: String(km), tripKm: String(tripKm),
+            bg: background ? '1' : '0', next: next ? JSON.stringify(next) : '', title: title ?? '',
+          },
+        })} />
 
         <View style={styles.kmRow}>
           <View>

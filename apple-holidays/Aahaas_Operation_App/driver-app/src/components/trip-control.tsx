@@ -133,7 +133,7 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     return (
       <View style={{ gap: S.md }}>
         <LiveDayCard dayNo={dayNo} startedAt={running.startedAt} km={km} tripKm={tripKm}
-          background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} />
+          background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} title={bookingRef} />
         <SwipeButton label={t('endDay')} icon="flag" colors={[C.gold, '#B45309']} onComplete={endDay} loading={busy} />
       </View>
     );
