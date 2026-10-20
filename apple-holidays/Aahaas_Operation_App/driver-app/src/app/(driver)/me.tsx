@@ -83,7 +83,7 @@ export default function Me() {
       <Button title={t('signOut')} kind="ghost" icon="log-out-outline" onPress={() => Alert.alert(t('signOut'), 'Sign out of this phone?', [
         { text: 'Cancel', style: 'cancel' }, { text: t('signOut'), style: 'destructive', onPress: () => { signOut(); router.replace('/welcome'); } },
       ])} />
-      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>Aahaas Driver {APP_VERSION}</Text>
+      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>Aahaas CORE {APP_VERSION}</Text>
     </Screen>
   );
 }

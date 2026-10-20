@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Aahaas",
+    "name": "Aahaas CORE",
     "slug": "aahaas-ops",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,7 +12,7 @@
       "bundleIdentifier": "com.aahaas.ops",
       "supportsTablet": false,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Aahaas Driver uses your location while a trip day is running to count the kilometres you drive and show operations where the car is.",
+        "NSLocationWhenInUseUsageDescription": "Aahaas CORE uses your location while a trip day is running to count the kilometres you drive and show operations where the car is.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Keep counting your kilometres when the phone is locked or another app (like Maps) is open. Tracking runs only between Start day and End day.",
         "NSCameraUsageDescription": "Take photos of your vehicle for the 2-monthly vehicle check.",
         "NSPhotoLibraryUsageDescription": "Choose vehicle or profile photos.",
@@ -26,13 +26,13 @@
         "foregroundImage": "./assets/images/splash-icon.png"
       },
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
-        "CAMERA",
-        "POST_NOTIFICATIONS"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -55,7 +55,7 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Keep counting your kilometres when the phone is locked or another app (like Maps) is open. Tracking runs only between Start day and End day.",
-          "locationWhenInUsePermission": "Aahaas Driver uses your location while a trip day is running to count the kilometres you drive.",
+          "locationWhenInUsePermission": "Aahaas CORE uses your location while a trip day is running to count the kilometres you drive.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
@@ -71,7 +71,8 @@
         "expo-image-picker",
         {
           "cameraPermission": "Take photos of your vehicle for the 2-monthly vehicle check.",
-          "photosPermission": "Choose vehicle or profile photos."
+          "photosPermission": "Choose vehicle or profile photos.",
+          "microphonePermission": false
         }
       ],
       "expo-sharing"
@@ -82,7 +83,12 @@
     },
     "extra": {
       "apiUrl": "https://ops.aahaas.com",
-      "opsPhone": "+94707224229"
-    }
+      "opsPhone": "+94707224229",
+      "router": {},
+      "eas": {
+        "projectId": "e10e61cf-e111-4c99-ac84-b5558af10734"
+      }
+    },
+    "owner": "sasiofficial25"
   }
 }
