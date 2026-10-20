@@ -22,8 +22,8 @@
     "android": {
       "package": "com.aahaas.ops",
       "adaptiveIcon": {
-        "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/splash-icon.png"
+        "backgroundColor": "#062476",
+        "foregroundImage": "./assets/images/adaptive-icon.png"
       },
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
