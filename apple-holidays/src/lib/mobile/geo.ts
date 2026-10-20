@@ -7,6 +7,7 @@
  *
  *   * accuracy worse than MAX_ACCURACY_M   → ignored (cell-tower fix)
  *   * hop shorter than MIN_HOP_M           → ignored (parked jitter)
+ *   * short hop while the phone reports it is standing still → ignored
  *   * hop implying > MAX_SPEED_KMH         → ignored (GPS jump / teleport)
  *
  * The filter only ever drops points from the sum; every point is still stored
@@ -16,6 +17,9 @@
 export const MAX_ACCURACY_M = 65
 export const MIN_HOP_M = 25
 export const MAX_SPEED_KMH = 180
+/** Below this reported speed (m/s) the car is standing; hops under STILL_HOP_M are wander. */
+export const STILL_SPEED_MS = 1
+export const STILL_HOP_M = 100
 
 export interface GeoPoint {
   lat: number
@@ -42,25 +46,56 @@ export function isValidPoint(p: GeoPoint): boolean {
     && Number.isFinite(p.t)
 }
 
+/** An untimed anchor (the start-of-day position) counts a first hop up to this far. */
+export const START_SNAP_M = 2_000
+
+export interface Anchor { lat: number; lng: number; /** epoch ms; null = start-of-day position, time unknown */ t: number | null }
+
+function plausible(a: { lat: number; lng: number; t: number }, b: GeoPoint): boolean {
+  const hours = Math.max((b.t - a.t) / 3_600_000, 1 / 3600)
+  return haversineM(a, b) / 1000 / hours <= MAX_SPEED_KMH
+}
+
 /**
- * Adds a sorted batch onto a running anchor. Returns metres to add and the new
- * anchor (the last point that counted).
+ * Adds a sorted batch onto a running anchor. Returns metres to add, the new
+ * anchor (the last point that counted) and `pending` — the last point that was
+ * rejected as too fast.
+ *
+ * The speed check is against the anchor's own time, not the last ping, so a
+ * GPS gap (tunnel, phone locked) is measured over the real elapsed time. And a
+ * "jump" that the next point agrees with is real, not a glitch: the anchor
+ * moves there, so one bad hop can never freeze the count for the rest of the day.
  */
 export function accumulate(
-  anchor: { lat: number; lng: number; t: number } | null,
+  anchor: Anchor | null,
   points: GeoPoint[],
-): { addM: number; anchor: { lat: number; lng: number; t: number } | null } {
+  pending: GeoPoint | null = null,
+): { addM: number; anchor: Anchor | null; pending: GeoPoint | null } {
   let addM = 0
   let a = anchor
+  let pend = pending
   for (const p of points) {
     if (p.accuracy != null && p.accuracy > MAX_ACCURACY_M) continue
     if (!a) { a = { lat: p.lat, lng: p.lng, t: p.t }; continue }
     const d = haversineM(a, p)
     if (d < MIN_HOP_M) continue
-    const hours = Math.max((p.t - a.t) / 3_600_000, 1 / 3600)
-    if (d / 1000 / hours > MAX_SPEED_KMH) continue
-    addM += d
-    a = { lat: p.lat, lng: p.lng, t: p.t }
+    if (p.speed != null && p.speed >= 0 && p.speed < STILL_SPEED_MS && d < STILL_HOP_M) continue
+    if (a.t == null) {
+      // Start position: its time is the server's, not the phone's — no speed check.
+      if (d <= START_SNAP_M) addM += d
+      a = { lat: p.lat, lng: p.lng, t: p.t }; pend = null
+      continue
+    }
+    if (plausible({ lat: a.lat, lng: a.lng, t: a.t }, p)) {
+      addM += d
+      a = { lat: p.lat, lng: p.lng, t: p.t }; pend = null
+    } else if (pend && pend.t < p.t && plausible(pend, p)) {
+      const after = haversineM(pend, p)
+      if (after >= MIN_HOP_M) addM += after
+      a = { lat: p.lat, lng: p.lng, t: p.t }; pend = null
+    } else {
+      pend = p
+    }
   }
-  return { addM, anchor: a }
+  return { addM, anchor: a, pending: pend }
 }

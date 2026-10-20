@@ -16,7 +16,7 @@ import { feedbackLinkPath } from '@/lib/feedback-link'
 import { portalLinkPath } from '@/lib/portal-link'
 import { appBaseUrl } from '@/lib/driver-auto/server'
 import { MobileError } from './http'
-import { accumulate, isValidPoint, type GeoPoint } from './geo'
+import { accumulate, isValidPoint, MAX_ACCURACY_M, type Anchor, type GeoPoint } from './geo'
 import { localTodayFor, type DriverTrip } from './trips'
 import { notifyStaff } from './notify'
 
@@ -166,8 +166,25 @@ export async function ingestPoints(driverId: string, raw: unknown[]): Promise<{ 
     .sort((a, b) => a.t - b.t)
   if (!points.length) return { accepted: 0, dayKm: Number(day.distanceKm) }
 
-  const anchor = day.lastLat != null && day.lastLng != null ? { lat: day.lastLat, lng: day.lastLng, t: since || points[0].t } : null
-  const { addM, anchor: next } = accumulate(anchor, points)
+  // The anchor's own time: the stored point it came from. None found = the
+  // start-of-day position (untimed). The latest stored point, if it was not
+  // the anchor, is a rejected "jump" the next point may confirm.
+  let anchor: Anchor | null = null
+  let pending: GeoPoint | null = null
+  if (day.lastLat != null && day.lastLng != null) {
+    const [at, latest] = day.pointCount > 0
+      ? await Promise.all([
+        prisma.mobileLocationPoint.findFirst({ where: { dayId: day.id, lat: day.lastLat, lng: day.lastLng, OR: [{ accuracy: null }, { accuracy: { lte: MAX_ACCURACY_M } }] }, orderBy: { recordedAt: 'desc' }, select: { recordedAt: true } }),
+        prisma.mobileLocationPoint.findFirst({ where: { dayId: day.id }, orderBy: { recordedAt: 'desc' }, select: { lat: true, lng: true, accuracy: true, recordedAt: true } }),
+      ])
+      : [null, null]
+    anchor = { lat: day.lastLat, lng: day.lastLng, t: at?.recordedAt.getTime() ?? null }
+    if (latest && !(latest.lat === day.lastLat && latest.lng === day.lastLng)
+      && (latest.accuracy == null || latest.accuracy <= MAX_ACCURACY_M)) {
+      pending = { lat: latest.lat, lng: latest.lng, accuracy: latest.accuracy, t: latest.recordedAt.getTime() }
+    }
+  }
+  const { addM, anchor: next } = accumulate(anchor, points, pending)
   const last = points[points.length - 1]
 
   await prisma.mobileLocationPoint.createMany({

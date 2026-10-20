@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Linking, Text, View } from 'react-native';
 import { api, ApiError } from '@/lib/api';
 import { useT } from '@/lib/i18n';
-import { currentPosition, flushPoints, LocationError, onPoint, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
+import { currentPosition, flushPoints, LocationError, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
 import { C, S } from '@/lib/theme';
 import type { Progress } from '@/lib/types';
 import { SwipeButton } from './swipe-button';
@@ -46,11 +46,12 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
   useEffect(() => {
     if (!running) return;
     resumeTracking().then(setMode);
-    const unsub = onPoint(() => {});
-    const timer = setInterval(async () => {
+    // The GPS task usually sends points before this timer does, so km comes
+    // from whichever send got the server's answer.
+    const unsub = onDayKm(setLiveKm);
+    const timer = setInterval(() => {
       tick(x => x + 1);
-      const km = await flushPoints();
-      if (km != null) setLiveKm(km);
+      flushPoints();
     }, 30_000);
     return () => { clearInterval(timer); unsub(); };
   }, [running?.id]); // eslint-disable-line react-hooks/exhaustive-deps

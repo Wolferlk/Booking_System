@@ -28,10 +28,26 @@ const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreCl
 let watcher: Location.LocationSubscription | null = null;
 let flushing = false;
 let listeners: ((p: QueuedPoint) => void)[] = [];
+let kmListeners: ((km: number) => void)[] = [];
 
 export function onPoint(fn: (p: QueuedPoint) => void) {
   listeners.push(fn);
   return () => { listeners = listeners.filter(l => l !== fn); };
+}
+
+/** Today's km as the server last reported it — whoever did the sending (screen timer or GPS task). */
+export function onDayKm(fn: (km: number) => void) {
+  kmListeners.push(fn);
+  return () => { kmListeners = kmListeners.filter(l => l !== fn); };
+}
+
+// Every read-modify-write of the queue goes through here, one at a time, so a
+// point arriving while a batch is being sent is never overwritten.
+let queueLock: Promise<unknown> = Promise.resolve();
+function withQueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queueLock.then(fn, fn);
+  queueLock = run.catch(() => {});
+  return run;
 }
 
 async function enqueue(locs: Location.LocationObject[]) {
@@ -40,10 +56,12 @@ async function enqueue(locs: Location.LocationObject[]) {
     lat: l.coords.latitude, lng: l.coords.longitude,
     accuracy: l.coords.accuracy ?? null, speed: l.coords.speed ?? null, t: l.timestamp,
   }));
-  const raw = await AsyncStorage.getItem(QUEUE_KEY).catch(() => null);
-  const q: QueuedPoint[] = raw ? JSON.parse(raw) : [];
-  q.push(...pts);
-  await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-MAX_QUEUE)));
+  await withQueue(async () => {
+    const raw = await AsyncStorage.getItem(QUEUE_KEY).catch(() => null);
+    const q: QueuedPoint[] = raw ? JSON.parse(raw) : [];
+    q.push(...pts);
+    await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(q.slice(-MAX_QUEUE)));
+  });
   pts.forEach(p => listeners.forEach(l => l(p)));
 }
 
@@ -60,9 +78,12 @@ export async function flushPoints(): Promise<number | null> {
       const batch = q.slice(0, 300);
       const res = await api<{ accepted: number; dayKm: number | null }>('/api/mobile/locations', { body: { points: batch } });
       dayKm = res.dayKm;
-      const again = await AsyncStorage.getItem(QUEUE_KEY);
-      const now: QueuedPoint[] = again ? JSON.parse(again) : [];
-      await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(now.slice(batch.length)));
+      if (dayKm != null) { const km = dayKm; kmListeners.forEach(l => l(km)); }
+      await withQueue(async () => {
+        const again = await AsyncStorage.getItem(QUEUE_KEY);
+        const now: QueuedPoint[] = again ? JSON.parse(again) : [];
+        await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(now.slice(batch.length)));
+      });
     }
   } catch {
     // offline — try again next time
