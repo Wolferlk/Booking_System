@@ -80,7 +80,9 @@ export function nextMovement(day: DayPlan | null | undefined): Movement | null {
   return moves.find(m => (m.time ?? '99:99') >= hhmm) ?? moves[moves.length - 1];
 }
 
-export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPlan, title }: {
+export interface TripHeading { guest: string; sub: string; onOpen: () => void }
+
+export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPlan, title, heading }: {
   dayNo?: number | null
   startedAt: string
   km: number
@@ -89,6 +91,8 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
   todayPlan?: DayPlan | null
   /** shown on the full-screen map */
   title?: string
+  /** Today screen: the trip itself, so it needs no separate card */
+  heading?: TripHeading
 }) {
   const [path, setPath] = useState<PathPoint[]>([]);
   const [, tick] = useState(0);
@@ -125,6 +129,15 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
             </Text>
           </View>
         </View>
+        {heading && (
+          <Pressable onPress={heading.onOpen} style={({ pressed }) => [styles.heading, pressed && { opacity: 0.8 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headingGuest} numberOfLines={1}>{heading.guest}</Text>
+              <Text style={styles.headingSub} numberOfLines={1}>{heading.sub}</Text>
+            </View>
+            <View style={styles.openBtn}><Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Open trip</Text><Ionicons name="chevron-forward" size={14} color="#fff" /></View>
+          </Pressable>
+        )}
 
         <RouteMap path={path} onExpand={() => router.push({
           pathname: '/live-map',
@@ -215,6 +228,10 @@ export function ReadyCard({ dayNo, todayPlan, title }: { dayNo?: number | null; 
 const styles = StyleSheet.create({
   liveWrap: { borderRadius: 28, shadowColor: '#0A1640', shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 8 },
   live: { borderRadius: 28, padding: 14, gap: 12, overflow: 'hidden' },
+  heading: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 4 },
+  headingGuest: { color: '#fff', fontSize: 20, fontWeight: '900' },
+  headingSub: { color: '#93C5FD', fontSize: 12, fontWeight: '700' },
+  openBtn: { flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: C.red, borderRadius: 99, paddingHorizontal: 10, paddingVertical: 6 },
   liveHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   liveTag: { color: '#fff', fontWeight: '900', letterSpacing: 1.2, fontSize: 13 },
   gps: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 99 },

@@ -13,6 +13,9 @@ import { API_URL } from '@/lib/config';
 import { C } from '@/lib/theme';
 import type { IconName } from './ui';
 
+const WORDMARK_WHITE = require('../../assets/images/aahaas-wordmark-white.png');
+const WORDMARK_RED = require('../../assets/images/aahaas-wordmark-red.png');
+
 const SCENES = {
   morning: require('../../assets/images/illustrations/banner-morning.jpg'),
   afternoon: require('../../assets/images/illustrations/banner-afternoon.jpg'),
@@ -64,8 +67,11 @@ export function TodayHero({ greeting, name, photoUrl, unread, onBell, onHelp }: 
         start={{ x: 0, y: 0.5 }} end={{ x: 0.85, y: 0.5 }} style={StyleSheet.absoluteFill} />
 
       <View style={styles.top}>
-        <View style={styles.avatar}>
-          {photo ? <Image source={photo} style={StyleSheet.absoluteFill} contentFit="cover" alt="" /> : <Text style={styles.initials}>{initials || '🙂'}</Text>}
+        <View style={styles.brand}>
+          <Image source={dark ? WORDMARK_WHITE : WORDMARK_RED} style={{ width: 96, height: 31 }} contentFit="contain" alt="Aahaas" />
+          <View style={[styles.core, { backgroundColor: dark ? 'rgba(255,255,255,0.16)' : C.red }]}>
+            <Text style={styles.coreText}>CORE</Text>
+          </View>
         </View>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <GlassButton icon="notifications" onPress={onBell} badge={unread} tint={dark ? '#fff' : '#0E1525'} />
@@ -73,24 +79,32 @@ export function TodayHero({ greeting, name, photoUrl, unread, onBell, onHelp }: 
         </View>
       </View>
 
-      <View style={{ gap: 2 }}>
-        <Text style={[styles.greet, { color: dark ? '#C7D2FE' : '#475569' }]}>{greeting},</Text>
-        <Text style={[styles.name, { color: ink }]} numberOfLines={1}>{name} 👋</Text>
-        <Text style={[styles.date, { color: dark ? '#A5B4FC' : '#64748B' }]}>{date}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={styles.avatar}>
+          {photo ? <Image source={photo} style={StyleSheet.absoluteFill} contentFit="cover" alt="" /> : <Text style={styles.initials}>{initials || '🙂'}</Text>}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.greet, { color: dark ? '#C7D2FE' : '#475569' }]}>{greeting},</Text>
+          <Text style={[styles.name, { color: ink }]} numberOfLines={1}>{name} 👋</Text>
+          <Text style={[styles.date, { color: dark ? '#A5B4FC' : '#64748B' }]}>{date}</Text>
+        </View>
       </View>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { height: 210, borderRadius: 28, overflow: 'hidden', padding: 16, justifyContent: 'space-between', backgroundColor: '#DCE7FF' },
+  wrap: { height: 196, borderRadius: 28, overflow: 'hidden', padding: 16, justifyContent: 'space-between', backgroundColor: '#DCE7FF' },
   top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  avatar: { width: 52, height: 52, borderRadius: 18, overflow: 'hidden', backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  core: { borderRadius: 7, paddingHorizontal: 6, paddingVertical: 2, marginTop: -8 },
+  coreText: { color: '#fff', fontWeight: '900', fontSize: 10, letterSpacing: 1.5 },
+  avatar: { width: 54, height: 54, borderRadius: 18, overflow: 'hidden', backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
   initials: { color: '#fff', fontWeight: '900', fontSize: 18 },
   glassBtn: { width: 44, height: 44, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)' },
   badge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 2, borderColor: '#fff' },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   greet: { fontSize: 15, fontWeight: '700' },
-  name: { fontSize: 30, fontWeight: '900', letterSpacing: -0.5 },
+  name: { fontSize: 26, fontWeight: '900', letterSpacing: -0.5 },
   date: { fontSize: 13, fontWeight: '700' },
 });

@@ -18,11 +18,11 @@ import { useT } from '@/lib/i18n';
 import { currentPosition, flushPoints, LocationError, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
 import { C, S } from '@/lib/theme';
 import type { DayPlan, Progress } from '@/lib/types';
-import { DayDoneCard, LiveDayCard, ReadyCard } from './live-day';
+import { DayDoneCard, LiveDayCard, ReadyCard, type TripHeading } from './live-day';
 import { SwipeButton } from './swipe-button';
 import { Button, Card, Ionicons, Row } from './ui';
 
-export function TripControl({ bookingRef, progress, isLastDay, onChange, startsLater, dayNo, todayPlan }: {
+export function TripControl({ bookingRef, progress, isLastDay, onChange, startsLater, dayNo, todayPlan, heading }: {
   bookingRef: string
   progress: Progress
   isLastDay: boolean
@@ -32,6 +32,8 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
   /** today's day number in the trip and its plan, for the live / ready cards */
   dayNo?: number | null
   todayPlan?: DayPlan | null
+  /** shown inside the live card while a day runs (Today screen) */
+  heading?: TripHeading
 }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
@@ -133,7 +135,7 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     return (
       <View style={{ gap: S.md }}>
         <LiveDayCard dayNo={dayNo} startedAt={running.startedAt} km={km} tripKm={tripKm}
-          background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} title={bookingRef} />
+          background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} title={bookingRef} heading={heading} />
         <SwipeButton label={t('endDay')} icon="flag" colors={[C.gold, '#B45309']} onComplete={endDay} loading={busy} />
       </View>
     );

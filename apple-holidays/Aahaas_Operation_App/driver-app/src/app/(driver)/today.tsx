@@ -57,6 +57,23 @@ export default function Today() {
   const cur = data?.current;
   const photo = actor?.kind === 'DRIVER' ? actor.photoUrl : null;
   const nextIn = data?.next ? daysUntil(data.next.startDate) : null;
+  // While a day runs the live card carries the trip — no separate trip card.
+  const running = !!cur?.progress.days.some(d => d.status === 'STARTED');
+  const openCur = () => cur && router.push({ pathname: '/trip/[ref]', params: { ref: cur.trip.bookingRef } });
+  const vehicleDue = (data?.alerts.vehicleCheck?.due && (
+        <Animated.View entering={FadeInDown.delay(60).springify().damping(16)}>
+          <Pressable onPress={() => router.push('/vehicle-check')} style={({ pressed }) => [styles.todo, pressed && { transform: [{ scale: 0.98 }] }]}>
+            <LinearGradient colors={['#FFB547', '#F59E0B']} style={styles.todoIcon}>
+              <WiggleIcon name="camera" color="#fff" />
+            </LinearGradient>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.todoTitle}>{t('vehicleDue')}</Text>
+              <Text style={styles.todoSub} numberOfLines={2}>{data.alerts.vehicleCheck.rejectedNote ? `Ops asked: ${data.alerts.vehicleCheck.rejectedNote}` : t('vehicleDueHint')}</Text>
+            </View>
+            <View style={styles.todoChip}><Text style={styles.todoChipText}>2 min</Text></View>
+          </Pressable>
+        </Animated.View>
+      ));
 
   return (
     <Screen refreshing={refreshing} onRefresh={reload}>
@@ -71,25 +88,12 @@ export default function Today() {
 
       {error && !data && <ErrorBox message={error} onRetry={reload} />}
 
-      {data?.alerts.vehicleCheck?.due && (
-        <Animated.View entering={FadeInDown.delay(60).springify().damping(16)}>
-          <Pressable onPress={() => router.push('/vehicle-check')} style={({ pressed }) => [styles.todo, pressed && { transform: [{ scale: 0.98 }] }]}>
-            <LinearGradient colors={['#FFB547', '#F59E0B']} style={styles.todoIcon}>
-              <WiggleIcon name="camera" color="#fff" />
-            </LinearGradient>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.todoTitle}>{t('vehicleDue')}</Text>
-              <Text style={styles.todoSub} numberOfLines={2}>{data.alerts.vehicleCheck.rejectedNote ? `Ops asked: ${data.alerts.vehicleCheck.rejectedNote}` : t('vehicleDueHint')}</Text>
-            </View>
-            <View style={styles.todoChip}><Text style={styles.todoChipText}>2 min</Text></View>
-          </Pressable>
-        </Animated.View>
-      )}
+      {!running && vehicleDue}
 
       {cur ? (
         <>
-          <Animated.View entering={FadeInDown.delay(100).springify().damping(18)}>
-            <Pressable onPress={() => router.push({ pathname: '/trip/[ref]', params: { ref: cur.trip.bookingRef } })}
+          {!running && <Animated.View entering={FadeInDown.delay(100).springify().damping(18)}>
+            <Pressable onPress={openCur}
               style={({ pressed }) => [{ transform: [{ scale: pressed ? 0.98 : 1 }] }]}>
               <LinearGradient colors={NAVY} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: 24, padding: 16, gap: 10 }}>
                 <Row style={{ justifyContent: 'space-between' }}>
@@ -115,7 +119,7 @@ export default function Today() {
                 {cur.trip.specialNotes && <Row gap={6}><Ionicons name="gift" size={15} color="#FCD34D" /><Text style={{ color: '#FDE68A', flex: 1 }} numberOfLines={2}>{cur.trip.specialNotes}</Text></Row>}
               </LinearGradient>
             </Pressable>
-          </Animated.View>
+          </Animated.View>}
 
           <TripControl
             bookingRef={cur.trip.bookingRef}
@@ -123,6 +127,11 @@ export default function Today() {
             isLastDay={cur.isLastDay}
             dayNo={cur.dayIndex}
             todayPlan={cur.todayPlan}
+            heading={{
+              guest: cur.trip.leadGuest ?? 'Guest',
+              sub: `${cur.dayIndex ? `Day ${cur.dayIndex} of ${cur.dayCount} · ` : ''}${cur.trip.pax.adults + cur.trip.pax.children} ${t('pax')} · ${cur.trip.fileNo}`,
+              onOpen: openCur,
+            }}
             onChange={p => setData(d => (d && d.current ? { ...d, current: { ...d.current, progress: p } } : d))}
           />
 
@@ -139,6 +148,7 @@ export default function Today() {
             </Animated.View>
           )}
           {cur.todayPlan && <AiBrief bookingRef={cur.trip.bookingRef} />}
+          {running && vehicleDue}
         </>
       ) : data && (
         <Animated.View entering={FadeInDown.delay(100).springify()} style={styles.rest}>
