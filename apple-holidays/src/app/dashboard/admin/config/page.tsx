@@ -17,6 +17,7 @@ import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
 import AirportPickupCard from '@/components/settings/airport-pickup-card'
 import MovementWhatsAppCard from '@/components/settings/movement-whatsapp-card'
+import CustomerDailyBriefingCard from '@/components/settings/customer-daily-briefing-card'
 import { parseFlightPickupRules, durationLabel } from '@/lib/flight-pickup-rules'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
@@ -323,6 +324,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'pnl-sync',       title: 'Accounts PNL Database Sync',   group: 'Money & Tickets', icon: Database,     keywords: 'link matching is number tour ref invoice snapshot refresh bulk' },
 
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
+  { id: 'customer-daily', title: 'Customer Daily Trip Details', group: 'Operations',    icon: MessageCircle, keywords: 'guest customer whatsapp daily briefing plan auto send default time 18:00 6pm trip portal next day' },
   { id: 'movement-whatsapp', title: 'Movement WhatsApp Briefing', group: 'Operations',   icon: MessageCircle, keywords: 'agenda movement chart driver vendor guide tour vendor whatsapp template send single item is number phone duplicate meta approve' },
   { id: 'airport-pickup', title: 'Airport Pickup Timings',       group: 'Operations',      icon: PlaneTakeoff, keywords: 'flight departure arrival pickup meeting time hours before after landing buffer check-in movement chart agenda' },
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
@@ -1138,6 +1140,11 @@ export default function ConfigPage() {
                   </div>
                 </CardBody>
               </Card>
+            </Section>
+
+            <Section id="customer-daily" visible={show('customer-daily')} flashed={flashId === 'customer-daily'}>
+              {/* Default send time + on/off for the guests' daily WhatsApp plan */}
+              <CustomerDailyBriefingCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="movement-whatsapp" visible={show('movement-whatsapp')} flashed={flashId === 'movement-whatsapp'}>

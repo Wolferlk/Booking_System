@@ -414,6 +414,13 @@ function AutoSendTime({ defaultTime, override, timezone, saving, onSave }: {
           ? 'Daily details will only go out when sent manually below.'
           : `Daily at ${effective} ${city} time with ${which} plan.`}
       </span>
+      {/* The global default lives in Ops Settings (admins) and on AI Call Bot → WhatsApp Auto. */}
+      <a
+        href="/dashboard/admin/config#setting-customer-daily"
+        className="ml-auto text-[11px] font-semibold text-brand-600 hover:text-brand-700 hover:underline"
+      >
+        Change default time
+      </a>
     </div>
   )
 }
