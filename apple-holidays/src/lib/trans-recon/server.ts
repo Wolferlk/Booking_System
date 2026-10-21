@@ -6,6 +6,7 @@
  * approval columns of trans_recon_lines and the lock columns of the sheet; this
  * file resets a line's approval when the figure that was approved changes.
  */
+import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { computePNLLineTotal } from '@/lib/utils'
@@ -16,10 +17,12 @@ import { countryScope } from '@/lib/country-detection'
 import { matchMovements, scorePair, type MatchMovement, type MatchPnlLine } from './match'
 import { accountsPnlLines, resolveAccountsLine } from './accounts-pnl'
 import { getConversionRate, isExchangeConfigured } from '@/lib/currency'
+import { loadMcSuppliers } from '@/lib/mc-supplier'
+import { getAccountsSupplier, isSupplierSource } from '@/lib/accounts-suppliers-db'
 import {
   EDITABLE_FIELDS, RECON_COUNTRIES, RECON_COUNTRY_META, formatPax, parseRate, periodOf, sheetTitle, sortLines,
   type ApprovalStatus, type EditableField, type Half, type LineSource, type PnlMatch, type ReconCountry,
-  type ReconLine, type ReconSheet, type SheetStatus,
+  type ReconLine, type ReconSheet, type ReconSupplierSource, type SheetStatus,
 } from './shared'
 
 export class ReconError extends Error {
@@ -138,6 +141,126 @@ function toLine(r: LineRow): ReconLine {
   }
 }
 
+// ── Driver and supplier (trans_recon_line_parties) ──────────────────────────
+//
+// Own table, read only by the code below, so a database where
+// prisma/sql/2026-10-21-transport-suppliers.sql has not been run yet still
+// opens every sheet — just without the two columns.
+
+export const PARTIES_NOT_READY =
+  'Driver and supplier are not set up on this database yet — run prisma/sql/apply-transport-suppliers.sh.'
+
+export function isPartiesMissing(err: unknown): boolean {
+  const e = err as { code?: string; message?: string }
+  return e?.code === 'P2021' || /trans_recon_line_parties.*(doesn't exist|does not exist)/i.test(e?.message ?? '')
+}
+
+type PartyRow = Prisma.TransReconLinePartyGetPayload<object>
+export interface SupplierPick { source: ReconSupplierSource; id: number; name: string; country: string | null }
+
+const pickOf = (p: PartyRow | null | undefined): SupplierPick | null =>
+  p?.supplierSource && p.supplierId != null && isSupplierSource(p.supplierSource)
+    ? { source: p.supplierSource, id: Number(p.supplierId), name: p.supplierName ?? '', country: p.supplierCountry ?? null }
+    : null
+const samePick = (a: SupplierPick | null, b: SupplierPick | null) =>
+  (a?.source ?? null) === (b?.source ?? null) && (a?.id ?? null) === (b?.id ?? null)
+
+/** Party rows by line id, or null when the table is not there yet. */
+async function loadParties(where: Prisma.TransReconLinePartyWhereInput): Promise<Map<string, PartyRow> | null> {
+  try {
+    return new Map((await prisma.transReconLineParty.findMany({ where })).map(p => [p.lineId, p]))
+  } catch (err) {
+    if (isPartiesMissing(err)) return null
+    throw err
+  }
+}
+
+function withParty(l: ReconLine, p: PartyRow | undefined): ReconLine {
+  const pick = pickOf(p)
+  return {
+    ...l,
+    driverName: p?.driverName ?? null,
+    supplierSource: pick?.source ?? null,
+    supplierId: pick?.id ?? null,
+    supplierName: pick?.name ?? null,
+    supplierCountry: pick?.country ?? null,
+    driverEdited: p?.driverEdited ?? false,
+    supplierEdited: p?.supplierEdited ?? false,
+  }
+}
+
+type PartyLine = { id: string; sheetId: string } & Pick<LineRow, 'approvalStatus' | 'approvedByName' | 'approvalNote'>
+
+/**
+ * The write that moves a line's party row to `next`, or nothing when it is
+ * already there. `supplierMoved` says a supplier was replaced or taken off —
+ * Accounts approved paying this line to one supplier, and paying another is a
+ * new decision, so callers send the line back to pending (approvalReset).
+ */
+function partyWrite(line: PartyLine, current: PartyRow | undefined, next: {
+  driverName: string | null; supplier: SupplierPick | null; driverEdited: boolean; supplierEdited: boolean
+}, actor: Actor): { op: Prisma.PrismaPromise<unknown> | null; supplierMoved: boolean } {
+  const cur = pickOf(current)
+  const unchanged = (current?.driverName ?? null) === next.driverName && samePick(cur, next.supplier)
+    && (cur?.name ?? null) === (next.supplier?.name ?? null)
+    && (current?.driverEdited ?? false) === next.driverEdited && (current?.supplierEdited ?? false) === next.supplierEdited
+  if (unchanged || (!current && !next.driverName && !next.supplier && !next.driverEdited && !next.supplierEdited)) {
+    return { op: null, supplierMoved: false }
+  }
+  const data = {
+    sheetId: line.sheetId,
+    driverName: next.driverName,
+    supplierSource: next.supplier?.source ?? null,
+    supplierId: next.supplier ? BigInt(next.supplier.id) : null,
+    supplierName: next.supplier ? next.supplier.name.slice(0, 191) : null,
+    supplierCountry: next.supplier?.country ?? null,
+    driverEdited: next.driverEdited,
+    supplierEdited: next.supplierEdited,
+    updatedByName: actor.name ?? null,
+  }
+  return {
+    op: prisma.transReconLineParty.upsert({ where: { lineId: line.id }, create: { lineId: line.id, ...data }, update: data }),
+    supplierMoved: cur !== null && !samePick(cur, next.supplier),
+  }
+}
+
+/**
+ * An MC Report supplier pick, carried straight onto the lines already made
+ * from those movements — so the sheet does not wait for a refresh. Lines whose
+ * supplier was set on the sheet, and locked sheets, are left alone. Never
+ * throws: the MC pick is saved whether or not this part can run.
+ */
+export async function applyMcSupplierToLines(agendaItemIds: string[], supplier: SupplierPick | null, actor: Actor): Promise<number> {
+  if (!agendaItemIds.length) return 0
+  try {
+    const lines = await prisma.transReconLine.findMany({
+      where: { agendaItemId: { in: agendaItemIds }, sheet: { status: { not: 'LOCKED' } } },
+      select: { id: true, sheetId: true, approvalStatus: true, approvedByName: true, approvalNote: true },
+    })
+    if (!lines.length) return 0
+    const parties = await loadParties({ lineId: { in: lines.map(l => l.id) } })
+    if (!parties) return 0
+    const ops: Prisma.PrismaPromise<unknown>[] = []
+    let n = 0
+    for (const l of lines) {
+      const p = parties.get(l.id)
+      if (p?.supplierEdited) continue
+      const w = partyWrite(l, p, { driverName: p?.driverName ?? null, supplier, driverEdited: p?.driverEdited ?? false, supplierEdited: false }, actor)
+      if (!w.op) continue
+      ops.push(w.op); n++
+      if (w.supplierMoved) {
+        const reset = approvalReset(l, actor, `Supplier changed to ${supplier?.name ?? 'none'} on the MC Report`)
+        if (Object.keys(reset).length) ops.push(prisma.transReconLine.update({ where: { id: l.id }, data: reset }))
+      }
+    }
+    for (let i = 0; i < ops.length; i += 100) await prisma.$transaction(ops.slice(i, i + 100))
+    return n
+  } catch (err) {
+    if (!isPartiesMissing(err) && !isMissingTable(err)) console.error('[trans-recon] MC supplier carry failed (non-fatal):', err)
+    return 0
+  }
+}
+
 // ── Reads ───────────────────────────────────────────────────────────────────
 
 export async function listSheets(year: number, month: number | null, allowed: ReconCountry[]) {
@@ -157,8 +280,16 @@ export async function loadSheet(id: string, allowed: ReconCountry[]) {
   const s = await prisma.transReconSheet.findUnique({ where: { id } })
   if (!s) throw new ReconError('Sheet not found', 404)
   if (!allowed.includes(s.country as ReconCountry)) throw new ReconError('That country is outside your scope', 403)
-  const lines = await prisma.transReconLine.findMany({ where: { sheetId: id }, orderBy: [{ serviceDate: 'asc' }, { position: 'asc' }] })
-  return { sheet: toSheet(s), lines: sortLines(lines.map(toLine)) }
+  const [lines, parties] = await Promise.all([
+    prisma.transReconLine.findMany({ where: { sheetId: id }, orderBy: [{ serviceDate: 'asc' }, { position: 'asc' }] }),
+    loadParties({ sheetId: id }),
+  ])
+  return {
+    sheet: toSheet(s),
+    lines: sortLines(lines.map(l => (parties ? withParty(toLine(l), parties.get(l.id)) : toLine(l)))),
+    /** False until trans_recon_line_parties exists — the page then hides Driver / Supplier. */
+    partiesReady: parties !== null,
+  }
 }
 
 /**
@@ -362,6 +493,8 @@ export interface Snapshot {
   mcDescription: string | null
   serviceType: string | null
   vendorName: string | null
+  /** The driver alone — vendorName above falls back to the driver when there is no vendor. */
+  driverName: string | null
   mcDriverRate: number | null
   mcRateCurrency: string | null
   fromPoint: string | null
@@ -492,6 +625,7 @@ export async function collectMovements(country: ReconCountry, start: string, end
       mcDescription: clean(i.details) || null,
       serviceType: i.serviceType,
       vendorName: cut(a?.vendor?.name ?? a?.vendorName ?? a?.driver?.vehicle?.vendor?.name ?? a?.driverName ?? a?.driver?.name, 191),
+      driverName: cut(a?.driverName ?? a?.driver?.name, 191),
       mcDriverRate: a?.driverRate != null ? Number(a.driverRate) : null,
       mcRateCurrency: a?.rateCurrency ?? null,
       fromPoint: i.fromPoint,
@@ -514,7 +648,7 @@ const pnlData = (p: PnlPick | null, match: PnlMatch) => p
   ? { pnlLineItemId: p.id, pnlDescription: p.activity, pnlCategory: p.category, pnlValue: p.value, pnlCurrency: p.currency, pnlMatch: match, pnlScore: p.score }
   : { pnlLineItemId: null, pnlDescription: null, pnlCategory: null, pnlValue: null, pnlCurrency: null, pnlMatch: 'NONE', pnlScore: null }
 
-export interface SyncResult { added: number; updated: number; cancelled: number; missing: number; unplaced: number; repaired: number }
+export interface SyncResult { added: number; updated: number; cancelled: number; missing: number; unplaced: number; repaired: number; suppliers: number }
 
 /**
  * Bring a sheet up to date with the MC Report.
@@ -545,7 +679,7 @@ export async function syncSheet(sheetId: string, actor: Actor): Promise<SyncResu
   const orphanBy = new Map<string, LineRow>()
   for (const o of orphans) orphanBy.set(keyOf(o.bookingRef, day(o.serviceDate)!, o.pickUp, o.dropOff), o)
 
-  const res: SyncResult = { added: 0, updated: 0, cancelled: 0, missing: 0, unplaced, repaired: 0 }
+  const res: SyncResult = { added: 0, updated: 0, cancelled: 0, missing: 0, unplaced, repaired: 0, suppliers: 0 }
   const ops: Prisma.PrismaPromise<unknown>[] = []
   const claimed = new Set<string>()
   let position = existing.reduce((m, l) => Math.max(m, l.position), 0)
@@ -633,7 +767,54 @@ export async function syncSheet(sheetId: string, actor: Actor): Promise<SyncResu
   ops.push(prisma.transReconSheet.update({ where: { id: sheetId }, data: { lastSyncedAt: new Date(), updatedByName: actor.name ?? null } }))
   // Chunked: a busy half month is a few hundred lines.
   for (let i = 0; i < ops.length; i += 100) await prisma.$transaction(ops.slice(i, i + 100))
+  res.suppliers = await syncParties(sheetId, snapshots, actor)
   return res
+}
+
+/**
+ * Driver and supplier follow the MC Report like any untyped field: the
+ * movement's driver, and the supplier picked for it on the chart. A value set
+ * on the sheet stays. Runs after the lines exist, so new lines get theirs on
+ * the same refresh. Returns how many lines' supplier was filled or changed.
+ * Non-fatal — the lines are already saved when this runs.
+ */
+async function syncParties(sheetId: string, snapshots: Snapshot[], actor: Actor): Promise<number> {
+  try {
+    const snapBy = new Map(snapshots.map(s => [s.agendaItemId, s]))
+    const lines = (await prisma.transReconLine.findMany({
+      where: { sheetId, agendaItemId: { not: null } },
+      select: { id: true, sheetId: true, agendaItemId: true, approvalStatus: true, approvedByName: true, approvalNote: true },
+    })).filter(l => snapBy.has(l.agendaItemId!))
+    if (!lines.length) return 0
+    const [parties, picks] = await Promise.all([
+      loadParties({ lineId: { in: lines.map(l => l.id) } }),
+      loadMcSuppliers(lines.map(l => l.agendaItemId!)),
+    ])
+    if (!parties) return 0
+
+    const ops: Prisma.PrismaPromise<unknown>[] = []
+    let suppliers = 0
+    for (const l of lines) {
+      const p = parties.get(l.id), mc = picks[l.agendaItemId!]
+      const supplier = p?.supplierEdited ? pickOf(p) : mc ? { source: mc.source, id: mc.id, name: mc.name, country: mc.country } : null
+      const w = partyWrite(l, p, {
+        driverName: p?.driverEdited ? p.driverName : snapBy.get(l.agendaItemId!)!.driverName,
+        supplier, driverEdited: p?.driverEdited ?? false, supplierEdited: p?.supplierEdited ?? false,
+      }, actor)
+      if (!w.op) continue
+      ops.push(w.op)
+      if (!samePick(pickOf(p), supplier)) suppliers++
+      if (w.supplierMoved) {
+        const reset = approvalReset(l, actor, `Supplier changed to ${supplier?.name ?? 'none'} on the MC Report`)
+        if (Object.keys(reset).length) ops.push(prisma.transReconLine.update({ where: { id: l.id }, data: reset }))
+      }
+    }
+    for (let i = 0; i < ops.length; i += 100) await prisma.$transaction(ops.slice(i, i + 100))
+    return suppliers
+  } catch (err) {
+    if (!isPartiesMissing(err)) console.error('[trans-recon] driver / supplier refresh failed (non-fatal):', err)
+    return 0
+  }
 }
 
 export async function createSheet(country: ReconCountry, year: number, month: number, half: Half, actor: Actor) {
@@ -723,6 +904,10 @@ export interface LineInput {
   bookingRef?: string | null
   /** Excel import: the workbook row this line was read from. */
   importRow?: number
+  /** The driver, as the desk names them. '' clears; a refresh then leaves it alone. */
+  driverName?: string | null
+  /** The Accounts supplier this line is paid to; null takes it off. Re-read from Accounts before saving. */
+  supplier?: { source: string; id: number } | null
 }
 
 const LIMITS: Record<EditableField, number> = {
@@ -791,6 +976,34 @@ export async function saveLines(
   let position = Array.from(existing.values()).reduce((m, l) => Math.max(m, l.position), 0)
   const created: Record<string, number> = {}
 
+  // Driver / supplier: checked before anything is written, so a save that
+  // cannot store them fails whole instead of half.
+  const touchesParty = (body.lines ?? []).some(l => 'driverName' in l || 'supplier' in l)
+  let parties = new Map<string, PartyRow>()
+  const suppliers = new Map<string, SupplierPick>()
+  if (touchesParty) {
+    const found = await loadParties({ sheetId })
+    if (!found) throw new ReconError(PARTIES_NOT_READY, 503)
+    parties = found
+    for (const l of body.lines ?? []) {
+      if (!l.supplier) continue
+      const key = `${l.supplier.source}:${l.supplier.id}`
+      if (suppliers.has(key)) continue
+      if (!isSupplierSource(l.supplier.source)) throw new ReconError('Unknown supplier type')
+      let a
+      try { a = await getAccountsSupplier(l.supplier.source, Number(l.supplier.id)) }
+      catch (err) {
+        console.error('[trans-recon] supplier lookup failed:', err)
+        throw new ReconError('Could not reach the Accounts supplier list — try again.', 502)
+      }
+      if (!a) throw new ReconError('That supplier is no longer in Suppliers Manage — pick it again.')
+      if (!a.active) throw new ReconError(`"${a.name}" is switched off in Suppliers Manage — pick another or ask Accounts.`)
+      suppliers.set(key, { source: a.source, id: a.id, name: a.name, country: a.country })
+    }
+  }
+  const supplierFor = (v: LineInput['supplier']) => (v ? suppliers.get(`${v.source}:${v.id}`)! : null)
+  const driverFor = (v: unknown) => cut(String(v ?? ''), 191)
+
   const val = (f: EditableField, v: unknown) => {
     const s = String(v ?? '').trim()
     if (f === 'details' || f === 'pickUp' || f === 'dropOff' || f === 'remarks') return s.replace(/[ \t]+/g, ' ').slice(0, LIMITS[f]) || null
@@ -821,9 +1034,18 @@ export async function saveLines(
       const rateText = val('rateText', input.rateText)
       const pnl = input.pnlCustom ? customPnl(input.pnlCustom)
         : input.pnlLineItemId ? await resolvePnl(bookingRef, input.pnlLineItemId) : null
+      // The id is chosen here so the row's driver / supplier can be written beside it.
+      const lineId = randomUUID()
+      const party = 'driverName' in input || 'supplier' in input
+        ? partyWrite({ id: lineId, sheetId, approvalStatus: 'PENDING', approvedByName: null, approvalNote: null }, undefined, {
+            driverName: driverFor(input.driverName), supplier: supplierFor(input.supplier),
+            driverEdited: true, supplierEdited: true,
+          }, actor).op
+        : null
+      if (party) ops.push(party)
       ops.push(prisma.transReconLine.create({
         data: {
-          sheetId, position: ++position, source: 'MANUAL', bookingRef,
+          id: lineId, sheetId, position: ++position, source: 'MANUAL', bookingRef,
           serviceDate: dateOnly(date), tourNo,
           guestName: val('guestName', input.guestName), pax: val('pax', input.pax),
           pickUp: val('pickUp', input.pickUp), dropOff: val('dropOff', input.dropOff),
@@ -873,10 +1095,28 @@ export async function saveLines(
       data.importedFrom = importedFrom
       data.importRow = input.importRow
     }
-    if (!Object.keys(data).length) continue
+
+    let supplierMoved = false
+    if ('driverName' in input || 'supplier' in input) {
+      const cur = parties.get(line.id)
+      const w = partyWrite(line, cur, {
+        driverName: 'driverName' in input ? driverFor(input.driverName) : cur?.driverName ?? null,
+        supplier: 'supplier' in input ? supplierFor(input.supplier) : pickOf(cur),
+        driverEdited: 'driverName' in input || (cur?.driverEdited ?? false),
+        supplierEdited: 'supplier' in input || (cur?.supplierEdited ?? false),
+      }, actor)
+      if (w.op) ops.push(w.op)
+      supplierMoved = w.supplierMoved
+    }
+
     const rateChanged = 'rate' in data && (data.rate as number | null) !== dec(line.rate)
     const pnlChanged = 'pnlValue' in data && (data.pnlValue as number | null) !== dec(line.pnlValue)
-    if (rateChanged || pnlChanged) Object.assign(data, approvalReset(line, actor, rateChanged ? `Rate changed to ${data.rateText ?? '—'} by ${actor.name ?? 'OPS'}` : 'P&L line changed'))
+    if (!Object.keys(data).length && !supplierMoved) continue
+    if (rateChanged || pnlChanged || supplierMoved) {
+      const next = supplierFor(input.supplier)
+      Object.assign(data, approvalReset(line, actor, rateChanged ? `Rate changed to ${data.rateText ?? '—'} by ${actor.name ?? 'OPS'}`
+        : pnlChanged ? 'P&L line changed' : `Supplier changed to ${next?.name ?? 'none'} by ${actor.name ?? 'OPS'}`))
+    }
     data.editedFields = Array.from(edited)
     data.updatedByName = actor.name ?? null
     ops.push(prisma.transReconLine.update({ where: { id: line.id }, data }))
@@ -897,6 +1137,14 @@ export async function saveLines(
 
   ops.push(prisma.transReconSheet.update({ where: { id: sheetId }, data: { updatedByName: actor.name ?? null } }))
   for (let i = 0; i < ops.length; i += 100) await prisma.$transaction(ops.slice(i, i + 100))
+
+  // A deleted hand-typed row takes its driver / supplier with it.
+  const deleted = (body.remove ?? []).filter(id => existing.get(id)?.source === 'MANUAL')
+  if (deleted.length) {
+    await prisma.transReconLineParty.deleteMany({ where: { lineId: { in: deleted } } }).catch(err => {
+      if (!isPartiesMissing(err)) console.error('[trans-recon] party clean-up failed (non-fatal):', err)
+    })
+  }
   return { saved: ops.length - 1 }
 }
 

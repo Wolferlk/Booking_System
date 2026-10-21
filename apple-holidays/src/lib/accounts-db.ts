@@ -117,6 +117,14 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
  *                      both systems from this table; no booking, invoice or
  *                      P&L is ever touched to make it happen.
  *
+ *   supplier_bank_details
+ *                      INSERT only. The "Suppliers Manage" registry: when the
+ *                      supplier a movement is paid to is not in it yet, OPS
+ *                      registers it there (src/lib/accounts-suppliers-db.ts)
+ *                      rather than keeping a second list that drifts. An
+ *                      existing supplier — and above all its bank details — is
+ *                      never updated or deleted from here; Accounts owns that.
+ *
  * Everything else over there stays read-only, and this guard is what keeps that
  * true: the connection is a privileged one, so the restriction cannot be left
  * to whoever writes the next query.
@@ -126,6 +134,9 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
 const WRITABLE_TABLE =
   /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals|sl_transport_settlement_requests|test_bookings)`?\b/i
 
+/** Tables this app may add rows to and nothing more. */
+const INSERT_ONLY_TABLE = /^\s*insert\s+into\s+`?(supplier_bank_details)`?\b/i
+
 /** test_bookings rows are history: OPS may insert and update them, never delete. */
 const NEVER_DELETE = /^\s*delete\s+from\s+`?test_bookings`?\b/i
 
@@ -133,11 +144,17 @@ export async function accountsWrite(
   sql: string,
   params: unknown[] = [],
 ): Promise<{ affectedRows: number; insertId: number }> {
-  if (!WRITABLE_TABLE.test(sql)) {
+  if (!WRITABLE_TABLE.test(sql) && !INSERT_ONLY_TABLE.test(sql)) {
     throw new Error(
       'Refused: this app may only write to `payment_portals`, `ticket_approvals`, '
-      + '`sl_transport_settlement_requests` and `test_bookings` in the Accounts database.',
+      + '`sl_transport_settlement_requests` and `test_bookings` in the Accounts database, '
+      + 'and add rows to `supplier_bank_details`.',
     )
+  }
+  // An INSERT … ON DUPLICATE KEY UPDATE / REPLACE would rewrite an existing
+  // supplier through the insert-only door.
+  if (INSERT_ONLY_TABLE.test(sql) && /\bon\s+duplicate\s+key\b/i.test(sql)) {
+    throw new Error('Refused: supplier_bank_details is insert-only from this app.')
   }
 
   if (NEVER_DELETE.test(sql)) {

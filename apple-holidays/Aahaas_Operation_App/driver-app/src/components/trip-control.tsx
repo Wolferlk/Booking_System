@@ -15,7 +15,7 @@ import { Alert, Linking, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { api, ApiError } from '@/lib/api';
 import { useT } from '@/lib/i18n';
-import { currentPosition, flushPoints, LocationError, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
+import { currentPosition, flushPoints, LocationError, needsLocationDisclosure, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
 import { C, S } from '@/lib/theme';
 import type { DayPlan, Progress } from '@/lib/types';
 import { DayDoneCard, LiveDayCard, ReadyCard, type TripHeading } from './live-day';
@@ -61,7 +61,30 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     return r.progress;
   }
 
+  /**
+   * Prominent disclosure (Google Play policy): said in the app, before the
+   * system permission prompt, that location is collected in the background
+   * and why. Resolves false if the driver says "Not now".
+   */
+  function discloseLocation(): Promise<boolean> {
+    return new Promise(resolve => {
+      Alert.alert(
+        'Location while you drive',
+        'Aahaas CORE collects location data to count the kilometres you drive and to show operations where your vehicle is, '
+        + 'even when the app is closed or not in use (for example with the screen off or Google Maps open).\n\n'
+        + 'This happens only between "Start day" and "End day". Tracking stops when you end the day, and a notification is shown while it runs.\n\n'
+        + 'On the next screen, please choose "Allow all the time".',
+        [
+          { text: 'Not now', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Continue', onPress: () => resolve(true) },
+        ],
+        { cancelable: false },
+      );
+    });
+  }
+
   async function startDay() {
+    if (await needsLocationDisclosure() && !(await discloseLocation())) return;
     setBusy(true);
     try {
       const m = await startTracking();

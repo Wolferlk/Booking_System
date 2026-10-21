@@ -172,7 +172,23 @@ export interface ReconLine {
   importRow: number | null
   updatedByName: string | null
   updatedAt: string | null
+  /**
+   * Who drives it and which Accounts supplier (Suppliers Manage) is paid for
+   * it — kept in trans_recon_line_parties, so absent on a database where that
+   * table has not been created yet. Filled from the MC Report on a refresh
+   * unless set on the sheet (driverEdited / supplierEdited).
+   */
+  driverName?: string | null
+  supplierSource?: ReconSupplierSource | null
+  supplierId?: number | null
+  supplierName?: string | null
+  supplierCountry?: string | null
+  driverEdited?: boolean
+  supplierEdited?: boolean
 }
+
+/** Same names as the Accounts system's payable_supplier_links.supplier_source. */
+export type ReconSupplierSource = 'supplier_bank' | 'driver'
 
 export interface ReconSheet {
   id: string
@@ -369,6 +385,9 @@ export function breakdown(
 export const byBooking = (l: ReconLine) => ({ key: l.tourNo || l.bookingRef || '—', label: l.tourNo || l.bookingRef || '—', sub: l.guestName })
 export const byVendor = (l: ReconLine) => ({ key: (l.vendorName || 'Not assigned').toLowerCase(), label: l.vendorName || 'Not assigned' })
 export const byDay = (l: ReconLine) => ({ key: l.serviceDate, label: l.serviceDate })
+export const bySupplier = (l: ReconLine) => l.supplierId != null && l.supplierSource
+  ? { key: `${l.supplierSource}:${l.supplierId}`, label: l.supplierName || `Supplier #${l.supplierId}`, sub: l.supplierSource === 'driver' ? 'driver payee' : null }
+  : { key: 'none', label: 'No supplier picked', sub: null }
 
 /** Default order on screen and in the export: day, then time, then tour. */
 export function sortLines<T extends Pick<ReconLine, 'serviceDate' | 'time' | 'tourNo' | 'position'>>(lines: T[]): T[] {

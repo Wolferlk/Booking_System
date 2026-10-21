@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs'
 import { reconFailure, reconSession } from '@/lib/trans-recon/access'
 import { loadSheet } from '@/lib/trans-recon/server'
 import {
-  breakdown, byBooking, byDay, byVendor, computeSheet, isLive, RECON_COUNTRY_META, type Breakdown,
+  breakdown, byBooking, byDay, bySupplier, byVendor, computeSheet, isLive, RECON_COUNTRY_META, type Breakdown,
 } from '@/lib/trans-recon/shared'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const s = await reconSession('view')
   if (s instanceof Response) return s
   try {
-    const { sheet, lines } = await loadSheet(params.id, s.allowed)
+    const { sheet, lines, partiesReady } = await loadSheet(params.id, s.allowed)
     const withCancelled = req.nextUrl.searchParams.get('cancelled') === '1'
     const shown = lines.filter(l => !l.isRemoved && (withCancelled || !l.bookingCancelled))
     const { figures, totals } = computeSheet(lines, sheet.currency, sheet.fxRates)
@@ -39,6 +39,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       ['DATE', 12], ['TOUR NO', 16], ['GUEST NAME', 24], ['PAX', 9], ['PICK UP', 28], ['DROP OFF', 28], ['TIME', 8],
       ['DETAILS', 46], ['MC DESCRIPTION', 46], ['PNL DESCRIPTION', 36], [`RATES (${cur})`, 14], ['RATE (TOTAL)', 12],
       [`PNL RATE (${cur})`, 14], ['DIFFERENCE', 13], ['ACCOUNTS', 12], ['NOTE', 30],
+      // Appended, not slotted in: the desk's own columns keep their places for re-import.
+      ...(partiesReady ? [['DRIVER', 18], ['SUPPLIER (ACCOUNTS)', 28]] as const : []),
     ] as const
     ws.columns = cols.map(([, w]) => ({ width: w }))
     ws.mergeCells(1, 1, 1, cols.length)
@@ -67,6 +69,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         f.pnlShare ?? null, f.difference ?? null,
         l.bookingCancelled ? 'CANCELLED' : l.approvalStatus === 'PENDING' ? 'Pending' : l.approvalStatus === 'APPROVED' ? 'Approved' : 'Not approved',
         [l.approvalNote, l.remarks, f.sharedBy > 1 ? `P&L line shared by ${f.sharedBy} movements` : null, f.gap === 'NO_FX' ? `No FX for ${l.pnlCurrency}` : null].filter(Boolean).join(' · '),
+        ...(partiesReady ? [l.driverName ?? l.vendorName ?? '', l.supplierName ? `${l.supplierName}${l.supplierSource === 'driver' ? ' (driver payee)' : ''}` : ''] : []),
       ]
       row.getCell(1).numFmt = 'dd-mmm-yy'
       for (const c of [12, 13, 14]) row.getCell(c).numFmt = money
@@ -132,6 +135,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const live = lines.filter(isLive)
     let next = table(3 + kpis.length + 2, 'By booking', breakdown(live, figures, byBooking).sort((a, b) => b.difference - a.difference), 'Tour no')
     next = table(next, 'By vendor / driver', breakdown(live, figures, byVendor).sort((a, b) => b.rate - a.rate), 'Vendor')
+    if (partiesReady) next = table(next, 'By Accounts supplier', breakdown(live, figures, bySupplier).sort((a, b) => b.rate - a.rate), 'Supplier')
     table(next, 'By day', breakdown(live, figures, byDay).sort((a, b) => a.key.localeCompare(b.key)), 'Date')
 
     const buf = await wb.xlsx.writeBuffer()

@@ -26,6 +26,7 @@ import { carryTicketsControl } from '@/lib/tickets-control'
 import { carryMcDetails } from '@/lib/mc-details'
 import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
+import { carryMcSupplier } from '@/lib/mc-supplier'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -328,6 +329,7 @@ export async function POST(
   }
   await carryMcDetails(booking.bookingRef, movedIds)
   await carryMcDone(booking.bookingRef, movedIds)
+  await carryMcSupplier(booking.bookingRef, movedIds)
   // Trans-Reconsultation lines point at movements the same way.
   await carryTransRecon(booking.bookingRef, movedIds)
   // Movement WhatsApp history is tagged by agenda item id too — move it across

@@ -11,7 +11,7 @@
 import { Fragment, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  AlertTriangle, ArrowLeft, BarChart3, CalendarRange, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed,
+  AlertTriangle, ArrowLeft, BarChart3, Building2, CalendarRange, Check, CheckCircle2, ChevronLeft, ChevronRight, CircleDashed,
   Download, Eye, EyeOff, FileSpreadsheet, Link2, Loader2, Lock, Plus, RefreshCw, RotateCcw, Save, Search, Send,
   Sparkles, Trash2, Undo2, Upload, XCircle,
 } from 'lucide-react'
@@ -19,9 +19,10 @@ import { toast } from 'sonner'
 import Header from '@/components/layout/header'
 import { ImportDialog } from '@/components/trans-recon/import-dialog'
 import { PnlPicker, type PnlChoice } from '@/components/trans-recon/pnl-picker'
+import { SupplierPicker, type PickedSupplier } from '@/components/suppliers/supplier-picker'
 import { cn, readApiResponse } from '@/lib/utils'
 import {
-  NOT_INSTALLED, RECON_COUNTRIES, RECON_COUNTRY_META, RECON_CURRENCIES, breakdown, byBooking, byDay, byVendor,
+  NOT_INSTALLED, RECON_COUNTRIES, RECON_COUNTRY_META, RECON_CURRENCIES, breakdown, byBooking, byDay, bySupplier, byVendor,
   computeSheet, fmtMoney, parseRate, periodOf, sheetTitle, sortLines,
   type Breakdown, type EditableField, type Half, type LineFigures, type ReconCountry, type ReconLine,
   type ReconSheet, type SheetTotals,
@@ -31,7 +32,7 @@ import {
 
 interface BoardRow { sheet: ReconSheet; totals: SheetTotals }
 interface BoardData { installed: boolean; allowed: ReconCountry[]; canEdit: boolean; sheets: BoardRow[] }
-interface SheetData { sheet: ReconSheet; lines: ReconLine[]; canEdit?: boolean }
+interface SheetData { sheet: ReconSheet; lines: ReconLine[]; canEdit?: boolean; partiesReady?: boolean }
 type CustomPnl = { id: string; description: string; value: number; currency: string }
 
 /** What the page holds for a line before Save. P&L preview fields are display only. */
@@ -40,8 +41,17 @@ type Edit = Partial<Record<EditableField, string | null>> & {
   /** A P&L figure typed in the picker; saved as a typed P&L line. */
   pnlCustom?: CustomPnl
   _pnl?: { description: string | null; value: number | null; category: string | null; currency: string | null }
+  /** The driver typed on the sheet. */
+  driverName?: string | null
+  /** The supplier picked on the sheet; null takes it off. */
+  supplier?: PickedSupplier | null
 }
 type AddedLine = ReconLine & { tempId: string; pnlCustom?: CustomPnl }
+
+const supplierOf = (l: ReconLine): PickedSupplier | null =>
+  l.supplierSource && l.supplierId != null
+    ? { source: l.supplierSource, id: l.supplierId, name: l.supplierName ?? '', country: l.supplierCountry ?? null }
+    : null
 
 /** Where a line's P&L came from, read off its id and match type. */
 function pnlSource(l: Pick<ReconLine, 'pnlLineItemId' | 'pnlMatch'>): { label: string; cls: string; title: string } | null {
@@ -280,7 +290,7 @@ function Board({ onOpen }: { onOpen: (id: string) => void }) {
 
 // ── Sheet editor ────────────────────────────────────────────────────────────
 
-type Filter = 'ALL' | 'NO_RATE' | 'NO_PNL' | 'OVER' | 'REJECTED' | 'PENDING' | 'MANUAL'
+type Filter = 'ALL' | 'NO_RATE' | 'NO_PNL' | 'OVER' | 'REJECTED' | 'PENDING' | 'MANUAL' | 'NO_SUPPLIER'
 
 const CELL = 'w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-xs text-slate-700 outline-none hover:border-slate-200 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-100 disabled:hover:border-transparent'
 
@@ -300,6 +310,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [showRemoved, setShowRemoved] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [picker, setPicker] = useState<string | null>(null)
+  const [supplierPicker, setSupplierPicker] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const tempSeq = useRef(0)
 
@@ -335,8 +346,14 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
       const e = edits[l.id]
       let out: ReconLine = l
       if (e) {
-        const { _pnl, pnlLineItemId, pnlCustom: _custom, ...fields } = e
+        const { _pnl, pnlLineItemId, pnlCustom: _custom, supplier, ...fields } = e
         out = { ...l, ...fields } as ReconLine
+        if (supplier !== undefined) {
+          out.supplierSource = supplier?.source ?? null
+          out.supplierId = supplier?.id ?? null
+          out.supplierName = supplier?.name ?? null
+          out.supplierCountry = supplier?.country ?? null
+        }
         if ('rateText' in e) out.rate = parseRate(e.rateText)
         if (pnlLineItemId !== undefined) {
           out.pnlLineItemId = pnlLineItemId
@@ -378,9 +395,10 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
         case 'REJECTED': if (l.approvalStatus !== 'REJECTED') return false; break
         case 'PENDING': if (l.approvalStatus !== 'PENDING') return false; break
         case 'MANUAL': if (l.source !== 'MANUAL') return false; break
+        case 'NO_SUPPLIER': if (l.supplierId != null) return false; break
       }
       if (!needle) return true
-      return [l.tourNo, l.guestName, l.pickUp, l.dropOff, l.details, l.mcDescription, l.pnlDescription, l.vendorName, l.rateText]
+      return [l.tourNo, l.guestName, l.pickUp, l.dropOff, l.details, l.mcDescription, l.pnlDescription, l.vendorName, l.rateText, l.driverName, l.supplierName]
         .some(v => String(v ?? '').toLowerCase().includes(needle))
     })
   }, [effective, q, filter, showCancelled, showRemoved, figures])
@@ -395,6 +413,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
       REJECTED: live.filter(l => l.approvalStatus === 'REJECTED').length,
       PENDING: live.filter(l => l.approvalStatus === 'PENDING').length,
       MANUAL: live.filter(l => l.source === 'MANUAL').length,
+      NO_SUPPLIER: live.filter(l => l.supplierId == null).length,
     }
   }, [effective, figures])
 
@@ -449,6 +468,40 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     setPicker(null)
     if (lineIds.length > 1) toast.message(`P&L line set on ${lineIds.length} lines — they share its value. Save to keep it.`)
   }
+  /** The driver typed on a line — saved with the sheet; a refresh then leaves it alone. */
+  const setDriver = (line: ReconLine, value: string) => {
+    if (isAdded(line.id)) { setAdded(a => a.map(r => r.id === line.id ? { ...r, driverName: value } : r)); return }
+    const orig = data!.lines.find(l => l.id === line.id)!.driverName ?? ''
+    setEdits(prev => {
+      const next = { ...prev }
+      const e: Edit = { ...(next[line.id] ?? {}) }
+      if (value === orig) delete e.driverName; else e.driverName = value
+      if (Object.keys(e).length) next[line.id] = e; else delete next[line.id]
+      return next
+    })
+  }
+  /** A supplier picked for a line and any lines ticked "also set on". */
+  const setSupplier = (lineIds: string[], supplier: PickedSupplier | null) => {
+    const ids = new Set(lineIds)
+    setAdded(a => a.map(r => !ids.has(r.id) ? r : {
+      ...r, supplierSource: supplier?.source ?? null, supplierId: supplier?.id ?? null,
+      supplierName: supplier?.name ?? null, supplierCountry: supplier?.country ?? null,
+    }))
+    setEdits(prev => {
+      const next = { ...prev }
+      for (const lid of lineIds) {
+        if (isAdded(lid)) continue
+        const orig = supplierOf(data!.lines.find(l => l.id === lid)!)
+        const e: Edit = { ...(next[lid] ?? {}) }
+        if ((orig?.source ?? null) === (supplier?.source ?? null) && (orig?.id ?? null) === (supplier?.id ?? null)) delete e.supplier
+        else e.supplier = supplier
+        if (Object.keys(e).length) next[lid] = e; else delete next[lid]
+      }
+      return next
+    })
+    setSupplierPicker(null)
+    if (lineIds.length > 1) toast.message(`Supplier set on ${lineIds.length} lines. Save to keep it.`)
+  }
   const addRow = (date?: string) => {
     if (!sheet) return
     const d = date && date >= sheet.periodStart && date <= sheet.periodEnd ? date
@@ -482,14 +535,21 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     try {
       const lines = [
         ...Object.entries(edits).map(([lid, e]) => {
-          const { _pnl: _ignored, pnlCustom, pnlLineItemId, ...rest } = e
+          const { _pnl: _ignored, pnlCustom, pnlLineItemId, supplier, ...rest } = e
           // A typed figure travels as pnlCustom; its id only groups the preview.
-          return { id: lid, ...rest, ...(pnlCustom ? { pnlCustom } : pnlLineItemId !== undefined ? { pnlLineItemId } : {}) }
+          return {
+            id: lid, ...rest, ...(pnlCustom ? { pnlCustom } : pnlLineItemId !== undefined ? { pnlLineItemId } : {}),
+            ...(supplier !== undefined ? { supplier: supplier ? { source: supplier.source, id: supplier.id } : null } : {}),
+          }
         }),
         ...added.map(a => ({
           tempId: a.tempId, serviceDate: a.serviceDate, tourNo: a.tourNo, guestName: a.guestName, pax: a.pax,
           pickUp: a.pickUp, dropOff: a.dropOff, time: a.time, details: a.details, rateText: a.rateText,
           remarks: a.remarks, ...(a.pnlCustom ? { pnlCustom: a.pnlCustom } : { pnlLineItemId: a.pnlLineItemId }),
+          ...(data?.partiesReady && (a.driverName || a.supplierId != null) ? {
+            driverName: a.driverName ?? null,
+            supplier: a.supplierSource && a.supplierId != null ? { source: a.supplierSource, id: a.supplierId } : null,
+          } : {}),
         })),
       ]
       const out = await api<SheetData & { saved: number }>(`/api/trans-recon/${id}/lines`, {
@@ -507,10 +567,10 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     if (dirty && !confirm('Save your changes first? Refreshing now discards the unsaved edits.')) return
     setBusy('sync')
     try {
-      const out = await api<SheetData & { result: { added: number; updated: number; cancelled: number; missing: number; unplaced: number; repaired: number } }>(`/api/trans-recon/${id}/sync`, { method: 'POST' })
+      const out = await api<SheetData & { result: { added: number; updated: number; cancelled: number; missing: number; unplaced: number; repaired: number; suppliers?: number } }>(`/api/trans-recon/${id}/sync`, { method: 'POST' })
       apply(out)
       const r = out.result
-      toast.success(`Refreshed from MC — ${r.added} new, ${r.updated} checked${r.cancelled ? `, ${r.cancelled} now cancelled` : ''}${r.missing ? `, ${r.missing} no longer on the chart` : ''}`)
+      toast.success(`Refreshed from MC — ${r.added} new, ${r.updated} checked${r.cancelled ? `, ${r.cancelled} now cancelled` : ''}${r.missing ? `, ${r.missing} no longer on the chart` : ''}${r.suppliers ? `, ${r.suppliers} supplier${r.suppliers === 1 ? '' : 's'} from MC` : ''}`)
       if (r.unplaced) toast.message(`${r.unplaced} Singapore/Malaysia movement${r.unplaced === 1 ? '' : 's'} could not be placed in a country — check their location on the agenda.`)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not refresh')
@@ -573,8 +633,13 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
     { key: 'ALL', label: 'All' }, { key: 'NO_RATE', label: 'No rate', tone: 'amber' }, { key: 'NO_PNL', label: 'No P&L line' },
     { key: 'OVER', label: 'Over P&L', tone: 'rose' }, { key: 'PENDING', label: 'Pending' }, { key: 'REJECTED', label: 'Not approved', tone: 'rose' },
     { key: 'MANUAL', label: 'Added by hand' },
+    ...(data.partiesReady ? [{ key: 'NO_SUPPLIER' as Filter, label: 'No supplier', tone: 'amber' }] : []),
   ]
   let lastDay = ''
+  // Driver / Supplier is one extra column once trans_recon_line_parties exists.
+  const parties = Boolean(data.partiesReady)
+  const COLS = ['Date', 'Tour no', ...(parties ? ['Driver · Supplier'] : []), 'Guest name', 'Pax', 'Pick up', 'Drop off', 'Time', 'Details', 'MC description', 'P&L description', `Rates (${cur})`, `P&L rate`, 'Difference', 'Accounts', '']
+  const firstMoney = COLS.indexOf(`Rates (${cur})`)
 
   return (
     <>
@@ -729,14 +794,14 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
               <table className="w-full min-w-[1680px] border-collapse text-xs">
                 <thead className="sticky top-0 z-20 bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   <tr>
-                    {['Date', 'Tour no', 'Guest name', 'Pax', 'Pick up', 'Drop off', 'Time', 'Details', 'MC description', 'P&L description', `Rates (${cur})`, `P&L rate`, 'Difference', 'Accounts', ''].map((h, i) => (
-                      <th key={i} className={cn('border-b border-slate-200 px-2 py-2.5 text-left whitespace-nowrap', i >= 10 && i <= 12 && 'text-right')}>{h}</th>
+                    {COLS.map((h, i) => (
+                      <th key={i} className={cn('border-b border-slate-200 px-2 py-2.5 text-left whitespace-nowrap', i >= firstMoney && i <= firstMoney + 2 && 'text-right')}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {visible.length === 0 && (
-                    <tr><td colSpan={15} className="px-4 py-16 text-center text-sm text-slate-400">
+                    <tr><td colSpan={COLS.length} className="px-4 py-16 text-center text-sm text-slate-400">
                       {effective.length ? 'Nothing matches these filters.' : 'No transport movements on the MC Report for this half month yet.'}
                     </td></tr>
                   )}
@@ -752,7 +817,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                       <Fragment key={l.id}>
                         {newDay && (
                           <tr className="bg-gradient-to-r from-indigo-50/80 to-transparent">
-                            <td colSpan={15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-700">
+                            <td colSpan={COLS.length} className="px-3 py-1.5 text-[11px] font-bold text-indigo-700">
                               <span className="inline-flex items-center gap-1.5"><CalendarRange className="h-3.5 w-3.5" />{fmtDay(l.serviceDate)}</span>
                               {editable && (
                                 <button onClick={() => addRow(l.serviceDate)} className="ml-3 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-100">
@@ -777,8 +842,35 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                           </td>
                           <td className="w-[120px] px-1 py-1">
                             <input disabled={ro} value={l.tourNo ?? ''} onChange={ev => setField(l, 'tourNo', ev.target.value)} className={cn(CELL, 'font-mono font-bold', changed('tourNo') && 'bg-amber-50')} />
-                            {l.vendorName && <div className="truncate px-1.5 text-[10px] text-slate-400" title={`Vendor / driver: ${l.vendorName}`}>{l.vendorName}</div>}
+                            {!parties && l.vendorName && <div className="truncate px-1.5 text-[10px] text-slate-400" title={`Vendor / driver: ${l.vendorName}`}>{l.vendorName}</div>}
                           </td>
+                          {parties && (
+                            <td className="w-[170px] px-1 py-1">
+                              <input disabled={ro} value={l.driverName ?? ''} onChange={ev => setDriver(l, ev.target.value)}
+                                placeholder={l.vendorName ?? 'Driver'}
+                                title={l.driverEdited ? 'Typed on this sheet — a refresh from MC leaves it' : 'From the MC Report'}
+                                className={cn(CELL, 'font-semibold', ('driverName' in e) && 'bg-amber-50')} />
+                              {l.vendorName && l.vendorName !== l.driverName && (
+                                <div className="truncate px-1.5 text-[10px] text-slate-400" title={`Vendor: ${l.vendorName}`}>{l.vendorName}</div>
+                              )}
+                              {l.supplierId != null ? (
+                                <button disabled={ro} onClick={() => setSupplierPicker(l.id)}
+                                  className={cn('mt-0.5 flex w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-left hover:bg-indigo-50 disabled:hover:bg-transparent',
+                                    'supplier' in e && 'bg-amber-50')}
+                                  title={`${l.supplierName} — Accounts ${l.supplierSource === 'driver' ? 'driver payee' : 'supplier'}${l.supplierEdited ? ' · set on this sheet' : ' · from the MC Report'}`}>
+                                  <Building2 className={cn('h-3 w-3 shrink-0', l.supplierSource === 'driver' ? 'text-sky-600' : 'text-indigo-600')} />
+                                  <span className="truncate text-[11px] font-semibold text-indigo-800">{l.supplierName}</span>
+                                  {l.supplierCountry && <span className="shrink-0 rounded bg-slate-100 px-1 text-[9px] font-bold text-slate-500">{l.supplierCountry}</span>}
+                                </button>
+                              ) : editable && !l.isRemoved ? (
+                                <button onClick={() => setSupplierPicker(l.id)}
+                                  className={cn('mt-0.5 inline-flex items-center gap-1 rounded-md border border-dashed border-indigo-300 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-50',
+                                    'supplier' in e && 'bg-amber-50')}>
+                                  <Building2 className="h-3 w-3" /> Supplier
+                                </button>
+                              ) : <div className="px-1.5 text-[10px] text-slate-300">no supplier</div>}
+                            </td>
+                          )}
                           <td className="w-[150px] px-1 py-1"><input disabled={ro} value={l.guestName ?? ''} onChange={ev => setField(l, 'guestName', ev.target.value)} className={cn(CELL, changed('guestName') && 'bg-amber-50')} /></td>
                           <td className="w-[72px] px-1 py-1"><input disabled={ro} value={l.pax ?? ''} onChange={ev => setField(l, 'pax', ev.target.value)} className={cn(CELL, 'text-center', changed('pax') && 'bg-amber-50')} /></td>
                           <td className="w-[170px] px-1 py-1"><textarea rows={isOpen ? 4 : 2} disabled={ro} value={l.pickUp ?? ''} onChange={ev => setField(l, 'pickUp', ev.target.value)} className={cn(CELL, 'resize-none', changed('pickUp') && 'bg-amber-50')} /></td>
@@ -856,7 +948,7 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
                 {visible.length > 0 && (
                   <tfoot className="sticky bottom-0 z-10 bg-slate-900 text-white">
                     <tr className="text-xs font-bold">
-                      <td colSpan={10} className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-white/70">Sheet total · {totals.lines} lines</td>
+                      <td colSpan={firstMoney} className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-white/70">Sheet total · {totals.lines} lines</td>
                       <td className="px-2 py-2.5 text-right tabular-nums">{fmtMoney(totals.totalRate, cur)}</td>
                       <td className="px-2 py-2.5 text-right tabular-nums">{fmtMoney(totals.totalPnl, cur)}</td>
                       <td className={cn('px-2 py-2.5 text-right tabular-nums', totals.difference > 0.005 ? 'text-rose-300' : 'text-emerald-300')}>{totals.difference > 0 ? '+' : ''}{fmtMoney(totals.difference, cur)}</td>
@@ -886,6 +978,27 @@ function SheetEditor({ id, onBack }: { id: string; onBack: () => void }) {
         return (
           <PnlPicker sheetId={id} line={line} bookingRef={ref} sheetCurrency={cur} siblings={siblings}
             onClose={() => setPicker(null)} onPick={(choice, also) => setPnl([line.id, ...also], choice)} />
+        )
+      })()}
+
+      {supplierPicker && (() => {
+        const line = effective.find(l => l.id === supplierPicker)
+        if (!line) return null
+        const who = (line.driverName || line.vendorName || '').trim().toLowerCase()
+        const siblings = who ? effective.filter(o => o.id !== line.id && !o.isRemoved && !o.bookingCancelled && o.supplierId == null
+          && (o.driverName || o.vendorName || '').trim().toLowerCase() === who) : []
+        return (
+          <SupplierPicker
+            title="Supplier for this line"
+            context={<><b className="font-mono text-slate-700">{line.tourNo || '—'}</b> · {fmtDay(line.serviceDate)}{line.time ? ` ${line.time}` : ''} · {line.pickUp ?? '—'} → {line.dropOff ?? '—'}</>}
+            country={sheet.country}
+            hint={line.driverName || line.vendorName}
+            current={supplierOf(line)}
+            siblings={siblings.map(o => ({ id: o.id, label: `${fmtDay(o.serviceDate)} · ${o.tourNo ?? '—'}`, sub: `${o.pickUp ?? '—'} → ${o.dropOff ?? '—'}` }))}
+            siblingsLabel={`Also set on ${line.driverName || line.vendorName}'s other lines with no supplier`}
+            onPick={(sup, also) => setSupplier([line.id, ...also], sup)}
+            onClose={() => setSupplierPicker(null)}
+          />
         )
       })()}
 
@@ -944,6 +1057,8 @@ function FxInput({ sheetId, from, to, value, disabled, onSave }: { sheetId: stri
 function Report({ lines, figures, currency }: { lines: ReconLine[]; figures: Map<string, LineFigures>; currency: string }) {
   const bookings = useMemo(() => breakdown(lines, figures, byBooking).sort((a, b) => b.difference - a.difference), [lines, figures])
   const vendors = useMemo(() => breakdown(lines, figures, byVendor).sort((a, b) => b.rate - a.rate), [lines, figures])
+  const suppliers = useMemo(() => breakdown(lines, figures, bySupplier).sort((a, b) => b.rate - a.rate), [lines, figures])
+  const hasSuppliers = lines.some(l => l.supplierId != null)
   const days = useMemo(() => breakdown(lines, figures, byDay).sort((a, b) => a.key.localeCompare(b.key)), [lines, figures])
   const peak = Math.max(1, ...days.map(d => Math.max(d.rate, d.pnl)))
 
@@ -973,6 +1088,7 @@ function Report({ lines, figures, currency }: { lines: ReconLine[]; figures: Map
       <div className="grid gap-4 xl:grid-cols-2">
         <BreakdownTable title="By booking — biggest overspend first" first="Tour no" rows={bookings} currency={currency} />
         <BreakdownTable title="By vendor / driver" first="Vendor" rows={vendors} currency={currency} />
+        {hasSuppliers && <BreakdownTable title="By Accounts supplier — what each one is owed" first="Supplier" rows={suppliers} currency={currency} />}
       </div>
     </div>
   )

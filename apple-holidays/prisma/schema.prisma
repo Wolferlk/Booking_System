@@ -413,6 +413,30 @@ model AgendaMcDone {
   @@map("agenda_mc_done")
 }
 
+/// The Accounts supplier (Suppliers Manage) an MC Report movement is paid to.
+/// Points at invoice_processor.supplier_bank_details / driver_bank_details by
+/// source + id, with the name snapshotted. Keyed by agenda item id and carried
+/// to the new id on every chart save, like AgendaMcDone. See src/lib/mc-supplier.ts.
+/// Created by prisma/sql/2026-10-21-transport-suppliers.sql — never `db push`.
+model AgendaMcSupplier {
+  agendaItemId    String   @id
+  bookingRef      String
+  /// supplier_bank | driver
+  supplierSource  String   @db.VarChar(20)
+  supplierId      BigInt
+  supplierName    String   @db.VarChar(191)
+  supplierCountry String?  @db.VarChar(2)
+  /// Normalised driver / vendor name at pick time — feeds "used last time" suggestions.
+  partyKey        String?  @db.VarChar(191)
+  setById         String?
+  setByName       String?
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  @@index([bookingRef], map: "agenda_mc_suppliers_bookingRef_idx")
+  @@index([partyKey], map: "agenda_mc_suppliers_partyKey_idx")
+  @@map("agenda_mc_suppliers")
+}
+
 /// The Vietnam product sheet, cached — what an agenda include is picked from.
 /// SHEET rows are refreshed by a sync and never deleted (a product that leaves
 /// the sheet goes inactive); MANUAL rows are typed in by an operator and pushed
@@ -3829,4 +3853,26 @@ model TransReconLine {
   @@index([agendaItemId], map: "trans_recon_lines_agenda_idx")
   @@index([bookingRef], map: "trans_recon_lines_booking_idx")
   @@map("trans_recon_lines")
+}
+
+/// Driver and Accounts supplier of one Trans-Reconsultation line. Own table so
+/// TransReconLine reads never depend on it; the Accounts system reads it too.
+/// No relation by design. Created by prisma/sql/2026-10-21-transport-suppliers.sql.
+model TransReconLineParty {
+  lineId          String   @id @db.VarChar(191)
+  sheetId         String   @db.VarChar(191)
+  driverName      String?  @db.VarChar(191)
+  supplierSource  String?  @db.VarChar(20)
+  supplierId      BigInt?
+  supplierName    String?  @db.VarChar(191)
+  supplierCountry String?  @db.VarChar(2)
+  /// Set on the sheet — a refresh from the MC Report leaves it alone.
+  driverEdited    Boolean  @default(false)
+  supplierEdited  Boolean  @default(false)
+  updatedByName   String?
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  @@index([sheetId], map: "trans_recon_line_parties_sheet_idx")
+  @@index([supplierSource, supplierId], map: "trans_recon_line_parties_supplier_idx")
+  @@map("trans_recon_line_parties")
 }

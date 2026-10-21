@@ -116,6 +116,16 @@ export class LocationError extends Error {
   constructor(message: string, public code: 'services_off' | 'denied') { super(message); }
 }
 
+/** True until the driver has granted background ("all the time") location — the disclosure must be shown first. */
+export async function needsLocationDisclosure(): Promise<boolean> {
+  try {
+    const bg = await Location.getBackgroundPermissionsAsync();
+    return bg.status !== 'granted';
+  } catch {
+    return true;
+  }
+}
+
 /** Ask for permission (explaining first is the caller's job) and start tracking. */
 export async function startTracking(): Promise<TrackingMode> {
   if (!(await Location.hasServicesEnabledAsync())) {
