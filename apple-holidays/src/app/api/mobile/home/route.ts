@@ -31,6 +31,18 @@ export const GET = mobileRoute('home', async (req: NextRequest) => {
   const ready = trips.find(t => !status.has(t.bookingId) && t.startDate <= today && t.endDate >= today)
   const current = running ?? ready ?? null
   const next = trips.find(t => t.startDate > today && t !== current && !status.has(t.bookingId)) ?? null
+  // Other trips on today's date (a driver can have a transfer next to a tour).
+  const alsoToday = trips
+    .filter(t => t !== current && t.startDate <= today && t.endDate >= today && status.get(t.bookingId) !== 'COMPLETED' && status.get(t.bookingId) !== 'HANDED_OVER')
+    .map(t => {
+      const day = t.days.find(d => d.date === today)
+      const first = day?.movements.find(m => m.mine && !m.noDriverNeeded) ?? null
+      return {
+        bookingRef: t.bookingRef, fileNo: t.fileNo, leadGuest: t.leadGuest, pax: t.pax, mode: t.mode,
+        dayNo: day?.dayNo ?? null, dayCount: t.days.length, legs: day?.movements.filter(m => m.mine).length ?? 0,
+        started: status.get(t.bookingId) === 'ACTIVE', firstMovement: first,
+      }
+    })
 
   const monthStart = `${today.slice(0, 7)}-01`
   const [monthDays, unread, pendingRequests, vehicleCheck] = await Promise.all([
@@ -63,6 +75,7 @@ export const GET = mobileRoute('home', async (req: NextRequest) => {
     today,
     name: actor.name,
     current: currentBlock,
+    alsoToday,
     next: next && {
       bookingRef: next.bookingRef, fileNo: next.fileNo, leadGuest: next.leadGuest, pax: next.pax,
       startDate: next.startDate, endDate: next.endDate, dayCount: next.days.length,

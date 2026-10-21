@@ -36,6 +36,11 @@ export interface Home {
     feedback: Feedback
     links: Links
   }
+  /** other trips on today's date, besides `current` */
+  alsoToday?: {
+    bookingRef: string; fileNo: string; leadGuest: string | null; pax: { adults: number; children: number }; mode: string
+    dayNo: number | null; dayCount: number; legs: number; started: boolean; firstMovement: Movement | null
+  }[]
   next: null | { bookingRef: string; fileNo: string; leadGuest: string | null; pax: { adults: number; children: number }; startDate: string; endDate: string; dayCount: number; firstMovement: Movement | null }
   upcomingCount: number
   month: { km: number; daysDriven: number; trips: number }

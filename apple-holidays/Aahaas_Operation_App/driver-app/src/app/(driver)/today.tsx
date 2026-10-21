@@ -158,6 +158,34 @@ export default function Today() {
         </Animated.View>
       )}
 
+      {!!data?.alsoToday?.length && (
+        <View style={{ gap: S.sm }}>
+          <Text style={styles.section}>ALSO TODAY · {data.alsoToday.length}</Text>
+          {data.alsoToday.map((o, i) => (
+            <Animated.View key={o.bookingRef} entering={FadeInDown.delay(200 + i * 70).springify().damping(18)}>
+              <Pressable onPress={() => router.push({ pathname: '/trip/[ref]', params: { ref: o.bookingRef } })}
+                style={({ pressed }) => [styles.also, pressed && { transform: [{ scale: 0.98 }] }]}>
+                <LinearGradient colors={o.started ? ['#34D399', '#059669'] : ['#FFB547', '#F59E0B']} style={styles.alsoTime}>
+                  <Text style={styles.alsoTimeText}>{o.firstMovement?.time ?? '—'}</Text>
+                  <Ionicons name={o.mode === 'ROUND_TRIP' ? 'repeat' : 'swap-horizontal'} size={14} color="#fff" />
+                </LinearGradient>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={styles.alsoGuest} numberOfLines={1}>{o.leadGuest ?? 'Guest'}</Text>
+                  {o.firstMovement && <Text style={styles.alsoRoute} numberOfLines={1}>{routeOf(o.firstMovement)}</Text>}
+                  <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+                    <View style={styles.alsoChip}><Text style={styles.alsoChipText}>{o.dayCount > 1 && o.dayNo ? `Day ${o.dayNo}/${o.dayCount}` : 'Transfer'}</Text></View>
+                    <View style={styles.alsoChip}><Text style={styles.alsoChipText}>{o.legs} {o.legs === 1 ? 'stop' : 'stops'}</Text></View>
+                    <View style={styles.alsoChip}><Text style={styles.alsoChipText}>{o.pax.adults + o.pax.children} {t('pax')}</Text></View>
+                    {o.started && <View style={[styles.alsoChip, { backgroundColor: C.greenSoft }]}><Text style={[styles.alsoChipText, { color: C.green }]}>Started</Text></View>}
+                  </View>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={C.dim} />
+              </Pressable>
+            </Animated.View>
+          ))}
+        </View>
+      )}
+
       {data?.next && (
         <Animated.View entering={FadeInDown.delay(220).springify().damping(18)}>
           <Pressable onPress={() => router.push({ pathname: '/trip/[ref]', params: { ref: data.next!.bookingRef } })}
@@ -196,6 +224,13 @@ export default function Today() {
 }
 
 const styles = StyleSheet.create({
+  also: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.card, borderRadius: 22, padding: 12, borderWidth: 1, borderColor: C.line },
+  alsoTime: { width: 62, height: 62, borderRadius: 18, alignItems: 'center', justifyContent: 'center', gap: 2 },
+  alsoTimeText: { color: '#fff', fontWeight: '900', fontSize: 16, fontVariant: ['tabular-nums'] },
+  alsoGuest: { color: C.text, fontWeight: '900', fontSize: 16 },
+  alsoRoute: { color: C.sub, fontSize: 13 },
+  alsoChip: { backgroundColor: C.cardHi, borderRadius: 99, paddingHorizontal: 8, paddingVertical: 3 },
+  alsoChipText: { color: C.sub, fontWeight: '800', fontSize: 11 },
   todo: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#FFFBEB', borderRadius: 20, padding: 12, borderWidth: 1, borderColor: '#FDE68A' },
   todoIcon: { width: 46, height: 46, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   todoTitle: { color: C.text, fontWeight: '900', fontSize: 16 },
