@@ -10,13 +10,15 @@
  */
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Alert, Linking, Pressable, RefreshControl, ScrollView, Share, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Sheet } from '@/components/sheet';
 import { Button, Card, ErrorBox, IconButton, Ionicons, Label, Loading, P, Pill, Row, type IconName } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { API_URL } from '@/lib/config';
 import { ago, fmtDay } from '@/lib/format';
 import { CHECKLIST, FLAG, STATUS_LABELS, money, reached, statusTone } from '@/lib/status';
@@ -31,6 +33,51 @@ interface Actions { status: string; statusLabel: string; actions: Action[]; tool
 const TABS = ['Overview', 'Agenda', 'Tickets', 'P&L', 'Timeline'] as const;
 type Tab = (typeof TABS)[number];
 
+const HERO: Record<string, [string, string]> = {
+  VIETNAM: ['#C8102E', '#7A0A1C'], SRILANKA: ['#0E7C66', '#08493C'], SINGAPORE: ['#1E3A8A', '#0E1F4F'],
+  MALAYSIA: ['#1E3A8A', '#0E1F4F'], SINGAPORE_MALAYSIA: ['#1E3A8A', '#0E1F4F'], DEFAULT: ['#1F2937', '#0E1525'],
+};
+const COUNTRY: Record<string, string> = { VIETNAM: 'Vietnam', SRILANKA: 'Sri Lanka', SINGAPORE: 'Singapore', MALAYSIA: 'Malaysia', SINGAPORE_MALAYSIA: 'Singapore · Malaysia' };
+
+/** Where the trip stands today: before (T−n), on tour (day x of n), or done. */
+function tripInfo(arr: string, dep: string) {
+  const day = (v: string) => new Date(`${String(v).slice(0, 10)}T00:00:00`).getTime();
+  const a = day(arr), z = day(dep), now = new Date().setHours(0, 0, 0, 0);
+  const total = Math.max(1, Math.round((z - a) / 86_400_000) + 1);
+  const nights = Math.max(0, total - 1);
+  if (now < a) { const n = Math.round((a - now) / 86_400_000); return { state: 'before', label: n === 1 ? 'Arrives tomorrow' : `T−${n} days`, progress: 0, days: n, nights }; }
+  if (now > z) return { state: 'done', label: 'Trip finished', progress: 1, days: 0, nights };
+  const at = Math.round((now - a) / 86_400_000) + 1;
+  return { state: 'on', label: `Day ${at} of ${total}`, progress: at / total, days: 0, nights };
+}
+
+function Glass({ text, strong }: { text: string; strong?: boolean }) {
+  return <View style={{ backgroundColor: strong ? '#FFFFFF' : '#FFFFFF2E', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 4 }}><Text style={{ color: strong ? C.text : '#FFFFFF', fontSize: 12, fontWeight: '800' }}>{text}</Text></View>;
+}
+
+function Glance({ icon, value, label, color, onPress }: { icon: IconName; value: string; label: string; color: string; onPress?: () => void }) {
+  return (
+    <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [{ minWidth: 92, padding: S.md, gap: 2, borderRadius: R.md, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, opacity: pressed ? 0.8 : 1 }, shadow]}>
+      <Ionicons name={icon} size={17} color={color} />
+      <Text style={{ color: C.text, fontSize: 17, fontWeight: '900' }}>{value}</Text>
+      <Text style={{ color: C.sub, fontSize: 11, fontWeight: '600' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/** Same role lists as /api/mobile/staff/booking-actions, for when that lookup is unavailable. */
+function fallbackTools(r: string, status: string): Record<string, boolean> {
+  const has = (l: string[]) => l.includes(r);
+  return {
+    cancel: has(['BT_USER', 'TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']) && !['COMPLETED', 'CANCELLED', 'PENDING_CANCELLATION'].includes(status),
+    pdf: has(['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']),
+    portalLink: has(['BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']),
+    whatsapp: has(['TE_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']),
+    agentEmail: has(['BT_USER', 'TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']),
+    pnl: !has(['RS_USER']),
+  };
+}
+
 function d(v: string | null | undefined) { return v ? fmtDay(String(v).slice(0, 10)) : '—'; }
 function phoneDigits(p?: string | null) { return (p ?? '').replace(/\D/g, ''); }
 
@@ -43,7 +90,7 @@ function Tool({ icon, label, onPress, tone = C.red, busy }: { icon: IconName; la
   );
 }
 
-function KV({ k, v }: { k: string; v: React.ReactNode }) {
+function KV({ k, v }: { k: string; v: ReactNode }) {
   return (
     <Row style={{ justifyContent: 'space-between', paddingVertical: 4 }}>
       <Text style={{ color: C.sub, fontSize: 14 }}>{k}</Text>
@@ -58,6 +105,8 @@ export default function BookingScreen() {
   const [b, setB] = useState<B | null>(null);
   const [acts, setActs] = useState<Actions | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actsError, setActsError] = useState<string | null>(null);
+  const { actor } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>('Overview');
   const [busy, setBusy] = useState<string | null>(null);
@@ -70,16 +119,34 @@ export default function BookingScreen() {
   const [cancel, setCancel] = useState<{ step: 'reason' | 'code'; reason: string; verificationId?: string; mask?: string; code: string } | null>(null);
   const [brief, setBrief] = useState<{ itemId: string; title: string; recipients: B[]; chosen: Set<number>; note: string; history: B[] } | null>(null);
 
+  // The booking (via the bridge) and its status buttons (read by the app API
+  // directly) are separate lookups. A miss on the buttons must not blank the
+  // page — the web routes still enforce every permission when a tool is used.
   const load = useCallback(async () => {
-    try {
-      const [bk, ac] = await Promise.all([
-        web<B>(`bookings/${enc}`),
-        api<Actions>(`/api/mobile/staff/booking-actions/${enc}`),
-      ]);
-      setB(bk); setActs(ac); setError(null);
-    } catch (e) { setError((e as Error).message); }
-    finally { setRefreshing(false); }
-  }, [enc]);
+    const [bk, ac] = await Promise.allSettled([
+      web<B>(`bookings/${enc}`),
+      api<Actions>(`/api/mobile/staff/booking-actions/${enc}`),
+    ]);
+    if (bk.status === 'fulfilled') {
+      setB(bk.value);
+      setActs(ac.status === 'fulfilled' ? ac.value : null);
+      setActsError(ac.status === 'rejected' ? (ac.reason as Error).message : null);
+      setError(null);
+    } else {
+      const e = bk.reason as ApiError;
+      // A ref typed or stored with different spacing/case: find the real one and open it.
+      if (e.status === 404) {
+        try {
+          const hit = await web<{ bookings: { bookingRef: string }[] }>(`bookings?search=${enc}&limit=5&includeCancelled=1&tests=include`);
+          const norm = (s: string) => s.replace(/\s+/g, '').toUpperCase();
+          const match = hit.bookings.find(x => norm(x.bookingRef) === norm(ref)) ?? (hit.bookings.length === 1 ? hit.bookings[0] : null);
+          if (match && match.bookingRef !== ref) { router.replace({ pathname: '/booking/[ref]', params: { ref: match.bookingRef } }); return; }
+        } catch { /* fall through to the error */ }
+      }
+      setError(e.status === 404 ? `Booking ${ref} was not found on the server. It may have been renamed by an amendment or removed.` : e.message);
+    }
+    setRefreshing(false);
+  }, [enc, ref]);
   useEffect(() => { load(); }, [load]);
 
   async function run(key: string, fn: () => Promise<string | void>, confirm?: string) {
@@ -134,10 +201,17 @@ export default function BookingScreen() {
 
   const status = String(b.status);
   const lead = (b.passengers ?? []).find((p: B) => p.isLead) ?? b.passengers?.[0];
-  const daysUntil = Math.ceil((new Date(b.arrivalDate).getTime() - Date.now()) / 86_400_000);
   const clientPhone = phoneDigits(b.contactWhatsapp || b.contactPhone);
-  const tools = acts?.tools ?? {};
+  const tools = acts?.tools ?? fallbackTools(actor?.kind === 'STAFF' ? actor.role : '', status);
   const pnl = b.pnl as B | null;
+  const trip = tripInfo(b.arrivalDate, b.departureDate);
+  const moves: B[] = (b.tourAgenda?.items ?? []).filter((i: B) => !i.isLeisure && !i.isHotelOnly);
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const glance = {
+    movements: moves.length,
+    assigned: moves.filter(i => i.assignment?.driverName || i.assignment?.vendorName).length,
+    next: moves.find(i => String(i.date).slice(0, 10) >= todayYmd) ?? null,
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
@@ -151,29 +225,55 @@ export default function BookingScreen() {
           </Row>
         </Row>
 
-        {/* Header */}
-        <Card style={{ gap: S.sm }}>
+        {/* Hero */}
+        <LinearGradient colors={HERO[b.operationCountry] ?? HERO.DEFAULT} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ borderRadius: R.lg, padding: S.lg, gap: S.sm, ...shadow }}>
           <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: C.text, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 }}>{b.bookingRef}</Text>
-              <Row gap={S.sm} style={{ flexWrap: 'wrap', marginTop: 4 }}>
-                {b.cntlNumber ? <Pill text={`CNTL ${b.cntlNumber}`} tone="blue" /> : null}
-                {b.isNumber ? <Pill text={`IS ${b.isNumber}`} tone="blue" /> : null}
-                <Pill text={`V${b.version}`} />
-              </Row>
+            <Pressable style={{ flex: 1 }} onLongPress={() => { Clipboard.setStringAsync(b.bookingRef); Haptics.selectionAsync(); }}>
+              <Text style={{ color: '#FFFFFFB3', fontSize: 12, fontWeight: '800', letterSpacing: 1 }}>{(COUNTRY[b.operationCountry] ?? 'BOOKING').toUpperCase()}{b.agent === 'Aahaas B2C' ? ' · B2C' : ''}</Text>
+              <Text style={{ color: '#FFFFFF', fontSize: 30, fontWeight: '900', letterSpacing: -0.5 }}>{b.bookingRef}</Text>
+            </Pressable>
+            <Text style={{ fontSize: 34 }}>{FLAG[b.operationCountry] ?? '🌏'}</Text>
+          </Row>
+          <Row gap={6} style={{ flexWrap: 'wrap' }}>
+            <Glass text={STATUS_LABELS[status] ?? status} strong />
+            {b.isNumber ? <Glass text={`IS ${b.isNumber}`} /> : null}
+            {b.cntlNumber ? <Glass text={`CNTL ${b.cntlNumber}`} /> : null}
+            <Glass text={`V${b.version}`} />
+          </Row>
+          <Text style={{ color: '#FFFFFF', fontSize: 19, fontWeight: '800', marginTop: 4 }} numberOfLines={1}>{lead?.name ?? 'Guest'}</Text>
+          <Text style={{ color: '#FFFFFFCC', fontSize: 13 }} numberOfLines={1}>{b.agent ?? '—'}{b.agentBookingId ? ` · Agent ${b.agentBookingId}` : ''}</Text>
+          <View style={{ marginTop: S.sm, gap: 6 }}>
+            <Row style={{ justifyContent: 'space-between' }}>
+              <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>{d(b.arrivalDate)}</Text>
+              <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 13 }}>{trip.label}</Text>
+              <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>{d(b.departureDate)}</Text>
+            </Row>
+            <View style={{ height: 6, borderRadius: 3, backgroundColor: '#FFFFFF40', overflow: 'hidden' }}>
+              <View style={{ width: `${Math.round(trip.progress * 100)}%`, height: 6, backgroundColor: '#FFFFFF' }} />
             </View>
-            <Text style={{ fontSize: 28 }}>{FLAG[b.operationCountry] ?? '🌏'}</Text>
-          </Row>
-          <Pill text={STATUS_LABELS[status] ?? status} tone={statusTone(status)} />
-          <Text style={{ color: C.text, fontSize: 17, fontWeight: '700' }}>{lead?.name ?? 'Guest'}</Text>
-          <Text style={{ color: C.sub }}>{b.agent ?? '—'}{b.agentBookingId ? ` · Agent ${b.agentBookingId}` : ''}</Text>
-          <Row gap={S.lg} style={{ flexWrap: 'wrap' }}>
-            <Row gap={4}><Ionicons name="calendar-outline" size={15} color={C.sub} /><Text style={{ color: C.text }}>{d(b.arrivalDate)} → {d(b.departureDate)}</Text></Row>
-            <Row gap={4}><Ionicons name="people-outline" size={15} color={C.sub} /><Text style={{ color: C.text }}>{b.paxAdults}A {b.paxChildren}C</Text></Row>
-            {b.quotedTotal != null && <Row gap={4}><Ionicons name="card-outline" size={15} color={C.sub} /><Text style={{ color: C.text }}>{money(b.quotedTotal, b.currency)}</Text></Row>}
-          </Row>
-          {daysUntil > 0 && <Text style={{ color: daysUntil <= 7 ? C.red : daysUntil <= 21 ? C.amber : C.sub, fontWeight: '700' }}>T−{daysUntil} days{daysUntil <= 21 ? ' · cancellation penalty window' : ''}</Text>}
-        </Card>
+          </View>
+        </LinearGradient>
+
+        {/* At a glance */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm }}>
+          <Glance icon="people" value={`${b.paxAdults ?? 0}A ${b.paxChildren ?? 0}C`} label="Guests" color={C.blue} />
+          <Glance icon="moon" value={String(trip.nights)} label="Nights" color="#7C3AED" />
+          <Glance icon="bed" value={String((b.accommodations ?? []).length)} label="Hotels" color={C.gold} />
+          <Glance icon="airplane" value={String((b.flights ?? []).length)} label="Flights" color="#0891B2" />
+          <Glance icon="car" value={`${glance.assigned}/${glance.movements}`} label="Drivers set" color={glance.movements && glance.assigned < glance.movements ? C.red : C.green} onPress={() => setTab('Agenda')} />
+          <Glance icon="ticket" value={String((b.tickets ?? []).length)} label="Tickets" color={C.amber} onPress={() => setTab('Tickets')} />
+          {b.quotedTotal != null ? <Glance icon="card" value={money(b.quotedTotal, b.currency).replace(/\.00$/, '')} label="Quoted" color={C.green} /> : null}
+        </ScrollView>
+        {trip.days > 0 && trip.days <= 21 && <Card tone={trip.days <= 7 ? 'red' : 'gold'} style={{ padding: S.md }}><Row><Ionicons name="alarm" size={18} color={trip.days <= 7 ? C.red : C.gold} /><Text style={{ color: C.text, flex: 1, fontWeight: '600' }}>Arrives in {trip.days} day{trip.days === 1 ? '' : 's'} · inside the cancellation penalty window</Text></Row></Card>}
+        {glance.next && (
+          <Card onPress={() => setTab('Agenda')} style={{ gap: 4, borderLeftWidth: 4, borderLeftColor: C.red }}>
+            <Label>{trip.state === 'on' ? 'Next movement' : 'First movement'}</Label>
+            <Text style={{ color: C.text, fontWeight: '800' }}>{d(glance.next.date)}{glance.next.meetingTime || glance.next.timeFrom ? ` · ${glance.next.meetingTime || glance.next.timeFrom}` : ''}</Text>
+            <Text style={{ color: C.sub }} numberOfLines={2}>{glance.next.fromPoint || glance.next.location}{glance.next.toPoint ? ` → ${glance.next.toPoint}` : ''}</Text>
+            <Text style={{ color: glance.next.assignment?.driverName ? C.green : C.red, fontWeight: '700', fontSize: 13 }}>{glance.next.assignment?.driverName ? `🚗 ${glance.next.assignment.driverName}` : 'No driver yet'}</Text>
+          </Card>
+        )}
+        {actsError && <Card tone="gold" style={{ padding: S.md }}><Row><Ionicons name="information-circle" size={18} color={C.gold} /><Text style={{ color: C.text, flex: 1, fontSize: 13 }}>Status buttons couldn’t load ({actsError}). Everything else works. Move the status on ops.aahaas.com for now.</Text></Row></Card>}
 
         {/* Operation checklist */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm }}>

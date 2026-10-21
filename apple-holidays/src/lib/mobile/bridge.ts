@@ -23,6 +23,8 @@ import type { StaffActor } from './auth'
 const ALLOWED_PREFIXES = [
   'bookings', 'tickets', 'mc-report', 'whatsapp', 'chat', 'ground', 'driver-auto', 'srilanka',
   'feedbacks', 'ops-ai/pdf', 'verification/request', 'overview', 'dashboard', 'currency', 'vn-checklist',
+  // Read-only ops readiness board (Accounts → Reports). No money on it by design.
+  'accounts/report/ops',
 ]
 
 /**

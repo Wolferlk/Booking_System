@@ -38,6 +38,7 @@ export default function More() {
       <Label>Operations</Label>
       <Card style={{ paddingVertical: S.xs }}>
         <Item icon="grid" label="MC Report" hint="Movements, drivers, what needs a driver" onPress={() => router.push('/mc-report')} />
+        <Item icon="speedometer" label="Ops Board" hint="Who is on the ground and is every tour ready" tone={C.blue} onPress={() => router.push('/ops-board')} />
         <Item icon="map" label="Live drivers" hint="Who is on the road, km today" tone={C.green} onPress={() => router.push('/live')} />
         <Item icon="file-tray-full" label="Driver requests" hint="Help calls, driver changes, vehicle photos" tone={C.amber} onPress={() => router.push('/inbox')} />
         <Item icon="car-sport" label="Drivers & vehicles" tone={C.blue} onPress={() => router.push('/drivers')} />

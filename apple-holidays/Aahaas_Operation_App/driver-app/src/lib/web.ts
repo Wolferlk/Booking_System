@@ -46,6 +46,19 @@ export async function webAction(path: string, body: unknown = {}, method = 'POST
   return json?.message ?? 'Done';
 }
 
+/** Multipart POST through the bridge (file uploads such as whatsapp/send-media). */
+export async function webForm(path: string, form: FormData): Promise<string> {
+  const token = await getToken();
+  const res = await fetch(`${API_URL}/api/mobile/web/${path}`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: form,
+  }).catch(() => { throw new ApiError('No internet connection. Please try again.', 0, 'offline'); });
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.success === false) throw new ApiError(json?.error || json?.message || `Server error (${res.status})`, res.status, json?.code);
+  return json?.message ?? 'Done';
+}
+
 /** Download a file from a web API path (PDF, Word) and open the share / preview sheet. */
 export async function openWebFile(path: string, filename: string): Promise<void> {
   const token = await getToken();
