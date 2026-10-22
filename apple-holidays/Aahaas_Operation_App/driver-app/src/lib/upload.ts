@@ -1,6 +1,17 @@
 import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { api } from './api';
+
+/**
+ * A local file as a multipart part. SDK 57 installs expo/fetch as the global
+ * fetch, and it rejects React Native's `{ uri, name, type }` descriptors (the
+ * request throws before leaving the phone); it reads parts that carry
+ * `bytes()`, taking the filename and Content-Type from `name` and `type`.
+ */
+export function filePart(f: { uri: string; name: string; type: string }): Blob {
+  return { name: f.name, type: f.type, bytes: () => new File(f.uri).bytes() } as unknown as Blob;
+}
 
 /** Take a photo (or pick one) and upload it. Returns the server URL, or null if cancelled. */
 export async function takeAndUpload(kind: 'vehicle' | 'profile' | 'odometer', from: 'camera' | 'library' = 'camera'): Promise<{ url: string; localUri: string } | null> {
@@ -13,8 +24,7 @@ export async function takeAndUpload(kind: 'vehicle' | 'profile' | 'odometer', fr
   const type = a.mimeType && a.mimeType !== 'image/heic' ? a.mimeType : 'image/jpeg';
   const form = new FormData();
   form.append('kind', kind);
-  // React Native's FormData takes a { uri, name, type } file descriptor.
-  form.append('file', { uri: a.uri, name: `${kind}.${type === 'image/png' ? 'png' : 'jpg'}`, type } as unknown as Blob);
+  form.append('file', filePart({ uri: a.uri, name: `${kind}.${type === 'image/png' ? 'png' : 'jpg'}`, type }));
   const r = await api<{ url: string }>('/api/mobile/upload', { form });
   return { url: r.url, localUri: a.uri };
 }
@@ -45,7 +55,6 @@ export async function pickTicketFiles(from: 'camera' | 'library' | 'pdf'): Promi
 export function filesForm(files: PickedFile[], fields: Record<string, string> = {}): FormData {
   const form = new FormData();
   for (const [k, v] of Object.entries(fields)) form.append(k, v);
-  // React Native's FormData takes a { uri, name, type } file descriptor.
-  for (const f of files) form.append('files', f as unknown as Blob);
+  for (const f of files) form.append('files', filePart(f));
   return form;
 }

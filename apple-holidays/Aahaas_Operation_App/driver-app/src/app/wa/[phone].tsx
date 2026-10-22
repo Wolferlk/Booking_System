@@ -25,6 +25,7 @@ import { API_URL } from '@/lib/config';
 import { fmtRange } from '@/lib/format';
 import { STATUS_LABELS } from '@/lib/status';
 import { C, R, S } from '@/lib/theme';
+import { filePart } from '@/lib/upload';
 import { fmtLeft, loadQuickReplies, saveCustomQuickReplies, tickFor, windowLeft, type Pending, type QuickReply } from '@/lib/wa';
 import { openWebFile, web, webAction, webForm, webImageSource } from '@/lib/web';
 
@@ -159,8 +160,7 @@ export default function WaThread() {
         const form = new FormData();
         form.append('phone', phone);
         if (p.text) form.append('caption', p.text);
-        // React Native's FormData takes a { uri, name, type } file descriptor.
-        form.append('file', { uri: p.file.uri, name: p.file.name, type: p.file.type } as unknown as Blob);
+        form.append('file', filePart(p.file));
         await webForm('whatsapp/send-media', form);
       }
       await load();

@@ -5,10 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertCircle, ArrowDown, ArrowLeft, BellRing, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
-  Copy, Download, ExternalLink, FileText, Inbox, Keyboard, LayoutTemplate, Loader2, MessageCircle,
-  MessageSquarePlus, Paperclip, Pin, PinOff, Plus, RefreshCw, Reply, Search, Send, Smile, Sparkles,
-  Trash2, VolumeX, WifiOff, X, Zap,
+  AlertCircle, ArrowDown, ArrowLeft, BellRing, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
+  Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderSearch, Hash, Inbox, Keyboard, LayoutTemplate,
+  Loader2, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, Search,
+  Send, Smile, Sparkles, Trash2, User, VolumeX, WifiOff, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
@@ -18,11 +18,31 @@ import {
   CONV_POLL_MS, DEFAULT_QUICK_REPLIES, DOODLE_BG, EMOJIS, THREAD_POLL_MS, UNASSIGNED, WA_TEXT_LIMIT,
   avatarGradient, conversationsSignature, countryGroupKey, downloadText, fmtAgo, fmtDate, fmtDayLabel,
   fmtDuration, fmtListStamp, fmtTime, initials, messagesSignature, playChime, readLocal, writeLocal,
-  type Conversation, type PendingMessage, type QuickReply, type RelatedThread, type ThreadBooking, type WaMessage,
+  type BookingLookup, type Conversation, type PendingMessage, type SearchField, type QuickReply, type RelatedThread, type ThreadBooking, type WaMessage,
 } from '@/components/whatsapp-inbox/shared'
 import { TemplatesModal } from '@/components/whatsapp-inbox/templates-modal'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country'
+
+/** How each search hit is labelled in the list. */
+const MATCH_META: Record<SearchField, { label: string; icon: typeof Hash; tone: string }> = {
+  isNumber:   { label: 'IS no.',  icon: Hash,          tone: 'bg-emerald-100 text-emerald-700' },
+  bookingRef: { label: 'Ref',     icon: FileText,      tone: 'bg-blue-100 text-blue-700' },
+  cntl:       { label: 'CNTL',    icon: FileText,      tone: 'bg-blue-100 text-blue-700' },
+  guest:      { label: 'Guest',   icon: User,          tone: 'bg-violet-100 text-violet-700' },
+  deal:       { label: 'Deal',    icon: Briefcase,     tone: 'bg-orange-100 text-orange-700' },
+  name:       { label: 'Name',    icon: User,          tone: 'bg-slate-200 text-slate-700' },
+  phone:      { label: 'Number',  icon: Phone,         tone: 'bg-slate-200 text-slate-700' },
+  message:    { label: 'Message', icon: MessageCircle, tone: 'bg-amber-100 text-amber-800' },
+}
+
+/** File-number prefixes offered as one-tap searches (see lib/country-detection). */
+const PREFIX_CHIPS = [
+  { prefix: 'VN', flag: '🇻🇳', title: 'Vietnam files' },
+  { prefix: 'IS', flag: '🇱🇰', title: 'Sri Lanka files' },
+  { prefix: 'SG', flag: '🇸🇬', title: 'Singapore files' },
+  { prefix: 'MY', flag: '🇲🇾', title: 'Malaysia files' },
+]
 
 const PINS_KEY = 'wa-inbox:pins'
 const QR_KEY = 'wa-inbox:quick-replies'
@@ -82,6 +102,9 @@ function WhatsAppInboxInner() {
   const [convLoading, setConvLoading] = useState(true)
   const [convRefreshing, setConvRefreshing] = useState(false)
   const [search, setSearch] = useState('')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const [matchFilter, setMatchFilter] = useState<SearchField | null>(null)
+  const [lookups, setLookups] = useState<BookingLookup[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<ListTab>('all')
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
@@ -222,6 +245,21 @@ function WhatsAppInboxInner() {
   }, [search, loadConversations])
 
   usePolling(loadConversations, CONV_POLL_MS, true)
+
+  // Files that match the search — including ones nobody has messaged yet.
+  useEffect(() => {
+    setMatchFilter(null)
+    const q = search.trim()
+    if (q.length < 2) { setLookups([]); return }
+    let live = true
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/whatsapp/lookup?q=${encodeURIComponent(q)}`, { cache: 'no-store' }).then(r => r.json())
+        if (live && res.success) setLookups(res.data as BookingLookup[])
+      } catch { /* the chat results still show */ }
+    }, 300)
+    return () => { live = false; clearTimeout(t) }
+  }, [search])
 
   // ── thread ────────────────────────────────────────────────────────────────
   const loadMessages = useCallback(async (phone: string, opts: { initial?: boolean } = {}) => {
@@ -635,9 +673,31 @@ function WhatsAppInboxInner() {
     if (tab === 'unread') list = list.filter(c => c.unreadCount > 0 || c.phone === selected)
     if (tab === 'pinned') list = list.filter(c => pins.includes(c.phone))
     if (tab === 'country' && countryFilter) list = list.filter(c => countryGroupKey(c.booking?.operationCountry) === countryFilter)
+    if (matchFilter) list = list.filter(c => c.match?.field === matchFilter)
     if (!pins.length) return list
     return [...list.filter(c => pins.includes(c.phone)), ...list.filter(c => !pins.includes(c.phone))]
-  }, [conversations, tab, countryFilter, pins, selected])
+  }, [conversations, tab, countryFilter, pins, selected, matchFilter])
+
+  // "9 by IS no. · 3 by message" — what the search actually hit, as filters.
+  const matchCounts = useMemo(() => {
+    const counts = new Map<SearchField, number>()
+    for (const c of conversations) if (c.match) counts.set(c.match.field, (counts.get(c.match.field) ?? 0) + 1)
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+  }, [conversations])
+
+  // Matching files with a number that isn't already in the list above.
+  const lookupCards = useMemo(() => {
+    const listed = new Set(conversations.map(c => c.phone))
+    return lookups.filter(l => l.numbers.some(n => !listed.has(n.phone)))
+  }, [lookups, conversations])
+
+  /** Enter in the search box opens the top result. */
+  function openTopResult() {
+    const top = visibleConversations[0]
+    if (top) { openConversation(top.phone); return }
+    const n = lookupCards[0]?.numbers[0]
+    if (n) openConversation(n.phone)
+  }
 
   // Unread count in the browser tab title.
   useEffect(() => {
@@ -793,7 +853,10 @@ function WhatsAppInboxInner() {
               ref={searchInputRef}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search name or number…"
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); openTopResult() } }}
+              placeholder="IS number, ref, guest, phone or message…"
               className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-16 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
             />
             <span className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
@@ -806,6 +869,61 @@ function WhatsAppInboxInner() {
               )}
             </span>
           </div>
+
+          <AnimatePresence initial={false}>
+            {searchFocused && !search && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-wrap items-center gap-1.5 pt-2">
+                  <span className="text-[10.5px] font-semibold uppercase tracking-wide text-slate-400">Files</span>
+                  {PREFIX_CHIPS.map(p => (
+                    <button
+                      key={p.prefix}
+                      title={p.title}
+                      onMouseDown={e => { e.preventDefault(); setSearch(p.prefix) }}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 font-mono text-[11px] font-bold text-slate-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+                    >
+                      <span className="font-sans">{p.flag}</span>{p.prefix}…
+                    </button>
+                  ))}
+                </div>
+                <p className="pt-1.5 text-[10.5px] leading-snug text-slate-400">
+                  Type an IS number like <span className="font-mono font-semibold text-slate-500">VN12345</span>, a booking ref, the guest&apos;s name, a phone number or words from a message.{' '}
+                  <span className="inline-flex items-center gap-0.5 font-semibold"><CornerDownLeft className="h-2.5 w-2.5" /> opens the top result</span>
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence initial={false}>
+            {search.trim() && matchCounts.length > 0 && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="flex flex-wrap items-center gap-1.5 pt-2">
+                  <span className="text-[10.5px] font-semibold text-slate-400">Found by</span>
+                  {matchCounts.map(([field, n]) => {
+                    const meta = MATCH_META[field]
+                    const Icon = meta.icon
+                    const on = matchFilter === field
+                    return (
+                      <button
+                        key={field}
+                        onClick={() => setMatchFilter(on ? null : field)}
+                        title={on ? 'Show every match' : `Only chats found by ${meta.label}`}
+                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold transition ${on ? 'bg-slate-900 text-white' : `${meta.tone} hover:brightness-95`}`}
+                      >
+                        <Icon className="h-3 w-3" /> {meta.label} <span className="opacity-70">{n}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="mt-3 flex gap-1 rounded-xl bg-slate-100/80 p-1">
             {tabs.map(t => (
@@ -860,29 +978,40 @@ function WhatsAppInboxInner() {
                 </div>
               ))}
             </div>
-          ) : visibleConversations.length === 0 ? (
+          ) : visibleConversations.length === 0 && lookupCards.length === 0 ? (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center">
               {tab === 'pinned' ? <Pin className="mx-auto mb-2 h-8 w-8 text-slate-300" /> : <Inbox className="mx-auto mb-2 h-8 w-8 text-slate-300" />}
               <p className="text-sm font-semibold text-slate-500">
                 {search ? 'No matches' : tab === 'unread' ? 'All caught up 🎉' : tab === 'pinned' ? 'No pinned chats' : tab === 'country' ? 'No chats for this country' : 'No conversations yet'}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                {search ? 'Try a different name or number.' : tab === 'pinned' ? 'Hover a chat and press the pin to keep it on top.' : 'Incoming WhatsApp messages will appear here.'}
+                {search ? 'Try an IS number (VN12345), booking ref, guest name, phone or message text.' : tab === 'pinned' ? 'Hover a chat and press the pin to keep it on top.' : 'Incoming WhatsApp messages will appear here.'}
               </p>
             </motion.div>
           ) : (
-            <AnimatePresence initial={false}>
-              {visibleConversations.map(c => (
-                <ConversationRow
-                  key={c.phone}
-                  c={c}
-                  active={c.phone === selected}
-                  pinned={pins.includes(c.phone)}
-                  onOpen={() => openConversation(c.phone)}
-                  onTogglePin={() => togglePin(c.phone)}
+            <>
+              <AnimatePresence initial={false}>
+                {visibleConversations.map(c => (
+                  <ConversationRow
+                    key={c.phone}
+                    c={c}
+                    query={search.trim()}
+                    active={c.phone === selected}
+                    pinned={pins.includes(c.phone)}
+                    onOpen={() => openConversation(c.phone)}
+                    onTogglePin={() => togglePin(c.phone)}
+                  />
+                ))}
+              </AnimatePresence>
+              {search.trim() && lookupCards.length > 0 && (
+                <LookupResults
+                  lookups={lookupCards}
+                  query={search.trim()}
+                  listed={new Set(conversations.map(c => c.phone))}
+                  onOpen={openConversation}
                 />
-              ))}
-            </AnimatePresence>
+              )}
+            </>
           )}
         </div>
 
@@ -990,6 +1119,7 @@ function WhatsAppInboxInner() {
                     <FileText className="h-3 w-3 shrink-0 text-blue-500" />
                     <span className="truncate font-bold text-slate-800">
                       {threadBooking.operationCountry && <span className="mr-1">{countryFlag(threadBooking.operationCountry)}</span>}
+                      {threadBooking.isNumber && <span className="mr-1 font-mono text-emerald-700">{threadBooking.isNumber}</span>}
                       {threadBooking.bookingRef}{threadBooking.leadName ? ` · ${threadBooking.leadName}` : ''}
                     </span>
                     <span className="hidden text-slate-500 sm:inline">{fmtDate(threadBooking.arrivalDate)} → {fmtDate(threadBooking.departureDate)}</span>
@@ -1460,8 +1590,93 @@ function Avatar({ seed, name, phone, size = 44, ring }: { seed: string; name: st
   )
 }
 
-function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
+/**
+ * Wraps the part of `text` the search hit in a <mark>. File numbers match
+ * loosely ("vn12345" finds "VN 12345"), so fall back to a letters-and-digits
+ * comparison and map the hit back onto the original characters.
+ */
+function MatchHighlight({ text, query }: { text: string; query: string }) {
+  const range = findLoose(text, query)
+  if (!range) return <>{text}</>
+  const [from, to] = range
+  return (
+    <>
+      {text.slice(0, from)}
+      <mark className="rounded-[3px] bg-yellow-200/80 px-px text-inherit">{text.slice(from, to)}</mark>
+      {text.slice(to)}
+    </>
+  )
+}
+
+function findLoose(text: string, query: string): [number, number] | null {
+  const q = query.trim().toLowerCase()
+  if (!q) return null
+  const at = text.toLowerCase().indexOf(q)
+  if (at >= 0) return [at, at + q.length]
+  const cq = q.replace(/[^a-z0-9]/g, '')
+  if (!cq) return null
+  let compact = ''
+  const index: number[] = []
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i].toLowerCase()
+    if (/[a-z0-9]/.test(ch)) { compact += ch; index.push(i) }
+  }
+  const k = compact.indexOf(cq)
+  return k < 0 ? null : [index[k], index[k + cq.length - 1] + 1]
+}
+
+/** Matching files whose numbers aren't in the chat list — open or start a chat. */
+function LookupResults({ lookups, query, listed, onOpen }: {
+  lookups: BookingLookup[]
+  query: string
+  listed: Set<string>
+  onOpen: (phone: string) => void
+}) {
+  return (
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="mt-2 px-1">
+      <p className="mb-1.5 flex items-center gap-1.5 px-2 text-[10.5px] font-bold uppercase tracking-wide text-slate-400">
+        <FolderSearch className="h-3.5 w-3.5" /> Matching files · not in the chat list
+      </p>
+      <div className="space-y-1.5">
+        {lookups.map(l => (
+          <div key={l.bookingRef} className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-3 py-2.5">
+            <div className="flex items-center gap-1.5 text-[12px]">
+              {l.operationCountry && <span>{countryFlag(l.operationCountry)}</span>}
+              {l.isNumber && <span className="font-mono font-bold text-slate-900"><MatchHighlight text={l.isNumber} query={query} /></span>}
+              <Link href={`/dashboard/bookings/${l.bookingRef}`} target="_blank" className="font-semibold text-blue-600 hover:underline">
+                <MatchHighlight text={l.bookingRef} query={query} />
+              </Link>
+              <span className={`ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold ${STATUS_COLORS[l.status]}`}>{STATUS_LABELS[l.status]}</span>
+            </div>
+            {l.leadName && (
+              <p className="mt-0.5 truncate text-[11.5px] text-slate-500"><User className="mr-1 inline h-3 w-3 -translate-y-px" /><MatchHighlight text={l.leadName} query={query} /></p>
+            )}
+            <div className="mt-1.5 space-y-1">
+              {l.numbers.filter(n => !listed.has(n.phone)).map(n => (
+                <button
+                  key={n.phone}
+                  onClick={() => onOpen(n.phone)}
+                  className="group flex w-full items-center gap-2 rounded-xl bg-white px-2.5 py-1.5 text-left text-[11.5px] ring-1 ring-slate-200 transition hover:ring-emerald-300"
+                >
+                  <Phone className="h-3 w-3 shrink-0 text-slate-400" />
+                  <span className="font-mono font-semibold text-slate-700">+{n.phone}</span>
+                  <span className="truncate text-slate-400">{n.label}</span>
+                  <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-bold transition ${n.hasChat ? 'bg-blue-50 text-blue-700 group-hover:bg-blue-100' : 'bg-emerald-50 text-emerald-700 group-hover:bg-emerald-100'}`}>
+                    {n.hasChat ? 'Open chat' : 'Start chat'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
+function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
   c: Conversation
+  query: string
   active: boolean
   pinned: boolean
   onOpen: () => void
@@ -1492,7 +1707,7 @@ function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className={`min-w-0 flex-1 truncate text-[13.5px] ${hasUnread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
-              {c.displayName || `+${c.phone}`}
+              <MatchHighlight text={c.displayName || `+${c.phone}`} query={query} />
             </span>
             {pinned && <Pin className="h-3 w-3 shrink-0 rotate-45 text-emerald-500" />}
             <span className={`shrink-0 text-[11px] ${hasUnread ? 'font-bold text-emerald-600' : 'text-slate-400'}`}>{fmtListStamp(c.updatedAt)}</span>
@@ -1513,11 +1728,29 @@ function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
               )}
             </AnimatePresence>
           </span>
+          {c.match && showMatchLine(c) && (() => {
+            const meta = MATCH_META[c.match.field]
+            const Icon = meta.icon
+            return (
+              <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-slate-600">
+                <span className={`inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-px text-[9.5px] font-bold uppercase ${meta.tone}`}>
+                  <Icon className="h-2.5 w-2.5" /> {meta.label}
+                </span>
+                <span className={`min-w-0 truncate ${c.match.field === 'message' ? 'italic' : 'font-semibold'}`}>
+                  {c.match.field === 'message' ? '“' : ''}<MatchHighlight text={c.match.text} query={query} />{c.match.field === 'message' ? '”' : ''}
+                </span>
+              </span>
+            )
+          })()}
           {c.booking && (
-            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
+            <span className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
               {c.booking.operationCountry && <span>{countryFlag(c.booking.operationCountry)}</span>}
-              {c.booking.bookingRef}
-              <span className={`ml-0.5 rounded-full px-1 ${STATUS_COLORS[c.booking.status]}`}>{STATUS_LABELS[c.booking.status]}</span>
+              {c.booking.isNumber && (
+                <span className="font-mono text-emerald-700"><MatchHighlight text={c.booking.isNumber} query={query} /></span>
+              )}
+              {c.booking.isNumber && <span className="text-blue-300">·</span>}
+              <span className="truncate"><MatchHighlight text={c.booking.bookingRef} query={query} /></span>
+              <span className={`ml-0.5 shrink-0 rounded-full px-1 ${STATUS_COLORS[c.booking.status]}`}>{STATUS_LABELS[c.booking.status]}</span>
             </span>
           )}
         </span>
@@ -1531,6 +1764,20 @@ function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
       </button>
     </motion.div>
   )
+}
+
+/**
+ * The title and the booking chip already highlight name, number, IS no. and ref
+ * hits — only spell the match out when it's something the row doesn't show.
+ */
+function showMatchLine(c: Conversation) {
+  const m = c.match
+  if (!m) return false
+  if (m.field === 'name') return false
+  if (m.field === 'phone') return !!c.displayName
+  if (m.field === 'isNumber') return c.booking?.isNumber !== m.text
+  if (m.field === 'bookingRef') return c.booking?.bookingRef !== m.text
+  return true
 }
 
 const TICK_LABEL: Record<string, string> = {

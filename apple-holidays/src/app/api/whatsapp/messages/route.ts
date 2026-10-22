@@ -103,6 +103,7 @@ export async function GET(req: NextRequest) {
     })
     booking = {
       bookingRef:       bookingRow.bookingRef,
+      isNumber:         bookingRow.isNumber,
       leadName:         lead?.name ?? null,
       status:           bookingRow.status,
       operationCountry: bookingRow.operationCountry,

@@ -4,8 +4,30 @@ import type { BookingStatus, OperationCountry } from '@prisma/client'
 
 export interface ConversationBooking {
   bookingRef: string
+  /** The Apple file number staff search by — "VN12345", "IS4521". */
+  isNumber?: string | null
+  leadName?: string | null
   status: BookingStatus
   operationCountry: OperationCountry | null
+}
+
+export type SearchField = 'isNumber' | 'bookingRef' | 'cntl' | 'guest' | 'deal' | 'name' | 'phone' | 'message'
+
+/** Why a chat is in the search results (see lib/whatsapp-inbox-search). */
+export interface SearchMatch {
+  field: SearchField
+  text: string
+}
+
+/** A booking the search found, with every number on it — /api/whatsapp/lookup. */
+export interface BookingLookup {
+  bookingRef: string
+  isNumber: string | null
+  leadName: string | null
+  status: BookingStatus
+  operationCountry: OperationCountry | null
+  match: SearchMatch
+  numbers: { phone: string; label: string; hasChat: boolean; lastAt: string | null }[]
 }
 
 export interface Conversation {
@@ -18,6 +40,8 @@ export interface Conversation {
   updatedAt: string
   unreadCount: number
   booking: ConversationBooking | null
+  /** Present only in search results. */
+  match?: SearchMatch | null
 }
 
 export interface WaMessage {
@@ -195,7 +219,7 @@ export function messagesSignature(ms: WaMessage[]) {
 }
 
 export function conversationsSignature(cs: Conversation[]) {
-  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}`).join('|')
+  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}:${c.booking?.isNumber ?? ''}:${c.match?.field ?? ''}:${c.match?.text ?? ''}`).join('|')
 }
 
 export function readLocal<T>(key: string, fallback: T): T {
