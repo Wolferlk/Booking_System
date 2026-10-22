@@ -185,6 +185,9 @@ export interface ResolvedParty {
   vehicleType: string | null
   vehiclePlate: string | null
   capacity: number | null
+  /** DRIVER only: the vehicle vendor this driver works for. Their trips come from the vendor, never from the open board. */
+  vendorId: string | null
+  vendorName: string | null
 }
 
 export async function resolveParty(type: PartyType, id: string): Promise<ResolvedParty | null> {
@@ -192,8 +195,9 @@ export async function resolveParty(type: PartyType, id: string): Promise<Resolve
     const d = await prisma.driver.findUnique({
       where: { id },
       select: {
-        id: true, name: true, phone: true, email: true, country: true, isActive: true,
+        id: true, name: true, phone: true, email: true, country: true, isActive: true, vendorId: true,
         vehicle: { select: { type: true, plateNo: true, capacity: true } },
+        vendorOwner: { select: { name: true } },
       },
     })
     if (!d) return null
@@ -203,6 +207,7 @@ export async function resolveParty(type: PartyType, id: string): Promise<Resolve
       isActive: d.isActive,
       vehicleType: d.vehicle?.type ?? null, vehiclePlate: d.vehicle?.plateNo ?? null,
       capacity: d.vehicle?.capacity ?? null,
+      vendorId: d.vendorId ?? null, vendorName: d.vendorOwner?.name ?? null,
     }
   }
   const v = await prisma.vehicleVendor.findUnique({
@@ -214,5 +219,6 @@ export async function resolveParty(type: PartyType, id: string): Promise<Resolve
     key: partyKey('VENDOR', v.id), type, id: v.id, name: v.name,
     phone: v.whatsappPhone || v.phone || null, email: v.email || null, country: v.country ?? null,
     isActive: v.isActive, vehicleType: null, vehiclePlate: null, capacity: null,
+    vendorId: null, vendorName: null,
   }
 }

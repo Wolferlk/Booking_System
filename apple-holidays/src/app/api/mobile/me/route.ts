@@ -18,6 +18,7 @@ import { MobileError, mobileRoute, readJson } from '@/lib/mobile/http'
 import { PROFILE_FIELDS, driverProfile, staffProfile } from '@/lib/mobile/profile'
 import { notifyStaff } from '@/lib/mobile/notify'
 import { refuseForSandbox } from '@/lib/mobile/sandbox'
+import { vendorProfile } from '@/lib/mobile/vendor'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,6 +26,7 @@ const LANGS = ['en', 'si', 'ta', 'vi']
 
 export const GET = mobileRoute('me', async (req: NextRequest) => {
   const actor = await requireActor(req)
+  if (actor.kind === 'VENDOR') return buildApiSuccess(await vendorProfile(actor.vendorId))
   const profile = actor.kind === 'DRIVER' ? await driverProfile(actor.driverId) : await staffProfile(actor.userId)
   const pending = actor.kind === 'DRIVER'
     ? await prisma.mobileDriverRequest.count({ where: { driverId: actor.driverId, kind: 'PROFILE_CHANGE', status: 'PENDING' } })

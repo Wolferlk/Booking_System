@@ -20,6 +20,9 @@ function Root() {
     const sub = Notifications.addNotificationResponseReceivedListener(r => {
       const d = r.notification.request.content.data as { bookingRef?: string; screen?: string; requestId?: string } | undefined;
       if (d?.screen === 'vehicle') router.push('/vehicle-check');
+      else if (d?.screen === 'vendor-trip') router.push('/fleet-trips');
+      else if (d?.screen === 'vendor-market') router.push('/fleet-market');
+      else if (d?.screen === 'get-trips') router.push('/get-trips');
       else if (d?.bookingRef && d.screen === 'trip') router.push({ pathname: '/trip/[ref]', params: { ref: d.bookingRef } });
       else router.push('/notifications');
     });
@@ -33,6 +36,9 @@ function Root() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(driver)" />
       <Stack.Screen name="(staff)" />
+      <Stack.Screen name="(vendor)" />
+      <Stack.Screen name="fleet/driver" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="fleet/vehicle" options={{ presentation: 'modal' }} />
       <Stack.Screen name="trip/start" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="trip/finish" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
       <Stack.Screen name="help" options={{ presentation: 'modal' }} />

@@ -1,13 +1,13 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ColorValue } from 'react-native';
 import { Redirect, Tabs } from 'expo-router';
-import { useAuth } from '@/lib/auth';
+import { homeFor, useAuth } from '@/lib/auth';
 import { C } from '@/lib/theme';
 
 export default function CompanyTabs() {
   const { actor } = useAuth();
   if (!actor) return <Redirect href="/welcome" />;
-  if (actor.kind !== 'STAFF') return <Redirect href="/today" />;
+  if (actor.kind !== 'STAFF') return <Redirect href={homeFor(actor)} />;
   const icon = (name: keyof typeof Ionicons.glyphMap) => function TabIcon({ color, size }: { color: ColorValue; size: number }) {
     return <Ionicons name={name} color={color} size={size + 1} />;
   };

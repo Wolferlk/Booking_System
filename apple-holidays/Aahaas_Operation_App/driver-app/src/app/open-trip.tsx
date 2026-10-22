@@ -10,17 +10,20 @@ import { openMaps } from '@/components/day-plan';
 import { Button, Card, ErrorBox, H1, IconButton, Ionicons, Label, Loading, Pill, Row, Screen } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api, ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtDay, fmtRange } from '@/lib/format';
 import { useT } from '@/lib/i18n';
-import { cachedTrip, rememberTrips, type OpenTrip } from '@/lib/open-trips';
+import { cachedTrip, openTripsPath, rememberTrips, type OpenTrip } from '@/lib/open-trips';
 import { C, S } from '@/lib/theme';
 
 export default function OpenTripScreen() {
   const { key } = useLocalSearchParams<{ key: string }>();
   const t = useT();
+  const { actor } = useAuth();
+  const path = openTripsPath(actor);
   const cached = cachedTrip(key);
   // Always refresh, so a trip just taken by someone else shows as gone.
-  const { data, error, loading, reload } = useLoad<{ trips: OpenTrip[] }>('/api/mobile/open-trips');
+  const { data, error, loading, reload } = useLoad<{ trips: OpenTrip[] }>(path);
   if (data) rememberTrips(data.trips);
   const trip = data ? data.trips.find(x => x.key === key) ?? null : cached;
   const [busy, setBusy] = useState(false);
@@ -40,9 +43,9 @@ export default function OpenTripScreen() {
     if (!trip) return;
     setBusy(true);
     try {
-      const r = await api<{ mode: string }>('/api/mobile/open-trips', { body: { action: 'request', tripKey: trip.key } });
+      const r = await api<{ mode: string }>(path, { body: { action: 'request', tripKey: trip.key } });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(r.mode === 'assigned' ? 'The trip is yours! 🎉' : 'Request sent', r.mode === 'assigned' ? 'It is now in My trips.' : 'Operations will confirm. You will get a notification.');
+      Alert.alert(r.mode === 'assigned' ? 'The trip is yours! 🎉' : 'Request sent', r.mode === 'assigned' ? (actor?.kind === 'VENDOR' ? 'It is in your Trips — choose a driver and vehicle for it.' : 'It is now in My trips.') : 'Operations will confirm. You will get a notification.');
       reload();
     } catch (e) {
       Alert.alert('Not possible', (e as ApiError).message);

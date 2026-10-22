@@ -14,7 +14,7 @@ import { MOBILE_STAFF_ROLES } from './auth'
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send'
 
-export type ActorType = 'DRIVER' | 'STAFF'
+export type ActorType = 'DRIVER' | 'STAFF' | 'VENDOR'
 
 export interface NotifyInput {
   actorType: ActorType

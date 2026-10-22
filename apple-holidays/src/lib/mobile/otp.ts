@@ -206,6 +206,20 @@ export async function issueOtp(params: {
   return { otpId: otp.id, channel, sentTo: maskTarget(channel, target), expiresInSec: CODE_TTL_MIN * 60 }
 }
 
+/**
+ * The newest code still waiting for this driver — for a driver whose vendor
+ * sent the code from their app, who types their number + the code without
+ * ever pressing "Send code" themselves.
+ */
+export async function pendingOtpFor(driverId: string): Promise<string | null> {
+  const otp = await prisma.mobileOtp.findFirst({
+    where: { driverId, consumedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  })
+  return otp?.id ?? null
+}
+
 /** Checks a code; consumes it on success. Returns the driver id. */
 export async function verifyOtp(otpId: string, code: string): Promise<{ driverId: string; purpose: OtpPurpose; channel: OtpChannel }> {
   const otp = await prisma.mobileOtp.findUnique({ where: { id: otpId } })

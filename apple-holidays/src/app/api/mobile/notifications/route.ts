@@ -8,14 +8,14 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiSuccess } from '@/lib/utils'
-import { requireActor } from '@/lib/mobile/auth'
+import { actorIdOf, requireActor } from '@/lib/mobile/auth'
 import { mobileRoute, readJson } from '@/lib/mobile/http'
 import { loadDriverTrips, localTodayFor } from '@/lib/mobile/trips'
 
 export const dynamic = 'force-dynamic'
 
 function who(actor: Awaited<ReturnType<typeof requireActor>>) {
-  return { actorType: actor.kind, actorId: actor.kind === 'DRIVER' ? actor.driverId : actor.userId }
+  return { actorType: actor.kind, actorId: actorIdOf(actor) }
 }
 
 interface Pinned {

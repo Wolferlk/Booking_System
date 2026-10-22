@@ -5,6 +5,8 @@
  *   * an e-mail that belongs to an ops account (users) → STAFF, same password
  *     as ops.aahaas.com (Ultra Super Admin also needs the critical password,
  *     as on the web)
+ *   * `as: 'VENDOR'` → a vehicle vendor, with their vendor-portal login
+ *     (e-mail or phone + the same password as /vendor/login)
  *   * otherwise a driver's phone or e-mail → DRIVER, with the password they
  *     set in the app. A driver who has never set one gets code 'not_activated'
  *     and the app moves them to the "first time" flow.
@@ -14,10 +16,12 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { buildApiSuccess } from '@/lib/utils'
 import { normalizeEmail } from '@/lib/credential-match'
-import { COMPANY_ROLES, signDriverToken, signStaffToken } from '@/lib/mobile/auth'
+import { COMPANY_ROLES, signDriverToken, signStaffToken, signVendorToken } from '@/lib/mobile/auth'
 import { MobileError, clientIp, mobileRoute, readJson } from '@/lib/mobile/http'
 import { findDriverByIdentifier } from '@/lib/mobile/otp'
 import { driverProfile, staffProfile } from '@/lib/mobile/profile'
+import { vendorProfile } from '@/lib/mobile/vendor'
+import { VendorLoginError, authenticateVendor } from '@/lib/vendor-login'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,10 +44,23 @@ function fail(ip: string | null, message: string, code = 'bad_credentials'): nev
 export const POST = mobileRoute('login', async (req: NextRequest) => {
   const ip = clientIp(req)
   guard(ip)
-  const body = await readJson<{ identifier?: string; password?: string; criticalPassword?: string; platform?: string; appVersion?: string; as?: 'DRIVER' | 'COMPANY' }>(req)
+  const body = await readJson<{ identifier?: string; password?: string; criticalPassword?: string; platform?: string; appVersion?: string; as?: 'DRIVER' | 'COMPANY' | 'VENDOR' }>(req)
   const identifier = String(body.identifier ?? '').trim()
   const password = String(body.password ?? '')
   if (!identifier || !password) throw new MobileError('Enter your phone or e-mail and your password.')
+
+  // ── Vehicle vendor ───────────────────────────────────────────────────────
+  if (body.as === 'VENDOR') {
+    try {
+      const vendor = await authenticateVendor({ credential: identifier, password })
+      console.log(`[mobile vendor] ${vendor.name} (${vendor.id}) signed in on ${body.platform?.slice(0, 16) ?? 'app'}`)
+      return buildApiSuccess({ token: await signVendorToken(vendor.id, vendor.password), actor: await vendorProfile(vendor.id) })
+    } catch (err) {
+      if (!(err instanceof VendorLoginError)) throw err
+      if (err.status === 401) fail(ip, err.message, err.code)
+      throw new MobileError(err.message, err.status, err.code)
+    }
+  }
 
   // ── Staff ────────────────────────────────────────────────────────────────
   if (identifier.includes('@') && body.as !== 'DRIVER') {

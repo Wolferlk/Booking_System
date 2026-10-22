@@ -14,10 +14,10 @@ export function filePart(f: { uri: string; name: string; type: string }): Blob {
 }
 
 /** Take a photo (or pick one) and upload it. Returns the server URL, or null if cancelled. */
-export async function takeAndUpload(kind: 'vehicle' | 'profile' | 'odometer', from: 'camera' | 'library' = 'camera'): Promise<{ url: string; localUri: string } | null> {
+export async function takeAndUpload(kind: 'vehicle' | 'profile' | 'odometer' | 'driver', from: 'camera' | 'library' = 'camera'): Promise<{ url: string; localUri: string } | null> {
   const perm = from === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) throw new Error(from === 'camera' ? 'Camera permission is needed.' : 'Photo access is needed.');
-  const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.6, allowsEditing: kind === 'profile', aspect: kind === 'profile' ? [1, 1] : undefined };
+  const opts: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.6, allowsEditing: kind === 'profile' || kind === 'driver', aspect: kind === 'profile' || kind === 'driver' ? [1, 1] : undefined };
   const res = from === 'camera' ? await ImagePicker.launchCameraAsync(opts) : await ImagePicker.launchImageLibraryAsync(opts);
   if (res.canceled || !res.assets?.[0]) return null;
   const a = res.assets[0];

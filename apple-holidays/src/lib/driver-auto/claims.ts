@@ -17,6 +17,7 @@ import { logActivity } from '@/lib/activity'
 import { sendMailViaGraph } from '@/lib/send-mail'
 import { syncSlAllocationFromAgenda } from '@/lib/sl-driver-allocation-sync'
 import { sendDriverAssignment, type DriverMovement } from '@/lib/driver-assignment-whatsapp'
+import { notify as notifyApp } from '@/lib/mobile/notify'
 import type { Prisma } from '@prisma/client'
 import { assignmentHasParty, loadTrip, publicTrip } from './open-trips'
 import {
@@ -114,6 +115,32 @@ function clashLabels(list: { date: string; bookingRef: string; fileNo: string }[
     .map(c => `${c.fileNo} · ${fmtTripDay(c.date)}`)
 }
 
+/**
+ * A vendor runs a fleet, so holding another trip on the same day is normal —
+ * it only clashes once every active driver of theirs is already out that day.
+ */
+async function fleetClashes(party: ResolvedParty, list: { date: string; bookingRef: string; fileNo: string }[], trip: OpenTrip): Promise<string[]> {
+  const clashes = clashLabels(list, trip)
+  if (party.type !== 'VENDOR' || !clashes.length) return clashes
+  const drivers = await prisma.driver.count({ where: { vendorId: party.id, isActive: true } })
+  const perDay = new Map<string, Set<string>>()
+  for (const c of list) {
+    if (c.bookingRef === trip.bookingRef) continue
+    if (!perDay.has(c.date)) perDay.set(c.date, new Set())
+    perDay.get(c.date)!.add(c.bookingRef)
+  }
+  const driven = trip.legs.filter(l => l.driven).map(l => l.date)
+  const days = driven.length ? driven : [trip.startDate]
+  const full = days.some(d => (perDay.get(d)?.size ?? 0) >= Math.max(drivers, 1))
+  return full ? clashes : []
+}
+
+/** In-app push for a driver or vendor signed in to the Aahaas app. Never blocks. */
+function pushToParty(type: string, id: string, kind: string, title: string, body: string, data: Record<string, unknown>, dedupeKey: string) {
+  void notifyApp({ actorType: type === 'VENDOR' ? 'VENDOR' : 'DRIVER', actorId: id, kind, title, body, data, dedupeKey })
+    .catch(() => { /* mobile_* tables may not exist on this server */ })
+}
+
 function seatsFit(party: ResolvedParty, trip: OpenTrip): boolean | null {
   if (!party.capacity || party.capacity <= 0) return null
   return trip.pax <= party.capacity
@@ -130,6 +157,9 @@ export interface RequestResult {
 /** A driver/vendor asks for (or, with approval off, takes) one open trip. */
 export async function requestTrip(party: ResolvedParty, tripKey: string, note?: string | null): Promise<RequestResult> {
   if (!party.isActive) throw new DaError('Your profile is not active. Please contact operations.', 403, 'inactive')
+  if (party.type === 'DRIVER' && party.vendorId) {
+    throw new DaError(`You drive for ${party.vendorName ?? 'a vehicle vendor'} — your trips are given to you by them.`, 403, 'vendor_driver')
+  }
 
   const live = await loadTrip(tripKey)
   if (!live.open) {
@@ -162,7 +192,7 @@ export async function requestTrip(party: ResolvedParty, tripKey: string, note?: 
   }
 
   const commitments = await partyCommitments(party.type, party.id, trip.startDate, trip.endDate)
-  const clashes = clashLabels(commitments, trip)
+  const clashes = await fleetClashes(party, commitments, trip)
   const fits = seatsFit(party, trip)
 
   if (!cs.requireApproval) {
@@ -234,6 +264,8 @@ export async function rejectClaim(claimId: string, actor: Actor, note?: string |
       decidedAt: new Date(),
     },
   })
+  pushToParty(c.partyType, c.partyId, 'TRIP_REQUEST_DECLINED', `Request declined · ${c.bookingRef}`,
+    note?.trim() ? note.trim().slice(0, 160) : 'Operations gave this trip to someone else.', { screen: c.partyType === 'VENDOR' ? 'vendor-market' : 'get-trips' }, `claim:${c.id}:rejected`)
   if (actor.userId) {
     void logActivity({ userId: actor.userId, action: 'DRIVER_AUTO_REJECTED', entityType: 'Booking', entityId: c.bookingId,
       details: { bookingRef: c.bookingRef, tripKey: c.tripKey, party: c.partyName, note } })
@@ -313,6 +345,9 @@ export async function commitClaim(claimId: string, actor: Actor, note?: string |
   })
 
   const notifyResult = await notifyAssigned(live.trip, party)
+  pushToParty(party.type, party.id, 'TRIP_ASSIGNED', `Trip confirmed · ${live.trip.fileNo}`,
+    party.type === 'VENDOR' ? `${fmtTripDay(live.trip.startDate)} · ${live.trip.pax} pax. Choose a driver and vehicle for it.` : `${fmtTripDay(live.trip.startDate)} · ${live.trip.pax} pax. It is in your trips.`,
+    { bookingRef: live.trip.bookingRef, screen: party.type === 'VENDOR' ? 'vendor-trip' : 'trip' }, `claim:${c.id}:assigned`)
   const final = await prisma.driverTripClaim.update({
     where: { id: c.id },
     data: { assignedAt: new Date(), notifyResult },

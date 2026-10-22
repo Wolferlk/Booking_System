@@ -118,7 +118,10 @@ export default function Notifications() {
 
   function open(n: N) {
     const d = n.data ?? {};
-    if (d.screen === 'vehicle' || n.kind.startsWith('VEHICLE')) router.push('/vehicle-check');
+    if (d.screen === 'vendor-trip') router.push('/fleet-trips');
+    else if (d.screen === 'vendor-market') router.push('/fleet-market');
+    else if (d.screen === 'get-trips') router.push('/get-trips');
+    else if (d.screen === 'vehicle' || n.kind.startsWith('VEHICLE')) router.push('/vehicle-check');
     else if (d.bookingRef && (d.screen === 'trip' || n.kind.startsWith('TRIP') || n.kind.startsWith('DAY'))) openTrip(d.bookingRef);
   }
 

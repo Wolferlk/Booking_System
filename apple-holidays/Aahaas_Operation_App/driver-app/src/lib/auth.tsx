@@ -30,7 +30,23 @@ export interface StaffActor {
   country: string
   avatar: string | null
 }
-export type Actor = DriverActor | StaffActor
+export interface VendorActor {
+  kind: 'VENDOR'
+  id: string
+  name: string
+  email: string | null
+  phone: string | null
+  whatsappPhone: string | null
+  address: string | null
+  country: string | null
+  bank: { bankName: string | null; branch: string | null; holder: string | null; accountNo: string | null } | null
+}
+export type Actor = DriverActor | StaffActor | VendorActor
+
+/** Where each kind of user lands after sign-in. */
+export function homeFor(actor: Actor): '/today' | '/home' | '/fleet-home' {
+  return actor.kind === 'DRIVER' ? '/today' : actor.kind === 'VENDOR' ? '/fleet-home' : '/home';
+}
 
 interface AuthState {
   ready: boolean

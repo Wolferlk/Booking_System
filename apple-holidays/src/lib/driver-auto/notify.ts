@@ -84,7 +84,8 @@ export async function listParties(country: DaCountry, includeVendors: boolean): 
 
   const [drivers, vendors] = await Promise.all([
     prisma.driver.findMany({
-      where: { isActive: true, country: { in: countryValues } },
+      // A vendor's own drivers take trips from their vendor, not from the board.
+      where: { isActive: true, country: { in: countryValues }, vendorId: null },
       select: {
         id: true, name: true, phone: true, email: true, country: true,
         vehicle: { select: { type: true, plateNo: true, capacity: true } },

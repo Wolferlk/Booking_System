@@ -10,11 +10,16 @@
  *           phone out.
  *   STAFF   a row in `users` — the same e-mail + password as ops.aahaas.com.
  *           Only the desks that run drivers on the road get the app.
+ *   VENDOR  a row in `vehicle_vendors` — the same login as the vendor portal
+ *           (/vendor/login). Tokens carry a fingerprint of the vendor's
+ *           password hash, so changing the portal password signs every phone
+ *           out without needing a table of its own.
  *
  * `/api/mobile` is excluded from the NextAuth middleware (see src/middleware.ts)
  * exactly like `/api/vendor`, so every route here must call `requireDriver` /
  * `requireStaff` / `requireActor` itself.
  */
+import { createHash } from 'crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import type { NextRequest } from 'next/server'
 import type { UserRole } from '@prisma/client'
@@ -26,6 +31,7 @@ const SECRET = new TextEncoder().encode(
 
 const DRIVER_TTL = '60d'
 const STAFF_TTL = '7d'
+const VENDOR_TTL = '30d'
 
 /** Staff roles that run drivers — the driver-ops views (live map, driver requests). */
 export const MOBILE_STAFF_ROLES: UserRole[] = [
@@ -57,7 +63,19 @@ export interface StaffActor {
   country: string
 }
 
-export type MobileActor = DriverActor | StaffActor
+export interface VendorActor {
+  kind: 'VENDOR'
+  vendorId: string
+  name: string
+  country: string | null
+}
+
+export type MobileActor = DriverActor | StaffActor | VendorActor
+
+/** The id an actor's push tokens and notifications are filed under. */
+export function actorIdOf(actor: MobileActor): string {
+  return actor.kind === 'DRIVER' ? actor.driverId : actor.kind === 'STAFF' ? actor.userId : actor.vendorId
+}
 
 export class MobileAuthError extends Error {
   constructor(message: string, public status = 401) { super(message) }
@@ -78,6 +96,19 @@ export async function signStaffToken(userId: string): Promise<string> {
     .setSubject(userId)
     .setIssuedAt()
     .setExpirationTime(STAFF_TTL)
+    .sign(SECRET)
+}
+
+function passwordFingerprint(hash: string | null): string {
+  return createHash('sha256').update(hash ?? '').digest('hex').slice(0, 16)
+}
+
+export async function signVendorToken(vendorId: string, passwordHash: string | null): Promise<string> {
+  return new SignJWT({ k: 'V', p: passwordFingerprint(passwordHash) })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(vendorId)
+    .setIssuedAt()
+    .setExpirationTime(VENDOR_TTL)
     .sign(SECRET)
 }
 
@@ -143,7 +174,25 @@ export async function requireActor(req: NextRequest): Promise<MobileActor> {
     return { kind: 'STAFF', userId: user.id, name: user.name, role: user.role, country: user.country }
   }
 
+  if (payload.k === 'V') {
+    const vendor = await prisma.vehicleVendor.findUnique({
+      where: { id: payload.sub },
+      select: { id: true, name: true, country: true, isActive: true, isRegistered: true, password: true },
+    })
+    if (!vendor || !vendor.isRegistered) throw new MobileAuthError('Please sign in again.')
+    if (passwordFingerprint(vendor.password) !== payload.p) throw new MobileAuthError('Your password was changed. Please sign in again.')
+    if (!vendor.isActive) throw new MobileAuthError('Your vendor account is not active. Please contact operations.', 403)
+    return { kind: 'VENDOR', vendorId: vendor.id, name: vendor.name, country: vendor.country ?? null }
+  }
+
   throw new MobileAuthError('Please sign in.')
+}
+
+/** Vehicle vendors (fleet owners) — their own drivers, vehicles and trips only. */
+export async function requireVendor(req: NextRequest): Promise<VendorActor> {
+  const a = await requireActor(req)
+  if (a.kind !== 'VENDOR') throw new MobileAuthError('This screen is for vehicle vendors.', 403)
+  return a
 }
 
 export async function requireDriver(req: NextRequest): Promise<DriverActor> {

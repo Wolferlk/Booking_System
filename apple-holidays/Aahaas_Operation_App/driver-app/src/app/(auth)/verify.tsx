@@ -2,6 +2,10 @@
  * Phone / e-mail verification — first time ("activate"), forgot password, and
  * sign in with a code. The code goes to the number or address already on the
  * driver's registration, chosen here: WhatsApp or e-mail.
+ *
+ * A vendor's driver may already hold a code — their vendor sent it from the
+ * app when adding them — so "I already have a code" skips straight to typing
+ * it, matched by the phone number (`haveCode`, `?code=1`).
  */
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -22,13 +26,14 @@ const TITLES: Record<Purpose, string> = {
 };
 
 export default function Verify() {
-  const params = useLocalSearchParams<{ purpose?: Purpose; identifier?: string }>();
+  const params = useLocalSearchParams<{ purpose?: Purpose; identifier?: string; code?: string }>();
   const purpose: Purpose = params.purpose ?? 'ACTIVATE';
   const { signIn } = useAuth();
   const [step, setStep] = useState<Step>('who');
   const [identifier, setIdentifier] = useState(params.identifier ?? '');
   const [channel, setChannel] = useState<'WHATSAPP' | 'EMAIL'>('WHATSAPP');
   const [otp, setOtp] = useState<{ otpId: string; sentTo: string; driverName: string } | null>(null);
+  const [haveCode, setHaveCode] = useState(params.code === '1');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
@@ -50,7 +55,7 @@ export default function Verify() {
       const r = await api<{ otpId: string; sentTo: string; driverName: string }>('/api/mobile/auth/otp/request', {
         auth: false, body: { identifier: identifier.trim(), channel: ch, purpose },
       });
-      setOtp(r); setStep('code'); setCode(''); setResendIn(45);
+      setOtp(r); setHaveCode(false); setStep('code'); setCode(''); setResendIn(45);
       setTimeout(() => codeRef.current?.focus(), 300);
     } catch (e) {
       setError((e as ApiError).message);
@@ -64,7 +69,7 @@ export default function Verify() {
     setBusy(true); setError(null);
     try {
       const r = await api<{ token: string; resetToken: string | null; needsPassword: boolean; actor: Actor }>('/api/mobile/auth/otp/verify', {
-        auth: false, body: { otpId: otp.otpId, code: value },
+        auth: false, body: haveCode ? { identifier: identifier.trim(), code: value } : { otpId: otp.otpId, code: value },
       });
       if (r.needsPassword && r.resetToken) {
         setPending({ token: r.token, resetToken: r.resetToken, actor: r.actor });
@@ -125,6 +130,16 @@ export default function Verify() {
             </Row>
             {error && <ErrorBox message={error} />}
             <Button title="Send code" icon="paper-plane" onPress={() => send()} loading={busy} disabled={identifier.trim().length < 5} />
+            <Pressable
+              disabled={identifier.trim().length < 5}
+              onPress={() => {
+                setError(null); setHaveCode(true); setCode('');
+                setOtp({ otpId: '', sentTo: `WhatsApp ${identifier.trim()}`, driverName: 'there' });
+                setStep('code'); setTimeout(() => codeRef.current?.focus(), 300);
+              }}
+              style={{ alignItems: 'center', padding: S.sm, opacity: identifier.trim().length < 5 ? 0.4 : 1 }}>
+              <Text style={{ color: C.sub }}>Your vendor sent you a code? <Text style={{ color: C.green, fontWeight: '800' }}>I already have a code</Text></Text>
+            </Pressable>
           </>
         )}
 
@@ -132,7 +147,7 @@ export default function Verify() {
           <>
             <View style={{ gap: S.sm }}>
               <H1>Hi {otp.driverName} 👋</H1>
-              <P>Enter the 6-digit code we sent to {otp.sentTo}.</P>
+              <P>{haveCode ? `Enter the 6-digit code that came on WhatsApp to ${identifier.trim()}.` : `Enter the 6-digit code we sent to ${otp.sentTo}.`}</P>
             </View>
             <TextInput
               ref={codeRef}
@@ -150,7 +165,7 @@ export default function Verify() {
             <Button title="Verify" onPress={() => verify()} loading={busy} disabled={code.length !== 6} />
             <Row style={{ justifyContent: 'space-between' }}>
               <Pressable disabled={resendIn > 0} onPress={() => send()}>
-                <Text style={{ color: resendIn > 0 ? C.dim : C.gold, fontWeight: '700', padding: 6 }}>{resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}</Text>
+                <Text style={{ color: resendIn > 0 ? C.dim : C.gold, fontWeight: '700', padding: 6 }}>{resendIn > 0 ? `Resend in ${resendIn}s` : haveCode ? 'Send me a new code' : 'Resend code'}</Text>
               </Pressable>
               <Pressable onPress={() => { const other = channel === 'WHATSAPP' ? 'EMAIL' : 'WHATSAPP'; setChannel(other); send(other); }}>
                 <Text style={{ color: C.blue, fontWeight: '700', padding: 6 }}>Use {channel === 'WHATSAPP' ? 'e-mail' : 'WhatsApp'} instead</Text>

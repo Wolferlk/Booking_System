@@ -87,7 +87,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const settings = await readSettings()
-    const tabs = tabsForPartner(party.country).filter(c => party.type === 'DRIVER' || settings.countries[c].includeVendors)
+    // A vendor's own drivers see the trips they hold, but no open trips to request.
+    const tabs = tabsForPartner(party.country).filter(c => party.type === 'DRIVER' ? !party.vendorId : settings.countries[c].includeVendors)
     const primary: DaCountry | undefined = tabs[0]
     const today = primary ? localToday(primary) : new Date().toISOString().slice(0, 10)
 
