@@ -72,10 +72,10 @@ export type Tick = { icon: 'time-outline' | 'checkmark' | 'checkmark-done' | 'al
 
 export function tickFor(status: string | null | undefined): Tick {
   switch ((status ?? '').toLowerCase()) {
-    case 'read': return { icon: 'checkmark-done', color: '#53BDEB', label: 'Read' };
+    case 'read': return { icon: 'checkmark-done', color: '#53BDEB', label: 'Seen' };
     case 'delivered': return { icon: 'checkmark-done', color: '#8696A0', label: 'Delivered' };
-    case 'failed': return { icon: 'alert-circle', color: '#E5484D', label: 'Failed' };
-    case 'pending': case 'sending': case 'held': return { icon: 'time-outline', color: '#8696A0', label: 'Sending' };
+    case 'failed': return { icon: 'alert-circle', color: '#E5484D', label: 'Not delivered' };
+    case 'pending': case 'sending': case 'held': case 'accepted': return { icon: 'time-outline', color: '#8696A0', label: 'Sending' };
     default: return { icon: 'checkmark', color: '#8696A0', label: 'Sent' };
   }
 }

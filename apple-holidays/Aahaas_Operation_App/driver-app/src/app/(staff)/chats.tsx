@@ -16,9 +16,10 @@ import { ErrorBox, H1, Ionicons, Row, type IconName } from '@/components/ui';
 import { ago } from '@/lib/format';
 import { STATUS_LABELS } from '@/lib/status';
 import { C, R, S } from '@/lib/theme';
+import { tickFor } from '@/lib/wa';
 import { web } from '@/lib/web';
 
-interface WaConv { phone: string; displayName: string | null; snippet: string; direction: string; updatedAt: string; unreadCount: number; booking: { bookingRef: string; status: string; operationCountry?: string | null } | null }
+interface WaConv { phone: string; displayName: string | null; snippet: string; direction: string; status?: string; updatedAt: string; unreadCount: number; booking: { bookingRef: string; status: string; operationCountry?: string | null } | null }
 interface TeamConv { id: number; title: string; type: string; emoji: string | null; accent: string; unread: number; is_pinned: boolean; last_message: { preview: string | null; at: string | null }; peer: { name: string; initials: string; is_online: boolean } | null; member_count: number }
 
 type Country = 'ALL' | 'VIETNAM' | 'SRILANKA' | 'SINGAPORE_MALAYSIA' | 'NONE';
@@ -247,7 +248,7 @@ export default function Chats() {
                   </Row>
                   <Row style={{ justifyContent: 'space-between' }}>
                     <Row gap={3} style={{ flex: 1 }}>
-                      {ours && <Ionicons name="checkmark-done" size={15} color={C.dim} />}
+                      {ours && (() => { const t = tickFor(c.status); return <Ionicons name={t.icon} size={15} color={t.color} accessibilityLabel={t.label} />; })()}
                       <Text style={{ color: unread ? C.text : C.sub, fontWeight: unread ? '600' : '400', flex: 1, fontSize: 14 }} numberOfLines={1}>{plain(c.snippet) || ' '}</Text>
                     </Row>
                     {unread && <View style={{ backgroundColor: WA_GREEN, borderRadius: 11, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 }}><Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '800' }}>{c.unreadCount}</Text></View>}
