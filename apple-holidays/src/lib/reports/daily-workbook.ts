@@ -24,7 +24,8 @@
  */
 import type { ReadinessState } from '@/lib/booking-readiness'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
-import { todayNewAndUpdated, type ReportData, type BookingLine } from './report-data'
+import { detectCountryFromRef } from '@/lib/country-detection'
+import { todayNewAndUpdated, reportCountryLabel, type ReportData, type BookingLine, type SplitFile } from './report-data'
 import type { BoardRow, BoardView } from './ops-board-digest'
 import { formatReportDate, PERIOD_LABEL } from './report-window'
 import {
@@ -111,6 +112,39 @@ function bookingCols(): Col<BookingLine>[] {
     { header: 'Created at', width: 17, kind: 'stamp', value: b => b.createdAt },
     { header: 'Nights', width: 8, kind: 'int', value: b => daysBetween(b.arrivalDate, b.departureDate) },
     { header: 'Lead time (days)', width: 11, kind: 'int', value: b => daysBetween(b.createdAt, b.arrivalDate), total: 'avg' },
+  ]
+}
+
+/**
+ * The Today new & updated files, one row per booking as the accounts ledger
+ * counts it — the invoice it was last raised on, and this system's file beside
+ * it. Blank OPS columns mean no file is held here (Intake = Not filed here).
+ */
+function splitFileCols(): Col<SplitFile>[] {
+  return [
+    { header: 'New / Amended', width: 11, kind: 'flag', value: f => f.pass },
+    { header: 'Booking ref', width: 13, value: f => f.booking?.bookingRef ?? f.ref },
+    { header: 'Invoice no.', width: 16, value: f => f.invoiceNumber },
+    { header: 'Document', width: 10, value: f => f.type },
+    { header: 'Channel', width: 9, kind: 'source', value: () => 'B2B' },
+    { header: 'Country', width: 12, value: f => f.booking?.countryLabel ?? reportCountryLabel(detectCountryFromRef(f.ref) ?? 'UNASSIGNED') },
+    { header: 'Agent', width: 26, value: f => f.booking?.agent ?? f.agent },
+    { header: 'Guest', width: 24, value: f => f.guest },
+    { header: 'Status', width: 16, value: f => f.booking?.status.replace(/_/g, ' ') ?? '' },
+    { header: 'Booking type', width: 12, value: f => (f.booking ? (f.booking.hotelOnly ? 'Hotel Only' : 'Full tour') : '') },
+    { header: 'Arrival', width: 12, kind: 'date', value: f => f.booking?.arrivalDate ?? null },
+    { header: 'Departure', width: 12, kind: 'date', value: f => f.booking?.departureDate ?? null },
+    { header: 'Pax', width: 6, kind: 'int', value: f => f.booking?.pax ?? null, total: 'sum' },
+    { header: 'Adults', width: 7, kind: 'int', value: f => f.booking?.paxAdults ?? null, total: 'sum' },
+    { header: 'Children', width: 8, kind: 'int', value: f => f.booking?.paxChildren ?? null, total: 'sum' },
+    { header: 'Infants', width: 7, kind: 'int', value: f => f.booking?.paxInfants ?? null, total: 'sum' },
+    { header: 'Currency', width: 9, value: f => f.currency },
+    { header: 'Invoice amount', width: 13, kind: 'money', value: f => f.amount },
+    { header: 'First raised', width: 12, kind: 'date', value: f => f.firstOn },
+    { header: 'Age (days)', width: 9, kind: 'int', value: f => f.ageDays },
+    { header: 'Revisions', width: 9, kind: 'int', value: f => f.revisions },
+    { header: 'Raised at', width: 17, kind: 'stamp', value: f => f.raisedAt },
+    { header: 'Intake', width: 16, value: f => f.intake },
   ]
 }
 
@@ -260,10 +294,11 @@ function overview(wb: import('exceljs').Workbook, d: ReportData, index: { name: 
 
   // ── Intake
   c.title('Intake — Today new & updated',
-    'New + booked & amended same day, plus order confirmations from earlier days edited in the period — as the accounts invoice mail counts the day. B2B / B2C / pax are AppleSystem\'s confirmations.')
+    'New + booked & amended same day, plus order confirmations from earlier days edited in the period — as the accounts invoice mail counts the day. B2C / pax are AppleSystem\'s confirmations; every B2B file is on the New Bookings tab.')
   c.header(['Measure', 'Count'])
   c.line(['Today new & updated', todayNewAndUpdated(d)], { bold: true, bg: P.brandWash })
-  c.line(['  B2B', d.created.channel.b2b], { labelColor: P.b2b })
+  // The ledger split is B2B only, so it is the B2B figure once it is read.
+  c.line(['  B2B', sp.available ? todayNewAndUpdated(d) : d.created.channel.b2b], { labelColor: P.b2b })
   c.line(['  B2C', d.created.channel.b2c], { labelColor: P.b2c })
   c.line(['  Pax booked', d.created.pax])
   if (sp.available) {
@@ -284,11 +319,28 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
   const plan = new SheetPlan()
 
   // ── Intake
+  // New Bookings is the tile itself: one row per file behind Today new &
+  // updated, so the tab's row count is the mail's number. AppleSystem's own
+  // confirmations follow on a tab of their own.
+  const sp = d.split
+  if (sp.available) {
+    const fresh = sp.files.filter(f => f.pass === 'New').length
+    const notHere = sp.files.filter(f => !f.booking).length
+    plan.table<SplitFile>({
+      name: 'New Bookings', tab: P.brand,
+      title: `Today new & updated — ${d.window.label}`,
+      description: 'Every booking behind the mail\'s Today new & updated tile, as the accounts invoice ledger counts it: New = this period\'s own business (new, or booked & amended the same day); Amended = an order confirmation from an earlier day edited in the period. One row per booking, on its latest invoice. OPS columns are blank where this system holds no file.',
+      totals: `${sp.files.length} files · ${fresh} new · ${sp.files.length - fresh} amended · B2B ${sp.files.length}${notHere ? ` · ${notHere} not filed here` : ''}`,
+      what: 'Every file behind Today new & updated — new and amended, with invoice, pax and intake',
+      cols: splitFileCols(), rows: sp.files,
+      empty: 'The accounts ledger shows no new or amended bookings in this period.',
+    })
+  }
   const created = d.created.allBookings ?? d.created.bookings
   plan.table({
-    name: 'New Bookings', tab: P.brand,
-    title: `Today new & updated — ${d.window.label}`,
-    description: 'Every booking AppleSystem confirmed in the report period — the population the mail’s Today new & updated tile counts. B2B is agent work; B2C is the Aahaas storefront. Lead time is days from filing to arrival.',
+    name: sp.available ? 'AS Confirmed' : 'New Bookings', tab: sp.available ? P.indigo : P.brand,
+    title: sp.available ? `Confirmed by AppleSystem — ${d.window.label}` : `Today new & updated — ${d.window.label}`,
+    description: 'Every booking AppleSystem confirmed in the report period. B2B is agent work; B2C is the Aahaas storefront. Lead time is days from filing to arrival.',
     totals: splitLine(created),
     what: 'Every booking confirmed in the period, B2B and B2C, with pax, quoted value and lead time',
     cols: bookingCols(), rows: created,

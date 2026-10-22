@@ -79,6 +79,10 @@ const data = {
     ],
     held: split.today.count - 1,
     index: split.index,
+    files: [
+      ...split.today.lines.map(l => ({ ...l, pass: 'New' as const, booking: null, intake: 'Not filed here' })),
+      ...split.old.lines.map(l => ({ ...l, pass: 'Amended' as const, booking: null, intake: 'Not filed here' })),
+    ],
   },
   parity: {
     available: true, source: 'ledger', upstreamConfirmed: 74, systemHeld: 74, missing: 0,

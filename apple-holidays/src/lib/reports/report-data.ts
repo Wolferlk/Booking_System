@@ -37,7 +37,7 @@ import { listByCreateDate } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
 import { collectCountCheck, type CountCheckSection } from './count-check'
-import { collectActivitySplit, bookingKey, type ActivitySplit } from './activity-split'
+import { collectActivitySplit, bookingKey, type ActivitySplit, type SplitLine } from './activity-split'
 import { resolveBookingOriginChannels, type OriginChannel } from '@/lib/booking-origin'
 import { collectAppleCohort, cohortKey, type AppleCohort } from './apple-cohort'
 import { groupByAgent } from './agent-names'
@@ -191,6 +191,20 @@ export interface ActivityOriginRow {
   bookings: number
 }
 
+/**
+ * One booking behind **Today new & updated**, as the accounts ledger lists it,
+ * with this system's own file beside it when there is one. The workbook's New
+ * Bookings tab is these rows, so its row count is the tile's number.
+ */
+export interface SplitFile extends SplitLine {
+  /** 'New' — this period's own business; 'Amended' — an earlier confirmation edited. */
+  pass: 'New' | 'Amended'
+  /** The booking as filed here; null when this system holds no file for it. */
+  booking: BookingLine | null
+  /** How that file reached this system; 'Not filed here' when there is none. */
+  intake: string
+}
+
 export interface ActivitySplitSection {
   available: boolean
   error?: string
@@ -210,6 +224,8 @@ export interface ActivitySplitSection {
   held: number
   /** Booking key → which table it belongs to, for marking the detail rows. */
   index: Record<string, 'today' | 'old'>
+  /** Every booking behind `todayCount + oldCount`, new first. Sums to the tile. */
+  files: SplitFile[]
 }
 
 /**
@@ -1588,7 +1604,7 @@ async function collectActivitySplitSection(
 ): Promise<ActivitySplitSection> {
   const empty: ActivitySplitSection = {
     available: false, todayCount: 0, oldCount: 0, oldBookings: 0, oldest: null,
-    appleCount, origins: [], held: 0, index: {},
+    appleCount, origins: [], held: 0, index: {}, files: [],
   }
 
   let split: ActivitySplit
@@ -1611,17 +1627,28 @@ async function collectActivitySplitSection(
     origins: [],
     held: 0,
     index: split.index,
+    files: [],
   }
 
+  // The files list stands even when the OPS lookup below fails — the ledger
+  // decides the population, this system only annotates it.
+  const fileOf = (line: SplitLine, pass: SplitFile['pass']): SplitFile =>
+    ({ ...line, pass, booking: null, intake: ORIGIN_LABELS.MISSING })
+  base.files = [
+    ...split.today.lines.map(l => fileOf(l, 'New')),
+    ...split.old.lines.map(l => fileOf(l, 'Amended')),
+  ]
+
   const keys = split.today.keys
-  if (keys.length === 0) return base
+  const allKeys = Array.from(new Set([...keys, ...split.old.keys]))
+  if (allKeys.length === 0) return base
 
   try {
     // Matched on the ledger's own key rule rather than on the reference as
     // either system happens to spell it: "VN 40499" here is "VN40499" there.
     // The lookup itself cannot use that rule — it is a SQL `IN` on a stored
     // column — so it asks for both spellings and the filter below decides.
-    const spellings = Array.from(new Set(keys.flatMap(k => {
+    const spellings = Array.from(new Set(allKeys.flatMap(k => {
       const parts = /^([A-Z]+)(\d+)$/.exec(k)
       return parts ? [k, `${parts[1]} ${parts[2]}`] : [k]
     })))
@@ -1634,25 +1661,37 @@ async function collectActivitySplitSection(
           { isNumber: { in: spellings } },
         ],
       },
-      select: { id: true, bookingRef: true, isNumber: true, sourceDocUrl: true },
+      select: { ...BOOKING_SELECT, id: true, isNumber: true, sourceDocUrl: true },
     })
 
-    const wanted = new Set(keys)
+    const wanted = new Set(allKeys)
     // One booking per key: a reference filed twice is one booking to the
     // accounts ledger, and counting both here would push the parts past the
     // headline they are supposed to add up to.
     const seen = new Set<string>()
-    const held = candidates.filter(b => {
+    const byKey = new Map<string, (typeof candidates)[number]>()
+    for (const b of candidates) {
       const key = wanted.has(bookingKey(b.bookingRef))
         ? bookingKey(b.bookingRef)
         : wanted.has(bookingKey(b.isNumber)) ? bookingKey(b.isNumber) : ''
 
-      if (!key || seen.has(key)) return false
+      if (!key || seen.has(key)) continue
       seen.add(key)
-      return true
-    })
+      byKey.set(key, b)
+    }
 
-    const channels = await resolveBookingOriginChannels(held)
+    const channels = await resolveBookingOriginChannels(Array.from(byKey.values()))
+
+    for (const f of base.files) {
+      const b = byKey.get(f.key)
+      if (!b) continue
+      f.booking = toLine(b)
+      f.intake = ORIGIN_LABELS[channels.get(b.id) ?? 'UNKNOWN']
+    }
+
+    // The origin split is about this period's own business only.
+    const todayKeys = new Set(keys)
+    const held = Array.from(byKey.entries()).filter(([k]) => todayKeys.has(k)).map(([, b]) => b)
 
     const counts = new Map<OriginChannel | 'MISSING', number>()
     for (const booking of held) {

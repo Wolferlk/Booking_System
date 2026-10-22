@@ -98,6 +98,11 @@ function createdSection(d: ReportData): string {
   // invoice mail adds the day up — the same number the ribbon leads with.
   const sp = d.split
   const newBookings = newBookingsCount(d)
+  // The ledger split is AHDS (B2B) only, so once it is read the B2B tile is
+  // the same 27 new + 11 amended the New bookings tile adds up — not the
+  // narrower set of confirmations AppleSystem raised in the window.
+  const b2b = sp.available ? newBookings : c.channel.b2b
+  const pct = (n: number) => (b2b + c.channel.b2c ? Math.round((n / (b2b + c.channel.b2c)) * 100) : 0)
 
   const kpis = kpiRow([
     {
@@ -106,8 +111,8 @@ function createdSection(d: ReportData): string {
       note: `today new &amp; updated<br>${trend(c.total, c.previousTotal)}`,
       color: C.brand,
     },
-    { label: 'B2B', value: num(c.channel.b2b), note: `${c.total ? Math.round((c.channel.b2b / c.total) * 100) : 0}% of confirmations`, color: C.b2b },
-    { label: 'B2C', value: num(c.channel.b2c), note: `${c.total ? Math.round((c.channel.b2c / c.total) * 100) : 0}% of confirmations`, color: C.b2c },
+    { label: 'B2B', value: num(b2b), note: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : `${pct(b2b)}% of confirmations`, color: C.b2b },
+    { label: 'B2C', value: num(c.channel.b2c), note: `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`, color: C.b2c },
     { label: 'Pax booked', value: num(c.pax) },
   ])
 
