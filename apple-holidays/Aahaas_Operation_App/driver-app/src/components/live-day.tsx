@@ -51,8 +51,9 @@ export function CountUp({ value, decimals = 1, style }: { value: number; decimal
   return <Text style={style}>{shown.toFixed(decimals)}</Text>;
 }
 
-function clock(fromIso: string) {
-  const s = Math.max(0, Math.floor((Date.now() - new Date(fromIso).getTime()) / 1000));
+/** Time since the day started, ended breaks left out. */
+function clock(fromIso: string, pausedMs = 0) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(fromIso).getTime() - pausedMs) / 1000));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
   return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
@@ -82,9 +83,13 @@ export function nextMovement(day: DayPlan | null | undefined): Movement | null {
 
 export interface TripHeading { guest: string; sub: string; onOpen: () => void }
 
-export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPlan, title, heading }: {
+export function LiveDayCard({ dayNo, startedAt, pausedMs = 0, km, tripKm, background, todayPlan, title, heading, bookingRef }: {
   dayNo?: number | null
   startedAt: string
+  /** ended breaks today — not driving time */
+  pausedMs?: number
+  /** lets the full-screen map pause / resume */
+  bookingRef?: string
   km: number
   tripKm: number
   background: boolean | null
@@ -108,7 +113,7 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
     return () => { alive = false; unsub(); clearInterval(timer); };
   }, []);
 
-  const hours = Math.max(1 / 60, (Date.now() - new Date(startedAt).getTime()) / 3_600_000);
+  const hours = Math.max(1 / 60, (Date.now() - new Date(startedAt).getTime() - pausedMs) / 3_600_000);
   const avg = km / hours;
   const last = path[path.length - 1];
   const speedNow = last && last.speed != null && Date.now() - last.t < 90_000 ? Math.round(last.speed * 3.6) : null;
@@ -142,7 +147,7 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
         <RouteMap path={path} onExpand={() => router.push({
           pathname: '/live-map',
           params: {
-            startedAt, dayNo: dayNo ? String(dayNo) : '', km: String(km), tripKm: String(tripKm),
+            startedAt, pausedMs: String(pausedMs), ref: bookingRef ?? '', dayNo: dayNo ? String(dayNo) : '', km: String(km), tripKm: String(tripKm),
             bg: background ? '1' : '0', next: next ? JSON.stringify(next) : '', title: title ?? '',
           },
         })} />
@@ -156,8 +161,8 @@ export function LiveDayCard({ dayNo, startedAt, km, tripKm, background, todayPla
             <Text style={styles.kmLabel}>driven today</Text>
           </View>
           <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.clock}>{clock(startedAt)}</Text>
-            <Text style={styles.kmLabel}>on the road</Text>
+            <Text style={styles.clock}>{clock(startedAt, pausedMs)}</Text>
+            <Text style={styles.kmLabel}>{pausedMs > 0 ? 'driving time' : 'on the road'}</Text>
           </View>
         </View>
 
@@ -262,8 +267,10 @@ function Star({ x, y, size, delay }: { x: number; y: number; size: number; delay
 }
 
 /** Day over: a calm dusk card. Re-opening the day is a small, confirmed link — not a second big swipe. */
-export function DayDoneCard({ km, dayNo, lastDay, onContinue, busy }: {
+export function DayDoneCard({ km, dayNo, lastDay, onContinue, busy, extra }: {
   km: number
+  /** e.g. the day's breaks */
+  extra?: ReactNode
   dayNo?: number | null
   lastDay: boolean
   onContinue?: () => void
@@ -289,6 +296,7 @@ export function DayDoneCard({ km, dayNo, lastDay, onContinue, busy }: {
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
           {lastDay ? 'Last day done! Show the guest the feedback QR to finish the trip.' : 'Great driving! Rest well — see you tomorrow 🌙'}
         </Text>
+        {extra}
         {onContinue && (
           <Pressable onPress={onContinue} disabled={busy} hitSlop={8} style={({ pressed }) => [styles.mistake, pressed && { opacity: 0.7 }]}>
             <Ionicons name="refresh" size={14} color="#fff" />

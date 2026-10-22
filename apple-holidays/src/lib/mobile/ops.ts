@@ -21,6 +21,7 @@ import { localTodayFor } from './trips'
 import { notify } from './notify'
 import { MobileError } from './http'
 import { SANDBOX_REF_PREFIX } from './sandbox'
+import { closeOpenPauses } from './sessions'
 
 export interface OpsViewer {
   name: string
@@ -56,6 +57,12 @@ export async function liveBoard(viewer: OpsViewer) {
   })
   const sById = new Map(sessions.map(s => [s.id, s]))
   const drivers = await driverMap(Array.from(new Set(days.map(d => d.driverId))))
+  // Who is on a break right now ([] until apply-trip-pauses.sh has run).
+  const openPauses = await prisma.mobileTripPause.findMany({
+    where: { dayId: { in: days.filter(d => d.status === 'STARTED').map(d => d.id) }, endT: null },
+    select: { dayId: true, reason: true, note: true, plannedMin: true, startedAt: true },
+  }).catch(() => [])
+  const pauseByDay = new Map(openPauses.map(p => [p.dayId, p]))
 
   const rows = days
     .map(d => {
@@ -84,6 +91,13 @@ export async function liveBoard(viewer: OpsViewer) {
         /** No GPS for 20 min on a running day — phone off, app killed, or no signal. */
         silent: d.status === 'STARTED' && (!d.lastPingAt || Date.now() - d.lastPingAt.getTime() > 20 * 60_000),
         stale: d.status === 'STARTED' && d.startedAt < yesterday,
+        paused: (() => {
+          const p = pauseByDay.get(d.id)
+          if (!p) return null
+          // Speed reported after the break began — the car is driving on a paused day.
+          const moving = d.lastSpeed != null && d.lastSpeed > 4 && !!d.lastPingAt && d.lastPingAt > p.startedAt
+          return { reason: p.reason, note: p.note, plannedMin: p.plannedMin, since: p.startedAt.toISOString(), moving }
+        })(),
       }
     })
     .filter(r => !viewer.country || !r.country || r.country === viewer.country)
@@ -193,6 +207,7 @@ export async function decideRequest(id: string, decision: 'APPROVED' | 'REJECTED
       const s = await prisma.mobileTripSession.findFirst({ where: { driverId: r.driverId, bookingRef: r.bookingRef } })
       if (s) {
         if (r.kind === 'HANDOVER') {
+          await closeOpenPauses({ sessionId: s.id }, 'OPS')
           await prisma.mobileTripDay.updateMany({ where: { sessionId: s.id, status: 'STARTED' }, data: { status: 'ENDED', endedAt: new Date() } })
           await prisma.mobileTripSession.update({ where: { id: s.id }, data: { status: 'HANDED_OVER' } })
         } else {

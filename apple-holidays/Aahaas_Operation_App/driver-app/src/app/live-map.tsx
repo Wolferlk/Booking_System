@@ -1,26 +1,29 @@
 /**
  * Full-screen live map for a running day: ¾ map with the car following the
- * road, ¼ panel with speed, km, time and the next stop.
+ * road, ¼ panel with speed, km, time and the next stop. The driver can take a
+ * break (and resume) from here too.
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgGradient, Path, Stop } from 'react-native-svg';
 import { openMaps } from '@/components/day-plan';
 import { CountUp, NAVY, PulseDot } from '@/components/live-day';
+import { askResume, BREAK, fmtDur, isMoving, PauseButton, PauseSheet, useTripPause } from '@/components/pause';
 import { RouteMap } from '@/components/route-map';
 import { routeOf } from '@/lib/format';
-import { flushPoints, loadPath, onDayKm, onPoint, type PathPoint } from '@/lib/location';
+import { currentPosition, flushPoints, loadPath, onDayKm, onPoint, type PathPoint } from '@/lib/location';
+import { onTripProgress, pauseTrip, reasonOf, resumeTrip, type PauseReason } from '@/lib/pause';
 import { C } from '@/lib/theme';
 import type { Movement } from '@/lib/types';
 
-function clock(fromIso: string) {
-  const s = Math.max(0, Math.floor((Date.now() - new Date(fromIso).getTime()) / 1000));
+function clock(fromIso: string, pausedMs = 0) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(fromIso).getTime() - pausedMs) / 1000));
   return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
@@ -53,13 +56,17 @@ function SpeedGauge({ kmh }: { kmh: number | null }) {
 }
 
 export default function LiveMap() {
-  const p = useLocalSearchParams<{ startedAt: string; dayNo?: string; km?: string; tripKm?: string; bg?: string; next?: string; title?: string }>();
+  const p = useLocalSearchParams<{ startedAt: string; pausedMs?: string; ref?: string; dayNo?: string; km?: string; tripKm?: string; bg?: string; next?: string; title?: string }>();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const panel = Math.round(height * 0.27) + insets.bottom;
   const [path, setPath] = useState<PathPoint[]>([]);
   const [km, setKm] = useState(Number(p.km ?? 0));
   const [follow, setFollow] = useState(true);
+  const [pausedMs, setPausedMs] = useState(Number(p.pausedMs ?? 0));
+  const [sheet, setSheet] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { pause, motion } = useTripPause(p.ref ?? '');
   const [, tick] = useState(0);
   const startKm = Number(p.km ?? 0);
   const tripKm = Number(p.tripKm ?? 0) - startKm + km;
@@ -75,14 +82,53 @@ export default function LiveMap() {
     const unKm = onDayKm(setKm);
     const timer = setInterval(() => tick(x => x + 1), 1000);
     const send = setInterval(() => { flushPoints(); }, 30_000);
-    return () => { alive = false; unPoint(); unKm(); clearInterval(timer); clearInterval(send); };
-  }, []);
+    // A resume ends a break — its minutes come back from the server.
+    const unProg = onTripProgress((ref, prog) => {
+      const day = prog.days.find(d => d.status === 'STARTED');
+      if (ref === p.ref && day?.pausedMs != null) setPausedMs(day.pausedMs);
+    });
+    return () => { alive = false; unPoint(); unKm(); unProg(); clearInterval(timer); clearInterval(send); };
+  }, [p.ref]);
 
   const last = path[path.length - 1];
   const speedNow = last && last.speed != null && Date.now() - last.t < 90_000 ? Math.round(last.speed * 3.6) : null;
   const bg = p.bg === '1';
 
   function toggle(v: boolean) { Haptics.selectionAsync().catch(() => {}); setFollow(v); }
+
+  async function doPause(v: { reason: PauseReason; plannedMin: number | null; note: string | null }) {
+    if (!p.ref) return;
+    setBusy(true);
+    try {
+      const pos = currentPositionOf(path);
+      const refused = await pauseTrip({ ref: p.ref, ...v, lat: pos?.lat, lng: pos?.lng });
+      setSheet(false);
+      if (refused) Alert.alert('Could not pause', refused);
+      else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doResume(by: 'DRIVER' | 'MOVING') {
+    if (!p.ref || !pause) return;
+    const choice = await askResume(motion);
+    if (!choice) return;
+    setBusy(true);
+    try {
+      const pos = currentPositionOf(path) ?? await currentPosition();
+      // Freeze the clock correctly until the server's figure arrives.
+      setPausedMs(ms => ms + (Date.now() - pause.startedAt));
+      await resumeTrip({ ref: p.ref, ...choice, by, lat: pos?.lat, lng: pos?.lng });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // While paused the clock stands still at the start of the break.
+  const breakMs = pause ? Date.now() - pause.startedAt : 0;
+  const moving = isMoving(motion);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0B1739' }}>
@@ -91,11 +137,18 @@ export default function LiveMap() {
       {/* top bar */}
       <Animated.View entering={FadeInDown.duration(350)} style={[styles.top, { top: insets.top + 8 }]} pointerEvents="box-none">
         <Pressable onPress={() => router.back()} style={styles.glass} hitSlop={8}><Ionicons name="chevron-down" size={22} color="#0E1525" /></Pressable>
-        <View style={styles.liveChip}>
-          <PulseDot size={8} />
-          <Text style={styles.liveText}>LIVE{p.dayNo ? ` · DAY ${p.dayNo}` : ''}</Text>
-          <View style={[styles.gpsDot, { backgroundColor: bg ? '#22C55E' : '#F59E0B' }]} />
-        </View>
+        {pause ? (
+          <View style={[styles.liveChip, { backgroundColor: 'rgba(124,45,18,0.94)' }]}>
+            <PulseDot size={8} color="#FBBF24" />
+            <Text style={styles.liveText}>PAUSED · {fmtDur(breakMs)}</Text>
+          </View>
+        ) : (
+          <View style={styles.liveChip}>
+            <PulseDot size={8} />
+            <Text style={styles.liveText}>LIVE{p.dayNo ? ` · DAY ${p.dayNo}` : ''}</Text>
+            <View style={[styles.gpsDot, { backgroundColor: bg ? '#22C55E' : '#F59E0B' }]} />
+          </View>
+        )}
         <Pressable onPress={() => toggle(!follow)} style={styles.glass} hitSlop={8}>
           <Ionicons name={follow ? 'navigate' : 'git-commit'} size={20} color={follow ? C.blue : '#0E1525'} />
         </Pressable>
@@ -111,11 +164,31 @@ export default function LiveMap() {
         </View>
       </View>
 
+      {moving && (
+        <Animated.View entering={FadeInUp} style={[styles.movingBar, { bottom: panel + 10 }]}>
+          <Ionicons name="car-sport" size={20} color="#fff" />
+          <Text style={{ color: '#fff', fontWeight: '800', flex: 1 }}>Driving on a break — km aren{'\u2019'}t counting</Text>
+          <Pressable onPress={() => doResume('MOVING')} style={styles.movingBtn}><Text style={{ color: C.red, fontWeight: '900' }}>Resume</Text></Pressable>
+        </Animated.View>
+      )}
+
       {/* bottom panel */}
       <Animated.View entering={FadeInUp.springify().damping(18)} style={[styles.panelWrap, { height: panel }]}>
-        <LinearGradient colors={NAVY} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.panel, { paddingBottom: insets.bottom + 10 }]}>
+        <LinearGradient colors={pause ? BREAK : NAVY} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.panel, { paddingBottom: insets.bottom + 10 }]}>
           <View style={styles.handle} />
-          {p.title ? <Text style={styles.panelTitle} numberOfLines={1}>{p.title}</Text> : null}
+          <View style={styles.titleRow}>
+            <Text style={[styles.panelTitle, { flex: 1, textAlign: 'left' }]} numberOfLines={1}>
+              {pause ? `${reasonOf(pause.reason).label} break${pause.plannedMin ? ` · ${pause.plannedMin} min` : ''}` : p.title ?? ''}
+            </Text>
+            {p.ref ? (pause ? (
+              <Pressable disabled={busy} onPress={() => doResume('DRIVER')} style={({ pressed }) => [styles.resumeBtn, pressed && { opacity: 0.8 }]}>
+                <Ionicons name="play" size={14} color="#fff" />
+                <Text style={{ color: '#fff', fontWeight: '900', fontSize: 13 }}>{busy ? '…' : 'Resume'}</Text>
+              </Pressable>
+            ) : (
+              <PauseButton compact label="Pause" onPress={() => setSheet(true)} />
+            )) : null}
+          </View>
           <View style={styles.statsRow}>
             <SpeedGauge kmh={speedNow} />
             <View style={{ flex: 1, alignItems: 'center' }}>
@@ -126,8 +199,8 @@ export default function LiveMap() {
               <Text style={styles.small}>today · {Math.round(tripKm)} km trip</Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={styles.clock}>{p.startedAt ? clock(p.startedAt) : '—'}</Text>
-              <Text style={styles.small}>on the road</Text>
+              <Text style={styles.clock}>{p.startedAt ? clock(p.startedAt, pausedMs + breakMs) : '—'}</Text>
+              <Text style={styles.small}>{pause ? 'on hold' : pausedMs > 0 ? 'driving time' : 'on the road'}</Text>
             </View>
           </View>
           {next && (
@@ -145,8 +218,15 @@ export default function LiveMap() {
           )}
         </LinearGradient>
       </Animated.View>
+      <PauseSheet open={sheet} onClose={() => setSheet(false)} onConfirm={doPause} busy={busy} />
     </View>
   );
+}
+
+/** The newest fix on the drawn route, if it is fresh. */
+function currentPositionOf(path: PathPoint[]) {
+  const last = path[path.length - 1];
+  return last && Date.now() - last.t < 120_000 ? { lat: last.lat, lng: last.lng } : null;
 }
 
 const styles = StyleSheet.create({
@@ -164,6 +244,10 @@ const styles = StyleSheet.create({
   panel: { flex: 1, paddingHorizontal: 16, paddingTop: 8, gap: 8 },
   handle: { alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.3)' },
   panelTitle: { color: '#BFDBFE', fontWeight: '800', fontSize: 13, textAlign: 'center' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 30 },
+  resumeBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.green, borderRadius: 99, paddingHorizontal: 12, paddingVertical: 6 },
+  movingBar: { position: 'absolute', left: 14, right: 14, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#DC2626', borderRadius: 18, padding: 12, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, elevation: 10 },
+  movingBtn: { backgroundColor: '#fff', borderRadius: 99, paddingHorizontal: 14, paddingVertical: 8 },
   statsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   gaugeNo: { color: '#fff', fontSize: 26, fontWeight: '900', fontVariant: ['tabular-nums'] },
   gaugeUnit: { color: '#93C5FD', fontSize: 11, fontWeight: '800', marginTop: -2 },

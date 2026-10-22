@@ -9,6 +9,9 @@
  * Every point goes into an on-device queue first and is sent in batches, so a
  * tunnel or a hill without signal loses nothing: the queue is flushed when the
  * network comes back. The server ignores points it already has.
+ *
+ * Tracking keeps running during a break (see pause.ts); the server leaves the
+ * km of a break out of the day.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -16,6 +19,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { api } from './api';
+import { flushPauseActions, notePausePoints } from './pause';
 
 export const LOCATION_TASK = 'aahaas-trip-location';
 const QUEUE_KEY = 'aahaas.gps.queue';
@@ -73,6 +77,7 @@ async function enqueue(locs: Location.LocationObject[]) {
     }
   });
   pts.forEach(p => listeners.forEach(l => l(p)));
+  await notePausePoints(pts).catch(() => {});
 }
 
 /** Send queued points; keeps whatever could not be sent. Returns today's km if the server said. */
@@ -81,6 +86,8 @@ export async function flushPoints(): Promise<number | null> {
   flushing = true;
   let dayKm: number | null = null;
   try {
+    // Breaks first: the server needs them to tell driving points from paused ones.
+    if (!(await flushPauseActions())) return null;
     for (let guard = 0; guard < 50; guard++) {
       const raw = await AsyncStorage.getItem(QUEUE_KEY);
       const q: QueuedPoint[] = raw ? JSON.parse(raw) : [];

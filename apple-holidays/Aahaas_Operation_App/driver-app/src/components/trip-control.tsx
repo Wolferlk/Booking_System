@@ -4,21 +4,25 @@
  *
  *   not started        → Swipe to start trip   (opens the guest-portal QR first)
  *   started, day off   → Swipe to start day    (asks for location)
- *   day running        → live km + timer, Swipe to end day
+ *   day running        → live km + timer, Pause trip, Swipe to end day
+ *   on a break         → break timer, Swipe to resume (km and time on hold)
  *   last day ended     → Swipe to finish trip  (opens the feedback QR)
  *   day ended          → "See you tomorrow"
  */
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, Linking, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Linking, Pressable, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { api, ApiError } from '@/lib/api';
 import { useT } from '@/lib/i18n';
 import { currentPosition, flushPoints, LocationError, needsLocationDisclosure, onDayKm, resumeTracking, startTracking, stopTracking, trackingSupportsBackground } from '@/lib/location';
+import { forgetPause, onPauseError, onTripProgress, pauseTrip, resumeTrip, syncPause, type PauseReason } from '@/lib/pause';
 import { C, S } from '@/lib/theme';
 import type { DayPlan, Progress } from '@/lib/types';
-import { DayDoneCard, LiveDayCard, ReadyCard, type TripHeading } from './live-day';
+import { DayDoneCard, LiveDayCard, nextMovement, ReadyCard, type TripHeading } from './live-day';
+import { askResume, BreaksLine, PausedCard, PauseButton, PauseSheet, useTripPause } from './pause';
 import { SwipeButton } from './swipe-button';
 import { Button, Card, Ionicons, Row } from './ui';
 
@@ -39,6 +43,10 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
   const [busy, setBusy] = useState(false);
   const [liveKm, setLiveKm] = useState<number | null>(null);
   const [mode, setMode] = useState<'background' | 'foreground' | null>(null);
+  const [sheet, setSheet] = useState(false);
+  const { pause, motion } = useTripPause(bookingRef);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const running = progress.days.find(d => d.status === 'STARTED');
   const todayDay = progress.days.find(d => d.date === progress.today);
@@ -54,6 +62,11 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     const timer = setInterval(() => { flushPoints(); }, 30_000);
     return () => { clearInterval(timer); unsub(); };
   }, [running?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The server's answer to a pause / resume (sent from here, the full map, or the offline queue).
+  useEffect(() => onTripProgress((ref, p) => { if (ref === bookingRef) onChangeRef.current(p); }), [bookingRef]);
+  useEffect(() => onPauseError(msg => Alert.alert('Break not saved', `${msg}\n\nKilometres are counting again.`)), []);
+  useEffect(() => { syncPause(bookingRef, progress); }, [bookingRef, progress]);
 
   async function act(path: string, body: Record<string, unknown>) {
     const r = await api<{ progress: Progress }>(`/api/mobile/trips/${encodeURIComponent(bookingRef)}/${path}`, { body });
@@ -110,12 +123,39 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     }
   }
 
+  async function doPause(v: { reason: PauseReason; plannedMin: number | null; note: string | null }) {
+    setBusy(true);
+    try {
+      const pos = await currentPosition();
+      const refused = await pauseTrip({ ref: bookingRef, ...v, lat: pos?.lat, lng: pos?.lng });
+      setSheet(false);
+      if (refused) Alert.alert('Could not pause', refused);
+      else Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doResume(by: 'DRIVER' | 'MOVING') {
+    const choice = await askResume(motion);
+    if (!choice) return;
+    setBusy(true);
+    try {
+      const pos = await currentPosition();
+      await resumeTrip({ ref: bookingRef, ...choice, by, lat: pos?.lat, lng: pos?.lng });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function endDay() {
     setBusy(true);
     try {
       await flushPoints();
       const pos = await currentPosition();
       const p = await act('day', { action: 'end', lat: pos?.lat, lng: pos?.lng });
+      await forgetPause();
       await stopTracking();
       setMode(null);
       const km = p.days.find(d => d.id === running?.id)?.km ?? 0;
@@ -155,11 +195,33 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     const km = liveKm ?? running.km;
     // Trip total = ended days (server) + today's live km.
     const tripKm = (session?.totalKm ?? 0) - running.km + km;
+    const pausedMs = running.pausedMs ?? 0;
+    if (pause) {
+      const drivingMs = Math.max(0, pause.startedAt - new Date(running.startedAt).getTime() - pausedMs);
+      return (
+        <View style={{ gap: S.md }}>
+          <PausedCard pause={pause} motion={motion} dayNo={dayNo} km={km} drivingMs={drivingMs}
+            breaksToday={(running.breaks ?? []).filter(b => b.endedAt).length + 1}
+            next={nextMovement(todayPlan)} heading={heading} onResume={doResume} />
+          <SwipeButton label={t('resumeTrip')} icon="play" colors={[C.green, '#047857']} onComplete={() => doResume('DRIVER')} loading={busy} />
+          <Pressable hitSlop={8} disabled={busy} style={({ pressed }) => [{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, padding: 6 }, pressed && { opacity: 0.6 }]}
+            onPress={() => Alert.alert('End the day now?', 'The break ends with the day. Only do this if you are done driving today.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'End day', style: 'destructive', onPress: endDay },
+            ])}>
+            <Ionicons name="flag-outline" size={16} color={C.sub} />
+            <Text style={{ color: C.sub, fontWeight: '700' }}>Done for today? End the day</Text>
+          </Pressable>
+        </View>
+      );
+    }
     return (
       <View style={{ gap: S.md }}>
-        <LiveDayCard dayNo={dayNo} startedAt={running.startedAt} km={km} tripKm={tripKm}
+        <LiveDayCard dayNo={dayNo} startedAt={running.startedAt} pausedMs={pausedMs} km={km} tripKm={tripKm} bookingRef={bookingRef}
           background={mode == null ? null : mode === 'background'} todayPlan={todayPlan} title={bookingRef} heading={heading} />
+        <PauseButton label={t('pauseTrip')} onPress={() => setSheet(true)} />
         <SwipeButton label={t('endDay')} icon="flag" colors={[C.gold, '#B45309']} onComplete={endDay} loading={busy} />
+        <PauseSheet open={sheet} onClose={() => setSheet(false)} onConfirm={doPause} busy={busy} />
       </View>
     );
   }
@@ -168,14 +230,14 @@ export function TripControl({ bookingRef, progress, isLastDay, onChange, startsL
     if (isLastDay) {
       return (
         <View style={{ gap: S.md }}>
-          <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay />
+          <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay extra={<BreaksLine breaks={todayDay.breaks ?? []} />} />
           <SwipeButton label={t('finishTrip')} icon="star" colors={[C.gold, '#B45309']}
             onComplete={() => router.push({ pathname: '/trip/finish', params: { ref: bookingRef } })} />
         </View>
       );
     }
     return (
-      <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay={false} busy={busy}
+      <DayDoneCard km={todayDay.km} dayNo={dayNo} lastDay={false} busy={busy} extra={<BreaksLine breaks={todayDay.breaks ?? []} />}
         onContinue={() => Alert.alert('Continue today?', 'Kilometres will keep counting on today. Only do this if you ended the day by mistake.', [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Continue', onPress: startDay },

@@ -35,6 +35,23 @@ interface LiveRow {
   bookingRef: string; dayDate: string; status: string; startedAt: string; endedAt: string | null
   km: number; tripKm: number; lastLat: number | null; lastLng: number | null; lastSpeedKmh: number | null
   lastPingAt: string | null; silent: boolean; stale: boolean
+  /** on a break right now; `moving` = GPS speed since the break began */
+  paused?: { reason: string; note: string | null; plannedMin: number | null; since: string; moving: boolean } | null
+}
+
+const BREAK_LABEL: Record<string, string> = {
+  MEAL: 'Meal', FUEL: 'Fuel', GUEST_STOP: 'Guest stop', REST: 'Rest', PRAYER: 'Prayer', VEHICLE: 'Vehicle problem', PERSONAL: 'Personal', OTHER: 'Break',
+}
+
+/** "On break · Meal · 25 min" — red when the break overran or the car is moving on it. */
+function breakChip(p: NonNullable<LiveRow['paused']>, speed: number | null): { text: string; cls: string } {
+  const min = Math.max(0, Math.round((Date.now() - new Date(p.since).getTime()) / 60_000))
+  if (p.moving) return { text: `Paused but moving${speed != null ? ` · ${speed} km/h` : ''}`, cls: 'bg-red-100 text-red-700' }
+  const over = p.plannedMin != null && min > p.plannedMin + 10
+  return {
+    text: `On break · ${BREAK_LABEL[p.reason] ?? 'Break'} · ${min} min${p.plannedMin ? ` / ${p.plannedMin}` : ''}`,
+    cls: p.reason === 'VEHICLE' || over ? 'bg-red-100 text-red-700' : 'bg-indigo-100 text-indigo-700',
+  }
 }
 interface Live {
   today: string
@@ -231,11 +248,16 @@ export default function DriverAppPage() {
                   className={cn('w-full text-left rounded-lg border p-3 hover:bg-slate-50', d.dayId === selected ? 'border-brand-400 bg-brand-50/40' : 'border-slate-200')}>
                   <div className="flex items-center justify-between">
                     <span className="font-medium text-slate-800">{d.driverName}</span>
-                    <span className={cn('text-xs rounded-full px-2 py-0.5', d.silent ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700')}>
-                      {d.silent ? `No GPS · ${ago(d.lastPingAt)}` : d.lastSpeedKmh != null ? `${d.lastSpeedKmh} km/h` : 'Live'}
-                    </span>
+                    {d.paused ? (
+                      <span className={cn('text-xs rounded-full px-2 py-0.5', breakChip(d.paused, d.lastSpeedKmh).cls)}>{breakChip(d.paused, d.lastSpeedKmh).text}</span>
+                    ) : (
+                      <span className={cn('text-xs rounded-full px-2 py-0.5', d.silent ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700')}>
+                        {d.silent ? `No GPS · ${ago(d.lastPingAt)}` : d.lastSpeedKmh != null ? `${d.lastSpeedKmh} km/h` : 'Live'}
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-slate-500 mt-1">{d.bookingRef} · {d.vehicle ?? '—'} · started {hm(d.startedAt)}</div>
+                  {d.paused?.note && <div className="text-xs text-slate-600 mt-1 italic">“{d.paused.note}”</div>}
                   <div className="text-xs text-slate-700 mt-1"><b>{d.km}</b> km today · <b>{d.tripKm}</b> km this trip{d.stale && <span className="text-red-600"> · day left open since {d.dayDate}</span>}</div>
                   {d.driverPhone && <a href={`tel:${d.driverPhone}`} onClick={e => e.stopPropagation()} className="text-xs text-brand-600 inline-flex items-center gap-1 mt-1"><Phone className="h-3 w-3" />{d.driverPhone}</a>}
                 </button>

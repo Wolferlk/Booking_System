@@ -3666,6 +3666,40 @@ model MobileTripDay {
   @@map("mobile_trip_days")
 }
 
+/// A break inside a running day — see prisma/sql/2026-10-22-trip-pauses.sql.
+model MobileTripPause {
+  /// made on the phone (offline queue retries are one row)
+  id         String    @id
+  dayId      String
+  sessionId  String
+  driverId   String
+  bookingRef String
+  /// MEAL | FUEL | GUEST_STOP | REST | PRAYER | VEHICLE | PERSONAL | OTHER
+  reason     String    @db.VarChar(24)
+  note       String?   @db.VarChar(500)
+  plannedMin Int?
+  /// phone clock, epoch ms — GPS points are matched to pauses by these
+  startT     BigInt
+  endT       BigInt?
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  lat        Float?
+  lng        Float?
+  endLat     Float?
+  endLng     Float?
+  /// distance the car moved while paused (not in the day's km unless countMoved)
+  movedKm    Decimal   @default(0.000) @db.Decimal(10, 3)
+  countMoved Boolean   @default(false)
+  /// DRIVER | MOVING | DAY_END | OPS
+  endedBy    String?   @db.VarChar(16)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
+
+  @@index([dayId, startT], map: "mobile_trip_pauses_day_idx")
+  @@index([driverId, endedAt], map: "mobile_trip_pauses_open_idx")
+  @@map("mobile_trip_pauses")
+}
+
 model MobileLocationPoint {
   id         BigInt   @id @default(autoincrement())
   dayId      String

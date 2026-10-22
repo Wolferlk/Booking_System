@@ -17,7 +17,14 @@ export interface Trip {
 export interface Progress {
   today: string
   session: { id: string; status: 'ACTIVE' | 'COMPLETED' | 'HANDED_OVER'; startedAt: string; portalSkipped: boolean; feedbackStatus: string | null; completedAt: string | null; totalKm: number } | null
-  days: { id: string; date: string; status: 'STARTED' | 'ENDED'; startedAt: string; endedAt: string | null; km: number; startOdometer: number | null; endOdometer: number | null }[]
+  days: {
+    id: string; date: string; status: 'STARTED' | 'ENDED'; startedAt: string; endedAt: string | null; km: number; startOdometer: number | null; endOdometer: number | null
+    /** the break running now (times are the phone's clock) */
+    pause?: { id: string; reason: string; note: string | null; plannedMin: number | null; startedAt: string; lat: number | null; lng: number | null } | null
+    /** ended breaks, ms */
+    pausedMs?: number
+    breaks?: { reason: string; startedAt: string; endedAt: string | null; movedKm: number; countMoved: boolean }[]
+  }[]
   activeDay: string | null
 }
 export interface Feedback { submitted: boolean; at: string | null; overall: string | null }

@@ -4,6 +4,9 @@
  *   start trip   portal QR shown (or skipped) → swipe → mobile_trip_sessions
  *   start day    swipe → mobile_trip_days row for today (location must be on)
  *   GPS          batches of points → km for the day (see geo.ts)
+ *   pause        "Take a break" → mobile_trip_pauses row; the day stays STARTED,
+ *                GPS keeps running, but km and minutes inside a pause are not
+ *                driving (unless the driver says the guest was in the car)
  *   end day      swipe → day closed, km rolled into the session total
  *   finish trip  only once the guest feedback form for the booking exists
  *                (guest_feedback_forms, the same form the WhatsApp link opens)
@@ -15,7 +18,8 @@ import { prisma } from '@/lib/prisma'
 import { feedbackLinkPath } from '@/lib/feedback-link'
 import { portalLinkPath } from '@/lib/portal-link'
 import { appBaseUrl } from '@/lib/driver-auto/server'
-import { MobileError } from './http'
+import { randomUUID } from 'crypto'
+import { isMobileTableMissing, MobileError } from './http'
 import { accumulate, isValidPoint, MAX_ACCURACY_M, type Anchor, type GeoPoint } from './geo'
 import { localTodayFor, type DriverTrip } from './trips'
 import { notify, notifyStaff } from './notify'
@@ -45,6 +49,7 @@ export async function tripProgress(driverId: string, trip: DriverTrip) {
   const days = session
     ? await prisma.mobileTripDay.findMany({ where: { sessionId: session.id }, orderBy: { dayDate: 'asc' } })
     : []
+  const pauses = session ? await pausesOf(session.id) : []
   const today = localTodayFor(trip.country)
   return {
     today,
@@ -66,6 +71,7 @@ export async function tripProgress(driverId: string, trip: DriverTrip) {
       km: Number(d.distanceKm),
       startOdometer: d.startOdometer,
       endOdometer: d.endOdometer,
+      ...pauseSummary(d.id, d.status, pauses),
     })),
     /** The day that is running right now, if any. */
     activeDay: days.find(d => d.status === 'STARTED')?.dayDate ?? null,
@@ -153,6 +159,7 @@ export async function endDay(driverId: string, trip: DriverTrip, input: DayActio
   if (input.odometer != null && day.startOdometer != null && input.odometer < day.startOdometer) {
     throw new MobileError('The end odometer is lower than the start. Please check it.', 400, 'odometer')
   }
+  await closeOpenPauses({ dayId: day.id }, 'DAY_END')
   const ended = await prisma.mobileTripDay.update({
     where: { id: day.id },
     data: { status: 'ENDED', endedAt: new Date(), endLat: input.lat ?? day.lastLat, endLng: input.lng ?? day.lastLng, endOdometer: input.odometer ?? null },
@@ -210,7 +217,30 @@ export async function ingestPoints(driverId: string, raw: unknown[]): Promise<{ 
       pending = { lat: latest.lat, lng: latest.lng, accuracy: latest.accuracy, t: latest.recordedAt.getTime() }
     }
   }
-  const { addM, anchor: next } = accumulate(anchor, points, pending)
+  // Split the batch into runs inside / outside a pause. The anchor carries
+  // across, so the distance moved during a break is never counted at resume.
+  const pauses = await prisma.mobileTripPause.findMany({
+    where: { dayId: day.id, OR: [{ endT: null }, { endT: { gt: BigInt(Math.floor(points[0].t)) } }] },
+    select: { id: true, startT: true, endT: true, countMoved: true },
+  }).catch(() => [])
+  const pauseAt = (t: number) => pauses.find(p => Number(p.startT) <= t && (p.endT == null || t < Number(p.endT))) ?? null
+  let next = anchor
+  let addM = 0
+  const movedM = new Map<string, number>()
+  for (let i = 0; i < points.length;) {
+    const pz = pauseAt(points[i].t)
+    let j = i + 1
+    while (j < points.length && pauseAt(points[j].t) === pz) j++
+    const r = accumulate(next, points.slice(i, j), pending)
+    next = r.anchor
+    pending = r.pending
+    if (pz) movedM.set(pz.id, (movedM.get(pz.id) ?? 0) + r.addM)
+    if (!pz || pz.countMoved) addM += r.addM
+    i = j
+  }
+  for (const [id, m] of Array.from(movedM)) {
+    if (m > 0) await prisma.mobileTripPause.update({ where: { id }, data: { movedKm: { increment: Number((m / 1000).toFixed(3)) } } })
+  }
   const last = points[points.length - 1]
 
   await prisma.mobileLocationPoint.createMany({
@@ -265,4 +295,138 @@ export async function completeTrip(driverId: string, trip: DriverTrip) {
 export async function markFeedbackShown(driverId: string, bookingId: string) {
   const s = await sessionFor(driverId, bookingId)
   if (s && !s.feedbackShownAt) await prisma.mobileTripSession.update({ where: { id: s.id }, data: { feedbackShownAt: new Date() } })
+}
+
+// ── Breaks ─────────────────────────────────────────────────────────────────
+
+export const PAUSE_REASONS = ['MEAL', 'FUEL', 'GUEST_STOP', 'REST', 'PRAYER', 'VEHICLE', 'PERSONAL', 'OTHER'] as const
+export type PauseReason = (typeof PAUSE_REASONS)[number]
+
+const PAUSE_SETUP = 'Breaks are not switched on for this server yet. Operations: run prisma/sql/apply-trip-pauses.sh.'
+
+type PauseRow = Awaited<ReturnType<typeof prisma.mobileTripPause.findMany>>[number]
+
+/** Every break on a session; [] while the table is not on this database yet. */
+async function pausesOf(sessionId: string): Promise<PauseRow[]> {
+  return prisma.mobileTripPause.findMany({ where: { sessionId }, orderBy: { startT: 'asc' } }).catch(() => [])
+}
+
+/** What the app needs about a day's breaks. Times are the phone's clock, which is what the app compares against. */
+function pauseSummary(dayId: string, dayStatus: string, all: PauseRow[]) {
+  const mine = all.filter(p => p.dayId === dayId)
+  const open = dayStatus === 'STARTED' ? mine.find(p => p.endT == null) : undefined
+  const closed = mine.filter(p => p.endT != null)
+  return {
+    pause: open ? {
+      id: open.id, reason: open.reason, note: open.note, plannedMin: open.plannedMin,
+      startedAt: new Date(Number(open.startT)).toISOString(), lat: open.lat, lng: open.lng,
+    } : null,
+    pausedMs: closed.reduce((s, p) => s + Math.max(0, Number(p.endT) - Number(p.startT)), 0),
+    breaks: mine.map(p => ({
+      reason: p.reason,
+      startedAt: new Date(Number(p.startT)).toISOString(),
+      endedAt: p.endT != null ? new Date(Number(p.endT)).toISOString() : null,
+      movedKm: Math.round(Number(p.movedKm) * 10) / 10,
+      countMoved: p.countMoved,
+    })),
+  }
+}
+
+/** The phone's clock when it is sane, else the server's. */
+function phoneTime(t: number | null | undefined): number {
+  const now = Date.now()
+  return t != null && Number.isFinite(t) && Math.abs(t - now) < 24 * 3_600_000 ? Math.round(t) : now
+}
+
+export interface PauseInput {
+  /** made on the phone, so a retried send is the same break */
+  id?: string | null
+  reason?: string | null
+  note?: string | null
+  plannedMin?: number | null
+  /** phone clock, epoch ms */
+  t?: number | null
+  lat?: number | null
+  lng?: number | null
+  /** resume: the guest was in the car, so km moved during the break count */
+  countMoved?: boolean
+  /** resume: 'MOVING' when it came from the "you're moving" prompt */
+  by?: string | null
+}
+
+export async function pauseDay(driverId: string, trip: DriverTrip, input: PauseInput) {
+  const session = await sessionFor(driverId, trip.bookingId)
+  if (!session) throw new MobileError('Start the trip first.', 409, 'no_session')
+  const day = await prisma.mobileTripDay.findFirst({ where: { sessionId: session.id, status: 'STARTED' } })
+  if (!day) throw new MobileError('No day is running.', 409, 'no_day')
+  const id = input.id && /^[A-Za-z0-9_-]{8,64}$/.test(input.id) ? input.id : randomUUID()
+  try {
+    const same = await prisma.mobileTripPause.findUnique({ where: { id } })
+    if (same) return same
+    const open = await prisma.mobileTripPause.findFirst({ where: { dayId: day.id, endT: null } })
+    if (open) return open
+    const reason: PauseReason = PAUSE_REASONS.includes(input.reason as PauseReason) ? input.reason as PauseReason : 'OTHER'
+    const planned = input.plannedMin != null && input.plannedMin > 0 ? Math.min(Math.round(input.plannedMin), 12 * 60) : null
+    const created = await prisma.mobileTripPause.create({
+      data: {
+        id, dayId: day.id, sessionId: session.id, driverId, bookingRef: trip.bookingRef,
+        reason, note: input.note?.trim().slice(0, 500) || null, plannedMin: planned,
+        startT: BigInt(phoneTime(input.t)), lat: input.lat ?? day.lastLat, lng: input.lng ?? day.lastLng,
+      },
+    })
+    // A vehicle problem is something ops act on now, not on the next board refresh.
+    if (reason === 'VEHICLE' && !isSandboxBookingId(trip.bookingId)) {
+      await notifyStaff(trip.country, {
+        kind: 'VEHICLE_ISSUE',
+        title: `Vehicle problem · ${trip.fileNo}`,
+        body: `${trip.leadGuest ?? 'Guest'} — the driver paused the day${created.note ? `: ${created.note}` : '.'}`,
+        data: { bookingRef: trip.bookingRef },
+        dedupeKey: `vehicle-issue:${created.id}`,
+      }).catch(err => console.error('[mobile pause notify]', err))
+    }
+    return created
+  } catch (err) {
+    if (isMobileTableMissing(err)) throw new MobileError(PAUSE_SETUP, 503, 'setup_required')
+    throw err
+  }
+}
+
+/** Ends the open break. Already resumed (or the day was ended) = nothing to do. */
+export async function resumeDay(driverId: string, trip: DriverTrip, input: PauseInput) {
+  const session = await sessionFor(driverId, trip.bookingId)
+  if (!session) throw new MobileError('Start the trip first.', 409, 'no_session')
+  try {
+    const open = await prisma.mobileTripPause.findFirst({ where: { sessionId: session.id, endT: null } })
+    if (!open) return null
+    const endT = Math.max(phoneTime(input.t), Number(open.startT))
+    const ended = await prisma.mobileTripPause.update({
+      where: { id: open.id },
+      data: {
+        endT: BigInt(endT), endedAt: new Date(), endLat: input.lat ?? null, endLng: input.lng ?? null,
+        endedBy: input.by === 'MOVING' ? 'MOVING' : 'DRIVER', countMoved: !!input.countMoved,
+      },
+    })
+    // Guest was in the car: what was moved so far goes onto the day now; any
+    // later-arriving points of the break count as they come in (ingestPoints).
+    if (ended.countMoved && Number(ended.movedKm) > 0) {
+      await prisma.mobileTripDay.update({ where: { id: ended.dayId }, data: { distanceKm: { increment: Number(ended.movedKm) } } })
+      await recomputeSessionKm(session.id)
+    }
+    return ended
+  } catch (err) {
+    if (isMobileTableMissing(err)) throw new MobileError(PAUSE_SETUP, 503, 'setup_required')
+    throw err
+  }
+}
+
+/** Day ended (by the driver or by ops) while on a break. */
+export async function closeOpenPauses(where: { dayId?: string; sessionId?: string }, by: 'DAY_END' | 'OPS') {
+  const now = Date.now()
+  const open = await prisma.mobileTripPause.findMany({ where: { ...where, endT: null } }).catch(() => [])
+  for (const p of open) {
+    await prisma.mobileTripPause.update({
+      where: { id: p.id },
+      data: { endT: BigInt(Math.max(now, Number(p.startT))), endedAt: new Date(), endedBy: by },
+    })
+  }
 }

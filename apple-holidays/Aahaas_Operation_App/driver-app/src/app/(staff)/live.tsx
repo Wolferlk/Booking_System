@@ -7,12 +7,15 @@ import { Card, ErrorBox, H1, IconButton, Ionicons, Label, Loading, P, Pill, Row,
 import { useLoad } from '@/hooks/use-load';
 import { api } from '@/lib/api';
 import { ago } from '@/lib/format';
+import { reasonOf } from '@/lib/pause';
 import { C, R, S } from '@/lib/theme';
 
 interface LiveRow {
   dayId: string; driverName: string; driverPhone: string | null; vehicle: string | null; bookingRef: string
   status: string; startedAt: string; endedAt: string | null; km: number; tripKm: number
   lastLat: number | null; lastLng: number | null; lastSpeedKmh: number | null; lastPingAt: string | null; silent: boolean
+  /** on a break right now; `moving` = the car is driving although paused */
+  paused?: { reason: string; note: string | null; plannedMin: number | null; since: string; moving: boolean } | null
 }
 interface Live {
   driving: LiveRow[]; finishedToday: LiveRow[]
@@ -73,7 +76,13 @@ export default function LiveBoard() {
             <Card key={d.dayId} onPress={() => setSelected(d.dayId === selected ? null : d.dayId)} style={{ gap: 4, borderColor: d.dayId === selected ? C.gold : C.line }}>
               <Row style={{ justifyContent: 'space-between' }}>
                 <Text style={{ color: C.text, fontWeight: '800', fontSize: 16, flex: 1 }}>{d.driverName}</Text>
-                <Pill text={d.silent ? `No GPS ${ago(d.lastPingAt)}` : d.lastSpeedKmh != null ? `${d.lastSpeedKmh} km/h` : 'Live'} tone={d.silent ? 'gold' : 'green'} />
+                {d.paused ? (
+                  <Pill icon={d.paused.moving ? 'car-sport' : 'pause'}
+                    text={d.paused.moving ? 'Paused · moving' : `${reasonOf(d.paused.reason).label} · ${Math.max(0, Math.round((Date.now() - new Date(d.paused.since).getTime()) / 60_000))}m`}
+                    tone={d.paused.moving || d.paused.reason === 'VEHICLE' ? 'red' : 'blue'} />
+                ) : (
+                  <Pill text={d.silent ? `No GPS ${ago(d.lastPingAt)}` : d.lastSpeedKmh != null ? `${d.lastSpeedKmh} km/h` : 'Live'} tone={d.silent ? 'gold' : 'green'} />
+                )}
               </Row>
               <Text style={{ color: C.sub }}>{d.bookingRef} · {d.vehicle ?? '—'}</Text>
               <Row style={{ justifyContent: 'space-between' }}>
