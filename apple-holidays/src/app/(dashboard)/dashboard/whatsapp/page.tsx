@@ -1499,7 +1499,7 @@ function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
           </span>
           <span className="mt-0.5 flex items-center gap-2">
             <span className={`min-w-0 flex-1 truncate text-[12.5px] ${hasUnread ? 'font-medium text-slate-700' : 'text-slate-400'}`}>
-              {c.direction === 'outbound' && <CheckCheck className="mr-1 inline h-3.5 w-3.5 -translate-y-px text-slate-400" />}
+              {c.direction === 'outbound' && <StatusTicks status={c.status} className="mr-1 inline-flex -translate-y-px align-middle" />}
               {c.snippet || '…'}
             </span>
             <AnimatePresence>
@@ -1533,12 +1533,22 @@ function ConversationRow({ c, active, pinned, onOpen, onTogglePin }: {
   )
 }
 
-function StatusTicks({ status }: { status: string }) {
-  if (status === 'failed') return <AlertCircle className="h-3.5 w-3.5 text-rose-500" />
-  if (status === 'read') return <CheckCheck className="h-3.5 w-3.5 text-sky-500" />
-  if (status === 'delivered') return <CheckCheck className="h-3.5 w-3.5 text-slate-400" />
-  if (status === 'sent') return <Check className="h-3.5 w-3.5 text-slate-400" />
-  return <Clock className="h-3 w-3 text-slate-400" />
+const TICK_LABEL: Record<string, string> = {
+  sent:      'Sent',
+  delivered: 'Delivered',
+  read:      'Seen',
+  failed:    'Not delivered',
+}
+
+function StatusTicks({ status, className = '' }: { status: string; className?: string }) {
+  const icon =
+    status === 'failed'    ? <AlertCircle className="h-3.5 w-3.5 text-rose-500" /> :
+    status === 'read'      ? <CheckCheck className="h-3.5 w-3.5 text-sky-500" /> :
+    status === 'delivered' ? <CheckCheck className="h-3.5 w-3.5 text-slate-400" /> :
+    status === 'sent'      ? <Check className="h-3.5 w-3.5 text-slate-400" /> :
+                             <Clock className="h-3 w-3 text-slate-400" />
+  const label = TICK_LABEL[status] ?? 'Sending'
+  return <span title={label} aria-label={label} className={className}>{icon}</span>
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {

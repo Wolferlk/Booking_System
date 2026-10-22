@@ -13,6 +13,8 @@ export interface Conversation {
   displayName: string | null
   snippet: string
   direction: 'inbound' | 'outbound'
+  /** Delivery status of the last message: sent | delivered | read | failed. */
+  status: string
   updatedAt: string
   unreadCount: number
   booking: ConversationBooking | null

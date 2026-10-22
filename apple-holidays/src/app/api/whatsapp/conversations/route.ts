@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     take: 5000,
     select: {
       phone: true, bookingRef: true, direction: true, body: true, mediaType: true,
-      senderName: true, read: true, createdAt: true,
+      senderName: true, read: true, status: true, createdAt: true,
     },
   })
 
@@ -127,6 +127,7 @@ export async function GET(req: NextRequest) {
       displayName: entry.displayName,
       snippet: last.body ?? (last.mediaType ? MEDIA_LABEL[last.mediaType] ?? '📎 Attachment' : ''),
       direction: last.direction,
+      status: last.status,
       updatedAt: last.createdAt,
       unreadCount: entry.unread,
       booking: booking ? {
