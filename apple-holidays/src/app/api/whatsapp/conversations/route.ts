@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
       const found: SearchMatch[] = []
       const viaNumber = hitByNumber.get(phone)
       if (viaNumber) found.push(viaNumber)
-      for (const ref of entry.refs) {
+      for (const ref of Array.from(entry.refs)) {
         const viaRef = hitByRef.get(ref)
         if (viaRef) { found.push(viaRef); break }
       }
