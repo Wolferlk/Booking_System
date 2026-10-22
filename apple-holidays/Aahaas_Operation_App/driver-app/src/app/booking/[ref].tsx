@@ -143,7 +143,7 @@ export default function BookingScreen() {
           if (match && match.bookingRef !== ref) { router.replace({ pathname: '/booking/[ref]', params: { ref: match.bookingRef } }); return; }
         } catch { /* fall through to the error */ }
       }
-      setError(e.status === 404 ? `Booking ${ref} was not found on the server. It may have been renamed by an amendment or removed.` : e.message);
+      setError(e.status === 404 ? `Booking ${ref} could not be opened. If it shows on ops.aahaas.com, the server needs the latest update. Pull down to try again.` : e.message);
     }
     setRefreshing(false);
   }, [enc, ref]);

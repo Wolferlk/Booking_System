@@ -73,8 +73,36 @@ export async function sessionCookieFor(actor: StaffActor): Promise<string> {
   return `next-auth.session-token=${jwt}; __Secure-next-auth.session-token=${jwt}`
 }
 
-export function bridgeOrigin(): string {
-  return (process.env.MOBILE_BRIDGE_ORIGIN || process.env.NEXTAUTH_URL || process.env.APP_URL || 'https://ops.aahaas.com').replace(/\/$/, '')
+/**
+ * Where the bridge forwards to: the same deployment the app just called.
+ *
+ * The app's own routes (/api/mobile/*) read this server's database directly,
+ * while bridged calls go out over HTTP. If the bridge followed an env URL that
+ * pointed at another deployment (an old host, the test site), the two halves of
+ * one screen read different databases — the home screen lists a booking that
+ * its own detail page then calls "not found". Following the request's host
+ * makes that impossible. The host is allow-listed (aahaas.com, or the hosts the
+ * env names) so a forged Host header cannot send the session anywhere else.
+ */
+export function bridgeOrigin(req?: { headers: Headers }): string {
+  const envOrigins = [process.env.MOBILE_BRIDGE_ORIGIN, process.env.NEXTAUTH_URL, process.env.APP_URL]
+    .filter((v): v is string => !!v).map(v => v.replace(/\/$/, ''))
+  const fallback = envOrigins[0] || 'https://ops.aahaas.com'
+  if (!req) return fallback
+
+  const host = (req.headers.get('x-forwarded-host') || req.headers.get('host') || '').split(',')[0].trim().toLowerCase()
+  if (!host) return fallback
+  const local = /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(host)
+  // Inside a serverless function the Host can be an internal address that is not listening.
+  if (local && process.env.NODE_ENV === 'production') return fallback
+
+  const name = host.replace(/:\d+$/, '')
+  const envHosts = envOrigins.map(o => { try { return new URL(o).host.toLowerCase() } catch { return '' } })
+  const allowed = local || name === 'aahaas.com' || name.endsWith('.aahaas.com') || envHosts.includes(host)
+  if (!allowed) return fallback
+
+  const proto = (req.headers.get('x-forwarded-proto') || '').split(',')[0].trim() || (local ? 'http' : 'https')
+  return `${proto}://${host}`
 }
 
 export async function auditBridgeWrite(actor: StaffActor, method: string, path: string, status: number, ip: string | null) {

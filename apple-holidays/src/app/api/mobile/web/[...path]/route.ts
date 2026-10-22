@@ -26,7 +26,8 @@ async function forward(req: NextRequest, { params }: Ctx): Promise<Response> {
   if (ct) headers['content-type'] = ct
   const body = method === 'GET' || method === 'HEAD' ? undefined : await req.arrayBuffer()
 
-  const upstream = await fetch(`${bridgeOrigin()}/api/${path}${req.nextUrl.search}`, {
+  const origin = bridgeOrigin(req)
+  const upstream = await fetch(`${origin}/api/${path}${req.nextUrl.search}`, {
     method, headers, body, redirect: 'manual', cache: 'no-store',
   })
 
@@ -39,6 +40,8 @@ async function forward(req: NextRequest, { params }: Ctx): Promise<Response> {
     const v = upstream.headers.get(h)
     if (v) out.set(h, v)
   }
+  // Which deployment answered — lets the app (and us) confirm both halves of a screen read one database.
+  out.set('x-aahaas-bridge', new URL(origin).host)
   return new Response(upstream.body, { status: upstream.status, headers: out })
 }
 
