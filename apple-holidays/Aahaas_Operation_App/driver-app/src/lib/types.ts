@@ -46,3 +46,13 @@ export interface Home {
   month: { km: number; daysDriven: number; trips: number }
   alerts: { vehicleCheck: { due: boolean; daysLeft: number; rejectedNote: string | null } | null; unread: number; pendingRequests: number }
 }
+
+/** An entrance ticket on a trip — see the server's lib/mobile/tickets.ts. */
+export interface TripTicket {
+  id: string; name: string; qty: number
+  /** trip day, or null for a trip-wide ticket */
+  date: string | null; dayNo: number | null
+  addedByDriver: boolean; done: boolean
+  files: { id: string; url: string; name: string | null; type: 'image' | 'pdf'; by: string | null; at: string; mine: boolean }[]
+}
+export interface TripTickets { tickets: TripTicket[]; missing: number; ready: boolean; sandbox: boolean }

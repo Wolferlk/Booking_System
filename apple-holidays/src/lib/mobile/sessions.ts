@@ -20,6 +20,7 @@ import { accumulate, isValidPoint, MAX_ACCURACY_M, type Anchor, type GeoPoint } 
 import { localTodayFor, type DriverTrip } from './trips'
 import { notify, notifyStaff } from './notify'
 import { isSandboxBookingId } from './sandbox'
+import { requireTicketsUploaded } from './tickets'
 
 export function guestLinks(bookingRef: string) {
   const base = appBaseUrl()
@@ -239,6 +240,7 @@ export async function completeTrip(driverId: string, trip: DriverTrip) {
   if (session.status === 'COMPLETED') return session
   const running = await prisma.mobileTripDay.findFirst({ where: { sessionId: session.id, status: 'STARTED' } })
   if (running) throw new MobileError('End today first, then finish the trip.', 409, 'day_running')
+  await requireTicketsUploaded(driverId, trip)
 
   const fb = await feedbackSubmitted(trip.bookingId)
   if (!fb.submitted && session.feedbackStatus !== 'WAIVED') {

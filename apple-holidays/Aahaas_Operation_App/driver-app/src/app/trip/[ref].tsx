@@ -6,12 +6,13 @@ import Animated, { FadeInDown, LinearTransition, useAnimatedStyle, useSharedValu
 import { DayPlanView } from '@/components/day-plan';
 import { NAVY, PulseDot } from '@/components/live-day';
 import { TripControl } from '@/components/trip-control';
+import { AddTicketSheet, ticketTally, TicketList, useTripTickets } from '@/components/trip-tickets';
 import { Button, Card, ErrorBox, IconButton, Ionicons, Label, Loading, Pill, Row, Screen } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { fmtDay, fmtRange } from '@/lib/format';
 import { useT } from '@/lib/i18n';
 import { C, S } from '@/lib/theme';
-import type { Feedback, Links, Progress, Trip } from '@/lib/types';
+import type { Feedback, Links, Progress, Trip, TripTicket } from '@/lib/types';
 
 interface Detail { trip: Trip; progress: Progress; feedback: Feedback; links: Links }
 
@@ -42,6 +43,8 @@ export default function TripDetail() {
   const t = useT();
   const { data, setData, error, loading, refreshing, reload } = useLoad<Detail>(`/api/mobile/trips/${encodeURIComponent(ref)}`);
   const [open, setOpen] = useState<string | null>(null);
+  const tk = useTripTickets(ref);
+  const [addFor, setAddFor] = useState<string | null>(null);
 
   if (loading && !data) return <Screen><Loading /></Screen>;
   if (!data) return <Screen><IconButton icon="chevron-back" onPress={() => router.back()} />{error && <ErrorBox message={error} onRetry={reload} />}</Screen>;
@@ -60,12 +63,22 @@ export default function TripDetail() {
   const lastDay = trip.days[trip.days.length - 1];
   const lastStop = lastDay?.movements.filter(m => m.mine).slice(-1)[0]?.to;
 
+  // Tickets can be uploaded / added while the trip is running.
+  const editable = progress.session?.status === 'ACTIVE';
+  const ticketsByDay = new Map<string, TripTicket[]>();
+  for (const tkt of tk.data?.tickets ?? []) {
+    const key = tkt.date ?? '';
+    ticketsByDay.set(key, [...(ticketsByDay.get(key) ?? []), tkt]);
+  }
+  const tripWide = ticketsByDay.get('') ?? [];
+  const missing = tk.data?.ready ? tk.data.missing : 0;
+
   function requestHandover() {
     router.push({ pathname: '/help', params: { ref, kind: 'HANDOVER' } });
   }
 
   return (
-    <Screen refreshing={refreshing} onRefresh={reload}>
+    <Screen refreshing={refreshing} onRefresh={() => { reload(); tk.reload(); }}>
       <Animated.View entering={FadeInDown.springify().damping(18)}>
         <LinearGradient colors={NAVY} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
           <Row style={{ justifyContent: 'space-between' }}>
@@ -112,6 +125,19 @@ export default function TripDetail() {
         dayNo={todayPlan?.dayNo ?? null} todayPlan={todayPlan}
         onChange={p => setData(d => (d ? { ...d, progress: p } : d))} />
 
+      {editable && missing > 0 && (
+        <Card tone="red" style={{ gap: 4 }}>
+          <Row><Ionicons name="ticket" size={18} color={C.red} /><Text style={{ color: C.text, fontWeight: '800', flex: 1 }}>{missing} entrance ticket{missing === 1 ? '' : 's'} to upload</Text></Row>
+          <Text style={{ color: C.sub }}>Upload a photo of each ticket on its day. The trip can only be finished once all are in.</Text>
+        </Card>
+      )}
+
+      {tripWide.length > 0 && (
+        <Card style={{ gap: S.md }}>
+          <TicketList tickets={tripWide} ctl={tk} editable={editable} title="Trip tickets" />
+        </Card>
+      )}
+
       <Label>Day by day</Label>
       <View>
         {trip.days.map((d, i) => {
@@ -121,6 +147,8 @@ export default function TripDetail() {
           const ended = run?.status === 'ENDED' || (finished && d.date <= today);
           const live = run?.status === 'STARTED';
           const lastRow = i === trip.days.length - 1;
+          const dayTickets = ticketsByDay.get(d.date) ?? [];
+          const tally = ticketTally(dayTickets);
           return (
             <Animated.View key={d.date} entering={FadeInDown.delay(120 + i * 60).springify().damping(18)} layout={LinearTransition.springify()} style={{ flexDirection: 'row', gap: S.md }}>
               {/* timeline rail */}
@@ -146,12 +174,18 @@ export default function TripDetail() {
                       )}
                     </View>
                     <Row gap={S.sm}>
+                      {tally.total > 0 && <Pill icon="ticket" text={`${tally.done}/${tally.total}`} tone={tally.missing ? (d.date <= today && editable ? 'red' : 'dim') : 'green'} />}
                       {run && <Pill text={`${run.km.toFixed(0)} km`} tone={live ? 'green' : 'dim'} />}
                       <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={20} color={C.sub} />
                     </Row>
                   </Row>
                 </Pressable>
-                {isOpen && <Animated.View entering={FadeInDown.duration(220)}><DayPlanView day={d} /></Animated.View>}
+                {isOpen && (
+                  <Animated.View entering={FadeInDown.duration(220)} style={{ gap: S.md }}>
+                    <DayPlanView day={d} />
+                    <TicketList tickets={dayTickets} ctl={tk} editable={editable} onAdd={() => setAddFor(d.date)} />
+                  </Animated.View>
+                )}
               </Card>
             </Animated.View>
           );
@@ -161,6 +195,8 @@ export default function TripDetail() {
       {progress.session?.status === 'ACTIVE' && (
         <Button title={t('cantContinue')} kind="ghost" icon="swap-horizontal" onPress={requestHandover} />
       )}
+
+      <AddTicketSheet open={addFor != null} onClose={() => setAddFor(null)} days={trip.days} date={addFor} ctl={tk} />
     </Screen>
   );
 }

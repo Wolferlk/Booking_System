@@ -1,15 +1,17 @@
 /**
- * Finish a trip: the guest scans the feedback QR on the driver's phone and
+ * Finish a trip. First every entrance ticket needs a photo (uploaded here if
+ * any are still missing), then the guest scans the feedback QR on the driver's phone and
  * rates the trip. The screen checks every few seconds; once the form is in
  * (or ops waived it) the driver swipes to finish.
  */
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { QrCard } from '@/components/qr-card';
 import { SwipeButton } from '@/components/swipe-button';
+import { TicketList, useTripTickets } from '@/components/trip-tickets';
 import { Button, Card, IconButton, Ionicons, Loading, Row } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { useT } from '@/lib/i18n';
@@ -24,6 +26,8 @@ export default function FinishTrip() {
   const [busy, setBusy] = useState(false);
   const notified = useRef(false);
   const base = `/api/mobile/trips/${encodeURIComponent(ref)}`;
+  const tk = useTripTickets(ref);
+  const missing = tk.data?.ready ? tk.data.missing : 0;
 
   useEffect(() => {
     api(`${base}/feedback`, { body: {} }).catch(() => {});
@@ -58,7 +62,10 @@ export default function FinishTrip() {
     }
   }
 
-  const ok = !!fb && (fb.submitted || fb.waived);
+  // A server without the tickets route answers with an error: don't hold the
+  // driver on it — /complete still refuses if a ticket is really missing.
+  const ticketsKnown = !!tk.data || !!tk.error;
+  const ok = !!fb && (fb.submitted || fb.waived) && ticketsKnown && missing === 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg, padding: S.xl, justifyContent: 'space-between' }}>
@@ -68,7 +75,15 @@ export default function FinishTrip() {
         <View style={{ width: 46 }} />
       </Row>
 
-      {!fb ? <Loading /> : ok ? (
+      {!fb || !ticketsKnown ? <Loading /> : missing > 0 && tk.data ? (
+        <ScrollView style={{ flex: 1, marginVertical: S.lg }} contentContainerStyle={{ gap: S.md }}>
+          <Card tone="red" style={{ gap: 4 }}>
+            <Row><Ionicons name="ticket" size={20} color={C.red} /><Text style={{ color: C.text, fontSize: 18, fontWeight: '900', flex: 1 }}>Upload the entrance tickets</Text></Row>
+            <Text style={{ color: C.sub }}>{missing} ticket{missing === 1 ? '' : 's'} still need a photo before the trip can be finished.</Text>
+          </Card>
+          <TicketList tickets={tk.data.tickets.filter(x => !x.done)} ctl={tk} editable title="Still needed" />
+        </ScrollView>
+      ) : fb.submitted || fb.waived ? (
         <View style={{ alignItems: 'center', gap: S.lg }}>
           <Ionicons name="checkmark-circle" size={110} color={C.green} />
           <Text style={{ color: C.text, fontSize: 24, fontWeight: '900', textAlign: 'center' }}>
@@ -87,7 +102,7 @@ export default function FinishTrip() {
 
       <View style={{ gap: S.md }}>
         <SwipeButton label={t('finishTrip')} icon="flag" colors={[C.gold, '#B45309']} onComplete={finish} loading={busy} disabled={!ok} />
-        {!ok && (
+        {!!fb && !fb.submitted && !fb.waived && (
           <Button title={t('guestWontRate')} kind="ghost" icon="help-circle-outline"
             onPress={() => router.push({ pathname: '/help', params: { ref, kind: 'FEEDBACK_WAIVER' } })} />
         )}
