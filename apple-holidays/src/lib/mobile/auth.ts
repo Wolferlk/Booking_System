@@ -132,6 +132,30 @@ export async function verifyResetToken(token: string): Promise<{ driverId: strin
   }
 }
 
+/**
+ * Proof that this phone sent a registration (driver or vendor) — lets the
+ * "waiting for approval" screen ask for its status. It never signs anyone in:
+ * once ops approves, the person signs in with the password they chose.
+ */
+export async function signPendingToken(kind: 'DRIVER' | 'VENDOR', id: string): Promise<string> {
+  return new SignJWT({ k: 'P', t: kind === 'DRIVER' ? 'D' : 'V' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setSubject(id)
+    .setIssuedAt()
+    .setExpirationTime('180d')
+    .sign(SECRET)
+}
+
+export async function verifyPendingToken(token: string): Promise<{ kind: 'DRIVER' | 'VENDOR'; id: string } | null> {
+  try {
+    const { payload } = await jwtVerify(token, SECRET)
+    if (payload.k !== 'P' || !payload.sub || (payload.t !== 'D' && payload.t !== 'V')) return null
+    return { kind: payload.t === 'D' ? 'DRIVER' : 'VENDOR', id: payload.sub }
+  } catch {
+    return null
+  }
+}
+
 function bearer(req: NextRequest): string | null {
   const h = req.headers.get('authorization') || ''
   const m = /^Bearer\s+(.+)$/i.exec(h)

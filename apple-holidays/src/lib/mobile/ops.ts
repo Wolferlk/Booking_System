@@ -22,6 +22,7 @@ import { notify } from './notify'
 import { MobileError } from './http'
 import { SANDBOX_REF_PREFIX } from './sandbox'
 import { closeOpenPauses } from './sessions'
+import { SIGNUP, approveDriverSignup, declineDriverSignup } from './signup'
 
 export interface OpsViewer {
   name: string
@@ -136,7 +137,8 @@ export async function liveBoard(viewer: OpsViewer) {
     .map(w => ({ ...w, driverName: waitDrivers.get(w.driverId)?.name ?? 'Driver', driverPhone: waitDrivers.get(w.driverId)?.phone ?? null }))
     .sort((a, b) => (a.firstTime ?? '99').localeCompare(b.firstTime ?? '99'))
 
-  const pendingRequests = await prisma.mobileDriverRequest.count({ where: { status: 'PENDING' } })
+  // Registrations are approved on the Drivers page, not in this inbox.
+  const pendingRequests = await prisma.mobileDriverRequest.count({ where: { status: 'PENDING', kind: { not: SIGNUP } } })
   const pendingChecks = await prisma.mobileVehicleCheck.count({ where: { status: 'SUBMITTED' } })
   const appDrivers = await prisma.mobileDriverAccount.count({ where: { passwordHash: { not: null } } })
 
@@ -167,7 +169,7 @@ export async function dayTrack(dayId: string) {
 
 export async function listRequests(viewer: OpsViewer, status: 'PENDING' | 'ALL' = 'PENDING') {
   const rows = await prisma.mobileDriverRequest.findMany({
-    where: status === 'PENDING' ? { status: 'PENDING' } : {},
+    where: status === 'PENDING' ? { status: 'PENDING', kind: { not: SIGNUP } } : { kind: { not: SIGNUP } },
     orderBy: { createdAt: 'desc' },
     take: 200,
   })
@@ -195,6 +197,13 @@ export async function decideRequest(id: string, decision: 'APPROVED' | 'REJECTED
   const r = await prisma.mobileDriverRequest.findUnique({ where: { id } })
   if (!r) throw new MobileError('Request not found.', 404)
   if (r.status !== 'PENDING') throw new MobileError('This request was already answered.', 409)
+  // A registration must switch the driver on (or stay off) — never just change the row.
+  if (r.kind === SIGNUP) {
+    const by = { name: viewer.name }
+    if (decision === 'APPROVED') await approveDriverSignup(id, by, note)
+    else await declineDriverSignup(id, by, note)
+    return prisma.mobileDriverRequest.findUniqueOrThrow({ where: { id } })
+  }
 
   if (decision === 'APPROVED') {
     if (r.kind === 'PROFILE_CHANGE') {

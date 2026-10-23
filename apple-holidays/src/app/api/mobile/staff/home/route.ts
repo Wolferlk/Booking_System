@@ -36,7 +36,7 @@ export const GET = mobileRoute('staff-home', async (req: NextRequest) => {
     prisma.booking.findMany({ where: { ...scope, ...notCancelled, departureDate: { gte: start, lte: end } }, select: card, take: 50, orderBy: { departureDate: 'asc' } }),
     prisma.booking.count({ where: { ...scope, status: { in: LIVE as never[] }, arrivalDate: { lte: end }, departureDate: { gte: start } } }),
     prisma.whatsAppMessage.count({ where: { direction: 'inbound', read: false, createdAt: { gte: new Date(Date.now() - 7 * 86_400_000) } } }),
-    MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileDriverRequest.count({ where: { status: 'PENDING' } }).catch(() => 0) : Promise.resolve(0),
+    MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileDriverRequest.count({ where: { status: 'PENDING', kind: { not: 'SIGNUP' } } }).catch(() => 0) : Promise.resolve(0),
     MOBILE_STAFF_ROLES.includes(s.role) ? prisma.mobileTripDay.count({ where: { status: 'STARTED', NOT: { bookingRef: { startsWith: SANDBOX_REF_PREFIX } } } }).catch(() => 0) : Promise.resolve(0),
   ])
   const shape = (b: (typeof arrivals)[number]) => ({

@@ -65,7 +65,7 @@ function pickOne(hits: FoundDriver[]): FoundDriver | null {
   return hits.find(h => h.isActive) ?? hits[0]
 }
 
-const COUNTRY_CODE: Record<string, string> = { SRILANKA: '94', VIETNAM: '84', SINGAPORE_MALAYSIA: '65' }
+const COUNTRY_CODE: Record<string, string> = { SRILANKA: '94', VIETNAM: '84', SINGAPORE_MALAYSIA: '65', SINGAPORE: '65', MALAYSIA: '60' }
 
 /** The number WhatsApp wants (digits, with country code), or null. */
 export function whatsappNumberFor(phone: string, country: string | null): string | null {

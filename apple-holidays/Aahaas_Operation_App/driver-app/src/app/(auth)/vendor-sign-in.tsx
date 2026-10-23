@@ -4,7 +4,7 @@
  */
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ import { Button, ErrorBox, IconButton, Input, Ionicons, P, Row } from '@/compone
 import { api, ApiError } from '@/lib/api';
 import { useAuth, type Actor } from '@/lib/auth';
 import { API_URL, APP_VERSION } from '@/lib/config';
+import { getPendingSignup } from '@/lib/signup';
 import { C, S } from '@/lib/theme';
 
 const PERKS: { icon: 'people' | 'car' | 'git-compare' | 'flash'; text: string }[] = [
@@ -23,7 +24,8 @@ const PERKS: { icon: 'people' | 'car' | 'git-compare' | 'flash'; text: string }[
 
 export default function VendorSignIn() {
   const { signIn } = useAuth();
-  const [identifier, setIdentifier] = useState('');
+  const params = useLocalSearchParams<{ identifier?: string }>();
+  const [identifier, setIdentifier] = useState(params.identifier ?? '');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -39,7 +41,9 @@ export default function VendorSignIn() {
       await signIn(r.token, r.actor);
       router.replace('/');
     } catch (e) {
-      setError((e as ApiError).message);
+      const err = e as ApiError;
+      if (err.code === 'pending_approval' && (await getPendingSignup())?.kind === 'VENDOR') router.push('/pending');
+      else setError(err.message);
     } finally { setBusy(false); }
   }
 
@@ -82,7 +86,7 @@ export default function VendorSignIn() {
         {error && <ErrorBox message={error} />}
         <Button title="Sign in" icon="log-in-outline" onPress={submit} loading={busy} disabled={identifier.trim().length < 5 || !password} />
         <Row style={{ justifyContent: 'space-between' }}>
-          <Pressable onPress={() => Linking.openURL(`${API_URL}/vendor/register`)}>
+          <Pressable onPress={() => router.push('/register-vendor')}>
             <Text style={{ color: C.blue, fontWeight: '700', padding: 6 }}>New vendor? Register</Text>
           </Pressable>
           <Pressable onPress={() => Linking.openURL(`${API_URL}/vendor/login`)}>

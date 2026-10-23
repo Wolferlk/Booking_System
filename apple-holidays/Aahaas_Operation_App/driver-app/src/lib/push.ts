@@ -20,7 +20,8 @@ Notifications.setNotificationHandler({
 
 let registeredToken: string | null = null;
 
-export async function registerForPush(): Promise<string | null> {
+/** This phone's Expo push token (asks for permission), or null — without telling the server. */
+export async function expoPushToken(): Promise<string | null> {
   try {
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('trips', {
@@ -37,7 +38,16 @@ export async function registerForPush(): Promise<string | null> {
     if (status !== 'granted') return null;
     const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
     if (!projectId) return null; // run `npx eas-cli init` once to get a projectId
-    const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    return (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  } catch {
+    return null;
+  }
+}
+
+export async function registerForPush(): Promise<string | null> {
+  try {
+    const token = await expoPushToken();
+    if (!token) return null;
     await api('/api/mobile/push-token', { body: { token, platform: Platform.OS } });
     registeredToken = token;
     return token;

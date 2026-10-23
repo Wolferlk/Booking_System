@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { UserRole } from '@prisma/client'
+import { settleSignupOnActivation } from '@/lib/mobile/signup'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -92,6 +93,11 @@ export async function PUT(
     entityId: params.id,
     details: { name: updated.name, fields: Object.keys(body) },
   })
+
+  // Switching on a driver who registered themselves is their approval.
+  if (!driver.isActive && updated.isActive) {
+    await settleSignupOnActivation(params.id, { userId: session.user.id, name: session.user.name ?? 'Operations' })
+  }
 
   return buildApiSuccess(updated, 'Driver updated')
 }

@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -6,11 +6,13 @@ import { Button, ErrorBox, H1, Input, IconButton, P } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { useAuth, type Actor } from '@/lib/auth';
 import { APP_VERSION } from '@/lib/config';
+import { getPendingSignup } from '@/lib/signup';
 import { C, S } from '@/lib/theme';
 
 export default function SignIn() {
   const { signIn } = useAuth();
-  const [identifier, setIdentifier] = useState('');
+  const params = useLocalSearchParams<{ identifier?: string }>();
+  const [identifier, setIdentifier] = useState(params.identifier ?? '');
   const [password, setPassword] = useState('');
   const [critical, setCritical] = useState('');
   const [needCritical, setNeedCritical] = useState(false);
@@ -31,6 +33,8 @@ export default function SignIn() {
       const err = e as ApiError;
       if (err.code === 'not_activated') {
         router.push({ pathname: '/verify', params: { purpose: 'ACTIVATE', identifier: identifier.trim() } });
+      } else if (err.code === 'pending_approval' && (await getPendingSignup())?.kind === 'DRIVER') {
+        router.push('/pending');
       } else if (err.code === 'critical_required') {
         setNeedCritical(true);
         setError(err.message);
@@ -69,6 +73,9 @@ export default function SignIn() {
             <Text style={{ color: C.blue, fontWeight: '700', padding: 6 }}>Sign in with a code</Text>
           </Pressable>
         </View>
+        <Pressable onPress={() => router.push('/register-driver')} style={{ alignItems: 'center', padding: 6 }}>
+          <Text style={{ color: C.sub }}>New independent driver? <Text style={{ color: C.red, fontWeight: '800' }}>Register</Text></Text>
+        </Pressable>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

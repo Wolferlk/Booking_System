@@ -51,7 +51,7 @@ export const GET = mobileRoute('home', async (req: NextRequest) => {
       select: { distanceKm: true, sessionId: true, dayDate: true },
     }),
     prisma.mobileNotification.count({ where: { actorType: 'DRIVER', actorId: actor.driverId, readAt: null } }),
-    prisma.mobileDriverRequest.count({ where: { driverId: actor.driverId, status: 'PENDING' } }),
+    prisma.mobileDriverRequest.count({ where: { driverId: actor.driverId, status: 'PENDING', kind: { not: 'SIGNUP' } } }),
     vehicleCheckState(actor.driverId),
   ])
 

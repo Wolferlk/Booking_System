@@ -1,9 +1,11 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, type IconName } from '@/components/ui';
+import { getPendingSignup, type PendingSignup } from '@/lib/signup';
 import { C, R, S, shadow } from '@/lib/theme';
 
 function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title: string; lines: string; onPress: () => void; tone: 'red' | 'ink' }) {
@@ -25,37 +27,73 @@ function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title
   );
 }
 
+function RegisterButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress}
+      style={({ pressed }) => [{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: R.md, borderWidth: 1.5, borderColor: C.line, paddingVertical: 12, backgroundColor: pressed ? C.cardHi : '#FFFFFF' }]}>
+      <Ionicons name={icon} size={16} color={C.red} />
+      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export default function Welcome() {
+  // A registration still waiting for ops — show where it stands instead of the register buttons.
+  const [pending, setPending] = useState<PendingSignup | null>(null);
+  useFocusEffect(useCallback(() => { getPendingSignup().then(setPending); }, []));
+
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
       {/* the logo's dashed orbit, echoed large behind the brand */}
       <Image alt="" source={require('@/assets/images/aahaas-mark.png')} style={{ position: 'absolute', width: 520, height: 520, top: -150, right: -190, opacity: 0.07 }} />
-      <SafeAreaView style={{ flex: 1, padding: S.xl, justifyContent: 'space-between' }}>
-        <View style={{ marginTop: 40, gap: S.lg }}>
-          <Image alt="Aahaas" source={require('@/assets/images/aahaas-wordmark.png')} style={{ width: 230, height: 87 }} contentFit="contain" />
-          <View style={{ gap: S.sm }}>
-            <Text style={{ color: C.text, fontSize: 30, fontWeight: '900', letterSpacing: -0.6, lineHeight: 36 }}>Every trip,{'\n'}in your pocket.</Text>
-            <Text style={{ color: C.sub, fontSize: 16, lineHeight: 23 }}>Operations for Aahaas & Apple Holidays — Sri Lanka, Vietnam, Singapore and Malaysia.</Text>
+      <SafeAreaView style={{ flex: 1 }}>
+        {/* Scrolls only on short phones; otherwise the brand sits top and the doors bottom. */}
+        <ScrollView contentContainerStyle={{ flexGrow: 1, padding: S.xl, justifyContent: 'space-between', gap: S.xl }} bounces={false}>
+          <View style={{ marginTop: 40, gap: S.lg }}>
+            <Image alt="Aahaas" source={require('@/assets/images/aahaas-wordmark.png')} style={{ width: 230, height: 87 }} contentFit="contain" />
+            <View style={{ gap: S.sm }}>
+              <Text style={{ color: C.text, fontSize: 30, fontWeight: '900', letterSpacing: -0.6, lineHeight: 36 }}>Every trip,{'\n'}in your pocket.</Text>
+              <Text style={{ color: C.sub, fontSize: 16, lineHeight: 23 }}>Operations for Aahaas & Apple Holidays — Sri Lanka, Vietnam, Singapore and Malaysia.</Text>
+            </View>
           </View>
-        </View>
 
-        <View style={{ gap: S.md }}>
-          <Text style={{ color: C.dim, fontSize: 12, fontWeight: '800', letterSpacing: 1.2 }}>SIGN IN AS</Text>
-          <RoleCard tone="red" icon="car-sport" title="Driver" lines="Today’s trip, km, guest QR, your score"
-            onPress={() => router.push({ pathname: '/sign-in', params: { as: 'DRIVER' } })} />
-          <RoleCard tone="ink" icon="bus" title="Vehicle Vendor" lines="Your fleet, drivers, vehicles and trips"
-            onPress={() => router.push('/vendor-sign-in')} />
-          <Pressable onPress={() => router.push({ pathname: '/verify', params: { purpose: 'ACTIVATE' } })} style={{ alignItems: 'center', paddingTop: S.sm }}>
-            <Text style={{ color: C.sub }}>New driver? <Text style={{ color: C.red, fontWeight: '800' }}>Verify your phone</Text></Text>
-          </Pressable>
-          {/* Staff use ops.aahaas.com day to day — the app login is the minor door. */}
-          <Pressable onPress={() => router.push('/company-sign-in')} hitSlop={8}
-            style={({ pressed }) => [{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: pressed ? C.cardHi : '#FFFFFF' }]}>
-            <Ionicons name="briefcase-outline" size={14} color={C.sub} />
-            <Text style={{ color: C.sub, fontSize: 13, fontWeight: '700' }}>Company login</Text>
-          </Pressable>
-          <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>aahaas · uniquely yours</Text>
-        </View>
+          <View style={{ gap: S.md }}>
+            <Text style={{ color: C.dim, fontSize: 12, fontWeight: '800', letterSpacing: 1.2 }}>SIGN IN AS</Text>
+            <RoleCard tone="red" icon="car-sport" title="Driver" lines="Today’s trip, km, guest QR, your score"
+              onPress={() => router.push({ pathname: '/sign-in', params: { as: 'DRIVER' } })} />
+            <RoleCard tone="ink" icon="bus" title="Vehicle Vendor" lines="Your fleet, drivers, vehicles and trips"
+              onPress={() => router.push('/vendor-sign-in')} />
+            {pending ? (
+              <Pressable onPress={() => router.push('/pending')}
+                style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: S.md, borderRadius: R.md, borderWidth: 1.5, borderColor: C.amber, backgroundColor: pressed ? '#FDECC8' : C.goldSoft, padding: S.md }]}>
+                <Ionicons name="hourglass" size={22} color={C.amber} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: C.text, fontWeight: '800' }}>{pending.kind === 'DRIVER' ? 'Driver' : 'Vendor'} registration sent</Text>
+                  <Text style={{ color: C.sub, fontSize: 13 }}>Waiting for approval · tap to check</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={C.amber} />
+              </Pressable>
+            ) : (
+              <View style={{ gap: S.sm, paddingTop: S.xs }}>
+                <Text style={{ color: C.dim, fontSize: 12, fontWeight: '800', letterSpacing: 1.2 }}>NEW HERE? REGISTER</Text>
+                <View style={{ flexDirection: 'row', gap: S.sm }}>
+                  <RegisterButton icon="person-add" label="As a driver" onPress={() => router.push('/register-driver')} />
+                  <RegisterButton icon="business" label="As a vendor" onPress={() => router.push('/register-vendor')} />
+                </View>
+              </View>
+            )}
+            <Pressable onPress={() => router.push({ pathname: '/verify', params: { purpose: 'ACTIVATE' } })} style={{ alignItems: 'center' }}>
+              <Text style={{ color: C.sub, fontSize: 13 }}>Added by operations or your vendor? <Text style={{ color: C.red, fontWeight: '800' }}>Verify your phone</Text></Text>
+            </Pressable>
+            {/* Staff use ops.aahaas.com day to day — the app login is the minor door. */}
+            <Pressable onPress={() => router.push('/company-sign-in')} hitSlop={8}
+              style={({ pressed }) => [{ alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: pressed ? C.cardHi : '#FFFFFF' }]}>
+              <Ionicons name="briefcase-outline" size={14} color={C.sub} />
+              <Text style={{ color: C.sub, fontSize: 13, fontWeight: '700' }}>Company login</Text>
+            </Pressable>
+            <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>aahaas · uniquely yours</Text>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     </View>
   );

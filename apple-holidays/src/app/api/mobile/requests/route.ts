@@ -22,7 +22,7 @@ const TOPICS = ['BREAKDOWN', 'ACCIDENT', 'GUEST', 'ROUTE', 'OTHER']
 export const GET = mobileRoute('requests', async (req: NextRequest) => {
   const actor = await requireDriver(req)
   const items = await prisma.mobileDriverRequest.findMany({
-    where: { driverId: actor.driverId }, orderBy: { createdAt: 'desc' }, take: 30,
+    where: { driverId: actor.driverId, kind: { not: 'SIGNUP' } }, orderBy: { createdAt: 'desc' }, take: 30,
     select: { id: true, kind: true, bookingRef: true, reason: true, status: true, decisionNote: true, decidedAt: true, createdAt: true, payload: true },
   })
   return buildApiSuccess({ items })

@@ -20,6 +20,7 @@ import { COMPANY_ROLES, signDriverToken, signStaffToken, signVendorToken } from 
 import { MobileError, clientIp, mobileRoute, readJson } from '@/lib/mobile/http'
 import { findDriverByIdentifier } from '@/lib/mobile/otp'
 import { driverProfile, staffProfile } from '@/lib/mobile/profile'
+import { inactiveDriverError } from '@/lib/mobile/signup'
 import { vendorProfile } from '@/lib/mobile/vendor'
 import { VendorLoginError, authenticateVendor } from '@/lib/vendor-login'
 
@@ -58,6 +59,10 @@ export const POST = mobileRoute('login', async (req: NextRequest) => {
     } catch (err) {
       if (!(err instanceof VendorLoginError)) throw err
       if (err.status === 401) fail(ip, err.message, err.code)
+      // A self-registered vendor stays switched off until ops approve it.
+      if (err.code === 'inactive') {
+        throw new MobileError('Your vendor account is waiting for approval from the operations team. We will let you know as soon as it is approved.', 403, 'pending_approval')
+      }
       throw new MobileError(err.message, err.status, err.code)
     }
   }
@@ -85,7 +90,7 @@ export const POST = mobileRoute('login', async (req: NextRequest) => {
   if (body.as === 'COMPANY') fail(ip, 'No company account with that e-mail. Drivers: use Driver sign in.', 'not_found')
   const driver = await findDriverByIdentifier(identifier)
   if (!driver) fail(ip, 'We could not find a driver with that phone or e-mail.', 'not_found')
-  if (!driver.isActive) throw new MobileError('Your driver profile is not active. Please contact operations.', 403, 'inactive')
+  if (!driver.isActive) throw await inactiveDriverError(driver.id)
   const account = await prisma.mobileDriverAccount.findUnique({ where: { driverId: driver.id } })
   if (!account?.passwordHash) {
     throw new MobileError('First time here? Verify your phone to set a password.', 409, 'not_activated')

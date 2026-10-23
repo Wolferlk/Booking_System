@@ -9,6 +9,7 @@ import { NextRequest } from 'next/server'
 import { buildApiSuccess } from '@/lib/utils'
 import { MobileError, clientIp, mobileRoute, readJson } from '@/lib/mobile/http'
 import { findDriverByIdentifier, issueOtp, type OtpChannel, type OtpPurpose } from '@/lib/mobile/otp'
+import { inactiveDriverError } from '@/lib/mobile/signup'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,6 +27,7 @@ export const POST = mobileRoute('otp-request', async (req: NextRequest) => {
       404, 'not_found',
     )
   }
+  if (!driver.isActive) throw await inactiveDriverError(driver.id)
   const issued = await issueOtp({ driver, purpose, channel, ip: clientIp(req) })
   return buildApiSuccess({ ...issued, driverName: driver.name.split(/\s+/)[0] })
 })
