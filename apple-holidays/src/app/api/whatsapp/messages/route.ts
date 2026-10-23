@@ -11,7 +11,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
-import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundForPhone, syncDeliveryReceiptsForPhone } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -31,8 +31,9 @@ export async function GET(req: NextRequest) {
 
   // Pull any replies n8n's webhook stored that we haven't imported yet — this
   // is what makes customer replies appear in the thread (n8n owns the Meta
-  // webhook; we read its shared table directly).
-  await syncInboundForPhone(phone)
+  // webhook; we read its shared table directly). Delivery receipts for what we
+  // sent come back the same way — that is what moves the ✓ / ✓✓ / blue ✓✓.
+  await Promise.all([syncInboundForPhone(phone), syncDeliveryReceiptsForPhone(phone)])
 
   const messages = await prisma.whatsAppMessage.findMany({
     where:   { phone },

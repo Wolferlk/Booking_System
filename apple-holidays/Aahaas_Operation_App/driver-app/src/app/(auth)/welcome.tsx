@@ -4,7 +4,6 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { RegisterButton } from '@/components/signup-ui';
 import { Ionicons, type IconName } from '@/components/ui';
 import { getPendingSignup, type PendingSignup } from '@/lib/signup';
 import { C, R, S, shadow } from '@/lib/theme';
@@ -29,7 +28,7 @@ function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title
 }
 
 export default function Welcome() {
-  // A registration still waiting for ops — show where it stands instead of the register buttons.
+  // A registration still waiting for ops — show where it stands. (Registering starts from each sign-in page.)
   const [pending, setPending] = useState<PendingSignup | null>(null);
   useFocusEffect(useCallback(() => { getPendingSignup().then(setPending); }, []));
 
@@ -64,15 +63,7 @@ export default function Welcome() {
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={C.amber} />
               </Pressable>
-            ) : (
-              <View style={{ gap: S.sm, paddingTop: S.xs }}>
-                <Text style={{ color: C.dim, fontSize: 12, fontWeight: '800', letterSpacing: 1.2 }}>NEW HERE? REGISTER</Text>
-                <View style={{ flexDirection: 'row', gap: S.sm }}>
-                  <RegisterButton icon="person-add" label="As a driver" style={{ flex: 1 }} onPress={() => router.push('/register-driver')} />
-                  <RegisterButton icon="business" label="As a vendor" style={{ flex: 1 }} onPress={() => router.push('/register-vendor')} />
-                </View>
-              </View>
-            )}
+            ) : null}
             <Pressable onPress={() => router.push({ pathname: '/verify', params: { purpose: 'ACTIVATE' } })} style={{ alignItems: 'center' }}>
               <Text style={{ color: C.sub, fontSize: 13 }}>Added by operations or your vendor? <Text style={{ color: C.red, fontWeight: '800' }}>Verify your phone</Text></Text>
             </Pressable>

@@ -13,6 +13,12 @@
  * handling (inbox, threads, 24h window, queued Tour Confirmations) then runs
  * entirely inside the booking system.
  *
+ * The same goes for delivery receipts (✓ / ✓✓ / blue ✓✓). n8n gets Meta's
+ * `statuses` for messages WE sent, and files them in
+ * `tbl_whatsapp_status_receipts` (its own outbound rows keep theirs on
+ * `tbl_whatsapp_messages.send_status`). `syncDeliveryReceipts` reads them back
+ * by wamid and walks our rows up the ladder.
+ *
  * Fully optional: without WA_SHARED_DB_* env config every function is a no-op,
  * and any query failure degrades to "no new rows" — never throws.
  */
@@ -20,6 +26,7 @@
 import mysql from 'mysql2/promise'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone } from '@/lib/whatsapp'
+import { applyDeliveryStatuses, type MetaDeliveryStatus } from '@/lib/whatsapp-delivery-status'
 
 // n8n's inbox media proxy — relative media_url paths are served from here.
 const DEFAULT_MEDIA_BASE = 'https://travel-parser-live.aahaas.com'
@@ -179,6 +186,101 @@ export async function syncInboundRecent(opts: { sinceDays?: number } = {}): Prom
     return await syncInboundForPhones(known.map(k => k.phone), { sinceDays: opts.sinceDays ?? 3 })
   } catch (err) {
     console.error('[WA SharedSync] recent sync failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
+// Outbound statuses that can still climb. `read` and `failed` are the last word.
+const OPEN_OUTBOUND = ['pending', 'accepted', 'held', 'sent', 'delivered']
+
+interface SharedReceipt {
+  wa_message_id: string
+  status: string
+  error_code: number | null
+  error_title: string | null
+  status_at: Date | null
+}
+
+/**
+ * Pull n8n's stored receipts for these wamids and apply them to our chat log
+ * and driver-document sends. Returns how many rows moved. Before n8n creates
+ * `tbl_whatsapp_status_receipts` the query fails and this quietly returns 0.
+ */
+export async function syncDeliveryReceipts(wamids: string[]): Promise<number> {
+  const db = getPool()
+  const ids = Array.from(new Set(wamids.filter(Boolean))).slice(0, 500)
+  if (!db || ids.length === 0) return 0
+
+  try {
+    const [rows] = await db.query<mysql.RowDataPacket[]>(
+      `SELECT wa_message_id, status, error_code, error_title, status_at
+       FROM tbl_whatsapp_status_receipts
+       WHERE wa_message_id IN (${ids.map(() => '?').join(',')})`,
+      ids,
+    )
+    const receipts = rows as unknown as SharedReceipt[]
+    if (receipts.length === 0) return 0
+
+    const statuses: MetaDeliveryStatus[] = receipts.map(r => ({
+      id:        r.wa_message_id,
+      status:    r.status,
+      timestamp: r.status_at ? Math.floor(new Date(r.status_at).getTime() / 1000) : undefined,
+      errors:    r.status === 'failed'
+        ? [{ code: r.error_code ?? undefined, title: r.error_title ?? undefined }]
+        : undefined,
+    }))
+    const result = await applyDeliveryStatuses(statuses)
+    return result.messages + result.documents
+  } catch (err) {
+    const code = (err as { code?: string })?.code
+    if (code !== 'ER_NO_SUCH_TABLE') {
+      console.error('[WA SharedSync] receipt sync failed:', err instanceof Error ? err.message : err)
+    }
+    return 0
+  }
+}
+
+/** Receipts for one thread — every outbound message that can still change ticks. */
+export async function syncDeliveryReceiptsForPhone(phone: string, opts: { sinceDays?: number } = {}) {
+  if (!getPool()) return 0
+  try {
+    const open = await prisma.whatsAppMessage.findMany({
+      where: {
+        phone:       normalisePhone(phone),
+        direction:   'outbound',
+        waMessageId: { not: null },
+        status:      { in: OPEN_OUTBOUND },
+        createdAt:   { gte: new Date(Date.now() - (opts.sinceDays ?? 30) * 86400000) },
+      },
+      select:  { waMessageId: true },
+      orderBy: { createdAt: 'desc' },
+      take:    300,
+    })
+    return await syncDeliveryReceipts(open.map(m => m.waMessageId!))
+  } catch (err) {
+    console.error('[WA SharedSync] thread receipt sync failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
+/** Receipts for recent outbound across every chat — keeps the inbox list's ticks current. */
+export async function syncDeliveryReceiptsRecent(opts: { sinceDays?: number } = {}) {
+  if (!getPool()) return 0
+  try {
+    const open = await prisma.whatsAppMessage.findMany({
+      where: {
+        direction:   'outbound',
+        waMessageId: { not: null },
+        status:      { in: OPEN_OUTBOUND },
+        createdAt:   { gte: new Date(Date.now() - (opts.sinceDays ?? 3) * 86400000) },
+      },
+      select:  { waMessageId: true },
+      orderBy: { createdAt: 'desc' },
+      take:    500,
+    })
+    return await syncDeliveryReceipts(open.map(m => m.waMessageId!))
+  } catch (err) {
+    console.error('[WA SharedSync] recent receipt sync failed:', err instanceof Error ? err.message : err)
     return 0
   }
 }

@@ -10,7 +10,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { WHATSAPP_STAFF_ROLES, whatsappInboxCountry } from '@/lib/whatsapp'
-import { syncInboundRecent } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundRecent, syncDeliveryReceiptsRecent } from '@/lib/whatsapp-shared-inbox-sync'
 import {
   FIELD_RANK, digitsOf, findBookingsForSearch, looksLikePhone, messageExcerpt, phoneKey,
   type SearchMatch,
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
 
   // Import any replies n8n's webhook stored for numbers we know, so incoming
   // messages surface in this list without anyone opening the thread first.
-  await syncInboundRecent()
+  await Promise.all([syncInboundRecent(), syncDeliveryReceiptsRecent()])
 
   // Bounded scan, newest first — this is a support inbox, not a bulk-messaging
   // log, so a few thousand recent rows comfortably covers "every conversation".
