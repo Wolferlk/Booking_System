@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   MessageCircle, Send, Loader2, CheckCircle2, Calendar, Plane, Hotel,
   ChevronDown, ChevronUp, Star, RefreshCw, Clock, Sparkles, MapPin, ExternalLink,
-  Link as LinkIcon,
+  Link as LinkIcon, Crown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -49,6 +49,8 @@ interface PanelData {
   briefingDefaultTime: string
   briefingTimeOverride: string | null   // "HH:MM", "OFF", or null = default
   briefingTimezone: string
+  agent: string | null
+  superPartner: boolean                 // daily plan carries AppleHolidays branding
   feedback: GuestFeedback | null
   portalLink: string
   portalWelcomeSentAt: string | null
@@ -198,6 +200,17 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                   ? <span>Messages go to <span className="font-mono font-semibold">{data.contact}</span>{data.leadName ? ` · ${data.leadName}` : ''}</span>
                   : <span>No WhatsApp/phone number on this booking — add a contact number before sending.</span>}
                 <span className="ml-auto flex items-center gap-2 text-slate-400">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      data.superPartner ? 'bg-amber-100 text-amber-800' : 'bg-white/70 text-slate-500 border border-slate-200'
+                    }`}
+                    title={data.superPartner
+                      ? `${data.agent} is a Super Partner — daily plans carry AppleHolidays branding`
+                      : `${data.agent ?? 'This agent'} is not a Super Partner — daily plans go out without AppleHolidays branding (Settings → Customer Daily Trip Details)`}
+                  >
+                    {data.superPartner && <Crown className="w-3 h-3" />}
+                    {data.superPartner ? 'AppleHolidays branded' : 'Unbranded'}
+                  </span>
                   {data.hasContact && (
                     <a
                       href={`/dashboard/whatsapp?phone=${encodeURIComponent((data.contact ?? '').replace(/\D/g, ''))}`}

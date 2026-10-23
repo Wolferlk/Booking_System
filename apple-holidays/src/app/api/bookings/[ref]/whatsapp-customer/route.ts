@@ -20,7 +20,9 @@ import {
   setBookingBriefingTime,
   normaliseBriefingTime,
   briefingTimezone,
+  getSuperPartners,
 } from '@/lib/customer-whatsapp-automation'
+import { isSuperPartner } from '@/lib/super-partners'
 import { briefingDayLabel } from '@/lib/whatsapp'
 import {
   sendPortalLinkForBooking,
@@ -110,10 +112,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   }
 
   const feedbackSend = sends.find(s => s.senderName?.startsWith(TAG_FEEDBACK_REQUEST))
-  const [portal, defaultTime, timeOverride] = await Promise.all([
+  const [portal, defaultTime, timeOverride, superPartners] = await Promise.all([
     portalSendStatus(params.ref),
     getDefaultBriefingTime(),
     getBookingBriefingTime(params.ref),
+    getSuperPartners(),
   ])
 
   return buildApiSuccess({
@@ -130,6 +133,9 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     briefingDefaultTime:  defaultTime,
     briefingTimeOverride: timeOverride,
     briefingTimezone:     briefingTimezone(booking.operationCountry, booking.bookingRef),
+    // Super Partner agents' guests get the AppleHolidays-branded daily plan.
+    agent:                booking.agent,
+    superPartner:         isSuperPartner(booking.agent, superPartners),
     feedback: booking.guestFeedback,
     // Customer trip-portal link: the URL itself plus when each stage last went out.
     // With no guest number the link is instead pushed to the ops fallback numbers.

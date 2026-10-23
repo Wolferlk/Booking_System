@@ -884,7 +884,6 @@ export interface BriefingMovement {
   meetingTime:  string | null   // pick-up / meeting time
   timeFrom:     string | null
   timeTo:       string | null
-  details:      string | null   // the "job" / activity description
   mealPlan:     string | null
   serviceType:  string          // ServiceType enum name
   driverName:   string | null
@@ -930,7 +929,11 @@ function paxLine(a: number, c: number, i = 0): string {
  * Format a warm, guest-facing day plan — sent the evening before each trip day
  * (and on-demand per day from the Customer WhatsApp panel). Adapts its tone to
  * arrival / mid-trip / departure days and folds in flights, hotels, per-movement
- * driver + ticket details, activities, and meal plans.
+ * driver + ticket details, activities, and meal plans. The movement's long
+ * description is left out — the guest needs the when/who, not the sales copy.
+ *
+ * `branded` is true only for Super Partner agents (lib/super-partners.ts);
+ * everyone else gets the same plan without the AppleHolidays header/sign-off.
  */
 export function formatCustomerDailyBriefingMessage(params: {
   bookingRef:     string
@@ -956,6 +959,7 @@ export function formatCustomerDailyBriefingMessage(params: {
   }[]
   movements:       BriefingMovement[]
   attachmentCount: number          // ticket/voucher images sent right after this text
+  branded:         boolean
 }): string {
   const dateStr  = briefingDayLabel(params.date)
   const name     = params.leadName ?? 'traveller'
@@ -972,7 +976,7 @@ export function formatCustomerDailyBriefingMessage(params: {
   }
 
   const lines: (string | null)[] = [
-    `🌴 *AppleHolidays — Your Day Plan*`,
+    params.branded ? `🌴 *AppleHolidays — Your Day Plan*` : `🌴 *Your Day Plan*`,
     ``,
     opener,
     ``,
@@ -1013,7 +1017,6 @@ export function formatCustomerDailyBriefingMessage(params: {
       else if (window)   lines.push(`   ⏰ ${window}`)
       const svc = SERVICE_LABEL[m.serviceType]
       if (svc && m.serviceType !== 'OWN_ARRANGEMENT') lines.push(`   🚐 ${svc}`)
-      if (m.details)  lines.push(`   📝 ${m.details}`)
       if (m.mealPlan) lines.push(`   🍽 Meals: ${m.mealPlan}`)
       if (m.driverName) {
         const vehicle = [m.vehicleType, m.vehiclePlate].filter(Boolean).join(' · ')
@@ -1064,7 +1067,7 @@ export function formatCustomerDailyBriefingMessage(params: {
 
   lines.push(`📁 *Ref:* ${params.bookingRef}`)
   lines.push(``)
-  lines.push(`Have a wonderful day 💙 — AppleHolidays Team`)
+  lines.push(params.branded ? `Have a wonderful day 💙 — AppleHolidays Team` : `Have a wonderful day 💙`)
 
   return lines.filter(l => l !== null).join('\n')
 }

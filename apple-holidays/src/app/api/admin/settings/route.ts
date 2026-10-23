@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { SETTING_DAILY_BRIEFING_TIME, normaliseBriefingTime } from '@/lib/customer-whatsapp-automation'
+import { SETTING_SUPER_PARTNERS, parseSuperPartners } from '@/lib/super-partners'
 
 export const dynamic = 'force-dynamic'
 const PROTECTED_KEYS = new Set([
@@ -56,6 +57,11 @@ export async function POST(req: NextRequest) {
     const time = normaliseBriefingTime(value)
     if (!time) return buildApiError('Time must be HH:MM (24-hour)')
     value = time
+  }
+
+  // Always stored as a clean JSON array, so the reader never has to guess the format.
+  if (key === SETTING_SUPER_PARTNERS) {
+    value = JSON.stringify(parseSuperPartners(String(value ?? '[]')))
   }
 
   await prisma.systemSetting.upsert({

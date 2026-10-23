@@ -8,10 +8,17 @@
  * pulls in prisma, so the keys are repeated here). The time is the guest's
  * local time; a booking's own "Own time" / "Off" override still wins. The
  * scheduler re-reads the row every 5 minutes, so no restart is needed.
+ *
+ * Super Partners: only these agents' guests see the AppleHolidays header and
+ * sign-off; everyone else gets the plan white-labelled (lib/super-partners.ts).
  */
 
-import { Clock, Loader2, MessageCircle } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Clock, Crown, Loader2, MessageCircle, Plus, RotateCcw, X } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import {
+  SETTING_SUPER_PARTNERS, DEFAULT_SUPER_PARTNERS, parseSuperPartners, isSuperPartner,
+} from '@/lib/super-partners'
 
 const KEY_TIME    = 'auto_whatsapp_daily_briefing_time'
 const KEY_ENABLED = 'auto_whatsapp_daily_briefing_enabled'
@@ -103,7 +110,160 @@ export default function CustomerDailyBriefingCard({ settings, saving, onSave }: 
             Before 12:00 sends the same day&apos;s plan; 12:00 or later sends tomorrow&apos;s.
           </p>
         </div>
+
+        <SuperPartners settings={settings} saving={saving} onSave={onSave} />
       </CardBody>
     </Card>
+  )
+}
+
+interface BookingAgent { name: string; count: number }
+
+const AGENTS_SHOWN = 12
+
+function SuperPartners({ settings, saving, onSave }: Props) {
+  const keys = useMemo(() => parseSuperPartners(settings[SETTING_SUPER_PARTNERS]), [settings])
+  const busy = saving === SETTING_SUPER_PARTNERS
+  const isDefault = settings[SETTING_SUPER_PARTNERS] == null
+  const [draft, setDraft] = useState('')
+  const [agents, setAgents] = useState<BookingAgent[] | null>(null)
+  const [showAll, setShowAll] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/admin/settings/booking-agents')
+      .then(r => r.json())
+      .then(j => setAgents(j.success ? j.data : []))
+      .catch(() => setAgents([]))
+  }, [])
+
+  const save = (next: string[]) => void onSave(SETTING_SUPER_PARTNERS, JSON.stringify(parseSuperPartners(JSON.stringify(next))))
+  const add = (k: string) => {
+    const v = k.trim()
+    if (!v) return
+    save([...keys, v])
+    setDraft('')
+  }
+
+  const covered = agents?.filter(a => isSuperPartner(a.name, keys)) ?? []
+  const coveredBookings = covered.reduce((n, a) => n + a.count, 0)
+  const totalBookings = agents?.reduce((n, a) => n + a.count, 0) ?? 0
+  const visibleAgents = showAll ? agents ?? [] : (agents ?? []).slice(0, AGENTS_SHOWN)
+
+  return (
+    <div className="space-y-3 border-t border-slate-100 pt-5">
+      <div>
+        <p className="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+          <Crown className="w-4 h-4 text-amber-500" /> Super Partners
+        </p>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Only guests of these agents see AppleHolidays branding in the daily plan. Everyone else gets the
+          same plan without it. A name matches any agent that contains it, ignoring case and spaces, so
+          &ldquo;MakeMyTrip&rdquo; also covers &ldquo;Make My Trip Pvt Ltd&rdquo;.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {keys.length === 0 && <span className="text-xs text-slate-400 italic">No super partners. Every guest gets the unbranded plan.</span>}
+        {keys.map(k => (
+          <span key={k} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 pl-2.5 pr-1 py-0.5 text-[11px] font-medium text-amber-800">
+            {k}
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => save(keys.filter(x => x !== k))}
+              className="rounded-full p-0.5 hover:bg-amber-100 disabled:opacity-50"
+              aria-label={`Remove ${k}`}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          value={draft}
+          disabled={busy}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add(draft) }}
+          placeholder="Add an agent, e.g. 30 Sundays"
+          className="flex-1 min-w-[180px] px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-sm disabled:opacity-50"
+        />
+        <button
+          type="button"
+          disabled={busy || !draft.trim()}
+          onClick={() => add(draft)}
+          className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add
+        </button>
+        {!isDefault && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => save(DEFAULT_SUPER_PARTNERS)}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+            title={`Reset to ${DEFAULT_SUPER_PARTNERS.join(', ')}`}
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Default
+          </button>
+        )}
+      </div>
+
+      {/* What the guest actually sees, side by side */}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {[
+          { label: 'Super Partner guest', branded: true },
+          { label: 'Any other agent', branded: false },
+        ].map(p => (
+          <div key={p.label} className="rounded-lg bg-[#e7fbe6] border border-emerald-100 px-3 py-2 text-[11px] leading-relaxed text-slate-700">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 mb-1">{p.label}</p>
+            <p className="font-semibold">🌴 {p.branded ? 'AppleHolidays — Your Day Plan' : 'Your Day Plan'}</p>
+            <p className="text-slate-400">…</p>
+            <p>Have a wonderful day 💙{p.branded ? ' — AppleHolidays Team' : ''}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-1.5">
+        <p className="text-xs text-slate-500">
+          Agents on bookings
+          {agents && totalBookings > 0 && (
+            <span className="text-slate-400"> · {coveredBookings} of {totalBookings} bookings branded</span>
+          )}
+        </p>
+        {agents === null ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {visibleAgents.map(a => {
+              const on = isSuperPartner(a.name, keys)
+              return (
+                <button
+                  key={a.name}
+                  type="button"
+                  disabled={busy || on}
+                  onClick={() => add(a.name)}
+                  title={on ? 'Already a super partner' : 'Make this agent a super partner'}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                    on
+                      ? 'border-amber-200 bg-amber-50 text-amber-800 cursor-default'
+                      : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-50'
+                  }`}
+                >
+                  {on ? '👑 ' : '+ '}{a.name} <span className="text-slate-400 tabular-nums">{a.count}</span>
+                </button>
+              )
+            })}
+            {agents.length > AGENTS_SHOWN && (
+              <button type="button" onClick={() => setShowAll(v => !v)} className="text-[11px] text-brand-600 hover:underline px-1">
+                {showAll ? 'Show fewer' : `Show all ${agents.length}`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }

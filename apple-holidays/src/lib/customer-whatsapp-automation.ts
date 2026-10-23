@@ -19,6 +19,7 @@ import {
   briefingDayLabel,
 } from '@/lib/whatsapp'
 import type { OperationCountry } from '@prisma/client'
+import { SETTING_SUPER_PARTNERS, parseSuperPartners, isSuperPartner } from '@/lib/super-partners'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -106,6 +107,12 @@ export async function setBookingBriefingTime(bookingRef: string, value: string |
     return
   }
   await prisma.systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
+}
+
+/** Agents whose guests get the AppleHolidays-branded daily plan (defaults to MMT / MakeMyTrip). */
+export async function getSuperPartners(): Promise<string[]> {
+  const row = await prisma.systemSetting.findUnique({ where: { key: SETTING_SUPER_PARTNERS } })
+  return parseSuperPartners(row?.value)
 }
 
 /** The guest's timezone — the send time means local time where the trip is. */
@@ -261,7 +268,6 @@ export async function sendDailyBriefingForBooking(
     meetingTime:  item.meetingTime,
     timeFrom:     item.timeFrom,
     timeTo:       item.timeTo,
-    details:      item.details,
     mealPlan:     item.mealPlan,
     serviceType:  item.serviceType,
     driverName:   item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
@@ -300,6 +306,8 @@ export async function sendDailyBriefingForBooking(
         .filter(a => /^https:\/\//i.test(a.url))
     : []
 
+  const branded = isSuperPartner(b.agent, await getSuperPartners())
+
   const msg = formatCustomerDailyBriefingMessage({
     bookingRef:  b.bookingRef,
     leadName:    b.passengers[0]?.name ?? null,
@@ -320,6 +328,7 @@ export async function sendDailyBriefingForBooking(
     })),
     movements,
     attachmentCount: attachments.length,
+    branded,
   })
 
   const ok = await sendWhatsAppText(phone, msg, b.passengers[0]?.name ?? undefined)
