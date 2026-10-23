@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
 import TranscriptsExplorer from '@/components/te/transcripts-explorer'
+import FeedbackBoard from '@/components/te/feedback-board'
 
 // ─── Base URL ─────────────────────────────────────────────────────────────────
 const TE_BASE = 'https://travel-parser-live.aahaas.com/v1/traveller-experience'
@@ -473,7 +474,7 @@ function TranscriptBubbles({ transcript }: { transcript: TEFeedback['transcript'
   )
 }
 
-type Tab = 'setup' | 'experience' | 'calls' | 'transcripts' | 'alerts' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp' | 'feedbackforms'
+type Tab = 'setup' | 'experience' | 'calls' | 'feedback' | 'transcripts' | 'alerts' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp' | 'feedbackforms'
 
 // ─── Guest feedback form (digital form submissions) ───────────────────────────
 interface GuestFeedbackForm {
@@ -520,7 +521,7 @@ interface WaAutomationState {
   }[]
 }
 
-const TAB_KEYS: Tab[] = ['setup', 'experience', 'calls', 'transcripts', 'alerts', 'jobs', 'quickcall', 'history', 'chatbot', 'whatsapp', 'feedbackforms']
+const TAB_KEYS: Tab[] = ['setup', 'experience', 'calls', 'feedback', 'transcripts', 'alerts', 'jobs', 'quickcall', 'history', 'chatbot', 'whatsapp', 'feedbackforms']
 
 export default function AICallBotPage() {
   const [tab, setTab] = useState<Tab>('setup')
@@ -1502,6 +1503,7 @@ export default function AICallBotPage() {
             { key: 'setup',    label: 'Setup & Service',  icon: <Settings className="w-3.5 h-3.5" /> },
             { key: 'experience', label: 'Experience',     icon: <Award className="w-3.5 h-3.5" /> },
             { key: 'calls',    label: 'Call Log',         icon: <ListChecks className="w-3.5 h-3.5" /> },
+            { key: 'feedback', label: 'Feedback',         icon: <ShieldAlert className="w-3.5 h-3.5" /> },
             { key: 'transcripts', label: 'Transcripts',   icon: <MessageSquare className="w-3.5 h-3.5" /> },
             { key: 'alerts',   label: 'Alerts',           icon: <BellRing className="w-3.5 h-3.5" />, badge: openAlertCount },
             { key: 'jobs',     label: 'Custom Jobs',      icon: <Megaphone className="w-3.5 h-3.5" /> },
@@ -1920,6 +1922,7 @@ export default function AICallBotPage() {
         {/* ════════════════════════════════════════════════════════════════
             TAB — TRANSCRIPTS EXPLORER (DB-backed, searchable, master-detail)
         ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'feedback' && <FeedbackBoard />}
         {tab === 'transcripts' && <TranscriptsExplorer />}
 
         {/* ════════════════════════════════════════════════════════════════

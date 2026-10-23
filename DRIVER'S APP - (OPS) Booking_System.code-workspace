@@ -3,6 +3,9 @@
 		{
 			"name": "Booking_System",
 			"path": "."
+		},
+		{
+			"path": "../../n8n-project"
 		}
 	],
 	"settings": {}

@@ -13,7 +13,7 @@ import {
   Sparkles, TrendingUp, ClipboardCheck,
 } from 'lucide-react'
 import {
-  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, fmtDateTime, triState,
+  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, FeedbackClassBadge, fmtDateTime, triState,
   type TranscriptRecord, type TranscriptStats, type Kind,
 } from '@/components/te/transcript-shared'
 
@@ -67,6 +67,7 @@ function ListRow({ rec, active, onClick }: { rec: TranscriptRecord; active: bool
       <p className="text-[11px] text-slate-400 line-clamp-2 leading-snug">{rec.summary || <span className="italic text-slate-600">No summary</span>}</p>
       <div className="flex items-center gap-2 mt-1.5">
         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${m.chip}`}>{m.short}</span>
+        <FeedbackClassBadge rec={rec} dark />
         {sent && <span className="text-[10px]" title={sent.label}>{sent.emoji}</span>}
         {rec.customer_name && <span className="text-[10px] text-slate-500 truncate">{rec.customer_name}</span>}
         <span className="ml-auto text-[9px] text-slate-600">{fmtDateTime(rec.at)}</span>
@@ -75,8 +76,8 @@ function ListRow({ rec, active, onClick }: { rec: TranscriptRecord; active: bool
   )
 }
 
-// ── Detail pane ─────────────────────────────────────────────────────────────
-function Detail({ rec, onClose }: { rec: TranscriptRecord; onClose: () => void }) {
+// ── Detail pane (also opened from the Feedback board) ──────────────────────
+export function TranscriptDetail({ rec, onClose }: { rec: TranscriptRecord; onClose: () => void }) {
   const m = KIND_META[rec.kind]
   const Icon = m.icon
   const sent = rec.sentiment ? SENTIMENT_META[rec.sentiment] : null
@@ -99,12 +100,18 @@ function Detail({ rec, onClose }: { rec: TranscriptRecord; onClose: () => void }
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {rec.kind === 'post_tour' && rec.rating != null && <span className="inline-flex items-center gap-1"><Stars rating={rec.rating} /><span className="text-xs font-black text-amber-400">{rec.rating}/10</span></span>}
+          <FeedbackClassBadge rec={rec} dark />
           {sent && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${sent.cls}`}>{sent.emoji} {sent.label}</span>}
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {rec.outcome && <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-300 bg-slate-800 px-2.5 py-1 rounded-full">{OUTCOME_LABEL[rec.outcome] ?? rec.outcome}</span>}
+
+        {rec.feedback_class !== 'none' && (
+          <Callout tone={rec.feedback_class === 'bad' ? 'red' : rec.feedback_class === 'warning' ? 'amber' : 'emerald'} icon={rec.feedback_class === 'good' ? ThumbsUp : AlertCircle}
+            title={`${rec.feedback_class} feedback${rec.feedback_source === 'ai' ? ' · AI verdict' : ''}`}>{rec.feedback_reason}</Callout>
+        )}
 
         {/* Structured insight */}
         {rec.kind === 'reconfirm' && (
@@ -240,7 +247,7 @@ export default function TranscriptsExplorer() {
           <AnimatePresence mode="wait">
             {selectedRec ? (
               <motion.div key={selectedRec.uid} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="h-full">
-                <Detail rec={selectedRec} onClose={() => setSelected(null)} />
+                <TranscriptDetail rec={selectedRec} onClose={() => setSelected(null)} />
               </motion.div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full py-20 text-center px-6">

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, CallRecordingPlayer, fmtDate, triState,
+  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, CallRecordingPlayer, FeedbackClassBadge, fmtDate, triState,
   type TranscriptRecord, type TranscriptStats, type Kind,
 } from '@/components/te/transcript-shared'
 
@@ -63,6 +63,7 @@ function CallCard({ rec, onRetry, retryBusy }: { rec: TranscriptRecord; onRetry?
           <span className="inline-flex items-center gap-1"><Stars rating={rec.rating} /><span className="text-[11px] font-black text-amber-500">{rec.rating}/10</span></span>
         )}
         {rec.outcome && <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{OUTCOME_LABEL[rec.outcome] ?? rec.outcome}</span>}
+        <FeedbackClassBadge rec={rec} />
         {sent && <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${sent.cls}`}>{sent.emoji} {sent.label}</span>}
         {rec.transcript_turns > 0 && <span className="text-[10px] font-semibold text-violet-500 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-full inline-flex items-center gap-1"><MessageSquareText className="w-3 h-3" />{rec.transcript_turns}</span>}
         <span className="ml-auto text-[11px] text-slate-400">{fmtDate(rec.at)}</span>
@@ -75,6 +76,9 @@ function CallCard({ rec, onRetry, retryBusy }: { rec: TranscriptRecord; onRetry?
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
             <div className="px-4 pb-4 pt-1 space-y-3 border-t border-slate-100">
+              {rec.feedback_class !== 'none' && (
+                <p className="pt-2 text-xs text-slate-600"><span className="font-bold">Feedback: </span>{rec.feedback_reason}</p>
+              )}
               {/* Kind-specific structured detail */}
               {rec.kind === 'reconfirm' && (
                 <div className="flex flex-wrap gap-1.5 pt-2">
