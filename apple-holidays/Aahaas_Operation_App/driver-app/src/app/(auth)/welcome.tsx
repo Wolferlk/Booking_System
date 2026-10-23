@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { RegisterButton } from '@/components/signup-ui';
 import { Ionicons, type IconName } from '@/components/ui';
 import { getPendingSignup, type PendingSignup } from '@/lib/signup';
 import { C, R, S, shadow } from '@/lib/theme';
@@ -23,16 +24,6 @@ function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title
         </View>
         <Ionicons name="chevron-forward" size={22} color="#FFFFFF" />
       </LinearGradient>
-    </Pressable>
-  );
-}
-
-function RegisterButton({ icon, label, onPress }: { icon: IconName; label: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress}
-      style={({ pressed }) => [{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderRadius: R.md, borderWidth: 1.5, borderColor: C.line, paddingVertical: 12, backgroundColor: pressed ? C.cardHi : '#FFFFFF' }]}>
-      <Ionicons name={icon} size={16} color={C.red} />
-      <Text style={{ color: C.text, fontSize: 14, fontWeight: '800' }}>{label}</Text>
     </Pressable>
   );
 }
@@ -77,8 +68,8 @@ export default function Welcome() {
               <View style={{ gap: S.sm, paddingTop: S.xs }}>
                 <Text style={{ color: C.dim, fontSize: 12, fontWeight: '800', letterSpacing: 1.2 }}>NEW HERE? REGISTER</Text>
                 <View style={{ flexDirection: 'row', gap: S.sm }}>
-                  <RegisterButton icon="person-add" label="As a driver" onPress={() => router.push('/register-driver')} />
-                  <RegisterButton icon="business" label="As a vendor" onPress={() => router.push('/register-vendor')} />
+                  <RegisterButton icon="person-add" label="As a driver" style={{ flex: 1 }} onPress={() => router.push('/register-driver')} />
+                  <RegisterButton icon="business" label="As a vendor" style={{ flex: 1 }} onPress={() => router.push('/register-vendor')} />
                 </View>
               </View>
             )}

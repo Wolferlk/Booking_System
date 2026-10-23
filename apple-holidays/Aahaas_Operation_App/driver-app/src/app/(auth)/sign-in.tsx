@@ -2,6 +2,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { RegisterBlock } from '@/components/signup-ui';
 import { Button, ErrorBox, H1, Input, IconButton, P } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { useAuth, type Actor } from '@/lib/auth';
@@ -73,9 +74,8 @@ export default function SignIn() {
             <Text style={{ color: C.blue, fontWeight: '700', padding: 6 }}>Sign in with a code</Text>
           </Pressable>
         </View>
-        <Pressable onPress={() => router.push('/register-driver')} style={{ alignItems: 'center', padding: 6 }}>
-          <Text style={{ color: C.sub }}>New independent driver? <Text style={{ color: C.red, fontWeight: '800' }}>Register</Text></Text>
-        </Pressable>
+        <RegisterBlock icon="person-add" label="Register as a driver" onPress={() => router.push('/register-driver')}
+          hint="For independent drivers. Driving for a vendor? Your vendor adds you." />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
