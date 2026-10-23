@@ -318,7 +318,6 @@ export async function sendDailyBriefingForBooking(
     paxAdults:   b.paxAdults,
     paxChildren: b.paxChildren,
     paxInfants:  b.paxInfants,
-    managerContact: b.chauffeurContact?.trim() || null,
     stayingAtHotel: stayingAt ? `${stayingAt.hotel} (${stayingAt.city})` : null,
     checkIns:  checkIns.map(a => ({ hotel: a.hotel, city: a.city })),
     checkOuts: checkOuts.map(a => ({ hotel: a.hotel, city: a.city })),

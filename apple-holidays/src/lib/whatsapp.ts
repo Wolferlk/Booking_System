@@ -930,7 +930,8 @@ function paxLine(a: number, c: number, i = 0): string {
  * (and on-demand per day from the Customer WhatsApp panel). Adapts its tone to
  * arrival / mid-trip / departure days and folds in flights, hotels, per-movement
  * driver + ticket details, activities, and meal plans. The movement's long
- * description is left out — the guest needs the when/who, not the sales copy.
+ * description and the on-ground manager line are left out — the guest needs
+ * the when/who, not the sales copy or an internal "Will Advice" placeholder.
  *
  * `branded` is true only for Super Partner agents (lib/super-partners.ts);
  * everyone else gets the same plan without the AppleHolidays header/sign-off.
@@ -945,7 +946,6 @@ export function formatCustomerDailyBriefingMessage(params: {
   paxAdults:      number
   paxChildren:    number
   paxInfants:     number
-  managerContact: string | null   // driver / operations manager hotline
   stayingAtHotel: string | null
   checkIns:       { hotel: string; city: string }[]
   checkOuts:      { hotel: string; city: string }[]
@@ -1037,11 +1037,6 @@ export function formatCustomerDailyBriefingMessage(params: {
       }
       lines.push(``)
     })
-  }
-
-  if (params.managerContact) {
-    lines.push(`📞 *On-ground manager:* ${params.managerContact}`)
-    lines.push(``)
   }
 
   if (params.attachmentCount > 0) {
