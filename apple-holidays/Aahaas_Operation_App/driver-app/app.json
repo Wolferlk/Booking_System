@@ -2,7 +2,7 @@
   "expo": {
     "name": "Aahaas CORE",
     "slug": "aahaas-ops",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "aahaas",
@@ -84,6 +84,7 @@
     "extra": {
       "apiUrl": "https://ops.aahaas.com",
       "opsPhone": "+94707224229",
+      "appStage": "Test",
       "router": {},
       "eas": {
         "projectId": "e10e61cf-e111-4c99-ac84-b5558af10734"

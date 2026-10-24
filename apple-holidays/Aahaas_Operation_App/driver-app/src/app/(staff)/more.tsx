@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import { Alert, Linking, Pressable, Text, View } from 'react-native';
 import { Card, Ionicons, Label, Row, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION } from '@/lib/config';
+import { API_URL, APP_NAME, APP_VERSION_LABEL } from '@/lib/config';
 import { C, R, S } from '@/lib/theme';
 
 function Item({ icon, label, hint, onPress, tone = C.red }: { icon: IconName; label: string; hint?: string; onPress: () => void; tone?: string }) {
@@ -61,7 +61,7 @@ export default function More() {
       <Row gap={S.sm} style={{ justifyContent: 'center', marginTop: S.lg }}>
         <Image alt="" source={require('@/assets/images/aahaas-wordmark.png')} style={{ width: 90, height: 34, opacity: 0.8 }} contentFit="contain" />
       </Row>
-      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12, borderRadius: R.sm }}>Version {APP_VERSION} · every change is logged</Text>
+      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12, borderRadius: R.sm }}>{APP_NAME} · {APP_VERSION_LABEL} · every change is logged</Text>
     </Screen>
   );
 }

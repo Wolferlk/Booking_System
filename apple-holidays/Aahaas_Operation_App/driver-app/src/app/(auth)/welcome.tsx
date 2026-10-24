@@ -5,6 +5,7 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, type IconName } from '@/components/ui';
+import { APP_NAME, APP_VERSION_LABEL, IS_BETA } from '@/lib/config';
 import { getPendingSignup, type PendingSignup } from '@/lib/signup';
 import { C, R, S, shadow } from '@/lib/theme';
 
@@ -41,6 +42,12 @@ export default function Welcome() {
         <ScrollView contentContainerStyle={{ flexGrow: 1, padding: S.xl, justifyContent: 'space-between', gap: S.xl }} bounces={false}>
           <View style={{ marginTop: 40, gap: S.lg }}>
             <Image alt="Aahaas" source={require('@/assets/images/aahaas-wordmark.png')} style={{ width: 230, height: 87 }} contentFit="contain" />
+            {IS_BETA ? (
+              <View style={{ alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, borderWidth: 1, borderColor: C.amber, backgroundColor: C.goldSoft, paddingHorizontal: 12, paddingVertical: 5 }}>
+                <Ionicons name="flask-outline" size={13} color={C.amber} />
+                <Text style={{ color: C.amber, fontSize: 12, fontWeight: '800', letterSpacing: 0.4 }}>BETA · {APP_VERSION_LABEL.replace(' · Beta', '')}</Text>
+              </View>
+            ) : null}
             <View style={{ gap: S.sm }}>
               <Text style={{ color: C.text, fontSize: 30, fontWeight: '900', letterSpacing: -0.6, lineHeight: 36 }}>Every trip,{'\n'}in your pocket.</Text>
               <Text style={{ color: C.sub, fontSize: 16, lineHeight: 23 }}>Operations for Aahaas & Apple Holidays — Sri Lanka, Vietnam, Singapore and Malaysia.</Text>
@@ -73,7 +80,7 @@ export default function Welcome() {
               <Ionicons name="briefcase-outline" size={14} color={C.sub} />
               <Text style={{ color: C.sub, fontSize: 13, fontWeight: '700' }}>Company login</Text>
             </Pressable>
-            <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>aahaas · uniquely yours</Text>
+            <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>aahaas · uniquely yours · {APP_NAME}</Text>
           </View>
         </ScrollView>
       </SafeAreaView>

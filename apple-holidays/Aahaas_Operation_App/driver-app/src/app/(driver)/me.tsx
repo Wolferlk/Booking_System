@@ -7,7 +7,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { IconBubble } from '@/components/fancy';
 import { Ionicons, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION } from '@/lib/config';
+import { API_URL, APP_NAME, APP_VERSION_LABEL } from '@/lib/config';
 import { LANGS, useT } from '@/lib/i18n';
 import { C } from '@/lib/theme';
 
@@ -68,7 +68,7 @@ export default function Me() {
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={styles.name} numberOfLines={1}>{actor.name}</Text>
               <Text style={styles.vendor} numberOfLines={1}>{actor.vendor ? actor.vendor : 'Aahaas driver'}</Text>
-              <Text style={styles.version}>Aahaas CORE {APP_VERSION}</Text>
+              <Text style={styles.version}>{APP_NAME} · {APP_VERSION_LABEL}</Text>
             </View>
           </View>
         </LinearGradient>

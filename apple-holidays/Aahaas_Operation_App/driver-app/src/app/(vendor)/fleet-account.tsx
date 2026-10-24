@@ -8,7 +8,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { IconBubble } from '@/components/fancy';
 import { Ionicons, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION, OPS_PHONE } from '@/lib/config';
+import { API_URL, APP_NAME, APP_VERSION_LABEL, OPS_PHONE } from '@/lib/config';
 import { C } from '@/lib/theme';
 import { initials } from '@/lib/vendor';
 
@@ -78,7 +78,7 @@ export default function FleetAccount() {
         <MenuRow icon="headset" color={C.green} bg={C.greenSoft} title="Call operations" sub={OPS_PHONE} onPress={() => Linking.openURL(`tel:${OPS_PHONE}`)} />
         <MenuRow icon="log-out" color={C.sub} bg={C.cardHi} title="Sign out" onPress={() => Alert.alert('Sign out?', undefined, [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: () => { signOut(); } }])} />
       </View>
-      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>Aahaas · v{APP_VERSION}</Text>
+      <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>{APP_NAME} · {APP_VERSION_LABEL}</Text>
     </Screen>
   );
 }
