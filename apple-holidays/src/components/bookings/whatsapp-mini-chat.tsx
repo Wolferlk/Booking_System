@@ -16,7 +16,8 @@ interface WaMessage {
   senderName: string | null
   // sent → delivered → read, or failed. 'pending' is queued until the client
   // replies (see /api/bookings/[ref]/whatsapp-queue); 'sent-queued' is a queued
-  // send that has since gone out; 'cancelled' is a queued send someone dropped.
+  // send that has since gone out (on their reply, or "Send now" via template);
+  // 'cancelled' is a queued send someone dropped.
   // 'sending' / 'local-failed' exist only client-side, for optimistic bubbles.
   status: string
   createdAt: string
@@ -109,6 +110,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
   const [phoneInput, setPhoneInput]     = useState('')
   const [message, setMessage]           = useState('')
   const [sending, setSending]           = useState(false)
+  const [sendingQueued, setSendingQueued] = useState<string | null>(null)
   const [messages, setMessages]         = useState<WaMessage[]>([])
   const [optimistic, setOptimistic]     = useState<WaMessage[]>([])
   const [loaded, setLoaded]             = useState(false)
@@ -370,6 +372,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
       const json = await res.json().catch(() => ({ success: false, error: `Send failed (HTTP ${res.status})` }))
       if (!json.success) throw new Error(json.error)
       if (json.data?.queued) toast.info(json.message ?? 'Queued until the client replies', { duration: 8000 })
+      else if (json.data?.channel === 'guest-template') toast.success(json.message ?? 'Sent via WhatsApp template')
       else toast.success('Sent')
       setOptimistic(o => o.filter(m => m.id !== tempId))
       forceScrollRef.current = true
@@ -380,6 +383,23 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
     } finally {
       setSending(false)
       inputRef.current?.focus()
+    }
+  }
+
+  // Don't wait for the client's reply: send the queued text on the guest-message template.
+  async function sendQueuedNow(id: string) {
+    setSendingQueued(id)
+    try {
+      const res  = await fetch(`/api/bookings/${bookingRef}/whatsapp-queue?id=${encodeURIComponent(id)}`, { method: 'POST' })
+      const json = await res.json().catch(() => ({ success: false, error: `Send failed (HTTP ${res.status})` }))
+      if (!json.success) throw new Error(json.error)
+      toast.success(json.message ?? 'Sent via WhatsApp template')
+      forceScrollRef.current = true
+      await fetchMessages('manual')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send', { duration: 10000 })
+    } finally {
+      setSendingQueued(null)
     }
   }
 
@@ -618,7 +638,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                     )}
                     title={windowOpen
                       ? 'The client messaged within the last 24 hours, so free-form text should deliver straight away.'
-                      : 'No client reply in the last 24 hours on this thread. Sending will deliver the approved reply-request template and queue your text until they answer.'}
+                      : 'No client reply in the last 24 hours on this thread. Your text goes out as a WhatsApp template (line breaks become · , long messages split into parts). Until that template is approved, they get a reply request and your text is queued.'}
                   >
                     {windowOpen ? `24h window · ${Math.max(1, Math.ceil(windowLeftMs / 3_600_000))}h left` : 'Window closed'}
                   </span>
@@ -775,7 +795,18 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                         {msg.status === 'pending' && (
                           <div className="mt-1 pt-1 border-t border-amber-200/70 flex items-center gap-2 text-[10px] text-amber-700">
                             <span className="flex-1">Queued · goes out when the client replies</span>
-                            <button onClick={() => cancelQueued(msg.id)} className="font-semibold hover:underline">Cancel</button>
+                            {!msg.mediaType && (
+                              <button
+                                onClick={() => sendQueuedNow(msg.id)}
+                                disabled={sendingQueued !== null}
+                                className="flex items-center gap-0.5 font-semibold text-green-700 hover:underline disabled:opacity-50"
+                                title="Send it now as a WhatsApp template — delivers even though the 24h window is closed (line breaks become · )"
+                              >
+                                {sendingQueued === msg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                                Send now
+                              </button>
+                            )}
+                            <button onClick={() => cancelQueued(msg.id)} disabled={sendingQueued === msg.id} className="font-semibold hover:underline disabled:opacity-50">Cancel</button>
                           </div>
                         )}
                         {failed && msg.body && (

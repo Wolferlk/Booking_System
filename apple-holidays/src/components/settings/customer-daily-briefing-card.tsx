@@ -13,8 +13,9 @@
  * sign-off; everyone else gets the plan white-labelled (lib/super-partners.ts).
  */
 
-import { useEffect, useMemo, useState } from 'react'
-import { Clock, Crown, Loader2, MessageCircle, Plus, RotateCcw, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import { Clock, Crown, FileText, Loader2, MessageCircle, Plus, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import {
   SETTING_SUPER_PARTNERS, DEFAULT_SUPER_PARTNERS, parseSuperPartners, isSuperPartner,
@@ -112,6 +113,8 @@ export default function CustomerDailyBriefingCard({ settings, saving, onSave }: 
         </div>
 
         <SuperPartners settings={settings} saving={saving} onSave={onSave} />
+
+        <GuestTemplate />
       </CardBody>
     </Card>
   )
@@ -264,6 +267,113 @@ function SuperPartners({ settings, saving, onSave }: Props) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+interface GuestTemplateInfo {
+  name: string
+  body: string
+  examples: string[]
+  status: { status: string; mismatch?: string; error?: string }
+}
+
+/**
+ * The WhatsApp template that carries the plan (and any desk message) to a guest
+ * whose 24h window is shut. Until it is APPROVED, guests outside the window are
+ * sent free-form exactly as before, which Meta drops.
+ */
+function GuestTemplate() {
+  const [info, setInfo] = useState<GuestTemplateInfo | null>(null)
+  const [hidden, setHidden] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [registering, setRegistering] = useState(false)
+  const [showBody, setShowBody] = useState(false)
+
+  const check = useCallback(async () => {
+    setChecking(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates/bootstrap-guest')
+      if (res.status === 403) { setHidden(true); return }   // admins only
+      const json = await res.json()
+      if (json.success) setInfo(json.data)
+    } catch { /* leave the last known status */ } finally { setChecking(false) }
+  }, [])
+  useEffect(() => { void check() }, [check])
+
+  async function register() {
+    setRegistering(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates/bootstrap-guest', { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(json.message || 'Template submitted to Meta')
+      setInfo(i => (i ? { ...i, status: json.data.status } : i))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Registration failed', { duration: 10000 })
+    } finally { setRegistering(false) }
+  }
+
+  if (hidden) return null
+  const st = info?.status.status ?? '…'
+  const tone = st === 'APPROVED' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : st === 'PENDING' ? 'bg-amber-50 text-amber-700 border-amber-200'
+    : st === 'MISSING' || st === 'REJECTED' ? 'bg-red-50 text-red-700 border-red-200'
+    : 'bg-slate-50 text-slate-500 border-slate-200'
+
+  return (
+    <div className="space-y-2 border-t border-slate-100 pt-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-slate-800 flex items-center gap-1.5">
+            <FileText className="w-4 h-4 text-slate-400" /> Delivery when the 24h window is closed
+          </p>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            WhatsApp drops free-form messages to a guest who hasn&apos;t written to us in 24 hours. Once this
+            template is approved, the daily plan, the feedback invite and messages typed in a booking&apos;s chat
+            go out through it instead: line breaks become &ldquo;·&rdquo; and a long plan is split into parts.
+            Until then nothing changes.
+          </p>
+        </div>
+        <span className={`flex-shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${tone}`}>{st}</span>
+      </div>
+
+      {info?.status.mismatch && <p className="text-xs text-red-600">Template {info.status.mismatch}.</p>}
+      {info?.status.error && <p className="text-xs text-slate-400 break-words">Status check: {info.status.error}</p>}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="text-[11px] text-slate-600 bg-slate-100 rounded px-1.5 py-0.5">{info?.name ?? 'apple_holidays_guest_message'}</code>
+        {(st === 'MISSING' || st === 'REJECTED') && (
+          <button
+            type="button"
+            disabled={registering}
+            onClick={register}
+            className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+          >
+            {registering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Register with Meta
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={checking}
+          onClick={check}
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${checking ? 'animate-spin' : ''}`} /> Check status
+        </button>
+        {info && (
+          <button type="button" onClick={() => setShowBody(v => !v)} className="text-[11px] text-brand-600 hover:underline">
+            {showBody ? 'Hide wording' : 'Show wording'}
+          </button>
+        )}
+      </div>
+
+      {showBody && info && (
+        <div className="rounded-lg bg-[#e7fbe6] border border-emerald-100 px-3 py-2 text-[11px] leading-relaxed text-slate-700 whitespace-pre-wrap">
+          {info.body.replace(/\{\{(\d+)\}\}/g, (_m, n: string) => info.examples[Number(n) - 1] ?? '')}
+        </div>
+      )}
     </div>
   )
 }

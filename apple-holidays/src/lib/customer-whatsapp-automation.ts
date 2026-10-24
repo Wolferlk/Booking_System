@@ -17,7 +17,9 @@ import {
   formatCustomerDailyBriefingMessage,
   formatFeedbackRequestMessage,
   briefingDayLabel,
+  isWithin24hWindow,
 } from '@/lib/whatsapp'
+import { sendGuestMessageTemplate, GuestTemplateUnavailableError } from '@/lib/guest-message-template'
 import type { OperationCountry } from '@prisma/client'
 import { SETTING_SUPER_PARTNERS, parseSuperPartners, isSuperPartner } from '@/lib/super-partners'
 
@@ -182,6 +184,49 @@ async function alreadySentToday(bookingRef: string, tag: string): Promise<boolea
 export { feedbackLinkToken, verifyFeedbackLinkToken } from './feedback-link'
 import { feedbackLinkToken } from './feedback-link'
 
+/**
+ * Free-form text only reaches a guest inside their 24h window; outside it Meta
+ * answers 200 and drops it. There the guest-message template carries the text
+ * instead (lines joined with " · ", long plans split into parts). Until that
+ * template is approved this is exactly the old free-form send.
+ *
+ * A later template part failing leaves the rest queued as `pending`, which the
+ * guest's next reply flushes (flushPendingConfirmations).
+ */
+async function deliverToGuest(p: {
+  phone: string
+  text: string
+  guestName: string | null
+  bookingRef: string
+  tag: string
+}): Promise<{ ok: boolean; waMessageId: string | null; reason?: string }> {
+  if (!(await isWithin24hWindow(p.phone))) {
+    try {
+      const sent = await sendGuestMessageTemplate({
+        to: p.phone, guestName: p.guestName ?? 'Guest', bookingRef: p.bookingRef, text: p.text,
+      })
+      if (sent.unsent) {
+        await prisma.whatsAppMessage.create({
+          data: {
+            bookingRef: p.bookingRef, phone: sent.phone, direction: 'outbound',
+            body: sent.unsent, status: 'pending', senderName: p.tag,
+          },
+        })
+      }
+      return { ok: true, waMessageId: sent.sent[0]?.waMessageId ?? null }
+    } catch (err) {
+      if (!(err instanceof GuestTemplateUnavailableError)) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[CustomerWhatsApp] template send failed for ${p.bookingRef}:`, msg)
+        return { ok: false, waMessageId: null, reason: `WhatsApp template send failed: ${msg.slice(0, 200)}` }
+      }
+      // Not approved yet — fall through to the free-form send, as before.
+    }
+  }
+  const ok = await sendWhatsAppText(p.phone, p.text, p.guestName ?? undefined)
+  return ok ? { ok, waMessageId: null } : { ok, waMessageId: null, reason: 'WhatsApp send failed' }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Daily briefing — tomorrow's itinerary to every guest mid-trip
 // ─────────────────────────────────────────────────────────────────────────────
@@ -330,17 +375,23 @@ export async function sendDailyBriefingForBooking(
     branded,
   })
 
-  const ok = await sendWhatsAppText(phone, msg, b.passengers[0]?.name ?? undefined)
-  if (!ok) return { ok: false, reason: 'WhatsApp send failed', message: msg }
+  const tag = `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`
+  const sent = await deliverToGuest({
+    phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag,
+  })
+  if (!sent.ok) return { ok: false, reason: sent.reason, message: msg }
 
+  // Logged as the plan itself (not the template wording) — alreadySentForDay
+  // and the booking's customer panel both read this body.
   await prisma.whatsAppMessage.create({
     data: {
-      bookingRef: b.bookingRef,
-      phone:      normalisePhone(phone),
-      direction:  'outbound',
-      body:       msg,
-      status:     'sent',
-      senderName: `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`,
+      bookingRef:  b.bookingRef,
+      phone:       normalisePhone(phone),
+      direction:   'outbound',
+      body:        msg,
+      waMessageId: sent.waMessageId,
+      status:      'sent',
+      senderName:  tag,
     },
   })
 
@@ -539,17 +590,21 @@ export async function sendFeedbackRequestForBooking(
     formUrl,
   })
 
-  const ok = await sendWhatsAppText(phone, msg, b.passengers[0]?.name ?? undefined)
-  if (!ok) return { ok: false, reason: 'WhatsApp send failed', message: msg }
+  const tag = `${TAG_FEEDBACK_REQUEST} ${b.passengers[0]?.name ?? 'Guest'}`
+  const sent = await deliverToGuest({
+    phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag,
+  })
+  if (!sent.ok) return { ok: false, reason: sent.reason, message: msg }
 
   await prisma.whatsAppMessage.create({
     data: {
-      bookingRef: b.bookingRef,
-      phone:      normalisePhone(phone),
-      direction:  'outbound',
-      body:       msg,
-      status:     'sent',
-      senderName: `${TAG_FEEDBACK_REQUEST} ${b.passengers[0]?.name ?? 'Guest'}`,
+      bookingRef:  b.bookingRef,
+      phone:       normalisePhone(phone),
+      direction:   'outbound',
+      body:        msg,
+      waMessageId: sent.waMessageId,
+      status:      'sent',
+      senderName:  tag,
     },
   })
   return { ok: true, message: msg }

@@ -10,7 +10,9 @@
  *   • a Word (.docx) attachment — Meta accepts only a PDF in a template header
  *   • a send with no attachment at all — a document header needs a document
  * Both fall back to free-form, which WhatsApp only delivers inside the 24h
- * window. When that window is shut we send the approved opener template (which
+ * window. When that window is shut, a bare message goes out on the guest-message
+ * template instead (lib/guest-message-template.ts). Until that template is
+ * approved, and always for a Word file, we send the approved opener template (which
  * does land cold) and QUEUE the send: a template we push never reopens the
  * window — only the customer's own reply does — so the opener asks for one and
  * the queued document goes out on that inbound. The caller is told it is
@@ -31,6 +33,7 @@ import {
   type FileFormat,
 } from '@/lib/booking-whatsapp-delivery'
 import { sendBookingDocTemplate } from '@/lib/booking-details-template'
+import { sendGuestMessageTemplate, GuestTemplateUnavailableError } from '@/lib/guest-message-template'
 
 export const dynamic = 'force-dynamic'
 // Rendering the document then uploading it to Meta takes far longer than the
@@ -117,6 +120,43 @@ export async function POST(
     if (!message) return buildApiError('A message is required for a free-form send')
 
     if (!(await isWithin24hWindow(to))) {
+      // A bare message rides the guest-message template, which lands cold, so
+      // the guest has it now rather than whenever they next write to us.
+      if (!attach) {
+        try {
+          const sent = await sendGuestMessageTemplate({
+            to, guestName: name || 'Guest', bookingRef: params.ref, text: message,
+          })
+          for (const part of sent.sent) {
+            await prisma.whatsAppMessage.create({
+              data: {
+                bookingRef: params.ref, phone: sent.phone, direction: 'outbound',
+                body: part.text, waMessageId: part.waMessageId, status: 'sent', senderName,
+              },
+            })
+          }
+          // A later part failed: the guest has the start, so the rest waits for their reply.
+          if (sent.unsent) {
+            await prisma.whatsAppMessage.create({
+              data: {
+                bookingRef: params.ref, phone: sent.phone, direction: 'outbound',
+                body: sent.unsent, status: 'pending', senderName,
+              },
+            })
+          }
+          const parts = sent.sent.length
+          return buildApiSuccess(
+            { delivered: true, queued: Boolean(sent.unsent), channel: 'guest-template', parts },
+            sent.unsent
+              ? `Sent ${parts} part${parts === 1 ? '' : 's'} via WhatsApp template; the rest is queued until the guest replies.`
+              : `Sent via WhatsApp template${parts > 1 ? ` in ${parts} parts` : ''} (24h window closed).`,
+          )
+        } catch (err) {
+          if (!(err instanceof GuestTemplateUnavailableError)) throw err
+          console.warn('[WhatsApp] guest template unavailable, falling back to opener + queue:', err.message)
+        }
+      }
+
       // Window shut. Send the approved opener template (it lands cold) and queue
       // this send — Meta reopens the window only on the CUSTOMER's own message,
       // so the opener asks them to reply and the queue flushes on that inbound.
