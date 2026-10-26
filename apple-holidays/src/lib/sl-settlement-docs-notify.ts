@@ -62,7 +62,8 @@ import {
 import { putUpload } from '@/lib/storage'
 import { normaliseSriLankanPhone, type NormalisedPhone } from '@/lib/sl-phone'
 import { generateSettlementDocsPdf } from '@/lib/sl-settlement-docs-pdfkit'
-import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
+import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
+import { loadAgendaBooking } from '@/lib/agenda-mailer'
 import { packForPrint } from '@/lib/sl-settlement-docs-server'
 import { copyNotice, readDriverDocCopy, type DriverDocCopyConfig } from '@/lib/sl-driver-doc-copy'
 import {
@@ -155,42 +156,31 @@ function explainSendError(err: unknown, fallback: string): string {
 // ── The booking details sheet ────────────────────────────────────────────────
 
 /**
- * The booking, as the PDF the office already sends everywhere else.
+ * The booking, as the movement chart the desk prints.
  *
  * The desk asks for it alongside the settlement pack often enough that it is a
  * tick box on the send dialog: the driver gets the paperwork he signs *and* the
- * file he is driving — guests, flights, hotels, the day-by-day agenda and the
- * vouchers. It is the same `generateFullDetailsPdf` the operations email and
- * the ops-AI download use, so there is one booking sheet in the company and not
- * a second one that drifts.
+ * file he is driving. It is the same `generateAgendaPdf` the agenda page's Send
+ * button uses — the PDFKit twin of `/print/agenda/<ref>?drivers=true` — so the
+ * driver reads the day-by-day movement chart exactly as it prints: from / to,
+ * meal, meet time, service, who is driving, the flight it serves and the full
+ * description, with the hotels, passengers and vouchers around it.
  *
- * It carries no money. That is a property of the document itself — it prints no
- * rate, no cost and no payment — which is exactly why it is the one that may go
- * to a driver.
+ * It carries no money: the chart itself prints no rate or cost, and
+ * `hideMoney` takes the price, total and payment reference off the voucher
+ * cards — which is exactly why it is the one that may go to a driver.
  */
 async function bookingDetailsPdf(bookingRef: string): Promise<{ buffer: Buffer; filename: string } | null> {
-  const booking = await prisma.booking.findUnique({
-    where: { bookingRef },
-    include: {
-      passengers:        { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
-      flights:           { orderBy: { date: 'asc' } },
-      accommodations:    { orderBy: { checkIn: 'asc' } },
-      itineraryItems:    { orderBy: { dayNo: 'asc' } },
-      emergencyContacts: true,
-      tourAgenda: {
-        include: {
-          items: {
-            orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
-            include: { assignment: true },
-          },
-        },
-      },
-      tickets: { orderBy: { createdAt: 'asc' } },
-    },
-  })
+  const booking = await loadAgendaBooking(bookingRef)
   if (!booking) return null
 
-  const buffer = await generateFullDetailsPdf(booking)
+  const buffer = await generateAgendaPdf(
+    booking.bookingRef,
+    booking as never,
+    (booking.tourAgenda?.items ?? []) as never,
+    true,
+    { hideMoney: true },
+  )
   const stem = (booking.isNumber || booking.bookingRef).replace(/[^A-Za-z0-9_-]+/g, '-')
   return { buffer, filename: `${stem}-booking-details.pdf` }
 }
