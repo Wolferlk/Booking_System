@@ -29,6 +29,8 @@ interface SyncResult {
   bookingsUpdated: number
   pnlsUpdated:     number
   errors:          number
+  /** What data protection kept during a TC re-import (lib/data-protection.ts). */
+  protections?:    { ref: string; note: string }[]
 }
 
 interface Props {
@@ -101,8 +103,10 @@ export default function OneDriveFiles({ bookingRef, canSync }: Props) {
       setLastSync(results)
 
       const found = results.some(r => r.bookingsCreated + r.bookingsUpdated + r.pnlsUpdated > 0)
+      const protectedNotes = results.flatMap(r => r.protections ?? []).map(p => p.note)
       toast[found ? 'success' : 'warning'](
         found ? 'Booking data synced from OneDrive' : `No changes found in OneDrive for ${bookingRef}`,
+        protectedNotes.length ? { description: protectedNotes.join(' · '), duration: 8000 } : undefined,
       )
       await load()
     } catch (err) {

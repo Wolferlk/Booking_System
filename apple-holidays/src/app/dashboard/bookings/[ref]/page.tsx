@@ -43,6 +43,10 @@ import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
+import {
+  useDataGuard, SectionLockButton, LockedStrip, FlightOriginTag, FlightRestoreButton, FlightRestoreModal,
+} from '@/components/bookings/data-guard'
+import { LOCK_SECTION_LABELS, type LockSection } from '@/lib/data-protection'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
@@ -221,6 +225,11 @@ export default function BookingDetailPage() {
   const [aiPassengerOpen, setAiPassengerOpen] = useState(false)
   const [aiFlightOpen, setAiFlightOpen] = useState(false)
   const [aiAccomOpen, setAiAccomOpen] = useState(false)
+
+  // Data protection — section padlocks, flight origin tags, restore from history.
+  // Re-fetched whenever the booking reloads (lib/data-protection.ts).
+  const guard = useDataGuard(ref, booking)
+  const [flightRestoreOpen, setFlightRestoreOpen] = useState(false)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
@@ -444,7 +453,10 @@ export default function BookingDetailPage() {
       const res = await fetch(`/api/bookings/${ref}/versions/${versionNo}/restore`, { method: 'POST' })
       const json = await res.json()
       if (json.success) {
-        toast.success(`Switched to version V${versionNo}`)
+        const kept: string[] = json.data?.lockedSections ?? []
+        toast.success(`Switched to version V${versionNo}`, kept.length
+          ? { description: `Locked — left as they were: ${kept.map(s => LOCK_SECTION_LABELS[s as LockSection] ?? s).join(', ')}` }
+          : undefined)
         setRestoreTarget(null)
         setVersionMenuOpen(false)
         await load()
@@ -2418,6 +2430,7 @@ Wishing you a wonderful trip! ✈️
                           : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
                       </button>
                     )}
+                    <SectionLockButton section="passengers" guard={guard} />
                   </div>
                 ) : undefined
               }
@@ -2428,6 +2441,7 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="passengers" guard={guard} />
               {(() => {
                 const MEAL_OPTIONS = [
                   { label: 'Non-Veg',      value: 'Non-Vegetarian', colour: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',   active: 'bg-orange-500 text-white border-orange-500' },
@@ -2622,6 +2636,8 @@ Wishing you a wonderful trip! ✈️
                   <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                     <Edit2 className="w-3 h-3" /> Edit
                   </button>
+                  <FlightRestoreButton guard={guard} onClick={() => setFlightRestoreOpen(true)} />
+                  <SectionLockButton section="flights" guard={guard} />
                 </div>
               ) : undefined}
             >
@@ -2630,13 +2646,17 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="flights" guard={guard} />
               {flights.length === 0 && (
                 <p className="px-4 py-3 text-xs text-slate-400">No flights recorded</p>
               )}
               {flights.map((f) => (
                 <div key={f.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-900 font-mono">{f.flightNo as string}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-slate-900 font-mono">{f.flightNo as string}</span>
+                      <FlightOriginTag flightId={f.id as string} guard={guard} />
+                    </span>
                     <span className="text-xs text-slate-400">{formatDate(f.date as string)}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
@@ -2674,6 +2694,7 @@ Wishing you a wonderful trip! ✈️
                   }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                     <Edit2 className="w-3 h-3" /> Edit
                   </button>
+                  <SectionLockButton section="accommodations" guard={guard} />
                 </div>
               ) : undefined}
             >
@@ -2682,6 +2703,7 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="accommodations" guard={guard} />
               {accommodations.map((a) => {
                 const own = isOwnArrangement(a)
                 return (
@@ -4111,6 +4133,13 @@ Wishing you a wonderful trip! ✈️
           </button>
         </div>
       </Modal>
+
+      <FlightRestoreModal
+        bookingRef={ref}
+        open={flightRestoreOpen}
+        onClose={() => setFlightRestoreOpen(false)}
+        onRestored={() => { load() }}
+      />
 
       {/* ── AI Auto-fill popups (Passengers · Flights · Accommodation) ─── */}
       <AiAutofillModal<ExtractedPassenger>

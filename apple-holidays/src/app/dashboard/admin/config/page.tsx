@@ -18,6 +18,8 @@ import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
 import AirportPickupCard from '@/components/settings/airport-pickup-card'
 import MovementWhatsAppCard from '@/components/settings/movement-whatsapp-card'
 import CustomerDailyBriefingCard from '@/components/settings/customer-daily-briefing-card'
+import DataProtectionCard from '@/components/settings/data-protection-card'
+import { DATA_PROTECTION_KEY, parseDataProtectionPolicy } from '@/lib/data-protection'
 import { parseFlightPickupRules, durationLabel } from '@/lib/flight-pickup-rules'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
@@ -318,6 +320,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'partners',       title: 'Guides & Tour Vendors',        group: 'Core',            icon: Sparkles,     keywords: 'countries registration link directory movement chart local partner' },
   { id: 'journey-map',    title: 'Journey Map Fly-Through',      group: 'Core',            icon: MapIcon,      keywords: 'camera speed zoom cinematic portal fullscreen animation route' },
   { id: 'data-mode',      title: 'Mail & WhatsApp Mode',         group: 'Core',            icon: FlaskConical, keywords: 'test data real customer sandbox email whatsapp number redirect safe' },
+  { id: 'data-protection', title: 'Data Protection — Flights',   group: 'Core',            icon: ShieldAlert,  keywords: 'flights erased reset wiped onedrive sync tc re-sync file handler manual keep lock padlock hotels passengers restore history version pnl only' },
 
   { id: 'pnl-edit',       title: 'Accounts PNL Editing',         group: 'Money & Tickets', icon: Pencil,       keywords: 'profit loss adjustments unlink version invoice processor view only' },
   { id: 'ticket-issue',   title: 'Ticket Issuing & Approval',    group: 'Money & Tickets', icon: Ticket,       keywords: 'g2 g4 accounts approval gate direct purchase malaysia singapore vietnam portal payment' },
@@ -726,6 +729,10 @@ export default function ConfigPage() {
   const partnerCount = parseCountryList(settings.guide_countries).length + parseCountryList(settings.tour_vendor_countries).length
   const cancelPolicy = parseCancellationPolicy(settings)
 
+  const dataProtectionOn = Object.values(
+    parseDataProtectionPolicy((settings as Record<string, string | undefined>)[DATA_PROTECTION_KEY]),
+  ).filter(Boolean).length
+
   const sectionStatuses: Record<string, SectionStatus | undefined> = {
     'data-mode':      useTestData      ? { label: 'Test', tone: 'warn' }   : { label: 'Live',  tone: 'on' },
     'pnl-edit':       extPnlEditEnabled? { label: 'Edit', tone: 'warn' }   : { label: 'View',  tone: 'off' },
@@ -735,6 +742,7 @@ export default function ConfigPage() {
     'ai-tokens':      { label: `${aiOnCount}/4`, tone: aiOnCount === 4 ? 'on' : aiOnCount === 0 ? 'off' : 'warn' },
     'partners':       { label: String(partnerCount), tone: partnerCount > 0 ? 'on' : 'off' },
     'airport-pickup': { label: durationLabel(parseFlightPickupRules(settings.flight_pickup_rules).departureIntlMin), tone: 'on' },
+    'data-protection': { label: `${dataProtectionOn}/4`, tone: dataProtectionOn === 4 ? 'on' : dataProtectionOn === 0 ? 'off' : 'warn' },
     // Sealed cancellation is the louder fact, so it wins the pill when it is live.
     'cancel-recovery': cancelPolicy.fullEnabled
       ? { label: 'Sealed', tone: 'warn' }
@@ -814,6 +822,11 @@ export default function ConfigPage() {
             <Section id="journey-map" visible={show('journey-map')} flashed={flashId === 'journey-map'}>
               {/* How the journey map's fly-through plays, for everyone */}
               <JourneyMapCard settings={settings} saving={saving} onSave={saveSetting} />
+            </Section>
+
+            <Section id="data-protection" visible={show('data-protection')} flashed={flashId === 'data-protection'}>
+              {/* Keeps hand-entered flights / locked sections through TC re-syncs */}
+              <DataProtectionCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="data-mode" visible={show('data-mode')} flashed={flashId === 'data-mode'}>

@@ -32,6 +32,8 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import { statusAfterAmendment } from '@/lib/state-machine'
+import { loadChildGuard, resyncFlights, buildGuardReport } from '@/lib/data-protection-server'
+import { describeGuardReport, type ChildGuardReport } from '@/lib/data-protection'
 import type { OperationCountry } from '@prisma/client'
 
 // ── Drive config ──────────────────────────────────────────────────────────────
@@ -226,6 +228,8 @@ export interface ScanResult {
   pnlsUpdated:     number
   errors:          number
   events:          { ref: string; type: string; file: string }[]
+  /** Hand-entered flights kept / locked sections left alone by a TC re-import. */
+  protections?:    { ref: string; note: string }[]
 }
 
 export async function scanDrive(cfg: DriveConfig): Promise<ScanResult> {
@@ -393,6 +397,7 @@ async function processTCAndPNL(
     console.log(`    📄 TC  file: "${tcFile.name}"`)
     try {
       const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderUrl)
+      noteProtection(result, bookingRef, r.guard)
 
       // Verify the booking actually exists in DB before marking as TC_PROCESSED.
       // processTCFile returns { isNew: false } for PDF TCs without creating a booking,
@@ -615,7 +620,7 @@ async function processTCFile(
   bookingRef:  string,
   country:     OperationCountry,
   folderUrl?:  string,
-): Promise<{ isNew: boolean }> {
+): Promise<{ isNew: boolean; guard?: ChildGuardReport }> {
   console.log(`[OneDrive] Processing TC: ${item.name} → ${bookingRef}`)
 
   const buffer = await downloadDriveItem(driveId, item.id)
@@ -737,8 +742,9 @@ async function processTCFile(
     })
   }
 
-  // Replace passengers / flights / hotels / itinerary
-  await replaceBookingChildren(booking.id, extracted)
+  // Replace passengers / flights / hotels / itinerary — hand-entered flights and
+  // locked sections are kept (lib/data-protection.ts).
+  const guard = await replaceBookingChildren(booking.id, extracted, { actorId: createdById, bookingRef })
 
   // Generate agenda (skip if one already exists)
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted, !isNew)
@@ -760,7 +766,9 @@ async function processTCFile(
   })
 
   console.log(`[OneDrive] ${bookingRef}: ${isNew ? 'CREATED' : 'UPDATED'} (${agendaItems} agenda items)`)
-  return { isNew }
+  const protectedNote = describeGuardReport(guard)
+  if (protectedNote) console.log(`[OneDrive] ${bookingRef}: ${protectedNote}`)
+  return { isNew, guard }
 }
 
 // ── PNL processing ────────────────────────────────────────────────────────────
@@ -936,6 +944,12 @@ async function processPNLFile(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function noteProtection(result: ScanResult, ref: string, guard?: ChildGuardReport) {
+  const note = describeGuardReport(guard)
+  if (!note) return
+  result.protections = [...(result.protections ?? []), { ref, note }]
+}
+
 async function getAutomationUserId(): Promise<string> {
   const u = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN' }, select: { id: true } })
   if (u) return u.id
@@ -950,17 +964,39 @@ function buildPath(item: DriveItem): string {
     : item.name
 }
 
+// Flights, and any section a person has locked, go through data protection
+// (lib/data-protection.ts) instead of being wiped: a re-sync used to erase the
+// flights file handlers had typed in after the TC went out.
 async function replaceBookingChildren(
   bookingId: string,
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
-) {
-  await prisma.passenger.deleteMany({ where: { bookingId } })
-  await prisma.flight.deleteMany({ where: { bookingId } })
-  await prisma.accommodation.deleteMany({ where: { bookingId } })
+  opts: { actorId?: string; bookingRef?: string } = {},
+): Promise<ChildGuardReport> {
+  const guard = await loadChildGuard(bookingId)
+  const keepPassengers = guard.isLocked('passengers')
+  const keepHotels     = guard.isLocked('accommodations')
+
+  if (!keepPassengers) await prisma.passenger.deleteMany({ where: { bookingId } })
+  if (!keepHotels)     await prisma.accommodation.deleteMany({ where: { bookingId } })
   await prisma.itineraryItem.deleteMany({ where: { bookingId } })
   await prisma.emergencyContact.deleteMany({ where: { bookingId } })
 
-  if (extracted.passengers.length > 0) {
+  const flights = await resyncFlights(
+    bookingId,
+    extracted.flights.map(f => ({
+      flightNo: f.flightNo,
+      date: new Date(f.date),
+      fromApt: f.fromApt,
+      depTime: f.depTime ?? '',
+      toApt: f.toApt,
+      arrTime: f.arrTime ?? '',
+      airline: f.airline ?? null,
+      notes: (f as { notes?: string }).notes ?? null,
+    })),
+    { guard, source: 'onedrive', ...opts },
+  )
+
+  if (!keepPassengers && extracted.passengers.length > 0) {
     await prisma.passenger.createMany({
       data: extracted.passengers.map(p => ({
         bookingId,
@@ -975,22 +1011,7 @@ async function replaceBookingChildren(
       })),
     })
   }
-  if (extracted.flights.length > 0) {
-    await prisma.flight.createMany({
-      data: extracted.flights.map(f => ({
-        bookingId,
-        flightNo: f.flightNo,
-        date: new Date(f.date),
-        fromApt: f.fromApt,
-        depTime: f.depTime ?? '',
-        toApt: f.toApt,
-        arrTime: f.arrTime ?? '',
-        airline: f.airline ?? null,
-        notes: (f as { notes?: string }).notes ?? null,
-      })),
-    })
-  }
-  if (extracted.accommodations.length > 0) {
+  if (!keepHotels && extracted.accommodations.length > 0) {
     await prisma.accommodation.createMany({
       data: extracted.accommodations.map(a => ({
         bookingId,
@@ -1017,6 +1038,8 @@ async function replaceBookingChildren(
       })),
     })
   }
+
+  return buildGuardReport(guard, flights)
 }
 
 type OneDriveEventInput = {
@@ -1336,6 +1359,7 @@ export async function scanDriveByDateRange(
 export async function scanBookingRefInDrive(
   cfg:        DriveConfig,
   bookingRef: string,
+  types:      ProcessDocType[] = ['TC', 'PNL'],
 ): Promise<ScanResult> {
   const result: ScanResult = {
     driveKey: cfg.key, label: cfg.label,
@@ -1372,7 +1396,7 @@ export async function scanBookingRefInDrive(
   }
 
   result.scanned += 1
-  await processBookingFolderDirect(driveId, folder, cfg, result)
+  await processBookingFolderDirect(driveId, folder, cfg, result, 0, types)
   return result
 }
 
@@ -1423,6 +1447,7 @@ async function processBookingFolderDirect(
     } else {
       try {
         const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderWebUrl)
+        noteProtection(result, bookingRef, r.guard)
         if (r.isNew) result.bookingsCreated += 1; else result.bookingsUpdated += 1
         result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
         await upsertOneDriveEvent({
