@@ -101,7 +101,11 @@ export function bridgeOrigin(req?: { headers: Headers }): string {
   const allowed = local || name === 'aahaas.com' || name.endsWith('.aahaas.com') || envHosts.includes(host)
   if (!allowed) return fallback
 
-  const proto = (req.headers.get('x-forwarded-proto') || '').split(',')[0].trim() || (local ? 'http' : 'https')
+  // Public hosts are https unless the env names them otherwise: behind Cloudflare/Amplify
+  // x-forwarded-proto can say "http", and Cloudflare answers http with a 301 that the
+  // bridge (redirect: 'manual') would hand straight to the app as "Server error (301)".
+  if (!local) return envOrigins[envHosts.indexOf(host)] ?? `https://${host}`
+  const proto = (req.headers.get('x-forwarded-proto') || '').split(',')[0].trim() || 'http'
   return `${proto}://${host}`
 }
 
