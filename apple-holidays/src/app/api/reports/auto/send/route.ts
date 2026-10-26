@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
   if (!session || !ADMIN_ROLES.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   // `date` sends a chosen past period ("week 3") instead of the latest one.
-  let body: { id?: string; mode?: 'live' | 'test'; to?: string[] | string; date?: string | null }
+  // `from`/`until` (sales report only) send a free date range instead — not
+  // `to`, which is already the test recipient.
+  let body: { id?: string; mode?: 'live' | 'test'; to?: string[] | string; date?: string | null; from?: string | null; until?: string | null }
   try {
     body = await req.json() as typeof body
   } catch {
@@ -43,6 +45,20 @@ export async function POST(req: NextRequest) {
     return buildApiError('That period has not finished yet — pick one that has.')
   }
 
+  const from = body.from?.trim() || null
+  const until = body.until?.trim() || null
+  if ((from || until) && schedule.reportType !== 'SALES') {
+    return buildApiError('A date range can only be sent on a sales report.')
+  }
+  for (const v of [from, until]) {
+    if (v && !isValidDate(v)) return buildApiError('Range dates must be valid yyyy-mm-dd dates.')
+  }
+  const start = from ?? until
+  if (start && start > dateInTz(new Date(), schedule.timezone)) {
+    return buildApiError('A report range cannot start in the future.')
+  }
+  const range = start ? { fromDate: start, toDate: until ?? start } : null
+
   // A test defaults to the requesting admin, so nobody can accidentally blast
   // the full CC list while trying out a layout change.
   const overrideTo = isTest
@@ -60,6 +76,7 @@ export async function POST(req: NextRequest) {
     testSend: isTest,
     overrideTo,
     anchorDate: date,
+    range,
   })
 
   if (outcome.status === 'error') {

@@ -30,6 +30,11 @@ export interface PreviewRequest {
   title?: string
   /** `yyyy-mm-dd` to back-date the preview to; empty means the latest period. */
   date?: string
+  /** SALES drafts: the Travel Quote GPT office team; empty = whole company. */
+  team?: string | null
+  /** SALES only: a free date range, inclusive. Overrides `date`. */
+  from?: string
+  to?: string
 }
 
 /** Build the query the preview endpoint expects from either a saved id or a draft. */
@@ -44,6 +49,12 @@ export function previewQuery(req: PreviewRequest): string {
     if (req.aiSummary) p.set('aiSummary', 'true')
     if (req.maxRows) p.set('maxRows', String(req.maxRows))
     if (req.dayOfWeek != null) p.set('dayOfWeek', String(req.dayOfWeek))
+    if (req.team) p.set('team', req.team)
+  }
+  if (req.from || req.to) {
+    if (req.from) p.set('from', req.from)
+    if (req.to) p.set('to', req.to)
+    return p.toString()
   }
   // Applies to both shapes — a saved schedule can be previewed for a past day
   // without touching what it will send tomorrow morning.
@@ -63,6 +74,7 @@ export function previewRequestFor(draft: Partial<Schedule>): PreviewRequest {
     aiSummary: draft.aiSummary,
     maxRows: draft.maxRows,
     dayOfWeek: draft.dayOfWeek,
+    team: draft.salesTeam ?? null,
     title: draft.name || 'Preview',
   }
 }
@@ -128,10 +140,51 @@ interface ReconcilePreviewData {
   b2c: { available: boolean; orders: number; withPnl: number; withInvoice: number }
 }
 
+interface Money { currency: string; total: number }
+
+export interface SalesPreviewData {
+  window: PreviewWindow & { days: number; custom: boolean; live: boolean; previous: { label: string } }
+  bookings: { available: boolean; total: number; previousTotal: number | null; pax: number; value: Money[]; missing: number }
+  invoices: { available: boolean; newCount: number; amendedCount: number; newValue: Money[] }
+  store: { available: boolean; orders: number; value: Money[] }
+  pipeline: {
+    available: boolean
+    team: { key: string; label: string } | null
+    counts: {
+      newQuotes: number; amendments: number; confirmations: number; conversion: number | null
+      calls: { total: number; connected: number; rate: number | null }
+      signups: { agencies: number; desk: number; pending: number }
+      adoption: { prompts: number; activeAgencies: number }
+    }
+  }
+  highlights: { severity: 'good' | 'watch' | 'warning' | 'critical'; title: string; detail: string }[]
+  warnings: string[]
+  sheets: string[]
+}
+
 interface Summary {
   reportType: ReportType
   subject: string
-  data: OpsPreviewData | ReconcilePreviewData
+  data: OpsPreviewData | ReconcilePreviewData | SalesPreviewData
+}
+
+const moneyShort = (m: Money[] | undefined) =>
+  m?.length ? `${m[0].currency} ${Math.round(m[0].total).toLocaleString()}${m.length > 1 ? ` +${m.length - 1}` : ''}` : 'no value'
+
+export function salesStats(d: SalesPreviewData): StatTile[] {
+  const c = d.pipeline.counts
+  const p = d.pipeline.available
+  const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`)
+  return [
+    { label: 'Bookings', value: d.bookings.total, sub: `${d.bookings.pax} guests${d.bookings.previousTotal !== null ? ` · ${d.bookings.previousTotal} before` : ''}` },
+    { label: 'Invoiced new', value: d.invoices.newCount, sub: d.invoices.available ? moneyShort(d.invoices.newValue) : 'accounts unavailable' },
+    { label: 'Quotations', value: p ? c.newQuotes : 0, sub: p ? `${c.amendments} amendments` : 'unavailable' },
+    { label: 'Confirmed', value: p ? c.confirmations : 0, sub: p ? `${pct(c.conversion)} of quoted` : 'unavailable' },
+    { label: 'Calls', value: p ? c.calls.total : 0, sub: p ? `${pct(c.calls.rate)} answered` : 'unavailable' },
+    { label: 'New agencies', value: p ? c.signups.agencies : 0, sub: p ? `${c.signups.desk} onboarded by us` : 'unavailable' },
+    { label: 'B2C orders', value: d.store.orders, sub: d.store.available ? moneyShort(d.store.value) : 'store unavailable' },
+    { label: 'AI prompts', value: p ? c.adoption.prompts : 0, sub: p ? `${c.adoption.activeAgencies} agencies` : 'unavailable' },
+  ]
 }
 
 interface StatTile { label: string; value: number; sub: string }
@@ -205,12 +258,15 @@ export default function PreviewDrawer({
   // Empty = whatever the schedule would send right now. Held here rather than on
   // the request so stepping through days does not disturb the caller's draft.
   const [date, setDate] = useState('')
+  // SALES only: a free range. Both empty = the schedule's own period.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
 
-  useEffect(() => { setDate(request?.date ?? '') }, [request])
+  useEffect(() => { setDate(request?.date ?? ''); setFrom(request?.from ?? ''); setTo(request?.to ?? '') }, [request])
 
   const query = useMemo(
-    () => (request ? previewQuery({ ...request, date }) : ''),
-    [request, date],
+    () => (request ? previewQuery({ ...request, date, from, to }) : ''),
+    [request, date, from, to],
   )
 
   useEffect(() => {
@@ -247,6 +303,7 @@ export default function PreviewDrawer({
   // Which attachment this shape would actually send: every OPS report carries a
   // workbook, the reconciliation report a CSV.
   const csvOnly = (summary?.reportType ?? request.reportType ?? 'OPS') === 'RECONCILIATION'
+  const isSales = (summary?.reportType ?? request.reportType) === 'SALES'
   // Stepping moves a whole period at a time, taken from the range the server
   // actually returned — so one click back on a weekly report is a whole week,
   // with no period arithmetic duplicated on the client.
@@ -255,6 +312,8 @@ export default function PreviewDrawer({
   const canStepForward = !!d && d.window.toDate < maxDate
   const step = (dir: -1 | 1) => {
     if (!d) return
+    // Stepping is by period, so it leaves any free range behind.
+    setFrom(''); setTo('')
     setDate(dir === -1 ? shiftDate(d.window.fromDate, -1) : shiftDate(d.window.toDate, 1))
   }
 
@@ -262,9 +321,11 @@ export default function PreviewDrawer({
   // `window`, so the strip is built from whichever shape the server said it is.
   const stats = !d
     ? []
-    : summary?.reportType === 'RECONCILIATION'
-      ? reconcileStats(d as ReconcilePreviewData)
-      : opsStats(d as OpsPreviewData)
+    : summary?.reportType === 'SALES'
+      ? salesStats(d as SalesPreviewData)
+      : summary?.reportType === 'RECONCILIATION'
+        ? reconcileStats(d as ReconcilePreviewData)
+        : opsStats(d as OpsPreviewData)
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900/60 backdrop-blur-sm animate-fade-in">
@@ -297,7 +358,7 @@ export default function PreviewDrawer({
               type="date"
               value={date || d?.window.fromDate || ''}
               max={maxDate}
-              onChange={e => setDate(e.target.value)}
+              onChange={e => { setFrom(''); setTo(''); setDate(e.target.value) }}
               className="bg-white rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
               title="Report date"
             />
@@ -309,9 +370,9 @@ export default function PreviewDrawer({
             >
               <ChevronRight className="w-4 h-4" />
             </button>
-            {date && (
+            {(date || from || to) && (
               <button
-                onClick={() => setDate('')}
+                onClick={() => { setDate(''); setFrom(''); setTo('') }}
                 className="p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-slate-900 transition-colors"
                 title="Back to the latest report"
               >
@@ -319,6 +380,23 @@ export default function PreviewDrawer({
               </button>
             )}
           </div>
+
+          {isSales && (
+            <div className="hidden md:flex items-center gap-1 p-1 rounded-lg bg-indigo-50" title="Any date range — sales report only">
+              <span className="px-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-500">Range</span>
+              <input
+                type="date" value={from} max={to || maxDate}
+                onChange={e => setFrom(e.target.value)}
+                className="bg-white rounded-md border border-indigo-200 px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+              />
+              <span className="text-indigo-300 text-xs">→</span>
+              <input
+                type="date" value={to} min={from || undefined} max={maxDate}
+                onChange={e => setTo(e.target.value)}
+                className="bg-white rounded-md border border-indigo-200 px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+              />
+            </div>
+          )}
 
           <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-slate-100">
             {([['desktop', Monitor], ['mobile', Smartphone]] as const).map(([mode, Icon]) => (
@@ -352,7 +430,7 @@ export default function PreviewDrawer({
 
         {/* Stat strip */}
         {stats.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-slate-200 border-b border-slate-200">
+          <div className={cn('grid grid-cols-2 gap-px bg-slate-200 border-b border-slate-200', isSales ? 'sm:grid-cols-4 lg:grid-cols-8' : 'sm:grid-cols-5')}>
             {stats.map(s => (
               <div key={s.label} className="bg-white px-4 py-2.5">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{s.label}</div>

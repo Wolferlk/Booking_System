@@ -19,6 +19,16 @@ export interface ScheduleSections {
   countCheck: boolean
   detail: boolean
   b2c: boolean
+  // Sales report
+  salesHighlights: boolean
+  salesBookings: boolean
+  salesRevenue: boolean
+  salesPipeline: boolean
+  salesCalls: boolean
+  salesSignups: boolean
+  salesAdoption: boolean
+  salesStaff: boolean
+  salesActivity: boolean
 }
 
 export interface Schedule {
@@ -38,6 +48,8 @@ export interface Schedule {
   replyTo: string | null
   subjectPrefix: string | null
   countries: string[]
+  /** SALES only: Travel Quote GPT office team, or null for the whole company. */
+  salesTeam?: string | null
   sections: ScheduleSections
   attachCsv: boolean
   aiSummary: boolean
@@ -123,6 +135,23 @@ export const REPORT_TYPE_OPTIONS: {
     hint: 'Apple System vs OPS vs accounts vs B2C — do the counts match?',
     defaultHour: 3,
   },
+  {
+    value: 'SALES',
+    label: 'Sales report',
+    // 09:00, after the 08:00 ops brief: yesterday is closed in every system and
+    // the overnight accounts sweep has run.
+    hint: 'Bookings, invoices, quotations, calls, signups and the team — with an Excel workbook',
+    defaultHour: 9,
+  },
+]
+
+/** Travel Quote GPT office teams — mirrors `sales-teams.ts`. */
+export const SALES_TEAM_OPTIONS: { value: string; label: string; hint: string }[] = [
+  { value: '', label: 'Whole company', hint: 'Every office team, side by side' },
+  { value: 'bangalore_b2b', label: 'Bangalore B2B', hint: 'The "Aahaas BLR Daily Performance" view' },
+  { value: 'madurai_b2b', label: 'Madurai B2B', hint: 'Madurai desk only' },
+  { value: 'sri_lanka_b2b_b2c', label: 'Sri Lanka B2B & B2C', hint: 'Sri Lanka desk only' },
+  { value: 'airline_ticketing', label: 'Airline Ticketing', hint: 'Ticketing desk only' },
 ]
 
 export interface SectionOption {
@@ -149,8 +178,21 @@ export const RECON_SECTION_OPTIONS: SectionOption[] = [
   { key: 'b2c', label: 'Aahaas B2C', hint: 'Storefront orders followed into OPS and accounts' },
 ]
 
+export const SALES_SECTION_OPTIONS: SectionOption[] = [
+  { key: 'salesHighlights', label: 'Where to look', hint: 'Rule-derived highlights: missing confirmations, quiet partners, warm leads, idle desks' },
+  { key: 'salesBookings', label: 'Confirmed bookings', hint: 'By market and partner, with lead time, value and the list' },
+  { key: 'salesRevenue', label: 'Revenue', hint: 'New vs re-issued invoices (accounts) and the Aahaas B2C store' },
+  { key: 'salesPipeline', label: 'Quotation pipeline', hint: 'New quotes, amendments, confirmations, conversion and destinations' },
+  { key: 'salesCalls', label: 'Calls', hint: 'Manual and AI calls, answered, agencies reached' },
+  { key: 'salesSignups', label: 'New agencies', hint: 'Signups, self vs onboarded, and who onboarded them' },
+  { key: 'salesAdoption', label: 'Agency adoption', hint: 'Agencies using the AI, agency by agency' },
+  { key: 'salesStaff', label: 'Team performance', hint: 'Consultant leaderboard and office teams — zeros shown' },
+  { key: 'salesActivity', label: 'Activity heatmap', hint: 'When quotes, calls and prompts happened, by hour' },
+]
+
 /** The sections a report type actually renders. Mirrors `sectionKeysFor()`. */
 export function sectionOptionsFor(type: ReportType | undefined): SectionOption[] {
+  if (type === 'SALES') return SALES_SECTION_OPTIONS
   return type === 'RECONCILIATION' ? RECON_SECTION_OPTIONS : OPS_SECTION_OPTIONS
 }
 
@@ -170,6 +212,8 @@ export const TIMEZONE_OPTIONS = [
 export const ALL_SECTIONS_ON: ScheduleSections = {
   created: true, onGround: true, readiness: true, reconfirm: true, complaints: true, upcoming: true,
   asStatus: true, opsIntake: true, accountsOutput: true, countCheck: true, detail: true, b2c: true,
+  salesHighlights: true, salesBookings: true, salesRevenue: true, salesPipeline: true, salesCalls: true,
+  salesSignups: true, salesAdoption: true, salesStaff: true, salesActivity: true,
 }
 
 /** A blank schedule the editor starts from. */
@@ -190,6 +234,7 @@ export function emptySchedule(defaultTimezone: string, reportType: ReportType = 
     replyTo: null,
     subjectPrefix: null,
     countries: [],
+    salesTeam: null,
     sections: { ...ALL_SECTIONS_ON },
     attachCsv: true,
     aiSummary: false,

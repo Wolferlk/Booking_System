@@ -18,6 +18,9 @@ import { collectReconcileData, type ReconcileReportData } from './reconcile-repo
 import {
   renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
 } from './reconcile-report-html'
+import { collectSalesReportData, isEmptySalesReport, type SalesReportData } from './sales-report-data'
+import { renderSalesCsv, renderSalesEmail, renderSalesSubject } from './sales-report-html'
+import { renderSalesWorkbook } from './sales-workbook'
 import { sendReportMail } from './report-mailer'
 import { archiveSentReport, archivedEmailHtml, type ArchiveFile } from './report-archive'
 import {
@@ -73,6 +76,7 @@ const SEND_AS_LIMITS = {
 const DASHBOARD_URL = (process.env.NEXTAUTH_URL || '').replace(/\/$/, '')
   ? `${(process.env.NEXTAUTH_URL || '').replace(/\/$/, '')}/dashboard/reports`
   : null
+const SALES_DASHBOARD_URL = DASHBOARD_URL ? `${DASHBOARD_URL}/sales` : null
 
 export type RunTrigger = ReportRunLog['trigger']
 
@@ -476,6 +480,57 @@ async function buildReconcileNarrative(d: ReconcileReportData): Promise<string |
   }
 }
 
+/**
+ * Three sentences above the sales figures. Given only the counts the mail
+ * prints and the highlights `deriveHighlights()` already chose — the model
+ * explains the day, it never picks the priority.
+ */
+async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) return null
+  const c = d.pipeline.counts
+  const pv = d.pipeline.previous
+  const facts = {
+    range: `${d.window.fromDate} to ${d.window.toDate}`,
+    comparedWith: `${d.window.previous.fromDate} to ${d.window.previous.toDate}`,
+    team: d.pipeline.team?.label ?? 'every office team',
+    confirmedBookings: { now: d.bookings.total, before: d.bookings.previousTotal, guests: d.bookings.pax, topPartners: d.bookings.partners.slice(0, 3).map(p => ({ partner: p.agent, bookings: p.bookings })), topMarkets: d.bookings.markets.slice(0, 3).map(m => ({ market: m.label, bookings: m.bookings })) },
+    invoicedNew: d.invoices.available ? { count: d.invoices.newCount, before: d.invoices.previousNewCount, valueByCurrency: d.invoices.newValue } : null,
+    b2cStore: d.store.available ? { orders: d.store.orders, before: d.store.previousOrders, valueByCurrency: d.store.value } : null,
+    quotations: d.pipeline.available ? {
+      newQuotes: c.newQuotes, before: pv?.newQuotes ?? null, amendments: c.amendments,
+      confirmed: c.confirmations, confirmedBefore: pv?.confirmations ?? null,
+      conversionPct: c.conversion === null ? null : Math.round(c.conversion * 100),
+      calls: c.calls.total, answered: c.calls.connected, newAgencies: c.signups.agencies,
+      agenciesUsingAi: c.adoption.activeAgencies,
+    } : null,
+    highlightsAlreadyInTheReport: d.highlights.map(h => h.title),
+  }
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      max_tokens: 240,
+      messages: [
+        {
+          role: 'system',
+          content: 'You write the opening summary of a travel sales report for the directors. '
+            + 'Exactly three sentences, plain English, no markdown, no bullet points, no greeting. '
+            + 'Sentence 1: what was sold (bookings and invoiced value) and how it compares with the previous period — give both numbers. '
+            + 'Sentence 2: the quotation pipeline — quotes, confirmations and calls — and which partner or market drove the day. '
+            + 'Sentence 3: the single most important thing to act on, restated from the highlights already in the report — never invent a new one. '
+            + 'Only use the numbers given. Never invent a figure, a partner or a cause. Money is never added across currencies.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    }, AI_REQUEST_OPTS)
+    await logAiUsage({ callType: 'sales_report_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
+    return res.choices[0]?.message?.content?.trim() || null
+  } catch (err) {
+    console.warn('[Reports] sales narrative failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 // ─── Building ─────────────────────────────────────────────────────────────────
 
 /**
@@ -488,7 +543,7 @@ async function buildReconcileNarrative(d: ReconcileReportData): Promise<string |
  * one send path serve two entirely different report shapes.
  */
 export interface BuiltReport {
-  data: ReportData | ReconcileReportData
+  data: ReportData | ReconcileReportData | SalesReportData
   subject: string
   html: string
   csv: string
@@ -515,21 +570,80 @@ export interface BuiltReport {
 type BuildShape = Pick<
   ReportSchedule,
   'name' | 'reportType' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'
-> & Partial<Pick<ReportSchedule, 'attachCsv' | 'dayOfWeek'>>
+> & Partial<Pick<ReportSchedule, 'attachCsv' | 'dayOfWeek' | 'salesTeam'>>
 
-export async function buildReport(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null } = {},
-): Promise<BuiltReport> {
+export interface BuildOptions {
+  now?: Date
+  testSend?: boolean
+  anchorDate?: string | null
+  /**
+   * SALES only: a free date range (`yyyy-mm-dd`, inclusive) instead of the
+   * schedule's period. The other report types ignore it.
+   */
+  range?: { fromDate?: string | null; toDate?: string | null } | null
+}
+
+export async function buildReport(s: BuildShape, opts: BuildOptions = {}): Promise<BuiltReport> {
+  if (s.reportType === 'SALES') return buildSalesReport(s, opts)
   return s.reportType === 'RECONCILIATION'
     ? buildReconciliation(s, opts)
     : buildOpsReport(s, opts)
 }
 
-async function buildOpsReport(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
-): Promise<BuiltReport> {
+async function buildSalesReport(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
+  const data = await collectSalesReportData({
+    period: s.period,
+    timezone: s.timezone,
+    countries: s.countries,
+    now: opts.now,
+    anchorDate: opts.anchorDate,
+    sendDay: s.dayOfWeek,
+    range: opts.range,
+    maxRows: s.maxRows,
+    team: s.salesTeam ?? null,
+  })
+  const narrative = s.aiSummary ? await buildSalesNarrative(data) : null
+
+  // Same contract as the ops workbooks: a file that cannot be written costs the
+  // attachment (the CSV goes instead), never the send.
+  let workbook: BuiltReport['workbook'] = null
+  try {
+    workbook = await renderSalesWorkbook(data)
+  } catch (err) {
+    console.warn('[Reports] sales workbook build failed:', err instanceof Error ? err.message : err)
+  }
+
+  const c = data.pipeline.counts
+  return {
+    data,
+    subject: renderSalesSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend }),
+    html: renderSalesEmail(data, {
+      sections: s.sections,
+      narrative,
+      dashboardUrl: SALES_DASHBOARD_URL,
+      scheduleName: s.name,
+      testSend: opts.testSend,
+      maxRows: s.maxRows,
+      workbookAttached: !!workbook && s.attachCsv !== false,
+      workbookSheets: workbook?.sheets ?? [],
+    }),
+    csv: renderSalesCsv(data),
+    workbook,
+    window: { fromDate: data.window.fromDate, toDate: data.window.toDate },
+    // Mapped onto the shared run-log shape: bookings, quotations, calls and
+    // confirmations — the four numbers the history list shows for a sales run.
+    counts: {
+      created: data.bookings.total,
+      onGround: c.newQuotes,
+      complaints: c.calls.total,
+      upcoming: c.confirmations,
+    },
+    isEmpty: isEmptySalesReport(data),
+    csvName: data.pipeline.team ? `sales-report-${data.pipeline.team.key}` : 'sales-report',
+  }
+}
+
+async function buildOpsReport(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
   const data = await collectReportData({
     period: s.period,
     timezone: s.timezone,
@@ -593,10 +707,7 @@ async function buildOpsReport(
   }
 }
 
-async function buildReconciliation(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
-): Promise<BuiltReport> {
+async function buildReconciliation(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
   const data = await collectReconcileData({
     period: s.period,
     timezone: s.timezone,
@@ -683,6 +794,8 @@ export interface RunScheduleOptions {
    * once-per-slot marker, so it cannot swallow the next real send.
    */
   anchorDate?: string | null
+  /** SALES only: send a chosen date range instead of the schedule's period. */
+  range?: { fromDate?: string | null; toDate?: string | null } | null
 }
 
 export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): Promise<RunOutcome> {
@@ -743,7 +856,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
   try {
     const built = await withAsDeadline(
       opts.trigger === 'schedule' || opts.trigger === 'cron-http' ? SEND_AS_LIMITS.schedule : SEND_AS_LIMITS.interactive,
-      () => buildReport(s, { now, testSend: opts.testSend, anchorDate: opts.anchorDate }),
+      () => buildReport(s, { now, testSend: opts.testSend, anchorDate: opts.anchorDate, range: opts.range }),
     )
     covered = { from: built.window.fromDate, to: built.window.toDate }
 
@@ -786,7 +899,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
     })
 
     await recordScheduleRun(s.id, {
-      lastRunKey: opts.force && (opts.testSend || opts.anchorDate) ? s.lastRunKey : runKey,
+      lastRunKey: opts.force && (opts.testSend || opts.anchorDate || opts.range) ? s.lastRunKey : runKey,
       lastRunAt: new Date().toISOString(),
       lastStatus: 'ok',
       lastError: null,
@@ -811,7 +924,11 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
         content: archivedEmailHtml(built.html, { subject: built.subject, to: s.to, cc: s.cc, sentAt }),
       })
       await archiveSentReport({
-        category: s.reportType === 'RECONCILIATION' ? 'OPS Reconciliation' : `OPS ${PERIOD_LABEL[s.period] ?? 'Daily'} Report`,
+        category: s.reportType === 'RECONCILIATION'
+          ? 'OPS Reconciliation'
+          : s.reportType === 'SALES'
+            ? `${PERIOD_LABEL[s.period] ?? 'Daily'} Sales Report`
+            : `OPS ${PERIOD_LABEL[s.period] ?? 'Daily'} Report`,
         periodFrom: built.window.fromDate,
         periodTo: built.window.toDate,
         sentAt,

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  ALL_SECTIONS_ON, COUNTRY_OPTIONS, PERIOD_OPTIONS, REPORT_TYPE_OPTIONS,
+  ALL_SECTIONS_ON, COUNTRY_OPTIONS, PERIOD_OPTIONS, REPORT_TYPE_OPTIONS, SALES_TEAM_OPTIONS,
   TIMEZONE_OPTIONS, WEEKDAYS, emptySchedule, sectionOptionsFor,
   type ReportPeriod, type ReportType, type Schedule, type ScheduleSections,
 } from './types'
@@ -484,6 +484,29 @@ export default function ScheduleEditor({
               <p className="text-xs text-red-600">Pick at least one section — an empty report has nothing to say.</p>
             )}
 
+            {reportType === 'SALES' && (
+              <Field label="Travel Quote GPT team" hint="Quotations, calls, signups and staff are narrowed to this team">
+                <div className="grid sm:grid-cols-2 gap-2">
+                  {SALES_TEAM_OPTIONS.map(t => (
+                    <button
+                      key={t.value || 'all'}
+                      type="button"
+                      onClick={() => set('salesTeam', t.value || null)}
+                      className={cn(
+                        'px-3 py-2 rounded-lg border text-left transition-all',
+                        (draft.salesTeam ?? '') === t.value
+                          ? 'border-indigo-500 bg-indigo-50 ring-2 ring-indigo-100'
+                          : 'border-slate-200 bg-white hover:border-slate-300',
+                      )}
+                    >
+                      <div className="text-sm font-semibold text-slate-800">{t.label}</div>
+                      <div className="text-[11px] text-slate-500 leading-tight mt-0.5">{t.hint}</div>
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            )}
+
             {reportType === 'RECONCILIATION' ? (
               <p className="text-[11px] text-slate-500 leading-relaxed">
                 The reconciliation is never scoped by country — a per-country view would hide a gap in
@@ -536,10 +559,12 @@ export default function ScheduleEditor({
               <Toggle
                 checked={draft.attachCsv ?? false}
                 onChange={v => set('attachCsv', v)}
-                label={draft.period === 'DAILY' ? 'Attach CSV export' : 'Attach Excel workbook'}
-                hint={draft.period === 'DAILY'
-                  ? 'Every row in the report as a spreadsheet'
-                  : 'Every booking, cancellation and complaint on its own explained sheet — this mail prints none of them'}
+                label={reportType === 'SALES' || draft.period !== 'DAILY' ? 'Attach Excel workbook' : 'Attach CSV export'}
+                hint={reportType === 'SALES'
+                  ? 'Overview, bookings, partners, invoices, quotations, calls, signups, agencies, staff and a heatmap — one sheet each'
+                  : draft.period === 'DAILY'
+                    ? 'Every row in the report as a spreadsheet'
+                    : 'Every booking, cancellation and complaint on its own explained sheet — this mail prints none of them'}
                 icon={<FileSpreadsheet className="w-3.5 h-3.5 text-slate-400" />}
               />
               <Toggle
