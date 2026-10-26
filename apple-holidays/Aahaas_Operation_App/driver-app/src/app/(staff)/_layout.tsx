@@ -3,9 +3,11 @@ import type { ColorValue } from 'react-native';
 import { Redirect, Tabs } from 'expo-router';
 import { homeFor, useAuth } from '@/lib/auth';
 import { C } from '@/lib/theme';
+import { useWaUnread } from '@/lib/wa-alerts';
 
 export default function CompanyTabs() {
   const { actor } = useAuth();
+  const waUnread = useWaUnread();
   if (!actor) return <Redirect href="/welcome" />;
   if (actor.kind !== 'STAFF') return <Redirect href={homeFor(actor)} />;
   const icon = (name: keyof typeof Ionicons.glyphMap) => function TabIcon({ color, size }: { color: ColorValue; size: number }) {
@@ -19,7 +21,11 @@ export default function CompanyTabs() {
     }}>
       <Tabs.Screen name="home" options={{ title: 'Home', tabBarIcon: icon('grid') }} />
       <Tabs.Screen name="bookings" options={{ title: 'Bookings', tabBarIcon: icon('briefcase') }} />
-      <Tabs.Screen name="chats" options={{ title: 'Chats', tabBarIcon: icon('chatbubbles') }} />
+      <Tabs.Screen name="chats" options={{
+        title: 'Chats', tabBarIcon: icon('chatbubbles'),
+        tabBarBadge: waUnread ? (waUnread > 99 ? '99+' : waUnread) : undefined,
+        tabBarBadgeStyle: { backgroundColor: '#00A884', color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
+      }} />
       <Tabs.Screen name="drivers" options={{ title: 'Drivers', tabBarIcon: icon('car-sport') }} />
       <Tabs.Screen name="more" options={{ title: 'More', tabBarIcon: icon('apps') }} />
       <Tabs.Screen name="live" options={{ href: null }} />

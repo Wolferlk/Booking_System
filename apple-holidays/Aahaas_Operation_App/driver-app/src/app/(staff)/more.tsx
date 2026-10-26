@@ -48,6 +48,7 @@ export default function More() {
       <Card style={{ paddingVertical: S.xs }}>
         <Item icon="logo-whatsapp" label="WhatsApp inbox" tone={C.green} onPress={() => router.push({ pathname: '/chats', params: { tab: 'wa' } })} />
         <Item icon="people" label="Team chat" tone={C.blue} onPress={() => router.push({ pathname: '/chats', params: { tab: 'team' } })} />
+        <Item icon="notifications" label="WhatsApp alerts" hint="Sounds, vibration, quiet hours, muted chats" tone={C.green} onPress={() => router.push('/wa-alerts')} />
       </Card>
 
       <Label>Account</Label>

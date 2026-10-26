@@ -15,11 +15,12 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, ScrollView, SectionList, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ErrorBox, H1, Ionicons, Row, type IconName } from '@/components/ui';
+import { ErrorBox, H1, IconButton, Ionicons, Row, type IconName } from '@/components/ui';
 import { ago } from '@/lib/format';
 import { STATUS_LABELS } from '@/lib/status';
 import { C, R, S } from '@/lib/theme';
 import { tickFor } from '@/lib/wa';
+import { ingest, mutedUntil, setChatsFocused, useWaAlertSettings } from '@/lib/wa-alerts';
 import { web } from '@/lib/web';
 
 type MatchField = 'isNumber' | 'bookingRef' | 'cntl' | 'guest' | 'deal' | 'name' | 'phone' | 'message';
@@ -154,6 +155,7 @@ export default function Chats() {
   const [team, setTeam] = useState<TeamConv[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const alerts = useWaAlertSettings();
 
   useEffect(() => { if (params.tab) setTab(params.tab); }, [params.tab]);
   useEffect(() => {
@@ -168,14 +170,22 @@ export default function Chats() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      if (tab === 'wa') setWa(await web<WaConv[]>('whatsapp/conversations'));
-      else setTeam((await web<{ conversations: TeamConv[] }>('chat/conversations')).conversations);
+      if (tab === 'wa') {
+        const list = await web<WaConv[]>('whatsapp/conversations');
+        setWa(list);
+        ingest(list); // alerts + badges reuse this poll instead of making their own
+      } else setTeam((await web<{ conversations: TeamConv[] }>('chat/conversations')).conversations);
       setError(null);
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, [tab]);
 
-  useFocusEffect(useCallback(() => { load(); const t = setInterval(load, 20_000); return () => clearInterval(t); }, [load]));
+  useFocusEffect(useCallback(() => {
+    setChatsFocused(true);
+    load();
+    const t = setInterval(load, 20_000);
+    return () => { clearInterval(t); setChatsFocused(false); };
+  }, [load]));
 
   const needle = q.trim().toLowerCase();
 
@@ -251,6 +261,7 @@ export default function Chats() {
               : `${teamRows.length} conversations${teamUnread ? ` · ${teamUnread} unread` : ''}`}
           </Text>
         </View>
+        <IconButton icon={alerts.enabled ? 'notifications' : 'notifications-off'} color={alerts.enabled ? WA_GREEN : C.dim} onPress={() => router.push('/wa-alerts')} />
       </Row>
 
       <View style={{ flexDirection: 'row', backgroundColor: C.cardHi, borderRadius: R.md, padding: 4 }}>
@@ -383,6 +394,7 @@ export default function Chats() {
                 <View style={{ flex: 1, gap: 3 }}>
                   <Row style={{ justifyContent: 'space-between' }}>
                     <Text style={{ color: C.text, fontWeight: unread ? '900' : '700', fontSize: 16, flex: 1 }} numberOfLines={1}><Hl text={c.displayName || `+${c.phone}`} q={needle} /></Text>
+                    {mutedUntil(c.phone) !== null && <Ionicons name="notifications-off" size={13} color={C.dim} style={{ marginRight: 4 }} />}
                     <Text style={{ color: unread ? WA_GREEN : C.dim, fontSize: 12, fontWeight: unread ? '800' : '500' }}>{stamp(c.updatedAt)}</Text>
                   </Row>
                   <Row style={{ justifyContent: 'space-between' }}>
