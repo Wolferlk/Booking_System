@@ -438,8 +438,8 @@ function WhatsAppInboxInner() {
       }
       if (!res.success) throw new Error(res.error || 'Send failed')
       // Outside the 24h window the API silently redirects this through the
-      // approved re-engagement template — flag it so staff know it still went out.
-      if (res.message?.includes('re-engagement template')) toast.info('Sent via approved template (outside 24h window)')
+      // approved template — flag it so staff know it still went out.
+      if (res.message?.includes('approved template')) toast.info('Sent via approved template (outside 24h window)')
       if (selectedRef.current === item.phone) {
         scrollModeRef.current = 'force'
         await loadMessages(item.phone)
