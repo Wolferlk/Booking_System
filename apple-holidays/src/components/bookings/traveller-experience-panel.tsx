@@ -168,7 +168,19 @@ function teProxy(path: string, method = 'GET', body?: unknown, extra?: Record<st
     method,
     headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
     body: hasBody ? JSON.stringify(body) : undefined,
-  }).then(r => r.json())
+  }).then(async r => {
+    // A gateway timeout or crash page is HTML, not JSON — turn it into a
+    // readable error instead of a bare parse failure.
+    const text = await r.text()
+    try { return JSON.parse(text) } catch {
+      return {
+        success: false,
+        error: r.status === 504 || r.status === 503
+          ? `The call server did not answer in time (HTTP ${r.status}). The call may still go through — check the call history before trying again.`
+          : `The call server returned an unexpected response (HTTP ${r.status}).`,
+      }
+    }
+  })
 }
 
 // ─── Customer number discovery ────────────────────────────────────────────────
@@ -1179,7 +1191,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     setQuickResult(null)
     try {
       const res = await teProxy('quick-call', 'POST', body)
-      if (res.approval_pending) {
+      if (res.success === false || (res.error && res.ok === undefined)) {
+        const msg = res.error ?? res.message ?? 'Call could not be placed'
+        setQuickResult({ ok: false, message: msg })
+        toast.error(msg)
+      } else if (res.approval_pending) {
         setQuickResult({ ok: false, message: res.message ?? 'WhatsApp approval pending — customer must tap Allow first', note: res.note })
         toast.info('Approval sent — customer must tap Allow first')
       } else if (res.ok === false) {
@@ -1189,7 +1205,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id, booking_ref: res.booking_ref, references_itinerary: res.references_itinerary })
         toast.success(res.references_itinerary ? `Quick call placed — agent has ${bookingRef} itinerary` : 'Quick call placed')
       }
-    } catch { toast.error('Quick call failed') } finally { setQuickLoading(false) }
+    } catch (err) {
+      const msg = err instanceof Error ? `Quick call failed: ${err.message}` : 'Quick call failed'
+      setQuickResult({ ok: false, message: msg })
+      toast.error(msg)
+    } finally { setQuickLoading(false) }
   }
 
   // Place (or re-place) the booking's reconfirmation / post-tour call right now,
