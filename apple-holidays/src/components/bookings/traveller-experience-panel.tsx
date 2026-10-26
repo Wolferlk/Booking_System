@@ -231,6 +231,43 @@ function fmtDateTime(iso: string) {
     return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
   } catch { return iso }
 }
+/** "3h ago" / "2d ago" — how long since an approval request went out. */
+function ago(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return fmtDateTime(iso)
+  const m = Math.round(ms / 60_000)
+  if (m < 60) return `${Math.max(1, m)}m ago`
+  const h = Math.round(m / 60)
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
+}
+
+// ─── WhatsApp call permission ─────────────────────────────────────────────────
+// Meta's verdict for the number in play (from /api/te/approval), plus what ops
+// knows around it: the approval ledger, a country-code fix for a locally-written
+// number, and the booking's other numbers.
+
+interface PermNumber { phone: string; allowed: boolean | null; status: string | null }
+
+interface PermState {
+  checked: boolean
+  allowed: boolean | null
+  /** permanent | temporary | no_permission */
+  status?: string | null
+  /** Unix seconds — when a temporary permission lapses. */
+  expiration_time?: number | null
+  message?: string
+  can_request?: boolean
+  ledger?: { requestedAt: string | null; requestedBy: string | null; approvedAt: string | null } | null
+  fix?: PermNumber | null
+  alternates?: (PermNumber & { fix?: PermNumber | null })[]
+}
+
+function fmtExpiry(unixSeconds: number): { label: string; soon: boolean } {
+  const at = new Date(unixSeconds * 1000)
+  const soon = at.getTime() - Date.now() < 24 * 3_600_000
+  return { label: at.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), soon }
+}
+
 function fmtTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) }
   catch { return '' }
@@ -692,21 +729,35 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // ── Live call-permission state — the source of truth for "can we call?" ────
   // Read from Meta via the TE API so the panel SHOWS whether the customer has
   // allowed WhatsApp calls, instead of every dial guessing and failing.
-  const [perm, setPerm] = useState<{ checked: boolean; allowed: boolean | null; message?: string; can_request?: boolean } | null>(null)
+  const [perm, setPerm] = useState<PermState | null>(null)
   const [permLoading, setPermLoading] = useState(false)
   // A cancelled service has had its number removed — the intake field is then
   // the only number in play, so the permission chip must follow that instead.
   const cancelled   = service?.status === 'cancelled'
   const needsIntake = !service || cancelled
   const permPhone = ((needsIntake ? intakeForm.phone : service?.call_phone) || '').replace(/\D/g, '')
+  // The booking's other numbers ride along, so the panel can say when one of
+  // THOSE is the number that allowed calls.
+  const altPhones = useMemo(() => phoneOptions.map(c => c.value).join(','), [phoneOptions])
   const loadPermission = useCallback(async (phone: string) => {
     if (!phone) { setPerm(null); return }
     setPermLoading(true)
     try {
-      const res = await teProxy('approval', 'GET', undefined, { to: phone })
-      setPerm({ checked: Boolean(res.checked), allowed: res.allowed ?? null, message: res.message, can_request: res.can_request })
+      const url = new URL('/api/te/approval', location.origin)
+      url.searchParams.set('to', phone)
+      url.searchParams.set('bookingRef', bookingRef)
+      if (altPhones) url.searchParams.set('alts', altPhones)
+      const json = await fetch(url.toString()).then(r => r.json()).catch(() => null)
+      const res = json?.success !== false ? (json?.data ?? null) as (PermState & { checked?: boolean }) | null : null
+      if (res) {
+        setPerm({ ...res, checked: Boolean(res.checked), allowed: res.allowed ?? null })
+        return
+      }
+      // Fallback: the plain upstream check the chip always used.
+      const raw = await teProxy('approval', 'GET', undefined, { to: phone })
+      setPerm({ checked: Boolean(raw.checked), allowed: raw.allowed ?? null, status: raw.status, expiration_time: raw.expiration_time, message: raw.message, can_request: raw.can_request })
     } catch { setPerm(null) } finally { setPermLoading(false) }
-  }, [])
+  }, [bookingRef, altPhones])
   // Debounced — the intake field feeds this, so typing must not fire a Meta
   // permission lookup per keystroke.
   useEffect(() => {
@@ -714,6 +765,21 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     const t = setTimeout(() => loadPermission(permPhone), 400)
     return () => clearTimeout(t)
   }, [permPhone, loadPermission])
+
+  // Switch the call number to one Meta says allows calls. Before registration it
+  // just fills the field; on a registered service it opens Edit with the number
+  // prefilled, so the change is still an explicit Save.
+  function adoptNumber(phone: string) {
+    setQuickForm(f => (digitsOnly(f.to) === permPhone ? { ...f, to: phone } : f))
+    if (needsIntake) {
+      phoneTouched.current = true
+      setIntakeForm(f => ({ ...f, phone }))
+      return
+    }
+    openEdit()
+    setEditForm(f => ({ ...f, phone }))
+    toast.info('Number filled in — press Save Changes to switch the call number')
+  }
 
   // ── Register ──────────────────────────────────────────────────────────────
   async function registerBooking() {
@@ -884,8 +950,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         body: JSON.stringify({ to: phone, name: leadName || 'Valued Customer', bookingRef }),
       }).then(r => r.json())
       if (json.success === false) throw new Error(json.error ?? 'Approval failed')
-      const res = (json.data ?? json) as { already_allowed?: boolean; message?: string }
+      const res = (json.data ?? json) as { already_allowed?: boolean; rate_limited?: boolean; message?: string }
       if (res.already_allowed) toast.success('Customer already allowed WhatsApp calls ✓')
+      // Nothing was sent — Meta caps requests at 1 a day / 2 a week per number.
+      else if (res.rate_limited) toast.warning(res.message ?? 'Meta is limiting new requests — the customer must tap Allow on the earlier message')
       else toast.success(res.message ?? 'Approval request sent — awaiting customer confirmation')
       await loadPermission(phone)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to send approval request') }
@@ -900,17 +968,85 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-500 border-slate-200"><Loader2 className="w-3 h-3 animate-spin" /> Checking call permission…</span>
     }
     if (perm?.allowed === true) {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200"><CheckCircle2 className="w-3 h-3" /> Customer allows calls</span>
+      const exp = perm.status === 'temporary' && perm.expiration_time ? fmtExpiry(perm.expiration_time) : null
+      return (
+        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${exp?.soon ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}
+          title={perm.status === 'permanent'
+            ? 'They chose "Always allow" — no need to ask again.'
+            : 'Temporary permission — once it lapses they must tap Allow again.'}>
+          <CheckCircle2 className="w-3 h-3" /> Customer allows calls
+          {perm.status === 'permanent' && <span className="font-semibold opacity-80">· always</span>}
+          {exp && <span className="font-semibold opacity-80">· until {exp.label}{exp.soon ? ' (expires soon)' : ''}</span>}
+        </span>
+      )
     }
     if (perm?.allowed === false) {
+      const ledger = perm.ledger
+      const why = ledger?.approvedAt
+        ? `allowed earlier (${fmtDate(ledger.approvedAt)}), permission has lapsed`
+        : perm.can_request === false
+          ? 'Meta request limit reached · awaiting their Allow tap'
+          : ledger?.requestedAt
+            ? `request sent ${ago(ledger.requestedAt)} · awaiting their Allow tap`
+            : 'send the approval request'
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200" title={perm?.message}>
-          <AlertCircle className="w-3 h-3" /> Not allowed yet — {perm?.can_request === false ? 'awaiting their Allow tap' : 'send the approval request'}
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200"
+          title={[perm.message, ledger?.requestedBy && `Last request by ${ledger.requestedBy}`].filter(Boolean).join(' · ')}>
+          <AlertCircle className="w-3 h-3" /> Not allowed — {why}
         </span>
       )
     }
     return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-400 border-slate-200" title={perm?.message}>Permission state unknown</span>
   }
+
+  // What the chip alone can't say: the right number is a different one. Either
+  // this number lacks its country code, or another number on the booking is the
+  // one that allowed calls — each with a one-tap switch.
+  function permHints() {
+    if (!perm || perm.allowed === true || permLoading) return null
+    const labelOf = (phone: string) => phoneOptions.find(c => c.value === phone)?.label ?? 'Another number'
+    const fix = perm.fix
+    const allowedAlt = perm.alternates?.find(a => a.allowed === true || a.fix?.allowed === true)
+    const altPhone = allowedAlt ? (allowedAlt.allowed === true ? allowedAlt.phone : allowedAlt.fix!.phone) : null
+    if (!fix && !altPhone) return null
+    const switchBtn = (phone: string) => (
+      <button type="button" onClick={() => adoptNumber(phone)}
+        className="ml-auto flex-shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 transition-colors">
+        Use {phone}
+      </button>
+    )
+    return (
+      <div className="w-full space-y-1.5 mt-1.5">
+        {fix?.allowed === true && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>This number is missing its country code — <b className="font-mono">{fix.phone}</b> has allowed calls{fix.status === 'permanent' ? ' (always)' : ''}.</span>
+            {switchBtn(fix.phone)}
+          </div>
+        )}
+        {fix && fix.allowed !== true && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-sky-200 bg-sky-50 text-[11px] text-sky-800">
+            <Info className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>No country code — WhatsApp needs the full number, probably <b className="font-mono">{fix.phone}</b>. Calls and approval requests to the short form won&apos;t reach them.</span>
+            {switchBtn(fix.phone)}
+          </div>
+        )}
+        {altPhone && altPhone !== fix?.phone && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>{labelOf(allowedAlt!.phone)} on this booking (<b className="font-mono">{altPhone}</b>) has allowed calls.</span>
+            {switchBtn(altPhone)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Numbers on the booking Meta reports as callable — marked on the quick-pick chips.
+  const callableNumbers = new Set<string>([
+    ...(perm?.allowed === true && permPhone ? [permPhone] : []),
+    ...(perm?.alternates ?? []).filter(a => a.allowed === true).map(a => a.phone),
+  ])
 
   // ── Schedule actions ──────────────────────────────────────────────────────
   async function callNow(id: number) {
@@ -1228,6 +1364,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                               onClick={() => setIntakeForm(f => ({ ...f, phone: c.value }))}
                               className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
                               {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                              {callableNumbers.has(c.value) && <span title="WhatsApp calls allowed" className={`ml-0.5 inline-flex items-center gap-0.5 ${active ? 'text-emerald-200' : 'text-emerald-600'}`}><PhoneCall className="w-2.5 h-2.5" />calls OK</span>}
                             </button>
                           )
                         })}
@@ -1334,6 +1471,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
                 <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
                   {permChip()}
+                  {permHints()}
                   <button onClick={registerBooking} disabled={intakeLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
                     {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> {cancelled ? 'Register with this number' : 'Register for AI Calls'}</>}
@@ -1397,6 +1535,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     <div className="col-span-2"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Interval</p><p className="text-sm font-bold text-slate-800">Every {service!.interval_count} {service!.interval_unit}</p></div>
                   )}
                 </div>
+                {permHints()}
 
                 {config && (
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400 py-2 border-y border-slate-50">
@@ -1715,13 +1854,14 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           onClick={() => setQuickForm(f => ({ ...f, to: c.value }))}
                           className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
                           {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                              {callableNumbers.has(c.value) && <span title="WhatsApp calls allowed" className={`ml-0.5 inline-flex items-center gap-0.5 ${active ? 'text-emerald-200' : 'text-emerald-600'}`}><PhoneCall className="w-2.5 h-2.5" />calls OK</span>}
                         </button>
                       )
                     })}
                   </div>
                 )}
                 <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
-                {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}</div>}
+                {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}{permHints()}</div>}
               </div>
 
               <div>
