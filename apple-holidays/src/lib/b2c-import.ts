@@ -82,7 +82,7 @@ export async function saveB2cImportSettings(s: B2cImportSettings): Promise<void>
 
 export interface B2cImportSummary {
   /** Who/what started the run — shown in the activity feed. */
-  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  trigger?: 'scheduler' | 'cron-http' | 'manual' | 'watch'
   triggeredBy?: string | null
   /** True for a preview: everything is computed, nothing is written. */
   dryRun?: boolean
@@ -118,8 +118,15 @@ export interface RunB2cImportOptions {
    * staff can see exactly what an import would create before committing to it.
    */
   dryRun?: boolean
-  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  trigger?: 'scheduler' | 'cron-http' | 'manual' | 'watch'
   triggeredBy?: string | null
+  /**
+   * Drop orders whose ref already exists in ops before any per-order work, with
+   * one bulk lookup. Used by the live watch so a quiet tick costs two queries
+   * instead of one per upcoming order. Skips the lead-name repair for existing
+   * bookings, which the nightly run still does.
+   */
+  onlyNew?: boolean
   /** Persist the summary to the run log. Off for previews. */
   log?: boolean
   /**
@@ -160,7 +167,15 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     return finish(summary, opts)
   }
 
-  const headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
+  let headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
+  if (opts.onlyNew && headers.length > 0) {
+    const present = await prisma.booking.findMany({
+      where: { bookingRef: { in: headers.map((h) => String(h.order_id)) } },
+      select: { bookingRef: true },
+    })
+    const presentRefs = new Set(present.map((p) => p.bookingRef))
+    headers = headers.filter((h) => !presentRefs.has(String(h.order_id)))
+  }
   summary.candidates = headers.length
   if (headers.length === 0) return finish(summary, opts)
 
@@ -288,19 +303,22 @@ async function finish(
 ): Promise<B2cImportSummary> {
   summary.finishedAt = new Date().toISOString()
   const shouldLog = opts.log ?? opts.dryRun !== true
-  if (shouldLog) {
-    try {
-      const runs = await getRunLog()
-      await prisma.systemSetting.upsert({
-        where: { key: SETTING_RUN_LOG },
-        update: { value: JSON.stringify([summary, ...runs].slice(0, MAX_RUNS)) },
-        create: { key: SETTING_RUN_LOG, value: JSON.stringify([summary]) },
-      })
-    } catch {
-      /* activity feed is a convenience, never a correctness requirement */
-    }
-  }
+  if (shouldLog) await appendRunLog(summary)
   return summary
+}
+
+/** Prepend a run to the activity feed. Best-effort: never throws. */
+export async function appendRunLog(summary: B2cImportSummary): Promise<void> {
+  try {
+    const runs = await getRunLog()
+    await prisma.systemSetting.upsert({
+      where: { key: SETTING_RUN_LOG },
+      update: { value: JSON.stringify([summary, ...runs].slice(0, MAX_RUNS)) },
+      create: { key: SETTING_RUN_LOG, value: JSON.stringify([summary]) },
+    })
+  } catch {
+    /* activity feed is a convenience, never a correctness requirement */
+  }
 }
 
 /** Recent import runs, newest first. Never throws — a bad row reads as empty. */
@@ -341,6 +359,31 @@ async function persistB2cBooking(
   const arrival = new Date(`${mapped.arrivalDate}T00:00:00Z`)
   const departure = new Date(`${mapped.departureDate}T00:00:00Z`)
 
+  try {
+    await createB2cBooking(mapped, createdById, arrival, departure)
+  } catch (err) {
+    // Two runs (watch + nightly, or two server instances) raced on the same
+    // order: the unique bookingRef rejected the second insert, so nothing was
+    // duplicated. Report it as present rather than as a failure.
+    if ((err as { code?: string })?.code === 'P2002') {
+      const now = await prisma.booking.findUnique({
+        where: { bookingRef: mapped.bookingRef },
+        select: { agent: true },
+      })
+      if (now) return isB2cBooking(now.agent) ? 'exists' : 'conflict'
+    }
+    throw err
+  }
+
+  return 'created'
+}
+
+async function createB2cBooking(
+  mapped: MappedB2cBooking,
+  createdById: string,
+  arrival: Date,
+  departure: Date,
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.create({
       data: {
@@ -414,8 +457,6 @@ async function persistB2cBooking(
       },
     })
   })
-
-  return 'created'
 }
 
 // ─── Dedup guard shared by the scheduler and the HTTP route ───────────────────

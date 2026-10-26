@@ -11,12 +11,12 @@
  *   4. Activity log + the B2C bookings already in ops.
  */
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, Clock,
   Database, DownloadCloud, Eye, Globe2, Loader2, Lock, Plane, RefreshCw,
-  ShieldCheck, ShoppingBag, TrendingUp, Users, XCircle,
+  ShieldCheck, ShoppingBag, TrendingUp, Users, XCircle, Zap,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { CountryFlag } from '@/components/ui/country-flag'
@@ -45,6 +45,11 @@ interface Overview {
     lastRunDate: string | null
     ranToday: boolean
     today: string
+  }
+  watch?: {
+    enabled: boolean
+    intervalMinutes: number
+    lastCheckAt: string | null
   }
   runs: RunSummary[]
 }
@@ -204,6 +209,34 @@ export default function B2cControlCentre() {
 
   useEffect(() => { void loadOverview(); void loadPreview() }, [loadOverview, loadPreview])
 
+  // An order marked "Will import" is imported right away by the live watch
+  // instead of waiting for its next tick or the nightly run. One attempt per
+  // set of new refs, so an order the importer cannot create is not retried in
+  // a loop — it stays visible with the manual Import button.
+  const autoTried = useRef('')
+  const [autoImporting, setAutoImporting] = useState(false)
+  useEffect(() => {
+    if (!overview?.watch?.enabled || importing || autoImporting) return
+    const newRefs = (preview?.orders ?? []).filter((o) => o.status === 'new').map((o) => o.bookingRef).join(',')
+    if (!newRefs || autoTried.current === newRefs) return
+    autoTried.current = newRefs
+    setAutoImporting(true)
+    void (async () => {
+      try {
+        const res = await fetch('/api/b2c/watch', { method: 'POST' })
+        const json = await res.json()
+        if (json.success && json.data.ran) {
+          if (json.data.summary.created.length > 0) setLastResult(json.data.summary)
+          await Promise.all([loadOverview(), loadPreview()])
+        }
+      } catch {
+        /* the timer and the nightly run will still pick it up */
+      } finally {
+        setAutoImporting(false)
+      }
+    })()
+  }, [overview, preview, importing, autoImporting, loadOverview, loadPreview])
+
   async function runImport() {
     setConfirmOpen(false)
     setImporting(true)
@@ -320,6 +353,16 @@ export default function B2cControlCentre() {
               {overview?.schedule.enabled
                 ? <><CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Schedule enabled</>
                 : <><XCircle className="h-3.5 w-3.5 text-slate-400" /> Schedule disabled</>}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              {overview?.watch?.enabled
+                ? <><Zap className="h-3.5 w-3.5 text-fuchsia-500" /> New orders import live
+                    <span className="text-slate-400">
+                      (checked every {overview.watch.intervalMinutes} min
+                      {overview.watch.lastCheckAt ? ` · last ${timeAgo(overview.watch.lastCheckAt)}` : ''})
+                    </span></>
+                : <><XCircle className="h-3.5 w-3.5 text-slate-400" /> Live import off</>}
+              {autoImporting && <Loader2 className="h-3.5 w-3.5 animate-spin text-fuchsia-500" />}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Activity className="h-3.5 w-3.5" /> Last run:{' '}
