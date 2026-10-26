@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { sendViaMetaApi, sendViaMetaTemplate, sendViaNotifyProxy, findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
+import { sendGuestMessageTemplate, GuestTemplateUnavailableError } from '@/lib/guest-message-template'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -29,16 +30,62 @@ export async function POST(req: NextRequest) {
   const text = message.trim()
 
   // PROACTIVE 24h-window decision — mirrors n8n-project's WhatsAppService.sendText():
-  // Meta can return 200 for an out-of-window free-form send WITHOUT actually
-  // delivering it, so we decide up front from our own inbound-message history
-  // rather than trust a successful-looking response. Outside the window, the
-  // staff member's message goes out as the {{1}} body param of the approved
-  // re-engagement template instead — same template n8n uses for this exact
-  // purpose — so composing a reply never silently fails to reach the customer.
-  const reengageTemplate = process.env.WHATSAPP_REENGAGE_TEMPLATE?.trim()
-  if (reengageTemplate) {
-    const open = await isWithin24hWindow(phone)
-    if (open === false) {
+  // Meta returns 200 for an out-of-window free-form send and then drops it with a
+  // `failed` receipt (131047), so we decide up front from our own inbound-message
+  // history rather than trust a successful-looking response. Outside the window
+  // the text must ride a template; if none can carry it we refuse, so the desk
+  // sees why instead of a red "Not delivered" bubble a minute later.
+  if (!(await isWithin24hWindow(phone))) {
+    // 1. A booking's guest: the guest-message template carries the desk's own text.
+    //    Not for an agent's number — that template greets the guest by name.
+    const isGuest = !!booking &&
+      [booking.contactWhatsapp, booking.contactPhone].some(p => p && normalisePhone(p) === phone)
+    if (booking && isGuest) {
+      try {
+        const lead = await prisma.passenger.findFirst({
+          where:  { bookingId: booking.id, isLead: true },
+          select: { name: true },
+        })
+        const sent = await sendGuestMessageTemplate({
+          to: phone, guestName: lead?.name ?? 'Guest', bookingRef, text,
+        })
+        for (const part of sent.sent) {
+          await prisma.whatsAppMessage.create({
+            data: {
+              bookingRef, phone: sent.phone, direction: 'outbound',
+              body: part.text, waMessageId: part.waMessageId, status: 'sent', senderName,
+            },
+          })
+        }
+        // A later part failed: the guest has the start, so the rest waits for their reply.
+        if (sent.unsent) {
+          await prisma.whatsAppMessage.create({
+            data: {
+              bookingRef, phone: sent.phone, direction: 'outbound',
+              body: sent.unsent, status: 'pending', senderName,
+            },
+          })
+        }
+        const parts = sent.sent.length
+        return buildApiSuccess(
+          { channel: 'guest-template', parts, queued: Boolean(sent.unsent) },
+          sent.unsent
+            ? `Sent ${parts} part${parts === 1 ? '' : 's'} via approved template (outside 24h window); the rest is queued until the guest replies`
+            : `Sent to ${phone} via approved template (outside 24h window)`,
+        )
+      } catch (err) {
+        if (!(err instanceof GuestTemplateUnavailableError)) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error('[WhatsApp] guest template send failed:', msg)
+          return buildApiError(msg, 422)
+        }
+        console.warn('[WhatsApp] guest template unavailable, trying re-engagement template:', err.message)
+      }
+    }
+
+    // 2. The re-engagement template, when this deployment has one configured.
+    const reengageTemplate = process.env.WHATSAPP_REENGAGE_TEMPLATE?.trim()
+    if (reengageTemplate) {
       try {
         const result = await sendViaMetaTemplate({
           to: phone,
@@ -58,13 +105,20 @@ export async function POST(req: NextRequest) {
             senderName,
           },
         })
-        return buildApiSuccess(result, `Sent to ${phone} via re-engagement template (outside 24h window)`)
+        return buildApiSuccess(result, `Sent to ${phone} via approved template (outside 24h window)`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error('[WhatsApp] re-engagement template send failed:', msg)
-        return buildApiError(msg, 502)
+        return buildApiError(msg, 422)
       }
     }
+
+    // 3. Nothing can carry it. Free-form text would be accepted and then dropped.
+    return buildApiError(
+      'Not sent: this chat is outside the 24h window, so WhatsApp drops plain text. ' +
+      'Use "Send template" above to reach them, then reply once they answer.',
+      422,
+    )
   }
 
   try {
