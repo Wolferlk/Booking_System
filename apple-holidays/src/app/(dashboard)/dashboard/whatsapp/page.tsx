@@ -5,10 +5,10 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertCircle, ArrowDown, ArrowLeft, BellRing, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
+  AlertCircle, ArrowDown, ArrowLeft, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
   Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderSearch, Hash, Inbox, Keyboard, LayoutTemplate,
   Loader2, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, Search,
-  Send, Smile, Sparkles, Trash2, User, VolumeX, WifiOff, X, Zap,
+  Send, Smile, Sparkles, Trash2, User, WifiOff, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
@@ -17,10 +17,12 @@ import type { OperationCountry } from '@prisma/client'
 import {
   CONV_POLL_MS, DEFAULT_QUICK_REPLIES, DOODLE_BG, EMOJIS, THREAD_POLL_MS, UNASSIGNED, WA_TEXT_LIMIT,
   avatarGradient, conversationsSignature, countryGroupKey, downloadText, fmtAgo, fmtDate, fmtDayLabel,
-  fmtDuration, fmtListStamp, fmtTime, initials, messagesSignature, playChime, readLocal, writeLocal,
+  fmtDuration, fmtListStamp, fmtTime, initials, messagesSignature, readLocal, writeLocal,
   type BookingLookup, type Conversation, type PendingMessage, type SearchField, type QuickReply, type RelatedThread, type ThreadBooking, type WaMessage,
 } from '@/components/whatsapp-inbox/shared'
 import { TemplatesModal } from '@/components/whatsapp-inbox/templates-modal'
+import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
+import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country'
 
@@ -46,7 +48,6 @@ const PREFIX_CHIPS = [
 
 const PINS_KEY = 'wa-inbox:pins'
 const QR_KEY = 'wa-inbox:quick-replies'
-const SOUND_KEY = 'wa-inbox:sound'
 const AT_BOTTOM_PX = 96
 
 /**
@@ -109,7 +110,6 @@ function WhatsAppInboxInner() {
   const [tab, setTab] = useState<ListTab>('all')
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
   const [pins, setPins] = useState<string[]>([])
-  const [soundOn, setSoundOn] = useState(false)
   const [online, setOnline] = useState(true)
   const [now, setNow] = useState(() => Date.now())
 
@@ -160,7 +160,6 @@ function WhatsAppInboxInner() {
   const msgSigRef = useRef('')
   const convSigRef = useRef('')
   const lastStampRef = useRef<number | null>(null)
-  const soundRef = useRef(false)
   const atBottomRef = useRef(true)
   const scrollModeRef = useRef<'initial' | 'force' | 'idle'>('idle')
   const prevCountRef = useRef(0)
@@ -171,13 +170,11 @@ function WhatsAppInboxInner() {
 
   useEffect(() => { selectedRef.current = selected }, [selected])
   useEffect(() => { searchRef.current = search }, [search])
-  useEffect(() => { soundRef.current = soundOn }, [soundOn])
 
   // Per-viewer preferences.
   useEffect(() => {
     setPins(readLocal<string[]>(PINS_KEY, []))
     setQuickReplies(readLocal<QuickReply[]>(QR_KEY, DEFAULT_QUICK_REPLIES))
-    setSoundOn(readLocal<boolean>(SOUND_KEY, false))
     setOnline(navigator.onLine)
     const on = () => setOnline(true)
     const off = () => setOnline(false)
@@ -208,12 +205,14 @@ function WhatsAppInboxInner() {
         const newest = data.reduce((m, c) => Math.max(m, new Date(c.updatedAt).getTime()), 0)
         const prevStamp = lastStampRef.current
         if (prevStamp !== null) {
-          const fresh = data.filter(c =>
-            c.direction === 'inbound' &&
-            new Date(c.updatedAt).getTime() > prevStamp &&
-            (c.phone !== selectedRef.current || document.visibilityState !== 'visible'))
+          const arrived = data.filter(c =>
+            c.direction === 'inbound' && new Date(c.updatedAt).getTime() > prevStamp)
+          const fresh = arrived.filter(c =>
+            c.phone !== selectedRef.current || document.visibilityState !== 'visible')
+          // Only the open chat got something and the window has focus: the
+          // desk is looking at it, so ring only if they asked for that.
+          if (arrived.length) playMessageAlert({ viewing: !fresh.length && document.hasFocus() })
           if (fresh.length) {
-            if (soundRef.current) playChime()
             const c = fresh[0]
             toast(c.displayName || `+${c.phone}`, {
               description: c.snippet.slice(0, 90) || 'New message',
@@ -601,20 +600,11 @@ function WhatsAppInboxInner() {
   )
   useEffect(() => () => { if (attachmentPreview) URL.revokeObjectURL(attachmentPreview) }, [attachmentPreview])
 
-  // ── pins / sound / export ────────────────────────────────────────────────
+  // ── pins / export ────────────────────────────────────────────────
   function togglePin(phone: string) {
     setPins(prev => {
       const next = prev.includes(phone) ? prev.filter(p => p !== phone) : [phone, ...prev]
       writeLocal(PINS_KEY, next)
-      return next
-    })
-  }
-
-  function toggleSound() {
-    setSoundOn(prev => {
-      const next = !prev
-      writeLocal(SOUND_KEY, next)
-      if (next) playChime()
       return next
     })
   }
@@ -833,9 +823,7 @@ function WhatsAppInboxInner() {
                 )}
               </p>
             </div>
-            <IconBtn title={soundOn ? 'Mute new-message sound' : 'Play a sound on new messages'} onClick={toggleSound} active={soundOn}>
-              {soundOn ? <BellRing className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-            </IconBtn>
+            <SoundSettingsButton variant="inbox" />
             <IconBtn title="Message templates" onClick={() => setTemplatesOpen(true)}>
               <LayoutTemplate className="h-4 w-4" />
             </IconBtn>

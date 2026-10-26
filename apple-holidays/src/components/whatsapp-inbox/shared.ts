@@ -235,29 +235,6 @@ export function writeLocal(key: string, value: unknown) {
   try { window.localStorage.setItem(key, JSON.stringify(value)) } catch { /* storage unavailable */ }
 }
 
-/** Short two-tone chime via WebAudio — no asset to ship. */
-export function playChime() {
-  try {
-    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-    const ctx = new Ctx()
-    const tone = (freq: number, start: number) => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.value = freq
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime + start)
-      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + start + 0.02)
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + 0.22)
-      osc.connect(gain).connect(ctx.destination)
-      osc.start(ctx.currentTime + start)
-      osc.stop(ctx.currentTime + start + 0.25)
-    }
-    tone(880, 0)
-    tone(1320, 0.12)
-    setTimeout(() => ctx.close().catch(() => {}), 600)
-  } catch { /* audio unavailable */ }
-}
-
 export function downloadText(filename: string, text: string) {
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)

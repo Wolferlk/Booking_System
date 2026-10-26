@@ -8,6 +8,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
+import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 
 interface WaMessage {
   id: string
@@ -214,6 +216,11 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
       if (inboundRef.current !== null && mode === 'poll') {
         const diff = inboundCount - inboundRef.current
         if (diff > 0 && panelRef.current === 'minimized') setUnread(u => u + diff)
+        if (diff > 0) {
+          playMessageAlert({
+            viewing: panelRef.current === 'open' && atBottomRef.current && document.hasFocus(),
+          })
+        }
       }
       inboundRef.current = inboundCount
 
@@ -558,6 +565,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
+              <SoundSettingsButton variant="mini" />
               <button
                 onClick={() => fetchMessages('manual')}
                 className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
