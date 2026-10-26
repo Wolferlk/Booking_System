@@ -2,7 +2,7 @@
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, Text, View } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline } from '@/components/map-view';
 import { Card, ErrorBox, H1, IconButton, Ionicons, Label, Loading, P, Pill, Row, Screen, Stat } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api } from '@/lib/api';
