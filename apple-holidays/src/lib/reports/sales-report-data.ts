@@ -23,7 +23,7 @@
 import { prisma } from '@/lib/prisma'
 import { fetchOrderProducts, fetchOrdersBookedBetween, isB2cConfigured } from '@/lib/b2c-db'
 import { collectAppleCohort } from './apple-cohort'
-import { collectActivitySplit, type ActivitySplit, type SplitLine } from './activity-split'
+import { bookingKey, collectActivitySplit, type ActivitySplit, type SplitLine } from './activity-split'
 import { agentKey, canonicalAgentName } from './agent-names'
 import { collectCreated, type CreatedSection } from './report-data'
 import {
@@ -181,6 +181,23 @@ export interface InvoiceSection {
   amendedLines: SplitLine[]
 }
 
+/**
+ * Bookings against invoices, ref by ref — why "54 bookings" and "41 new
+ * invoices" are both right. Built in memory from the two lists above; the
+ * accounts split is B2B only, so B2C bookings are set aside first.
+ */
+export interface BookingInvoiceMatch {
+  available: boolean
+  b2bBooked: number
+  b2cBooked: number
+  /** B2B bookings of the window that carry a new invoice of the window. */
+  matched: number
+  /** B2B bookings of the window with no invoice raised in it yet. */
+  notInvoiced: string[]
+  /** New invoices whose booking is not in this window's confirmations. */
+  invoicedOnly: string[]
+}
+
 export interface Highlight {
   severity: 'good' | 'watch' | 'warning' | 'critical'
   title: string
@@ -212,6 +229,7 @@ export interface SalesReportData {
     lines: BookingLine[]
   }
   invoices: InvoiceSection
+  match: BookingInvoiceMatch
   store: B2cStoreSection
   pipeline: PipelineSection
   highlights: Highlight[]
@@ -344,6 +362,17 @@ function invoicesFrom(split: ActivitySplit, prev: ActivitySplit | null): Invoice
   }
 }
 
+function matchBookingsToInvoices(lines: BookingLine[], split: ActivitySplit, bookingsOk: boolean): BookingInvoiceMatch {
+  const b2b = lines.filter(l => l.source !== 'B2C')
+  const empty: BookingInvoiceMatch = { available: false, b2bBooked: b2b.length, b2cBooked: lines.length - b2b.length, matched: 0, notInvoiced: [], invoicedOnly: [] }
+  if (!bookingsOk || !split.available) return empty
+  const invoiced = new Set([...split.today.keys, ...split.old.keys])
+  const booked = new Set(b2b.map(l => bookingKey(l.bookingRef)).filter(Boolean))
+  const notInvoiced = b2b.filter(l => !invoiced.has(bookingKey(l.bookingRef))).map(l => l.bookingRef)
+  const invoicedOnly = split.today.lines.filter(l => l.key && !booked.has(l.key)).map(l => l.ref)
+  return { ...empty, available: true, matched: b2b.length - notInvoiced.length, notInvoiced, invoicedOnly }
+}
+
 // ─── B2C storefront ───────────────────────────────────────────────────────────
 
 async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSection> {
@@ -426,6 +455,15 @@ function deriveHighlights(d: Omit<SalesReportData, 'highlights' | 'warnings'>): 
       severity: 'critical',
       title: `${d.bookings.missingRefs.length} confirmation${d.bookings.missingRefs.length === 1 ? '' : 's'} sold but not filed here`,
       detail: `Confirmed in the Apple System ${span} with no booking in OPS yet: ${d.bookings.missingRefs.slice(0, 8).join(', ')}${d.bookings.missingRefs.length > 8 ? '…' : ''}. Sales that are not filed are not operated.`,
+    })
+  }
+
+  const m = d.match
+  if (m.available && m.notInvoiced.length) {
+    out.push({
+      severity: m.notInvoiced.length >= 5 ? 'warning' : 'watch',
+      title: `${m.notInvoiced.length} B2B booking${m.notInvoiced.length === 1 ? '' : 's'} confirmed ${span} with no invoice yet`,
+      detail: `${m.notInvoiced.slice(0, 8).join(', ')}${m.notInvoiced.length > 8 ? '…' : ''}. Usually raised next morning. Check if it is still open a day later.`,
     })
   }
 
@@ -563,6 +601,7 @@ export async function collectSalesReportData(opts: SalesCollectOptions): Promise
       lines,
     },
     invoices: invoicesFrom(split, prevSplit),
+    match: matchBookingsToInvoices(lines, split, !!created),
     store,
     pipeline,
   }

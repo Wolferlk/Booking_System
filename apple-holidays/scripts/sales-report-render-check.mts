@@ -75,8 +75,9 @@ const data: SalesReportData = {
       destination: 'Hanoi · Halong · Saigon', createdAt: at(9 + (i % 10)), hotelOnly: i % 9 === 0,
     })),
   },
+  match: { available: true, b2bBooked: 17, b2cBooked: 1, matched: 14, notInvoiced: ['VN 41201', 'IS 2210', 'VN 41207'], invoicedOnly: ['VN 41060', 'VN 41061'] },
   invoices: {
-    available: true, error: null, newCount: 16, amendedCount: 9, newValue: [{ currency: 'USD', total: 44120.5 }], amendedValue: [{ currency: 'USD', total: 18200 }],
+    available: true, error: null, newCount: 16, amendedCount: 9, newValue: [{ currency: 'INR', total: 1347073 }, { currency: 'USD', total: 44120.5 }], amendedValue: [{ currency: 'USD', total: 18200 }],
     previousNewCount: 13, previousNewValue: [{ currency: 'USD', total: 36000 }],
     newLines: Array.from({ length: 16 }, (_, i) => ({
       key: `VN410${60 + i}`, ref: `VN 410${60 + i}`, invoiceNumber: `AHDS-2610-${300 + i}`, type: 'New' as const, agent: agencies[i % agencies.length],

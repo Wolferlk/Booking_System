@@ -219,6 +219,8 @@ function revenueSection(d: SalesReportData, maxRows: number): string {
         ${top.map(l => `<tr>${td(esc(l.ref), { bold: true, nowrap: true })}${td(esc(l.invoiceNumber), { nowrap: true })}${td(truncate(l.agent, 24))}${td(truncate(l.guest, 22))}${td(money(l.amount, l.currency), { align: 'right', nowrap: true, bold: true })}</tr>`).join('')}${TABLE_CLOSE}
         ${moreNote(top.length, inv.newLines.length, 'new invoices')}`
       : emptyNote('No new invoices in this window.')
+    body += `<div class="sub" style="padding-top:4px;">New value in full: <b style="color:${C.ink};">${moneyLine(inv.newValue, 6)}</b></div>`
+    body += matchBlock(d)
   } else body += emptyNote(`Invoices unavailable — ${inv.error ?? 'the accounts ledger could not be read'}.`)
 
   body += `<div class="h3" style="padding-top:18px;">Aahaas B2C store</div>`
@@ -424,6 +426,10 @@ function reportTitle(d: SalesReportData): string {
   return `${PERIOD_LABEL[d.window.period]} Sales Report`
 }
 
+// Solid colours only on the dark bands: Outlook's Word engine drops rgba(),
+// and a label that fell back to black on navy is the "invisible" ribbon.
+const ON_DARK = { strong: '#ffffff', soft: '#c7d2fe', dim: '#a5b4fc', faint: '#8b8fc7', chip: '#3730a3', rule: '#2e2a6b' }
+
 function headerBlock(d: SalesReportData, opts: SalesRenderOptions): string {
   const badges = [
     opts.testSend ? 'TEST SEND' : '',
@@ -431,45 +437,121 @@ function headerBlock(d: SalesReportData, opts: SalesRenderOptions): string {
     d.window.custom && !d.window.live ? 'CHOSEN DATES' : '',
     d.pipeline.team ? d.pipeline.team.label.toUpperCase() : '',
   ].filter(Boolean).map(text =>
-    `<span style="display:inline-block;margin:0 0 4px 5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
+    `<span style="display:inline-block;margin:0 0 4px 5px;padding:3px 9px;border-radius:999px;background:${ON_DARK.chip};color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
   ).join('')
   return `
-  <tr><td style="background:#1e1b4b;background-image:linear-gradient(135deg,#1e1b4b 0%,#4338ca 55%,${C.brand} 100%);padding:26px 24px;border-radius:16px 16px 0 0;">
+  <tr><td bgcolor="#1e1b4b" style="background:#1e1b4b;background-image:linear-gradient(135deg,#1e1b4b 0%,#4338ca 55%,${C.brand} 100%);padding:26px 24px 22px 24px;border-radius:16px 16px 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td>
-        <div style="font:700 11px/1.4 ${FONT};color:rgba(255,255,255,.72);text-transform:uppercase;letter-spacing:.14em;">AppleHolidays Sales</div>
-        <div style="font:800 24px/1.25 ${FONT};color:#ffffff;padding-top:6px;letter-spacing:-0.02em;">${esc(reportTitle(d))}</div>
-        <div style="font:400 13px/1.5 ${FONT};color:rgba(255,255,255,.82);padding-top:5px;">${esc(d.window.label)}</div>
-        <div style="font:400 11px/1.5 ${FONT};color:rgba(255,255,255,.6);padding-top:2px;">Compared with ${esc(d.window.previous.label)}</div>
+        <div style="font:700 11px/1.4 ${FONT};color:${ON_DARK.soft};text-transform:uppercase;letter-spacing:.16em;">AppleHolidays &nbsp;·&nbsp; Sales Intelligence</div>
+        <div style="font:800 26px/1.2 ${FONT};color:#ffffff;padding-top:6px;letter-spacing:-0.02em;">${esc(reportTitle(d))}</div>
+        <div style="font:600 14px/1.5 ${FONT};color:#e0e7ff;padding-top:5px;">${esc(d.window.label)}</div>
+        <div style="font:400 11px/1.5 ${FONT};color:${ON_DARK.dim};padding-top:2px;">Compared with ${esc(d.window.previous.label)} &nbsp;·&nbsp; times in ${esc(d.window.timezone)}</div>
       </td>
       <td align="right" valign="top">${badges}</td>
     </tr></table>
   </td></tr>`
 }
 
+/** "INR" over "1,347,073" — a money figure never appears without its currency. */
+function moneyFigure(list: MoneyByCurrency[]): { value: string; extra: string } {
+  if (!list.length) return { value: '0', extra: 'nothing invoiced' }
+  const [first, ...rest] = list
+  return {
+    value: `<span style="font:700 11px/1 ${FONT};color:${ON_DARK.soft};letter-spacing:.06em;">${esc(first.currency)}</span> ${Math.round(first.total).toLocaleString('en-US')}`,
+    extra: rest.length ? `+ ${rest.slice(0, 2).map(m => `${esc(m.currency)} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ')}${rest.length > 2 ? ` + ${rest.length - 2} more` : ''}` : 'one currency',
+  }
+}
+
+function deltaChip(now: number, before: number | null | undefined): string {
+  if (before === null || before === undefined) return ''
+  const diff = now - before
+  if (diff === 0) return `<span style="color:${ON_DARK.dim};">= ${num(before)} before</span>`
+  const up = diff > 0
+  return `<span style="color:${up ? '#6ee7b7' : '#fca5a5'};font-weight:700;">${up ? '▲' : '▼'} ${num(Math.abs(diff))}</span> <span style="color:${ON_DARK.dim};">vs ${num(before)}</span>`
+}
+
+/**
+ * The two bands under the header. The top one is money and bookings — what was
+ * sold and billed, each figure with its unit; the lower one is the pipeline
+ * that feeds it. Every tile is defined again in "How to read these numbers".
+ */
 function ribbon(d: SalesReportData): string {
   const c = d.pipeline.counts
   const p = d.pipeline.available
-  const top = d.invoices.newValue[0]
-  const cells = [
-    { label: 'Bookings', value: d.bookings.available ? num(d.bookings.total) : '—', sub: `${num(d.bookings.pax)} guests` },
-    { label: 'Invoiced new', value: top ? `${compactMoney(top.total)}` : d.invoices.available ? '0' : '—', sub: top ? `${top.currency} · ${num(d.invoices.newCount)} inv.` : 'no invoices' },
-    { label: 'Quotations', value: p ? num(c.newQuotes) : '—', sub: p ? `${num(c.amendments)} amended` : 'unavailable' },
-    { label: 'Confirmed', value: p ? num(c.confirmations) : '—', sub: p ? `${pct(c.conversion)} of quoted` : '' },
-    { label: 'Calls', value: p ? num(c.calls.total) : '—', sub: p ? `${pct(c.calls.rate)} answered` : '' },
-    { label: 'New agencies', value: p ? num(c.signups.agencies) : '—', sub: p ? `${num(c.signups.desk)} by us` : '' },
+  const inv = d.invoices
+  const fig = moneyFigure(inv.newValue)
+  const big = [
+    { label: 'Bookings confirmed', value: d.bookings.available ? num(d.bookings.total) : '—', sub: d.bookings.available ? `${num(d.bookings.pax)} guests · B2B ${num(d.bookings.b2b)} · B2C ${num(d.bookings.b2c)}` : 'unavailable', delta: d.bookings.available ? deltaChip(d.bookings.total, d.bookings.previousTotal) : '' },
+    { label: 'New invoices (B2B)', value: inv.available ? num(inv.newCount) : '—', sub: inv.available ? `${num(inv.amendedCount)} older ones re-issued` : 'unavailable', delta: inv.available ? deltaChip(inv.newCount, inv.previousNewCount) : '' },
+    { label: 'Value of new invoices', value: inv.available ? fig.value : '—', sub: inv.available ? fig.extra : 'unavailable', delta: inv.available && inv.newValue.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
+  ]
+  const small = [
+    { label: 'Quotations', value: p ? num(c.newQuotes) : '—', sub: p ? `${num(c.amendments)} amended` : '' },
+    { label: 'Quotes confirmed', value: p ? num(c.confirmations) : '—', sub: p ? `${pct(c.conversion)} of quoted` : '' },
+    { label: 'Calls', value: p ? num(c.calls.total) : '—', sub: p ? `${num(c.calls.connected)} answered · ${pct(c.calls.rate)}` : '' },
+    { label: 'New agencies', value: p ? num(c.signups.agencies) : '—', sub: p ? `${num(c.signups.desk)} added by us` : '' },
     { label: 'AI prompts', value: p ? num(c.adoption.prompts) : '—', sub: p ? `${num(c.adoption.activeAgencies)} agencies` : '' },
   ]
+  const bigCells = big.map((t, i) => `<td width="33%" valign="top" style="padding:14px 14px 12px 14px;${i ? `border-left:1px solid ${ON_DARK.rule};` : ''}">
+        <div style="font:700 10px/1.4 ${FONT};color:${ON_DARK.soft};text-transform:uppercase;letter-spacing:.1em;">${esc(t.label)}</div>
+        <div style="font:800 24px/1.25 ${FONT};color:#ffffff;padding-top:4px;white-space:nowrap;">${t.value}</div>
+        <div style="font:400 11px/1.5 ${FONT};color:#e0e7ff;padding-top:2px;">${t.sub}</div>
+        <div style="font:400 11px/1.5 ${FONT};padding-top:1px;">${t.delta || '&nbsp;'}</div>
+      </td>`).join('')
+  const smallCells = small.map(t => `<td width="20%" align="center" valign="top" style="padding:10px 4px;">
+        <div style="font:800 17px/1.2 ${FONT};color:#ffffff;">${t.value}</div>
+        <div style="font:700 9px/1.4 ${FONT};color:${ON_DARK.soft};text-transform:uppercase;letter-spacing:.08em;padding-top:3px;">${esc(t.label)}</div>
+        <div style="font:400 10px/1.4 ${FONT};color:${ON_DARK.faint};padding-top:1px;">${esc(t.sub)}</div>
+      </td>`).join('')
   return `
-  <tr><td style="background:#16133d;padding:14px 18px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${cells.map(c => `<td width="${Math.floor(100 / cells.length)}%" align="center" style="padding:2px 4px;">
-        <div style="font:800 21px/1.2 ${FONT};color:#ffffff;">${c.value}</div>
-        <div style="font:700 10px/1.4 ${FONT};color:rgba(255,255,255,.66);text-transform:uppercase;letter-spacing:.08em;padding-top:3px;">${esc(c.label)}</div>
-        <div style="font:400 10px/1.4 ${FONT};color:rgba(255,255,255,.45);padding-top:2px;">${esc(c.sub)}</div>
-      </td>`).join('')}
-    </tr></table>
+  <tr><td bgcolor="#16133d" style="background:#16133d;padding:4px 10px 0 10px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${bigCells}</tr></table>
+  </td></tr>
+  <tr><td bgcolor="#100e2e" style="background:#100e2e;padding:2px 10px 4px 10px;border-top:1px solid ${ON_DARK.rule};">
+    <div style="font:700 9px/1.4 ${FONT};color:${ON_DARK.faint};text-transform:uppercase;letter-spacing:.14em;padding:8px 0 0 4px;">Pipeline · Travel Quote GPT</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${smallCells}</tr></table>
   </td></tr>`
+}
+
+/**
+ * Bookings against invoices, so "54 bookings" beside "41 invoices" is
+ * answered on the page instead of by a reply-all.
+ */
+function matchBlock(d: SalesReportData): string {
+  const m = d.match
+  if (!m.available) return ''
+  const row = (label: string, value: string, note: string, color: string = C.ink) => `<tr>
+    <td style="padding:6px 0;font:400 12px/1.5 ${FONT};color:${C.body};border-bottom:1px solid ${C.line};">${label}${note ? `<div class="sub">${note}</div>` : ''}</td>
+    <td align="right" style="padding:6px 0 6px 10px;font:800 15px/1.3 ${FONT};color:${color};border-bottom:1px solid ${C.line};white-space:nowrap;">${value}</td></tr>`
+  const list = (refs: string[]) => refs.length ? esc(refs.slice(0, 12).join(', ')) + (refs.length > 12 ? ` … +${refs.length - 12}` : '') : ''
+  return `<div class="h3" style="padding-top:18px;">Bookings ↔ invoices — why the two counts differ</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${row('Bookings confirmed', num(m.b2bBooked + m.b2cBooked), '')}
+      ${row('&nbsp;&nbsp;less B2C store bookings', `− ${num(m.b2cBooked)}`, 'billed by the storefront, not in the B2B invoice ledger', C.muted)}
+      ${row('&nbsp;&nbsp;less B2B bookings not invoiced yet', `− ${num(m.notInvoiced.length)}`, list(m.notInvoiced), m.notInvoiced.length ? C.warn : C.muted)}
+      ${row('<b>B2B bookings invoiced in the window</b>', num(m.matched), '', C.good)}
+      ${row('plus new invoices for bookings confirmed earlier', `+ ${num(m.invoicedOnly.length)}`, list(m.invoicedOnly), C.muted)}
+    </table>
+    <div class="sub" style="padding-top:6px;">Matched by booking reference, spaces and dashes ignored. An amendment re-issued in the window counts as invoiced.</div>`
+}
+
+/** Plain definitions of every ribbon figure: what it counts and where it is read. */
+function glossaryBlock(d: SalesReportData): string {
+  const inv = d.invoices
+  const total = inv.newValue.map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ') || '0'
+  const items: [string, string][] = [
+    ['Bookings confirmed', 'Confirmations the Apple System raised in the window, counted exactly as the Daily Ops Report counts them. B2B and the Aahaas B2C store together.'],
+    ['New invoices (B2B)', 'Bookings whose first invoice was raised in the window, one per booking, cancellations and test bookings excluded. B2C is not in this ledger. Older bookings re-invoiced after an amendment are counted separately as "re-issued".'],
+    ['Value of new invoices', `The grand total of those ${num(inv.newCount)} invoices, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
+    ['Quotations / Quotes confirmed', 'Quotes issued in Travel Quote GPT in the window, and quotes marked confirmed there in the window. This is the quote tool’s own status, so it can read 0 on a day the booking system confirmed bookings.'],
+    ['Calls', 'Dials logged by the calling system. "Answered" means the call connected to a person.'],
+    ['New agencies / AI prompts', 'Agency accounts created in the window, and prompts sent to the Travel Quote GPT assistant.'],
+  ]
+  return section('How to read these numbers', 'Every figure above, defined — and where it comes from', '#475569',
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${items.map(([k, v]) => `<tr>
+      <td width="30%" valign="top" style="padding:7px 10px 7px 0;font:700 12px/1.5 ${FONT};color:${C.ink};border-bottom:1px solid ${C.line};">${esc(k)}</td>
+      <td valign="top" style="padding:7px 0;font:400 12px/1.6 ${FONT};color:${C.body};border-bottom:1px solid ${C.line};">${esc(v)}</td></tr>`).join('')}</table>`)
 }
 
 export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = {}): string {
@@ -498,6 +580,7 @@ export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = 
     on('salesAdoption') ? adoptionSection(d, maxRows) : '',
     on('salesStaff') ? staffSection(d, maxRows) : '',
     on('salesActivity') ? activitySection(d) : '',
+    glossaryBlock(d),
   ].join('')
 
   const attach = opts.workbookAttached && opts.workbookSheets?.length
@@ -561,7 +644,7 @@ export function renderSalesSubject(d: SalesReportData, opts: { prefix?: string; 
   const top = d.invoices.newValue[0]
   const parts = [
     d.bookings.available ? `${d.bookings.total} booking${d.bookings.total === 1 ? '' : 's'}` : '',
-    top ? `${top.currency} ${Math.round(top.total).toLocaleString('en-US')} invoiced` : '',
+    top ? `${d.invoices.newValue.slice(0, 2).map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ')}${d.invoices.newValue.length > 2 ? ' + more' : ''} invoiced (${d.invoices.newCount} new)` : '',
     d.pipeline.available ? `${c.newQuotes} quote${c.newQuotes === 1 ? '' : 's'}` : '',
     d.pipeline.available && c.confirmations ? `${c.confirmations} confirmed` : '',
     d.pipeline.available ? `${c.calls.total} calls` : '',
