@@ -5,8 +5,9 @@
  * 680px table shell, header gradient, ribbon and section cards — so the two
  * mails land in the same inbox reading as one product. What is different is
  * the shape of the story: a sales mail leads with *where to look*, then walks
- * the funnel from the first AI prompt to the invoice, and only then breaks the
- * day down by market, partner, consultant and hour.
+ * the funnel from the first AI prompt to the B2C order, and only then breaks
+ * the day down by store category, market, consultant and hour. B2C only — no
+ * B2B bookings, partners or invoices.
  *
  * Every number on it comes from `sales-report-data.ts`; this file adds,
  * divides and infers nothing beyond formatting and the bar widths.
@@ -137,7 +138,7 @@ function highlightsSection(d: SalesReportData): string {
 /**
  * The funnel, from the first AI prompt to the invoice. Bars are scaled to the
  * widest stage; each stage names the system it is read from, because the six
- * numbers come from four databases and are not a single cohort.
+ * numbers come from three databases and are not a single cohort.
  */
 function funnelBlock(d: SalesReportData): string {
   const c = d.pipeline.counts
@@ -146,9 +147,8 @@ function funnelBlock(d: SalesReportData): string {
     { label: 'AI prompts', value: p ? c.adoption.prompts : null, note: `${p ? num(c.adoption.aiUsers) : '—'} people · Travel Quote GPT`, color: '#7c3aed' },
     { label: 'Quotations issued', value: p ? c.newQuotes : null, note: `${p ? num(c.amendments) : '—'} amendments · Travel Quote GPT`, color: '#4f46e5' },
     { label: 'Quotes confirmed', value: p ? c.confirmations : null, note: `dated by confirmation · Travel Quote GPT`, color: '#2563eb' },
-    { label: 'Bookings confirmed', value: d.bookings.available ? d.bookings.total : null, note: `${num(d.bookings.pax)} guests · Booking system`, color: '#0284c7' },
-    { label: 'Invoiced as new', value: d.invoices.available ? d.invoices.newCount : null, note: `${moneyLine(d.invoices.newValue, 2)} · Accounts`, color: '#059669' },
     { label: 'B2C store orders', value: d.store.available ? d.store.orders : null, note: `${moneyLine(d.store.value, 2)} · Aahaas store`, color: '#db2777' },
+    { label: 'B2C bookings filed', value: d.bookings.available ? d.bookings.total : null, note: `${num(d.bookings.pax)} guests · Booking system`, color: '#0284c7' },
   ]
   const max = Math.max(1, ...stages.map(s => s.value ?? 0))
   const rows = stages.map(s => `<tr>
@@ -161,16 +161,15 @@ function funnelBlock(d: SalesReportData): string {
 
 function bookingsSection(d: SalesReportData, maxRows: number): string {
   const b = d.bookings
-  if (!b.available) return section('Confirmed bookings', 'Booking system', ACCENT.bookings, emptyNote(`Bookings could not be read${b.error ? ` — ${b.error}` : ''}.`))
+  if (!b.available) return section('B2C bookings', 'Booking system', ACCENT.bookings, emptyNote(`Bookings could not be read${b.error ? ` — ${b.error}` : ''}.`))
   const value = moneyHeadline(b.value)
   const tiles = kpiRow([
-    { label: 'Confirmed', value: num(b.total), note: `${cmp(b.total, b.previousTotal)} ${b.previousTotal !== null ? `${num(b.previousTotal)} before` : ''}`, color: ACCENT.bookings },
+    { label: 'Filed', value: num(b.total), note: `${cmp(b.total, b.previousTotal)} ${b.previousTotal !== null ? `${num(b.previousTotal)} before` : ''}`, color: ACCENT.bookings },
     { label: 'Guests', value: num(b.pax), note: b.avgPax !== null ? `avg party ${b.avgPax}` : '&nbsp;' },
     { label: 'Quoted value', value: value.value, note: value.note, color: ACCENT.revenue },
     { label: 'Lead time', value: b.avgLeadDays !== null ? `${b.avgLeadDays}d` : '—', note: b.avgNights !== null ? `avg ${b.avgNights} nights` : '&nbsp;' },
   ])
-  const channel = `<div class="sub" style="padding-bottom:12px;">${pill(`B2B ${num(b.b2b)}`, '#ffffff', C.b2b)} ${pill(`B2C ${num(b.b2c)}`, '#ffffff', C.b2c)}${b.hotelOnly ? ` ${pill(`${num(b.hotelOnly)} hotel only`, '#92400e', '#fffbeb')}` : ''}
-    &nbsp;Counted as the Daily Ops Report counts them${b.created?.basis === 'apple' ? ' — the Apple System confirmations of the window' : ' — bookings filed here in the window'}.</div>`
+  const channel = `<div class="sub" style="padding-bottom:12px;">${b.hotelOnly ? `${pill(`${num(b.hotelOnly)} hotel only`, '#92400e', '#fffbeb')} ` : ''}Aahaas store orders filed in the booking system in the window. An order is filed shortly after it is placed, so this can trail the store count by a few orders.</div>`
 
   const maxM = Math.max(1, ...b.markets.map(m => m.bookings))
   const markets = b.markets.length
@@ -178,52 +177,19 @@ function bookingsSection(d: SalesReportData, maxRows: number): string {
       ${b.markets.map(m => `<tr>${td(esc(m.label), { bold: true })}${td(num(m.bookings), { align: 'right', bold: true })}${td(num(m.pax), { align: 'right' })}${td(m.avgLeadDays !== null ? `${m.avgLeadDays}d` : '—', { align: 'right' })}${td(moneyLine(m.quoted, 2), { align: 'right', nowrap: true })}<td class="c">${bar(m.bookings, maxM, ACCENT.bookings)}</td></tr>`).join('')}${TABLE_CLOSE}`
     : ''
 
-  const partners = b.partners.filter(p => p.bookings || p.invoicedNew).slice(0, 12)
-  const maxP = Math.max(1, ...partners.map(p => p.bookings))
-  const partnerTable = partners.length
-    ? `<div class="h3" style="padding-top:18px;">Top partners</div>${tableOpen([{ text: 'Partner' }, { text: 'Bookings', align: 'right' }, { text: 'Guests', align: 'right' }, { text: 'Invoiced new', align: 'right' }, { text: 'Amended', align: 'right' }, { text: 'Share', width: '18%' }])}
-      ${partners.map(p => `<tr>${td(truncate(p.agent, 34), { bold: true })}${td(num(p.bookings), { align: 'right', bold: true })}${td(num(p.pax), { align: 'right' })}${td(p.invoicedNew ? `${num(p.invoicedNew)}<div class="sub">${moneyLine(p.invoicedNewValue, 1)}</div>` : '—', { align: 'right' })}${td(p.amended ? num(p.amended) : '—', { align: 'right' })}<td class="c">${bar(p.bookings, maxP, '#6366f1')}<div class="sub">${pct(p.share)}</div></td></tr>`).join('')}${TABLE_CLOSE}
-      ${moreNote(partners.length, b.partners.length, 'partners')}`
-    : ''
-
   const rows = b.lines.slice(0, maxRows)
   const list = rows.length
-    ? `<div class="h3" style="padding-top:18px;">The bookings</div>${tableOpen([{ text: 'Ref' }, { text: 'Partner' }, { text: 'Market' }, { text: 'Arrival' }, { text: 'Pax', align: 'right' }, { text: 'Value', align: 'right' }])}
-      ${rows.map(l => `<tr>${td(`${esc(l.bookingRef)}${l.source === 'B2C' ? ` <span class="pill sc">B2C</span>` : ''}`, { bold: true, nowrap: true })}${td(truncate(l.agent, 26))}${td(esc(l.countryLabel))}${td(shortDate(l.arrivalDate), { nowrap: true })}${td(num(l.pax), { align: 'right' })}${td(l.quotedTotal !== null ? money(l.quotedTotal, l.currency) : '—', { align: 'right', nowrap: true })}</tr>`).join('')}${TABLE_CLOSE}
+    ? `<div class="h3" style="padding-top:18px;">The bookings</div>${tableOpen([{ text: 'Ref' }, { text: 'Destination' }, { text: 'Market' }, { text: 'Arrival' }, { text: 'Pax', align: 'right' }, { text: 'Value', align: 'right' }])}
+      ${rows.map(l => `<tr>${td(esc(l.bookingRef), { bold: true, nowrap: true })}${td(truncate(l.destination ?? '—', 26))}${td(esc(l.countryLabel))}${td(shortDate(l.arrivalDate), { nowrap: true })}${td(num(l.pax), { align: 'right' })}${td(l.quotedTotal !== null ? money(l.quotedTotal, l.currency) : '—', { align: 'right', nowrap: true })}</tr>`).join('')}${TABLE_CLOSE}
       ${moreNote(rows.length, b.lines.length, 'bookings')}`
-    : emptyNote('No confirmed bookings in this window.')
+    : emptyNote('No B2C bookings filed in this window.')
 
-  const missing = b.missingRefs.length
-    ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;color:#991b1b;font:400 12px/1.6 ${FONT};"><b>${num(b.missingRefs.length)} confirmed but not filed here:</b> ${esc(b.missingRefs.slice(0, 20).join(', '))}</div>`
-    : ''
-
-  return section('Confirmed bookings', `What was sold — ${d.window.label}`, ACCENT.bookings, tiles + channel + markets + partnerTable + list + missing)
+  return section('B2C bookings', `Store orders as bookings — ${d.window.label}`, ACCENT.bookings, tiles + channel + markets + list)
 }
 
 function revenueSection(d: SalesReportData, maxRows: number): string {
-  const inv = d.invoices
   const s = d.store
   let body = ''
-  if (inv.available) {
-    const nv = moneyHeadline(inv.newValue)
-    const av = moneyHeadline(inv.amendedValue)
-    body += kpiRow([
-      { label: 'Invoiced new', value: num(inv.newCount), note: `${cmp(inv.newCount, inv.previousNewCount)} ${inv.previousNewCount !== null ? `${num(inv.previousNewCount)} before` : ''}`, color: ACCENT.revenue },
-      { label: 'New value', value: nv.value, note: nv.note, color: ACCENT.revenue },
-      { label: 'Re-issued', value: num(inv.amendedCount), note: 'older confirmations amended' },
-      { label: 'Re-issued value', value: av.value, note: av.note },
-    ])
-    const top = [...inv.newLines].sort((a, b) => b.amount - a.amount).slice(0, Math.min(10, maxRows))
-    body += top.length
-      ? `<div class="h3">Largest new invoices</div>${tableOpen([{ text: 'Booking' }, { text: 'Invoice' }, { text: 'Partner' }, { text: 'Guest' }, { text: 'Amount', align: 'right' }])}
-        ${top.map(l => `<tr>${td(esc(l.ref), { bold: true, nowrap: true })}${td(esc(l.invoiceNumber), { nowrap: true })}${td(truncate(l.agent, 24))}${td(truncate(l.guest, 22))}${td(money(l.amount, l.currency), { align: 'right', nowrap: true, bold: true })}</tr>`).join('')}${TABLE_CLOSE}
-        ${moreNote(top.length, inv.newLines.length, 'new invoices')}`
-      : emptyNote('No new invoices in this window.')
-    body += `<div class="sub" style="padding-top:4px;">New value in full: <b style="color:${C.ink};">${moneyLine(inv.newValue, 6)}</b></div>`
-    body += matchBlock(d)
-  } else body += emptyNote(`Invoices unavailable — ${inv.error ?? 'the accounts ledger could not be read'}.`)
-
-  body += `<div class="h3" style="padding-top:18px;">Aahaas B2C store</div>`
   if (s.available) {
     const sv = moneyHeadline(s.value)
     body += kpiRow([
@@ -237,7 +203,7 @@ function revenueSection(d: SalesReportData, maxRows: number): string {
       : emptyNote('No storefront orders in this window.')
   } else body += emptyNote(s.error ?? 'The Aahaas B2C store could not be read.')
 
-  return section('Revenue', 'Invoices from the accounts ledger, and the Aahaas storefront — read-only', ACCENT.revenue, body)
+  return section('Aahaas B2C store', 'Orders placed on the storefront — read-only', '#db2777', body)
 }
 
 function pipelineUnavailable(d: SalesReportData, title: string, accent: string): string | null {
@@ -455,7 +421,7 @@ function headerBlock(d: SalesReportData, opts: SalesRenderOptions): string {
 
 /** "INR" over "1,347,073" — a money figure never appears without its currency. */
 function moneyFigure(list: MoneyByCurrency[]): { value: string; extra: string } {
-  if (!list.length) return { value: '0', extra: 'nothing invoiced' }
+  if (!list.length) return { value: '0', extra: 'no priced orders' }
   const [first, ...rest] = list
   return {
     value: `<span style="font:700 11px/1 ${FONT};color:${ON_DARK.soft};letter-spacing:.06em;">${esc(first.currency)}</span> ${Math.round(first.total).toLocaleString('en-US')}`,
@@ -472,19 +438,18 @@ function deltaChip(now: number, before: number | null | undefined): string {
 }
 
 /**
- * The two bands under the header. The top one is money and bookings — what was
- * sold and billed, each figure with its unit; the lower one is the pipeline
- * that feeds it. Every tile is defined again in "How to read these numbers".
+ * The two bands under the header. The top one is the B2C store — what was
+ * sold, each figure with its unit; the lower one is the quote pipeline. Every tile is defined again in "How to read these numbers".
  */
 function ribbon(d: SalesReportData): string {
   const c = d.pipeline.counts
   const p = d.pipeline.available
-  const inv = d.invoices
-  const fig = moneyFigure(inv.newValue)
+  const st = d.store
+  const fig = moneyFigure(st.value)
   const big = [
-    { label: 'Bookings confirmed', value: d.bookings.available ? num(d.bookings.total) : '—', sub: d.bookings.available ? `${num(d.bookings.pax)} guests · B2B ${num(d.bookings.b2b)} · B2C ${num(d.bookings.b2c)}` : 'unavailable', delta: d.bookings.available ? deltaChip(d.bookings.total, d.bookings.previousTotal) : '' },
-    { label: 'New invoices (B2B)', value: inv.available ? num(inv.newCount) : '—', sub: inv.available ? `${num(inv.amendedCount)} older ones re-issued` : 'unavailable', delta: inv.available ? deltaChip(inv.newCount, inv.previousNewCount) : '' },
-    { label: 'Value of new invoices', value: inv.available ? fig.value : '—', sub: inv.available ? fig.extra : 'unavailable', delta: inv.available && inv.newValue.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
+    { label: 'B2C store orders', value: st.available ? num(st.orders) : '—', sub: st.available ? `${num(st.lines)} products sold` : 'unavailable', delta: st.available ? deltaChip(st.orders, st.previousOrders) : '' },
+    { label: 'Store sales value', value: st.available ? fig.value : '—', sub: st.available ? fig.extra : 'unavailable', delta: st.available && st.value.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
+    { label: 'B2C bookings filed', value: d.bookings.available ? num(d.bookings.total) : '—', sub: d.bookings.available ? `${num(d.bookings.pax)} guests` : 'unavailable', delta: d.bookings.available ? deltaChip(d.bookings.total, d.bookings.previousTotal) : '' },
   ]
   const small = [
     { label: 'Quotations', value: p ? num(c.newQuotes) : '—', sub: p ? `${num(c.amendments)} amended` : '' },
@@ -514,37 +479,14 @@ function ribbon(d: SalesReportData): string {
   </td></tr>`
 }
 
-/**
- * Bookings against invoices, so "54 bookings" beside "41 invoices" is
- * answered on the page instead of by a reply-all.
- */
-function matchBlock(d: SalesReportData): string {
-  const m = d.match
-  if (!m.available) return ''
-  const row = (label: string, value: string, note: string, color: string = C.ink) => `<tr>
-    <td style="padding:6px 0;font:400 12px/1.5 ${FONT};color:${C.body};border-bottom:1px solid ${C.line};">${label}${note ? `<div class="sub">${note}</div>` : ''}</td>
-    <td align="right" style="padding:6px 0 6px 10px;font:800 15px/1.3 ${FONT};color:${color};border-bottom:1px solid ${C.line};white-space:nowrap;">${value}</td></tr>`
-  const list = (refs: string[]) => refs.length ? esc(refs.slice(0, 12).join(', ')) + (refs.length > 12 ? ` … +${refs.length - 12}` : '') : ''
-  return `<div class="h3" style="padding-top:18px;">Bookings ↔ invoices — why the two counts differ</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-      ${row('Bookings confirmed', num(m.b2bBooked + m.b2cBooked), '')}
-      ${row('&nbsp;&nbsp;less B2C store bookings', `− ${num(m.b2cBooked)}`, 'billed by the storefront, not in the B2B invoice ledger', C.muted)}
-      ${row('&nbsp;&nbsp;less B2B bookings not invoiced yet', `− ${num(m.notInvoiced.length)}`, list(m.notInvoiced), m.notInvoiced.length ? C.warn : C.muted)}
-      ${row('<b>B2B bookings invoiced in the window</b>', num(m.matched), '', C.good)}
-      ${row('plus new invoices for bookings confirmed earlier', `+ ${num(m.invoicedOnly.length)}`, list(m.invoicedOnly), C.muted)}
-    </table>
-    <div class="sub" style="padding-top:6px;">Matched by booking reference, spaces and dashes ignored. An amendment re-issued in the window counts as invoiced.</div>`
-}
-
 /** Plain definitions of every ribbon figure: what it counts and where it is read. */
 function glossaryBlock(d: SalesReportData): string {
-  const inv = d.invoices
-  const total = inv.newValue.map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ') || '0'
+  const total = d.store.value.map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ') || '0'
   const items: [string, string][] = [
-    ['Bookings confirmed', 'Confirmations the Apple System raised in the window, counted exactly as the Daily Ops Report counts them. B2B and the Aahaas B2C store together.'],
-    ['New invoices (B2B)', 'Bookings whose first invoice was raised in the window, one per booking, cancellations and test bookings excluded. B2C is not in this ledger. Older bookings re-invoiced after an amendment are counted separately as "re-issued".'],
-    ['Value of new invoices', `The grand total of those ${num(inv.newCount)} invoices, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
-    ['Quotations / Quotes confirmed', 'Quotes issued in Travel Quote GPT in the window, and quotes marked confirmed there in the window. This is the quote tool’s own status, so it can read 0 on a day the booking system confirmed bookings.'],
+    ['B2C store orders', 'Orders placed on the Aahaas storefront in the window, dated by when they were booked. B2B bookings are not in this report.'],
+    ['Store sales value', `The net total of those orders' products, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
+    ['B2C bookings filed', 'Store orders filed as bookings in the booking system in the window, test bookings excluded. Guests, markets and lead time come from these.'],
+    ['Quotations / Quotes confirmed', 'Quotes issued in Travel Quote GPT in the window, and quotes marked confirmed there in the window. This is the quote tool’s own status.'],
     ['Calls', 'Dials logged by the calling system. "Answered" means the call connected to a person.'],
     ['New agencies / AI prompts', 'Agency accounts created in the window, and prompts sent to the Travel Quote GPT assistant.'],
   ]
@@ -566,14 +508,14 @@ export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = 
       </td></tr></table></td></tr>`
     : ''
 
-  const funnel = section(d.window.days === 1 ? 'The day at a glance' : 'The period at a glance', `${d.window.label} — six stages, four systems, read-only`, ACCENT.funnel, funnelBlock(d))
+  const funnel = section(d.window.days === 1 ? 'The day at a glance' : 'The period at a glance', `${d.window.label} — five stages, three systems, read-only`, ACCENT.funnel, funnelBlock(d))
 
   const body = [
     warningsBlock(d),
     on('salesHighlights') ? highlightsSection(d) : '',
     funnel,
-    on('salesBookings') ? bookingsSection(d, maxRows) : '',
     on('salesRevenue') ? revenueSection(d, maxRows) : '',
+    on('salesBookings') ? bookingsSection(d, maxRows) : '',
     on('salesPipeline') ? pipelineSection(d) : '',
     on('salesCalls') ? callsSection(d) : '',
     on('salesSignups') ? signupsSection(d) : '',
@@ -596,7 +538,7 @@ export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = 
     d.countries.length ? `Bookings scoped to ${d.countries.map(c => c.replace(/_/g, ' ')).join(', ')}` : 'All operating countries',
     d.pipeline.team ? `Travel Quote GPT: ${d.pipeline.team.label}` : 'Travel Quote GPT: every team',
   ].join(' · ')
-  const pre = `${d.window.label} — ${num(d.bookings.total)} bookings, ${num(d.invoices.newCount)} new invoices, ${num(d.pipeline.counts.newQuotes)} quotations, ${num(d.pipeline.counts.confirmations)} confirmed, ${num(d.pipeline.counts.calls.total)} calls, ${num(d.pipeline.counts.signups.agencies)} new agencies.`
+  const pre = `${d.window.label} — ${num(d.store.orders)} B2C store orders, ${num(d.bookings.total)} B2C bookings, ${num(d.pipeline.counts.newQuotes)} quotations, ${num(d.pipeline.counts.confirmations)} confirmed, ${num(d.pipeline.counts.calls.total)} calls, ${num(d.pipeline.counts.signups.agencies)} new agencies.`
 
   return compact(`<!DOCTYPE html>
 <html lang="en"><head>
@@ -641,15 +583,14 @@ export function renderSalesSubject(d: SalesReportData, opts: { prefix?: string; 
   const range = d.window.days === 1
     ? formatReportDate(d.window.fromDate)
     : `${formatReportDate(d.window.fromDate)}–${formatReportDate(d.window.toDate)}`
-  const top = d.invoices.newValue[0]
+  const st = d.store
   const parts = [
-    d.bookings.available ? `${d.bookings.total} booking${d.bookings.total === 1 ? '' : 's'}` : '',
-    top ? `${d.invoices.newValue.slice(0, 2).map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ')}${d.invoices.newValue.length > 2 ? ' + more' : ''} invoiced (${d.invoices.newCount} new)` : '',
+    st.available ? `${st.orders} B2C order${st.orders === 1 ? '' : 's'}` : '',
+    st.value.length ? `${st.value.slice(0, 2).map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ')}${st.value.length > 2 ? ' + more' : ''} sold` : '',
     d.pipeline.available ? `${c.newQuotes} quote${c.newQuotes === 1 ? '' : 's'}` : '',
     d.pipeline.available && c.confirmations ? `${c.confirmations} confirmed` : '',
     d.pipeline.available ? `${c.calls.total} calls` : '',
     d.pipeline.available && c.signups.agencies ? `${c.signups.agencies} new agenc${c.signups.agencies === 1 ? 'y' : 'ies'}` : '',
-    d.bookings.missingRefs.length ? `${d.bookings.missingRefs.length} NOT FILED` : '',
   ].filter(Boolean)
   const prefix = opts.prefix?.trim() ? `${opts.prefix.trim()} ` : ''
   const team = d.pipeline.team ? ` (${d.pipeline.team.label.replace(/ Team$/, '')})` : ''
@@ -665,10 +606,10 @@ export function renderSalesCsv(d: SalesReportData): string {
     lines.forEach(l => rows.push(l.map(cell).join(',')))
     rows.push('')
   }
-  block('Confirmed bookings', ['Ref', 'Channel', 'Partner', 'Market', 'Arrival', 'Pax', 'Currency', 'Value', 'Created'],
-    d.bookings.lines.map(l => [l.bookingRef, l.source, l.agent, l.countryLabel, l.arrivalDate, l.pax, l.currency, l.quotedTotal, l.createdAt]))
-  block('New invoices', ['Booking', 'Invoice', 'Partner', 'Guest', 'Currency', 'Amount', 'Raised'],
-    d.invoices.newLines.map(l => [l.ref, l.invoiceNumber, l.agent, l.guest, l.currency, l.amount, l.raisedAt]))
+  block('B2C store orders', ['Order', 'Booked', 'Service date', 'Lines', 'Categories', 'Products', 'Currency', 'Value'],
+    d.store.list.map(o => [o.orderId, o.bookedDate, o.serviceDate, o.lines, o.categories, o.products, o.currency, o.value]))
+  block('B2C bookings', ['Ref', 'Destination', 'Market', 'Arrival', 'Pax', 'Currency', 'Value', 'Created'],
+    d.bookings.lines.map(l => [l.bookingRef, l.destination, l.countryLabel, l.arrivalDate, l.pax, l.currency, l.quotedTotal, l.createdAt]))
   block('Quotations', ['Quote', 'Issued', 'Consultant', 'Agency', 'Destination', 'Versions', 'Booking status', 'Currency', 'Latest total', 'Confirmed at'],
     d.pipeline.quotes.map(q => [q.ref, q.issuedAt, q.ownerName, q.agency, q.destination, q.versions, q.bookingStatus, q.currency, q.latestTotal, q.confirmedAt]))
   block('Staff', ['Consultant', 'Team', 'Quotes', 'Amendments', 'Confirmed', 'Calls', 'Answered', 'Prompts'],

@@ -493,9 +493,8 @@ async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     comparedWith: `${d.window.previous.fromDate} to ${d.window.previous.toDate}`,
     team: d.pipeline.team?.label ?? 'every office team',
-    confirmedBookings: { now: d.bookings.total, before: d.bookings.previousTotal, guests: d.bookings.pax, topPartners: d.bookings.partners.slice(0, 3).map(p => ({ partner: p.agent, bookings: p.bookings })), topMarkets: d.bookings.markets.slice(0, 3).map(m => ({ market: m.label, bookings: m.bookings })) },
-    invoicedNew: d.invoices.available ? { count: d.invoices.newCount, before: d.invoices.previousNewCount, valueByCurrency: d.invoices.newValue } : null,
-    b2cStore: d.store.available ? { orders: d.store.orders, before: d.store.previousOrders, valueByCurrency: d.store.value } : null,
+    b2cStore: d.store.available ? { orders: d.store.orders, before: d.store.previousOrders, valueByCurrency: d.store.value, topCategories: d.store.byCategory.slice(0, 3).map(c => ({ category: c.category, orders: c.orders })) } : null,
+    b2cBookingsFiled: { now: d.bookings.total, before: d.bookings.previousTotal, guests: d.bookings.pax, topMarkets: d.bookings.markets.slice(0, 3).map(m => ({ market: m.label, bookings: m.bookings })) },
     quotations: d.pipeline.available ? {
       newQuotes: c.newQuotes, before: pv?.newQuotes ?? null, amendments: c.amendments,
       confirmed: c.confirmations, confirmedBefore: pv?.confirmations ?? null,
@@ -515,8 +514,9 @@ async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
           role: 'system',
           content: 'You write the opening summary of a travel sales report for the directors. '
             + 'Exactly three sentences, plain English, no markdown, no bullet points, no greeting. '
-            + 'Sentence 1: what was sold (bookings and invoiced value) and how it compares with the previous period — give both numbers. '
-            + 'Sentence 2: the quotation pipeline — quotes, confirmations and calls — and which partner or market drove the day. '
+            + 'This report is B2C only: never mention B2B, partners or invoices. '
+            + 'Sentence 1: what the Aahaas B2C store sold (orders and value) and how it compares with the previous period — give both numbers. '
+            + 'Sentence 2: the quotation pipeline — quotes, confirmations and calls — and which category or market drove the day. '
             + 'Sentence 3: the single most important thing to act on, restated from the highlights already in the report — never invent a new one. '
             + 'Only use the numbers given. Never invent a figure, a partner or a cause. Money is never added across currencies.',
         },

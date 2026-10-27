@@ -56,37 +56,22 @@ const data: SalesReportData = {
   generatedAt: new Date().toISOString(),
   countries: [],
   bookings: {
-    available: true, error: null, created: null, total: 18, previousTotal: 14, pax: 61, b2b: 17, b2c: 1,
-    value: [{ currency: 'USD', total: 48210 }, { currency: 'SGD', total: 6120 }], avgLeadDays: 38.5, avgPax: 3.4, avgNights: 5.2, hotelOnly: 2,
+    available: true, error: null, created: null, total: 6, previousTotal: 4, pax: 15,
+    value: [{ currency: 'USD', total: 9210 }], avgLeadDays: 38.5, avgPax: 3.4, avgNights: 5.2, hotelOnly: 2,
     markets: [
-      { country: 'VIETNAM', label: 'Vietnam', bookings: 9, pax: 31, b2b: 9, b2c: 0, quoted: [{ currency: 'USD', total: 26400 }], avgLeadDays: 41 },
-      { country: 'SRILANKA', label: 'Sri Lanka', bookings: 5, pax: 18, b2b: 4, b2c: 1, quoted: [{ currency: 'USD', total: 15800 }], avgLeadDays: 33 },
-      { country: 'SINGAPORE', label: 'Singapore', bookings: 4, pax: 12, b2b: 4, b2c: 0, quoted: [{ currency: 'SGD', total: 6120 }], avgLeadDays: 29 },
+      { country: 'VIETNAM', label: 'Vietnam', bookings: 9, pax: 31, quoted: [{ currency: 'USD', total: 26400 }], avgLeadDays: 41 },
+      { country: 'SRILANKA', label: 'Sri Lanka', bookings: 5, pax: 18, quoted: [{ currency: 'USD', total: 15800 }], avgLeadDays: 33 },
+      { country: 'SINGAPORE', label: 'Singapore', bookings: 4, pax: 12, quoted: [{ currency: 'SGD', total: 6120 }], avgLeadDays: 29 },
     ],
-    partners: agencies.map((agent, i) => ({
-      agent, bookings: 6 - i, pax: (6 - i) * 3, quoted: [{ currency: 'USD', total: (6 - i) * 2600 }], invoicedNew: Math.max(0, 5 - i),
-      invoicedNewValue: [{ currency: 'USD', total: Math.max(0, 5 - i) * 2400 }], amended: i % 2, previousNew: i === 5 ? 3 : 4 - i, share: (6 - i) / 18,
-    })),
-    missingRefs: ['VN 41092'],
-    lines: Array.from({ length: 18 }, (_, i) => ({
-      bookingRef: `VN 410${60 + i}`, agent: agencies[i % agencies.length], source: i === 17 ? 'B2C' as const : 'B2B' as const,
+    lines: Array.from({ length: 6 }, (_, i) => ({
+      bookingRef: `AHS-${5120 + i}`, agent: 'Aahaas B2C', source: 'B2C' as const,
       country: 'VIETNAM', countryLabel: 'Vietnam', status: 'CONFIRMED', arrivalDate: '2026-12-0' + (1 + (i % 9)), departureDate: '2026-12-1' + (i % 9),
       pax: 2 + (i % 4), paxAdults: 2, paxChildren: i % 4, paxInfants: 0, currency: 'USD', quotedTotal: 1800 + i * 210,
       destination: 'Hanoi · Halong · Saigon', createdAt: at(9 + (i % 10)), hotelOnly: i % 9 === 0,
     })),
   },
-  match: { available: true, b2bBooked: 17, b2cBooked: 1, matched: 14, notInvoiced: ['VN 41201', 'IS 2210', 'VN 41207'], invoicedOnly: ['VN 41060', 'VN 41061'] },
-  invoices: {
-    available: true, error: null, newCount: 16, amendedCount: 9, newValue: [{ currency: 'INR', total: 1347073 }, { currency: 'USD', total: 44120.5 }], amendedValue: [{ currency: 'USD', total: 18200 }],
-    previousNewCount: 13, previousNewValue: [{ currency: 'USD', total: 36000 }],
-    newLines: Array.from({ length: 16 }, (_, i) => ({
-      key: `VN410${60 + i}`, ref: `VN 410${60 + i}`, invoiceNumber: `AHDS-2610-${300 + i}`, type: 'New' as const, agent: agencies[i % agencies.length],
-      guest: `Guest ${i + 1}`, currency: 'USD', amount: 1500 + i * 250, firstOn: day, ageDays: 0, revisions: 0, raisedAt: at(11 + (i % 8)),
-    })),
-    amendedLines: [],
-  },
   store: {
-    available: true, error: null, orders: 7, previousOrders: 5, lines: 11, value: [{ currency: 'USD', total: 2380 }],
+    available: true, error: null, orders: 7, previousOrders: 5, lines: 11, value: [{ currency: 'USD', total: 2380 }, { currency: 'LKR', total: 184500 }],
     byCategory: [{ category: 'Lifestyle', orders: 4, lines: 6, value: [{ currency: 'USD', total: 820 }] }, { category: 'Flights', orders: 3, lines: 5, value: [{ currency: 'USD', total: 1560 }] }],
     list: [],
   },
@@ -130,8 +115,7 @@ const data: SalesReportData = {
     },
   },
   highlights: [
-    { severity: 'critical', title: '1 confirmation sold but not filed here', detail: 'Confirmed in the Apple System today with no booking in OPS yet: VN 41092. Sales that are not filed are not operated.' },
-    { severity: 'good', title: 'Confirmed bookings up 29% vs the day before', detail: '18 now against 14 before.' },
+    { severity: 'good', title: 'Store orders up 40% vs the day before', detail: '7 orders now against 5 before.' },
     { severity: 'watch', title: '1 agency used the AI but got no quotation', detail: 'Pick Your Trail (14 prompts). Warm leads — a consultant can turn these into quotes.' },
     { severity: 'watch', title: '1 consultant with no recorded activity', detail: 'Sahana P — no quote, amendment, call or prompt today. On leave, or working outside the system?' },
   ],
