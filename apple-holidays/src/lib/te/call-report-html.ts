@@ -10,7 +10,7 @@
 import { formatReportDate } from '@/lib/reports/report-window'
 import {
   CALL_PHASES, PHASE_LABEL,
-  type CallCounts, type CallReportData, type CallReportRow,
+  type CallCounts, type CallIssue, type CallReportData, type CallReportRow,
 } from './call-report-data'
 
 const C = {
@@ -195,6 +195,95 @@ function dailyTable(d: CallReportData): string {
     </table>`)
 }
 
+function pct(part: number, whole: number): string {
+  return whole ? `${Math.round((part / whole) * 100)}%` : '—'
+}
+
+function feedbackSection(d: CallReportData): string {
+  const ins = d.insights
+  const captured = CALL_PHASES.reduce((n, p) => n + ins.verdicts[p].calls, 0)
+  if (!captured && !ins.alerts.total) return ''
+  const rc = ins.reconfirm
+  const ot = ins.onTour
+  const pt = ins.postTour
+  const areaBad = (['hotel', 'meals', 'driver', 'vehicle'] as const)
+    .filter(k => ot.areas[k].bad).map(k => `${k} ${ot.areas[k].bad}`).join(', ') || 'none'
+  return `${section('Call feedback — good / warning / bad', `${num(captured)} call${captured === 1 ? '' : 's'} captured a result · ${d.window.label}`,
+    `<table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <th class="th" align="left">Call type</th>
+        <th class="th" align="right">Captured</th>
+        <th class="th" align="right">Good</th>
+        <th class="th" align="right">Warning</th>
+        <th class="th" align="right">Bad</th>
+        <th class="th" align="right">No feedback</th>
+      </tr>
+      ${CALL_PHASES.map(p => {
+        const v = ins.verdicts[p]
+        return `<tr>
+          <td class="c b">${esc(PHASE_LABEL[p])}</td>
+          <td class="c b" align="right">${num(v.calls)}</td>
+          <td class="c" align="right" style="color:${v.good ? C.good : C.faint};font-weight:700;">${num(v.good)}</td>
+          <td class="c" align="right" style="color:${v.warning ? C.warn : C.faint};font-weight:700;">${num(v.warning)}</td>
+          <td class="c" align="right" style="color:${v.bad ? C.bad : C.faint};font-weight:700;">${num(v.bad)}</td>
+          <td class="c" align="right" style="color:${C.faint};">${num(v.none)}</td>
+        </tr>`
+      }).join('')}
+    </table>`)}
+  <table width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:18px;"><tr>
+    ${kpi('Reconfirmation', num(rc.calls), `${num(rc.confirmed)} confirmed · ${num(rc.changeRequested)} change · ${num(rc.mismatched.dates + rc.mismatched.flight + rc.mismatched.pax)} mismatch`, C.info)}
+    ${kpi('On-tour', num(ot.calls), `${pct(ot.sentiment.positive, ot.calls)} positive · ${num(ot.sentiment.negative)} negative · bad: ${areaBad}`, C.brand)}
+    ${kpi('Post-tour', pt.avgRating != null ? `${pt.avgRating}/10` : '—', `${num(pt.rated)} rated · NPS ${pt.nps ?? '—'} · ${num(pt.recommendNo)} would not recommend`, C.warn)}
+    ${kpi('Alerts', num(ins.alerts.total), `${num(ins.alerts.open)} open · ${num(ins.alerts.high)} high severity`, ins.alerts.open ? C.bad : C.faint)}
+  </tr></table>`
+}
+
+function opsWarnings(d: CallReportData): string {
+  const o = d.insights.ops
+  const lines: string[] = []
+  if (o.overdue) lines.push(`${num(o.overdue)} call${o.overdue === 1 ? '' : 's'} still pending on a day that has passed (${num(o.overdueBookings)} booking${o.overdueBookings === 1 ? '' : 's'})`)
+  if (o.neverReached) lines.push(`${num(o.neverReached)} booking${o.neverReached === 1 ? '' : 's'} never reached — every call so far was missed`)
+  if (o.notApprovedWithPending) lines.push(`${num(o.notApprovedWithPending)} booking${o.notApprovedWithPending === 1 ? '' : 's'} with calls pending but WhatsApp not approved`)
+  if (!lines.length && !o.failures.length) return ''
+  return section('Operational warnings', 'Calls that will not, or did not, happen',
+    `${lines.map(l => `<div class="c" style="color:${C.warn};font-weight:700;">⚠ ${esc(l)}</div>`).join('')}
+    ${o.failures.length ? `<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;">
+      <tr><th class="th" align="left">Why calls were missed / failed</th><th class="th" align="right">Calls</th></tr>
+      ${o.failures.map(f => `<tr><td class="c">${esc(f.reason)}</td><td class="c b" align="right">${num(f.count)}</td></tr>`).join('')}
+    </table>` : ''}`)
+}
+
+function issueRow(i: CallIssue): string {
+  const colour = i.level === 'bad' ? C.bad : C.warn
+  return `<tr>
+    <td class="c" valign="top">${pill(i.level === 'bad' ? 'BAD' : 'WARNING', colour, i.level === 'bad' ? '#fee2e2' : '#fef3c7')}</td>
+    <td class="c nw" valign="top">${esc(PHASE_LABEL[i.phase])}<div style="font-size:11px;color:${C.faint};">${esc(i.date ? formatReportDate(i.date) : '—')}</div></td>
+    <td class="c" valign="top"><div class="b mono">${esc(i.bookingRef)}</div>${i.customerName ? `<div style="font-size:11px;color:${C.faint};">${esc(i.customerName)}</div>` : ''}</td>
+    <td class="c" valign="top"><div class="b">${esc(i.reason)}</div>${i.detail ? `<div style="font-size:11px;color:${C.muted};padding-top:2px;">${esc(i.detail)}</div>` : ''}</td>
+  </tr>`
+}
+
+function issuesSection(d: CallReportData, maxRows: number): string {
+  const ins = d.insights
+  const total = ins.issueTotals.bad + ins.issueTotals.warning
+  if (!total) {
+    return section('Warnings & issues', d.window.label, `<div class="note">No bad or warning calls in this window.</div>`)
+  }
+  const shown = ins.issues.slice(0, maxRows)
+  const more = total - shown.length
+  return section('Warnings & issues', `${num(ins.issueTotals.bad)} bad · ${num(ins.issueTotals.warning)} warning · ${d.window.label}`,
+    `<table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <th class="th" align="left">Level</th>
+        <th class="th" align="left">Call</th>
+        <th class="th" align="left">Booking</th>
+        <th class="th" align="left">Issue</th>
+      </tr>
+      ${shown.map(issueRow).join('')}
+    </table>
+    ${more > 0 ? `<div style="font-size:11px;color:${C.faint};padding-top:10px;">+ ${num(more)} more — see the CSV for the full list.</div>` : ''}`)
+}
+
 function bookingTable(d: CallReportData, maxRows: number): string {
   if (!d.rows.length) {
     return section('Assigned calls by booking', d.window.label,
@@ -280,6 +369,9 @@ export function renderCallReportHtml(d: CallReportData, opts: CallReportHtmlOpti
             ${warnings}
             ${kpiGrid(d)}
             ${phaseTable(d)}
+            ${feedbackSection(d)}
+            ${issuesSection(d, maxRows)}
+            ${opsWarnings(d)}
             ${dailyTable(d)}
             ${bookingTable(d, maxRows)}
             <div class="foot">
@@ -304,5 +396,6 @@ export function renderCallReportSubject(d: CallReportData, prefix?: string | nul
   const head = `AI Calls — ${d.window.label}`
   const stats = `${t.calls.assigned} assigned · ${t.calls.done} done · ${t.calls.pending} pending`
   const urgent = t.urgentBookings ? ` · ${t.urgentBookings} urgent` : ''
-  return `${testSend ? '[TEST] ' : ''}${prefix ? `${prefix} ` : ''}${head} — ${stats}${urgent}`
+  const bad = d.insights.issueTotals.bad ? ` · ${d.insights.issueTotals.bad} bad calls` : ''
+  return `${testSend ? '[TEST] ' : ''}${prefix ? `${prefix} ` : ''}${head} — ${stats}${urgent}${bad}`
 }
