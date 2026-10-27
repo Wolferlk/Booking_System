@@ -74,6 +74,13 @@ const data: SalesReportData = {
     available: true, error: null, orders: 7, previousOrders: 5, lines: 11, value: [{ currency: 'USD', total: 2380 }, { currency: 'LKR', total: 184500 }],
     byCategory: [{ category: 'Lifestyle', orders: 4, lines: 6, value: [{ currency: 'USD', total: 820 }] }, { category: 'Flights', orders: 3, lines: 5, value: [{ currency: 'USD', total: 1560 }] }],
     list: [],
+    tests: {
+      checked: true, orders: 2, value: [{ currency: 'USD', total: 145 }],
+      list: [
+        { orderId: 15233, bookedDate: day, serviceDate: '2026-11-02', lines: 1, categories: 'Lifestyle', products: 'Colombo City Tour', currency: 'USD', value: 95, reason: 'Checkout test after payment gateway change', markedBy: 'sasindu@appleholidaysds.com', markedAt: at(15) },
+        { orderId: 15229, bookedDate: day, serviceDate: '2026-11-05', lines: 1, categories: 'Flights', products: 'CMB → SIN', currency: 'USD', value: 50, reason: null, markedBy: 'accounts@appleholidaysds.com', markedAt: at(12) },
+      ],
+    },
   },
   pipeline: {
     available: true, configured: true, error: null, team: null, warnings: [],

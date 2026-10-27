@@ -266,6 +266,29 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
     empty: d.store.available ? 'No storefront orders in this window.' : d.store.error ?? 'Unavailable.',
   })
 
+  type TO = SalesReportData['store']['tests']['list'][number]
+  plan.table<TO>({
+    name: 'B2C Test Orders', tab: P.muted,
+    title: 'Test orders — excluded from every figure',
+    description: d.store.tests.checked
+      ? 'Store orders in the window marked as tests in the shared test-booking register (AHS-<order id>). Not counted in orders, value or bookings.'
+      : 'The test-booking register could not be read, so test orders could not be separated.',
+    totals: `${d.store.tests.orders} test orders · ${moneyText(d.store.tests.value)}`,
+    what: 'Store orders marked as tests, with who marked them',
+    cols: [
+      { header: 'Order', width: 12, value: o => `AHS-${o.orderId}` },
+      { header: 'Booked', width: 12, kind: 'date', value: o => o.bookedDate },
+      { header: 'Products', width: 44, wrap: true, value: o => o.products },
+      { header: 'Marked by', width: 22, value: o => o.markedBy ?? '' },
+      { header: 'Reason', width: 30, wrap: true, value: o => o.reason ?? '' },
+      { header: 'Marked at', width: 17, kind: 'stamp', value: o => o.markedAt },
+      { header: 'Currency', width: 9, value: o => o.currency },
+      { header: 'Value', width: 13, kind: 'money', value: o => o.value, total: 'sum' },
+    ],
+    rows: d.store.tests.list,
+    empty: d.store.tests.checked ? 'No test orders in this window.' : 'Unavailable — the test-booking register could not be read.',
+  })
+
   plan.table<BookingLine>({
     name: 'Bookings', tab: P.b2b,
     title: `B2C bookings filed — ${range}`,
@@ -430,7 +453,7 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
       c.title('Sources')
       c.header(['Section', 'System', 'How it is counted'])
       const rows: [string, string, string][] = [
-        ['B2C store', 'Aahaas store (read-only)', 'Orders by booked_date, travel categories 3–6; value = net_total_amount in base_currency.'],
+        ['B2C store', 'Aahaas store (read-only)', 'Orders by booked_date, travel categories 3–6; value = net_total_amount in base_currency. Orders marked in the test-booking register (AHS-<id>) are excluded and listed on "B2C Test Orders".'],
         ['B2C bookings filed', 'Booking system', 'Bookings with agent "Aahaas B2C" filed in the window. Test bookings excluded. No B2B bookings, partners or invoices are read for this report.'],
         ['Quotations', 'Travel Quote GPT (read-only)', 'One quotation_ref = one quotation, dated by its first version. Owner = first internal author.'],
         ['Amendments', 'Travel Quote GPT', 'Every AMD2+ document issued in the window. The BLR digest counts only amendments of the day\'s own new quotations.'],

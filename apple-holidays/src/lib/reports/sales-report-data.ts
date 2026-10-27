@@ -28,7 +28,7 @@ import {
 } from './report-window'
 import { countryWhere, daysBetween, labelFor, type BookingLine, type MoneyByCurrency } from './booking-lines'
 import { collectSalesPipeline, emptyCounts, type PipelineCounts, type PipelineSection } from './sales-pipeline-data'
-import { testBookingWhere } from '@/lib/test-bookings'
+import { loadTestBookings, testBookingKey, testBookingWhere } from '@/lib/test-bookings'
 import { bookingSourceWhere } from '@/lib/booking-source'
 
 // ─── Window ───────────────────────────────────────────────────────────────────
@@ -136,15 +136,30 @@ export interface B2cStoreOrder {
   value: number | null
 }
 
+export interface B2cTestOrder extends B2cStoreOrder {
+  reason: string | null
+  markedBy: string | null
+  markedAt: string | null
+}
+
 export interface B2cStoreSection {
   available: boolean
   error: string | null
+  /** Real orders only — test orders are counted in `tests`, never here. */
   orders: number
   previousOrders: number | null
   lines: number
   value: MoneyByCurrency[]
   byCategory: { category: string; orders: number; lines: number; value: MoneyByCurrency[] }[]
   list: B2cStoreOrder[]
+  /** Orders in the window marked as tests in the shared test-booking register. */
+  tests: {
+    /** False when the register could not be read: test orders may then sit in the figures above. */
+    checked: boolean
+    orders: number
+    value: MoneyByCurrency[]
+    list: B2cTestOrder[]
+  }
 }
 
 export interface Highlight {
@@ -243,35 +258,37 @@ function marketsFrom(lines: BookingLine[]): MarketRow[] {
 // ─── B2C storefront ───────────────────────────────────────────────────────────
 
 async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSection> {
-  const empty: B2cStoreSection = { available: false, error: null, orders: 0, previousOrders: null, lines: 0, value: [], byCategory: [], list: [] }
+  const empty: B2cStoreSection = {
+    available: false, error: null, orders: 0, previousOrders: null, lines: 0, value: [], byCategory: [], list: [],
+    tests: { checked: false, orders: 0, value: [], list: [] },
+  }
   if (!isB2cConfigured()) return { ...empty, error: 'The Aahaas B2C store database is not configured.' }
   try {
-    const [orders, prevOrders] = await Promise.all([
+    const [all, prevAll, register] = await Promise.all([
       fetchOrdersBookedBetween({ from: w.fromDate, to: w.toDate, limit: 5000 }),
       fetchOrdersBookedBetween({ from: w.previous.fromDate, to: w.previous.toDate, limit: 5000 }).catch(() => null),
+      loadTestBookings(),
     ])
-    const products = orders.length ? await fetchOrderProducts(orders.map(o => Number(o.order_id))) : []
+    // The register files a store order as AHS-<order id> (testBookingReference()).
+    const markOf = (orderId: number | string) => register.marks.get(testBookingKey(`AHS-${orderId}`)) ?? null
+
+    const products = all.length ? await fetchOrderProducts(all.map(o => Number(o.order_id))) : []
     const byOrder = new Map<number, typeof products>()
     products.forEach(p => { const l = byOrder.get(Number(p.order_id)) ?? []; l.push(p); byOrder.set(Number(p.order_id), l) })
 
     const total = moneyMap()
+    const testTotal = moneyMap()
+    let realLines = 0
     const cats = new Map<string, { orders: Set<number>; lines: number; value: Map<string, number> }>()
-    const rows: B2cStoreOrder[] = orders.map(o => {
+    const rows: B2cStoreOrder[] = []
+    const tests: B2cTestOrder[] = []
+    for (const o of all) {
       const lines = byOrder.get(Number(o.order_id)) ?? []
       // `net_total_amount` is already in `base_currency` — the importer's rule
       // (b2c-booking-map.ts); `paid_currency` is only what the card was charged in.
       const currency = (lines.find(p => p.base_currency)?.base_currency ?? 'USD').trim().toUpperCase()
       const value = lines.reduce((s, p) => s + (Number(p.net_total_amount) || 0), 0)
-      if (value > 0) add(total, currency, value)
-      for (const p of lines) {
-        const cat = (p.maincat_type ?? '').trim() || 'Other'
-        const c = cats.get(cat) ?? { orders: new Set<number>(), lines: 0, value: moneyMap() }
-        c.orders.add(Number(o.order_id))
-        c.lines++
-        add(c.value, (p.base_currency ?? currency).toUpperCase(), Number(p.net_total_amount) || 0)
-        cats.set(cat, c)
-      }
-      return {
+      const row: B2cStoreOrder = {
         orderId: Number(o.order_id),
         bookedDate: o.bookedDate,
         serviceDate: o.serviceDate,
@@ -281,18 +298,36 @@ async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSe
         currency,
         value: value > 0 ? Math.round(value * 100) / 100 : null,
       }
-    })
+      const mark = markOf(o.order_id)
+      if (mark) {
+        if (value > 0) add(testTotal, currency, value)
+        tests.push({ ...row, reason: mark.reason, markedBy: mark.markedBy, markedAt: mark.markedAt })
+        continue
+      }
+      if (value > 0) add(total, currency, value)
+      realLines += lines.length
+      for (const p of lines) {
+        const cat = (p.maincat_type ?? '').trim() || 'Other'
+        const c = cats.get(cat) ?? { orders: new Set<number>(), lines: 0, value: moneyMap() }
+        c.orders.add(Number(o.order_id))
+        c.lines++
+        add(c.value, (p.base_currency ?? currency).toUpperCase(), Number(p.net_total_amount) || 0)
+        cats.set(cat, c)
+      }
+      rows.push(row)
+    }
     return {
       available: true,
       error: null,
-      orders: orders.length,
-      previousOrders: prevOrders ? prevOrders.length : null,
-      lines: products.length,
+      orders: rows.length,
+      previousOrders: prevAll ? prevAll.filter(o => !markOf(o.order_id)).length : null,
+      lines: realLines,
       value: list(total),
       byCategory: Array.from(cats.entries())
         .map(([category, c]) => ({ category, orders: c.orders.size, lines: c.lines, value: list(c.value) }))
         .sort((a, b) => b.orders - a.orders),
       list: rows.sort((a, b) => b.orderId - a.orderId).slice(0, Math.max(maxRows, 500)),
+      tests: { checked: register.checked, orders: tests.length, value: list(testTotal), list: tests.sort((a, b) => b.orderId - a.orderId) },
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -439,6 +474,7 @@ export async function collectSalesReportData(opts: SalesCollectOptions): Promise
   const warnings = [
     booked.error ? `Bookings could not be read — ${booked.error}` : '',
     store.error ?? '',
+    store.available && !store.tests.checked ? 'The test-order register could not be read, so test orders may be counted in the store figures.' : '',
     ...pipeline.warnings,
   ].filter(Boolean)
 

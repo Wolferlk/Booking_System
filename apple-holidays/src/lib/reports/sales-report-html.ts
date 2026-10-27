@@ -203,7 +203,23 @@ function revenueSection(d: SalesReportData, maxRows: number): string {
       : emptyNote('No storefront orders in this window.')
   } else body += emptyNote(s.error ?? 'The Aahaas B2C store could not be read.')
 
-  return section('Aahaas B2C store', 'Orders placed on the storefront — read-only', '#db2777', body)
+  return section('Aahaas B2C store', 'Orders placed on the storefront — test orders excluded', '#db2777', body)
+}
+
+/**
+ * Orders marked as tests in the shared register. Kept on the page so nobody
+ * wonders where an order went, but outside every figure above.
+ */
+function testOrdersSection(d: SalesReportData): string {
+  const t = d.store.tests
+  if (!d.store.available || (!t.orders && t.checked)) return ''
+  const body = !t.checked
+    ? emptyNote('The test-order register could not be read, so test orders could not be separated today.')
+    : `<div class="sub" style="padding-bottom:10px;">${num(t.orders)} order${t.orders === 1 ? '' : 's'} · ${moneyLine(t.value, 3)} — not counted in the store orders, value or bookings above.</div>
+      ${tableOpen([{ text: 'Order' }, { text: 'Booked' }, { text: 'Products' }, { text: 'Marked by' }, { text: 'Value', align: 'right' }])}
+      ${t.list.slice(0, 30).map(o => `<tr>${td(`AHS-${o.orderId} <span class="pill" style="background:#f1f5f9;color:#475569;">TEST</span>`, { bold: true, nowrap: true })}${td(shortDate(o.bookedDate ?? ''), { nowrap: true })}${td(truncate(o.products || o.categories || '—', 34))}${td(`${esc(o.markedBy ?? '—')}${o.reason ? `<div class="sub">${esc(truncate(o.reason, 40))}</div>` : ''}`)}${td(o.value !== null ? money(o.value, o.currency) : '—', { align: 'right', nowrap: true })}</tr>`).join('')}${TABLE_CLOSE}
+      ${moreNote(Math.min(30, t.list.length), t.list.length, 'test orders')}`
+  return section('Test orders', 'Marked as tests in the test-booking register — excluded from every sales figure', '#64748b', body)
 }
 
 function pipelineUnavailable(d: SalesReportData, title: string, accent: string): string | null {
@@ -447,7 +463,7 @@ function ribbon(d: SalesReportData): string {
   const st = d.store
   const fig = moneyFigure(st.value)
   const big = [
-    { label: 'B2C store orders', value: st.available ? num(st.orders) : '—', sub: st.available ? `${num(st.lines)} products sold` : 'unavailable', delta: st.available ? deltaChip(st.orders, st.previousOrders) : '' },
+    { label: 'B2C store orders', value: st.available ? num(st.orders) : '—', sub: st.available ? `${num(st.lines)} products sold${st.tests.orders ? ` · ${num(st.tests.orders)} test excluded` : ''}` : 'unavailable', delta: st.available ? deltaChip(st.orders, st.previousOrders) : '' },
     { label: 'Store sales value', value: st.available ? fig.value : '—', sub: st.available ? fig.extra : 'unavailable', delta: st.available && st.value.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
     { label: 'B2C bookings filed', value: d.bookings.available ? num(d.bookings.total) : '—', sub: d.bookings.available ? `${num(d.bookings.pax)} guests` : 'unavailable', delta: d.bookings.available ? deltaChip(d.bookings.total, d.bookings.previousTotal) : '' },
   ]
@@ -483,7 +499,7 @@ function ribbon(d: SalesReportData): string {
 function glossaryBlock(d: SalesReportData): string {
   const total = d.store.value.map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ') || '0'
   const items: [string, string][] = [
-    ['B2C store orders', 'Orders placed on the Aahaas storefront in the window, dated by when they were booked. B2B bookings are not in this report.'],
+    ['B2C store orders', 'Orders placed on the Aahaas storefront in the window, dated by when they were booked. Orders marked as tests are left out and listed under "Test orders". B2B bookings are not in this report.'],
     ['Store sales value', `The net total of those orders' products, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
     ['B2C bookings filed', 'Store orders filed as bookings in the booking system in the window, test bookings excluded. Guests, markets and lead time come from these.'],
     ['Quotations / Quotes confirmed', 'Quotes issued in Travel Quote GPT in the window, and quotes marked confirmed there in the window. This is the quote tool’s own status.'],
@@ -515,6 +531,7 @@ export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = 
     on('salesHighlights') ? highlightsSection(d) : '',
     funnel,
     on('salesRevenue') ? revenueSection(d, maxRows) : '',
+    on('salesRevenue') ? testOrdersSection(d) : '',
     on('salesBookings') ? bookingsSection(d, maxRows) : '',
     on('salesPipeline') ? pipelineSection(d) : '',
     on('salesCalls') ? callsSection(d) : '',
@@ -608,6 +625,8 @@ export function renderSalesCsv(d: SalesReportData): string {
   }
   block('B2C store orders', ['Order', 'Booked', 'Service date', 'Lines', 'Categories', 'Products', 'Currency', 'Value'],
     d.store.list.map(o => [o.orderId, o.bookedDate, o.serviceDate, o.lines, o.categories, o.products, o.currency, o.value]))
+  block('B2C test orders (excluded)', ['Order', 'Booked', 'Products', 'Marked by', 'Reason', 'Currency', 'Value'],
+    d.store.tests.list.map(o => [`AHS-${o.orderId}`, o.bookedDate, o.products, o.markedBy, o.reason, o.currency, o.value]))
   block('B2C bookings', ['Ref', 'Destination', 'Market', 'Arrival', 'Pax', 'Currency', 'Value', 'Created'],
     d.bookings.lines.map(l => [l.bookingRef, l.destination, l.countryLabel, l.arrivalDate, l.pax, l.currency, l.quotedTotal, l.createdAt]))
   block('Quotations', ['Quote', 'Issued', 'Consultant', 'Agency', 'Destination', 'Versions', 'Booking status', 'Currency', 'Latest total', 'Confirmed at'],
