@@ -12,7 +12,7 @@ import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { useEffect, useMemo, useRef } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
+import MapView, { Marker, Polyline } from '@/components/map-view';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, G, Image as SvgImage, Path } from 'react-native-svg';
 import type { PathPoint } from '@/lib/location';
@@ -21,7 +21,7 @@ import { C } from '@/lib/theme';
 const CAR = require('../../assets/images/illustrations/car-top.png');
 
 const androidKey = (Constants.expoConfig?.android as { config?: { googleMaps?: { apiKey?: string } } } | undefined)?.config?.googleMaps?.apiKey;
-export const nativeMapAvailable = Platform.OS === 'ios' || !!androidKey;
+export const nativeMapAvailable = Platform.OS === 'ios' || (Platform.OS === 'android' && !!androidKey);
 
 const SRI_LANKA = { latitude: 7.87, longitude: 80.77, latitudeDelta: 3.5, longitudeDelta: 3.5 };
 

@@ -9,7 +9,9 @@ import {
   scanBookingRefInDrive,
   DRIVE_CONFIGS,
   type ScanResult,
+  type ProcessDocType,
 } from '@/lib/onedrive-monitor'
+import { getDataProtectionPolicy } from '@/lib/data-protection-server'
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 300
@@ -24,6 +26,12 @@ interface SyncBody {
   dateTo?:    string
   /** Targeted booking-ref scan. */
   bookingRef?: string
+  /**
+   * 'pnl' — sent by the PNL page. With the data-protection switch on, the scan
+   * reads the PNL file only and never re-imports the TC (which would rebuild
+   * passengers / flights / hotels from the document).
+   */
+  purpose?: 'pnl'
 }
 
 export async function POST(req: NextRequest) {
@@ -38,9 +46,12 @@ export async function POST(req: NextRequest) {
     const cfgs  = DRIVE_CONFIGS.filter(d => keys.includes(d.key))
     if (!cfgs.length) return buildApiError('No matching drives for bookingRef scan', 400)
 
+    const pnlOnly = body.purpose === 'pnl' && (await getDataProtectionPolicy()).pnlSyncPnlOnly
+    const types: ProcessDocType[] = pnlOnly ? ['PNL'] : ['TC', 'PNL']
+
     const results: ScanResult[] = []
     for (const cfg of cfgs) {
-      const r = await scanBookingRefInDrive(cfg, ref)
+      const r = await scanBookingRefInDrive(cfg, ref, types)
       results.push(r)
     }
     const found = results.some(r => r.bookingsCreated + r.bookingsUpdated + r.pnlsUpdated > 0)

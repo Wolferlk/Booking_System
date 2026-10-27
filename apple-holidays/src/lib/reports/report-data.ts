@@ -647,7 +647,7 @@ const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 
-async function collectCreated(
+export async function collectCreated(
   w: ReportWindow,
   countries: string[],
   maxRows: number,

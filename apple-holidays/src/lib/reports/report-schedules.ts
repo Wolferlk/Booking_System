@@ -13,6 +13,7 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { DEFAULT_REPORT_TZ, REPORT_PERIODS, type ReportPeriod } from './report-window'
+import { normalizeSalesTeam } from './sales-teams'
 
 export const SCHEDULES_KEY = 'auto_report_schedules'
 export const RUNS_KEY = 'auto_report_runs'
@@ -31,12 +32,13 @@ const MAX_SCHEDULES = 40
  * collector and the renderer differ, which is the whole reason the type lives
  * on the schedule rather than in a second copy of this feature.
  */
-export const REPORT_TYPES = ['OPS', 'RECONCILIATION'] as const
+export const REPORT_TYPES = ['OPS', 'RECONCILIATION', 'SALES'] as const
 export type ReportType = (typeof REPORT_TYPES)[number]
 
 export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
   OPS: 'Operations report',
   RECONCILIATION: 'System reconciliation',
+  SALES: 'Sales report',
 }
 
 /**
@@ -75,13 +77,49 @@ export interface ReportSections {
   detail: boolean
   /** The Aahaas B2C storefront channel. */
   b2c: boolean
+
+  // ── Sales report ──
+  /** "Where to look" — rule-derived highlights at the top. */
+  salesHighlights: boolean
+  /** Confirmed bookings by market and partner, and the list. */
+  salesBookings: boolean
+  /** Invoices (new vs re-issued) and the B2C storefront. */
+  salesRevenue: boolean
+  /** Travel Quote GPT quotations, confirmations and destinations. */
+  salesPipeline: boolean
+  /** Manual and AI calls. */
+  salesCalls: boolean
+  /** New agencies and who onboarded them. */
+  salesSignups: boolean
+  /** Agencies using the AI, agency by agency. */
+  salesAdoption: boolean
+  /** Consultant leaderboard and office teams. */
+  salesStaff: boolean
+  /** Activity heatmap by hour or day. */
+  salesActivity: boolean
 }
+
+export const SALES_SECTION_KEYS = [
+  'salesHighlights', 'salesBookings', 'salesRevenue', 'salesPipeline', 'salesCalls',
+  'salesSignups', 'salesAdoption', 'salesStaff', 'salesActivity',
+] as const satisfies readonly (keyof ReportSections)[]
 
 /** Which section flags a report type actually reads. */
 export function sectionKeysFor(type: ReportType): (keyof ReportSections)[] {
+  if (type === 'SALES') return [...SALES_SECTION_KEYS]
   return type === 'RECONCILIATION'
     ? ['countCheck', 'detail', 'asStatus', 'opsIntake', 'accountsOutput', 'b2c']
     : ['created', 'onGround', 'readiness', 'reconfirm', 'complaints', 'upcoming']
+}
+
+/** Every sales section flag, from a partial bag — absent means on. */
+function salesSectionsFrom(
+  input: Record<string, unknown>,
+  prev: Partial<ReportSections> | undefined,
+): Pick<ReportSections, (typeof SALES_SECTION_KEYS)[number]> {
+  const out = {} as Pick<ReportSections, (typeof SALES_SECTION_KEYS)[number]>
+  for (const k of SALES_SECTION_KEYS) out[k] = bool(input[k], prev?.[k] ?? true)
+  return out
 }
 
 export interface ReportSchedule {
@@ -106,6 +144,12 @@ export interface ReportSchedule {
   subjectPrefix: string | null
   /** Empty = all countries. Accepts `UNASSIGNED` for un-scoped bookings. */
   countries: string[]
+  /**
+   * SALES only: the Travel Quote GPT office team its pipeline sections cover
+   * (`bangalore_b2b` for the BLR view), or null for the whole company. Absent
+   * on rows saved before the sales report existed.
+   */
+  salesTeam?: string | null
   sections: ReportSections
   /** Attach the flat CSV export of every row in the report. */
   attachCsv: boolean
@@ -234,6 +278,7 @@ export function normalizeSchedule(
     reconfirm: bool(sectionsIn.reconfirm, prevSections?.reconfirm ?? true),
     complaints: bool(sectionsIn.complaints, prevSections?.complaints ?? true),
     upcoming: bool(sectionsIn.upcoming, prevSections?.upcoming ?? true),
+    ...salesSectionsFrom(sectionsIn, prevSections),
   }
   // Only the sections this report type actually renders count: an OPS schedule
   // with every reconciliation flag on and none of its own still sends nothing.
@@ -260,6 +305,9 @@ export function normalizeSchedule(
     replyTo: replyToList ? replyToList[0] ?? null : existing?.replyTo ?? null,
     subjectPrefix: (String(input.subjectPrefix ?? existing?.subjectPrefix ?? '').trim() || null)?.slice(0, 40) ?? null,
     countries,
+    salesTeam: input.salesTeam !== undefined
+      ? normalizeSalesTeam(input.salesTeam)
+      : existing?.salesTeam ?? null,
     sections,
     attachCsv: bool(input.attachCsv, existing?.attachCsv ?? false),
     aiSummary: bool(input.aiSummary, existing?.aiSummary ?? false),
@@ -327,6 +375,7 @@ function withSectionDefaults(s: ReportSchedule): ReportSchedule {
       countCheck: sections.countCheck ?? true,
       detail: sections.detail ?? true,
       b2c: sections.b2c ?? true,
+      ...salesSectionsFrom({}, sections),
     },
   }
 }

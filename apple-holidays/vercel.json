@@ -45,6 +45,10 @@
       "schedule": "0 19 * * *"
     },
     {
+      "path": "/api/cron/b2c-watch",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/customer-daily-briefing",
       "schedule": "*/10 * * * *"
     },

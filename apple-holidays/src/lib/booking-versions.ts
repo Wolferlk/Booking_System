@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma'
+import { loadChildGuard } from '@/lib/data-protection-server'
+import { LOCK_SECTIONS } from '@/lib/data-protection'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Booking versioning
@@ -206,6 +208,14 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       : snap[f]
   }
 
+  // A section somebody locked on the booking page is left as it is — the
+  // switch restores everything else (lib/data-protection.ts).
+  const guard = await loadChildGuard(bookingId)
+  const lockedSections = LOCK_SECTIONS.filter(s => guard.isLocked(s))
+  const keepPassengers = guard.isLocked('passengers')
+  const keepFlights    = guard.isLocked('flights')
+  const keepHotels     = guard.isLocked('accommodations')
+
   await prisma.$transaction(async tx => {
     await tx.booking.update({
       where: { id: bookingId },
@@ -213,13 +223,13 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
     })
 
     // Passengers / flights / accommodations / itinerary / emergency contacts.
-    await tx.passenger.deleteMany({ where: { bookingId } })
-    await tx.flight.deleteMany({ where: { bookingId } })
-    await tx.accommodation.deleteMany({ where: { bookingId } })
+    if (!keepPassengers) await tx.passenger.deleteMany({ where: { bookingId } })
+    if (!keepFlights)    await tx.flight.deleteMany({ where: { bookingId } })
+    if (!keepHotels)     await tx.accommodation.deleteMany({ where: { bookingId } })
     await tx.itineraryItem.deleteMany({ where: { bookingId } })
     await tx.emergencyContact.deleteMany({ where: { bookingId } })
 
-    if (snap.passengers?.length) {
+    if (!keepPassengers && snap.passengers?.length) {
       await tx.passenger.createMany({
         data: snap.passengers.map(p => ({
           bookingId,
@@ -235,7 +245,7 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       })
     }
 
-    if (snap.flights?.length) {
+    if (!keepFlights && snap.flights?.length) {
       await tx.flight.createMany({
         data: snap.flights.map(f => ({
           bookingId,
@@ -251,7 +261,7 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       })
     }
 
-    if (snap.accommodations?.length) {
+    if (!keepHotels && snap.accommodations?.length) {
       await tx.accommodation.createMany({
         data: snap.accommodations.map(a => ({
           bookingId,
@@ -328,5 +338,5 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
     }
   })
 
-  return versionNo
+  return { versionNo, lockedSections }
 }

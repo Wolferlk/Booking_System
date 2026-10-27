@@ -15,6 +15,7 @@ import {
   dateInTz,
 } from '@/lib/b2c-import'
 import { fetchOrderHeaders, isB2cConfigured } from '@/lib/b2c-db'
+import { getB2cWatchSettings, WATCH_LAST_AT } from '@/lib/b2c-watch'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,8 +44,10 @@ export async function GET(_req: NextRequest) {
 
   const b2cWhere = bookingSourceWhere('B2C')!
 
-  const [settings, lastRunDate, runs, importedTotal, importedUpcoming, byCountryRaw, latestImported] =
+  const [watch, watchLastAt, settings, lastRunDate, runs, importedTotal, importedUpcoming, byCountryRaw, latestImported] =
     await Promise.all([
+      getB2cWatchSettings(),
+      prisma.systemSetting.findUnique({ where: { key: WATCH_LAST_AT } }),
       getB2cImportSettings(),
       getLastRunDate(),
       getRunLog(),
@@ -90,6 +93,11 @@ export async function GET(_req: NextRequest) {
       lastRunDate,
       ranToday: lastRunDate === today,
       today,
+    },
+    watch: {
+      enabled: watch.enabled,
+      intervalMinutes: watch.intervalMinutes,
+      lastCheckAt: watchLastAt?.value ?? null,
     },
     runs: runs.slice(0, 10),
   })

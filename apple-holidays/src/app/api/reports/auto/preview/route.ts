@@ -118,7 +118,21 @@ async function resolveShape(params: URLSearchParams) {
     maxRows: Number(params.get('maxRows') ?? '30'),
     ...(params.get('dayOfWeek') ? { dayOfWeek: Number(params.get('dayOfWeek')) } : {}),
     aiSummary: params.get('aiSummary') === 'true',
+    // SALES only: the Travel Quote GPT office team; empty = the whole company.
+    salesTeam: params.get('team') ?? null,
   })
+}
+
+function readRange(params: URLSearchParams, timezone: string): { fromDate: string; toDate: string } | null {
+  const from = params.get('from')?.trim() || ''
+  const to = params.get('to')?.trim() || ''
+  if (!from && !to) return null
+  for (const v of [from, to]) {
+    if (v && !isValidDate(v)) throw new ScheduleValidationError('Range dates must be valid yyyy-mm-dd dates.')
+  }
+  const today = dateInTz(new Date(), timezone)
+  if ((from || to) > today) throw new ScheduleValidationError('A report range cannot start in the future.')
+  return { fromDate: from || to, toDate: to || from }
 }
 
 export async function GET(req: NextRequest) {
@@ -137,10 +151,13 @@ export async function GET(req: NextRequest) {
     if (date && date > dateInTz(new Date(), shape.timezone)) {
       throw new ScheduleValidationError('Report date cannot be in the future.')
     }
+    // `?from=&to=` — a free date range, sales report only. Both ends checked the
+    // same way as `date`; the window itself clamps to today.
+    const range = readRange(req.nextUrl.searchParams, shape.timezone)
 
     const built = await cachedBuild(previewKey(req.nextUrl.searchParams), () => withAsDeadline(
       { budgetMs: PREVIEW_AS_BUDGET_MS, timeoutMs: PREVIEW_AS_TIMEOUT_MS },
-      () => buildReport(shape, { testSend: true, anchorDate: date }),
+      () => buildReport(shape, { testSend: true, anchorDate: date, range }),
     ))
     const format = req.nextUrl.searchParams.get('format')
 
@@ -181,6 +198,26 @@ export async function GET(req: NextRequest) {
     // The uncapped booking lists exist for the CSV attachment only; sending
     // them to the drawer as well would double a month's payload for rows the
     // page never renders.
+    if (shape.reportType === 'SALES' && 'pipeline' in built.data) {
+      // The drawer reads the window, the headline counts and the highlights;
+      // the row arrays are the workbook's, and a month of them is megabytes.
+      const d = built.data
+      return buildApiSuccess({
+        reportType: shape.reportType,
+        subject: built.subject,
+        data: {
+          window: d.window,
+          bookings: { available: d.bookings.available, total: d.bookings.total, previousTotal: d.bookings.previousTotal, pax: d.bookings.pax, value: d.bookings.value, missing: d.bookings.missingRefs.length },
+          invoices: { available: d.invoices.available, newCount: d.invoices.newCount, amendedCount: d.invoices.amendedCount, newValue: d.invoices.newValue },
+          store: { available: d.store.available, orders: d.store.orders, value: d.store.value },
+          pipeline: { available: d.pipeline.available, team: d.pipeline.team, counts: d.pipeline.counts, previous: d.pipeline.previous },
+          highlights: d.highlights,
+          warnings: d.warnings,
+          sheets: built.workbook?.sheets ?? [],
+        },
+      })
+    }
+
     const data = 'created' in built.data
       ? (() => {
           const { allBookings: _all, allOutside: _outside, ...created } = built.data.created

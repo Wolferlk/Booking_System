@@ -10,7 +10,7 @@
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +27,7 @@ import { STATUS_LABELS } from '@/lib/status';
 import { C, R, S } from '@/lib/theme';
 import { filePart } from '@/lib/upload';
 import { fmtLeft, loadQuickReplies, saveCustomQuickReplies, tickFor, windowLeft, type Pending, type QuickReply } from '@/lib/wa';
+import { fmtMuted, muteChat, mutedUntil, setActiveWaThread, useWaAlertSettings } from '@/lib/wa-alerts';
 import { openWebFile, web, webAction, webForm, webImageSource } from '@/lib/web';
 
 interface Msg { id: string; direction: string; body: string | null; createdAt: string; status: string; senderName: string | null; mediaUrl: string | null; mediaType: string | null }
@@ -78,6 +79,7 @@ export default function WaThread() {
   const [now, setNow] = useState(Date.now());
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [muteOpen, setMuteOpen] = useState(false);
   const [action, setAction] = useState<Msg | null>(null);
   const [viewer, setViewer] = useState<Msg | null>(null);
   const [saveReply, setSaveReply] = useState<{ text: string; list: QuickReply[] } | null>(null);
@@ -87,6 +89,11 @@ export default function WaThread() {
   const [seen, setSeen] = useState(0);
   const list = useRef<FlatList<Row_>>(null);
   const lastSig = useRef('');
+  useWaAlertSettings(); // re-render when this chat is muted or unmuted
+  const muted = mutedUntil(phone);
+
+  // No alert for the chat that is already on screen.
+  useFocusEffect(useCallback(() => { setActiveWaThread(phone); return () => setActiveWaThread(null); }, [phone]));
 
   useEffect(() => { webImageSource('whatsapp').then(s => setAuth(s.headers)); }, []);
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(t); }, []);
@@ -266,7 +273,10 @@ export default function WaThread() {
             <Text style={{ color: '#FFFFFF', fontWeight: '800', fontSize: 15 }}>{initials(title.startsWith('+') ? '' : title, phone)}</Text>
           </View>
           <Pressable style={{ flex: 1 }} onPress={() => setMenuOpen(true)}>
-            <Text style={{ color: C.text, fontWeight: '800', fontSize: 16 }} numberOfLines={1}>{title}</Text>
+            <Row gap={4}>
+              <Text style={{ color: C.text, fontWeight: '800', fontSize: 16, flexShrink: 1 }} numberOfLines={1}>{title}</Text>
+              {muted !== null && <Ionicons name="notifications-off" size={14} color={C.dim} />}
+            </Row>
             {!data ? <Text style={{ color: C.sub, fontSize: 12 }}>+{phone}</Text> : windowOpen ? (
               <Row gap={4}>
                 <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: left !== null && left < 2 * 3_600_000 ? C.amber : '#25D366' }} />
@@ -368,6 +378,7 @@ export default function WaThread() {
           <Big icon="copy" label="Copy no." onPress={() => { Clipboard.setStringAsync(`+${phone}`); setMenuOpen(false); }} />
           <Big icon="share-outline" label="Export" onPress={() => { setMenuOpen(false); exportChat(); }} />
         </Row>
+        <MenuRow icon={muted !== null ? 'notifications-off' : 'notifications-outline'} label={muted !== null ? `Muted ${fmtMuted(muted)}` : 'Mute notifications'} onPress={() => { setMenuOpen(false); setMuteOpen(true); }} />
         <MenuRow icon="search" label="Search this chat" onPress={() => { setMenuOpen(false); setSearch(''); }} />
         <MenuRow icon="document-text" label="Send an approved template" onPress={() => { setMenuOpen(false); setTemplatesOpen(true); }} />
         {b && <MenuRow icon="briefcase" label={`Open booking ${b.bookingRef}`} onPress={() => { setMenuOpen(false); router.push({ pathname: '/booking/[ref]', params: { ref: b.bookingRef } }); }} />}
@@ -377,6 +388,18 @@ export default function WaThread() {
           <Stat n={msgs.filter(m => m.direction === 'outbound').length} label="from us" />
           <Stat n={msgs.filter(m => m.mediaUrl).length} label="files" />
         </View>
+      </Sheet>
+
+      {/* mute */}
+      <Sheet open={muteOpen} onClose={() => setMuteOpen(false)} title={muted !== null ? 'Chat muted' : 'Mute this chat'}>
+        <Text style={{ color: C.sub, marginTop: -S.sm }}>
+          {muted !== null ? `No sound or banner from ${title} ${fmtMuted(muted)}. ` : `No sound or banner when ${title} writes. `}Only on this phone — the desk still sees every message.
+        </Text>
+        {([[60, '1 hour', 'time-outline'], [480, '8 hours', 'hourglass-outline'], ['morning', 'Until 8:00', 'sunny-outline'], ['always', 'Until I unmute', 'infinite']] as const).map(([m, label, icon]) => (
+          <MenuRow key={label} icon={icon} label={label} onPress={() => { muteChat(phone, m); Haptics.selectionAsync(); setMuteOpen(false); }} />
+        ))}
+        {muted !== null && <MenuRow icon="notifications" label="Unmute" onPress={() => { muteChat(phone, null); Haptics.selectionAsync(); setMuteOpen(false); }} />}
+        <MenuRow icon="options-outline" label="All WhatsApp alert settings" onPress={() => { setMuteOpen(false); router.push('/wa-alerts'); }} />
       </Sheet>
 
       {/* long-press actions */}

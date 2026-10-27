@@ -73,6 +73,32 @@ async function readEntry(key: string): Promise<ApprovalEntry | undefined> {
   return parseJson<ApprovalEntry>(row?.value) ?? (await readLegacyBlob())[key]
 }
 
+/** The ledger's record for one number, if ops ever sent it a request or saw it accept. */
+export async function getApprovalEntry(phone: string): Promise<ApprovalEntry | null> {
+  const key = normalizePhone(phone)
+  if (!key) return null
+  return (await readEntry(key)) ?? null
+}
+
+/**
+ * International forms a locally-written number most likely meant. Meta keys call
+ * permission by the full international number, so `7259960745` reads as "no
+ * permission" even when `917259960745` has allowed calls permanently — seen on
+ * live services saved without their country code. Only shapes that are
+ * unambiguous for our two markets are guessed; anything else returns [].
+ */
+export function countryCodeGuesses(phone: string): string[] {
+  const d = normalizePhone(phone).replace(/^00/, '')
+  const out: string[] = []
+  // India mobile: 10 digits starting 6–9, optionally written with a trunk 0.
+  if (/^[6-9]\d{9}$/.test(d)) out.push('91' + d)
+  if (/^0[6-9]\d{9}$/.test(d)) out.push('91' + d.slice(1))
+  // Sri Lanka mobile: 07X XXX XXXX, or the same without the trunk 0.
+  if (/^07\d{8}$/.test(d)) out.push('94' + d.slice(1))
+  if (/^7\d{8}$/.test(d)) out.push('94' + d)
+  return out
+}
+
 async function writeEntry(entry: ApprovalEntry): Promise<void> {
   const json = JSON.stringify(entry)
   await prisma.systemSetting.upsert({

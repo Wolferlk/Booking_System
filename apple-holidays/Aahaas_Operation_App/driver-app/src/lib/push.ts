@@ -10,12 +10,11 @@ import { Platform } from 'react-native';
 import { api } from './api';
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  // `soundOnly` (lib/wa-alerts) rings for a WhatsApp banner the app is already showing itself.
+  handleNotification: async n => {
+    const soundOnly = !!(n.request.content.data as { soundOnly?: boolean } | undefined)?.soundOnly;
+    return { shouldShowBanner: !soundOnly, shouldShowList: !soundOnly, shouldPlaySound: true, shouldSetBadge: true };
+  },
 });
 
 let registeredToken: string | null = null;
