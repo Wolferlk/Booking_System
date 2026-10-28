@@ -399,6 +399,8 @@ export function mapB2cOrder(input: {
   // Colombo→Tokyo ticket still says where it is going.
   const lead = resolveLeadPassenger(flights, travellers, customer)
   const sharedAccount = looksLikeAccountName(customer?.customer_name)
+  // Latest flight booking with a contact: a rebooking carries the current one.
+  const ticketContact = [...flights].reverse().find((f) => f.contactEmail || f.contactPhone)
 
   const destination =
     products.map((p) => p.product_city || p.service_location).find((v) => v && v.trim()) ??
@@ -421,9 +423,19 @@ export function mapB2cOrder(input: {
       currency,
       operationCountry: country,
       // On the shared admin6611 login the account's address is the desk's own
-      // inbox; the traveller's, when the desk gave one, is who to contact.
-      contactEmail: (sharedAccount && lead.email) || customer?.customer_email?.trim() || null,
-      contactPhone: (sharedAccount && lead.phone) || customer?.customer_phone?.trim() || null,
+      // inbox; the traveller's, when the desk gave one, is who to contact. A
+      // flight's ticket contact is where the e-ticket went — the guest.
+      contactEmail: firstGuestContact(
+        sharedAccount
+          ? [lead.email, ticketContact?.contactEmail, customer?.customer_email]
+          : [customer?.customer_email, ticketContact?.contactEmail, lead.email],
+        isStaffEmail,
+      ),
+      contactPhone: firstGuestContact(
+        sharedAccount
+          ? [lead.phone, ticketContact?.contactPhone, customer?.customer_phone]
+          : [customer?.customer_phone, ticketContact?.contactPhone, lead.phone],
+      ),
       contactCountry: customer?.customer_nationality?.trim() || null,
       tourDestination: destination ? destination.trim().slice(0, 191) : null,
       leadPassengerName: lead.name,
@@ -454,6 +466,24 @@ export function mapB2cOrder(input: {
       },
     },
   }
+}
+
+/** Our own mailboxes (admin@it.aahaas.com, …) — never the guest's address. */
+export function isStaffEmail(email: string): boolean {
+  return /@([a-z0-9-]+\.)*aahaas\.com$/i.test(email.trim())
+}
+
+/**
+ * First usable contact, in the caller's order of trust. Values `skip` rejects
+ * (staff inboxes) are kept only as a last resort, so a booking still has
+ * somewhere to write when the store has nothing better.
+ */
+function firstGuestContact(
+  candidates: (string | null | undefined)[],
+  skip: (value: string) => boolean = () => false,
+): string | null {
+  const values = candidates.map((v) => v?.trim()).filter((v): v is string => Boolean(v))
+  return values.find((v) => !skip(v)) ?? values[0] ?? null
 }
 
 /**

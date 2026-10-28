@@ -296,7 +296,7 @@ export async function fetchOrderHeaders(opts: {
   for (const h of undated) {
     if (h.arrival >= upcomingFrom) byOrder.set(Number(h.order_id), h)
   }
-  return [...byOrder.values()]
+  return Array.from(byOrder.values())
     .sort((a, b) => (a.arrival < b.arrival ? -1 : a.arrival > b.arrival ? 1 : Number(a.order_id) - Number(b.order_id)))
     .slice(0, lim)
 }
@@ -363,7 +363,8 @@ async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: 
 function datesInText(text: string | null): string[] {
   if (!text) return []
   const out: string[] = []
-  for (const m of text.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)) {
+  const re = /\b(20\d{2})-(\d{2})-(\d{2})\b/g
+  for (let m = re.exec(text); m; m = re.exec(text)) {
     const d = new Date(`${m[0]}T00:00:00Z`)
     if (!Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === m[0]) out.push(m[0])
   }
