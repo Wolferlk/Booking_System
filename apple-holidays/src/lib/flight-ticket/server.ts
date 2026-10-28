@@ -78,25 +78,35 @@ const ASSET_FILES = {
   mark: ['png/aahaslogo.png', 'image/png'],
 } as const
 
-let cached: Omit<TicketAssets, never> | null = null
+let cached: TicketAssets | null = null
 
 /**
  * Artwork as data URIs, so headless Chromium needs no network to draw it.
- * Where the bundle has no `public/` on disk (serverless), the site's own URL
- * for the same file is used instead.
+ *
+ * On Amplify the bundle has no `public/` on disk, so each file is fetched once
+ * from the site's own URL and inlined here. Leaving Chromium to load them itself
+ * from inside the Lambda is slow and fragile (it held the PDF past the request
+ * limit). `inline: false` hands back plain URLs instead, which is enough for the
+ * browser print view and keeps that page small.
  */
-export async function ticketAssets(origin: string): Promise<TicketAssets> {
+export async function ticketAssets(origin: string, { inline = true }: { inline?: boolean } = {}): Promise<TicketAssets> {
   if (cached) return cached
+  const base = origin.replace(/\/+$/, '')
   const entries = await Promise.all(Object.entries(ASSET_FILES).map(async ([key, [file, type]]) => {
     try {
       const buf = await readFile(path.join(process.cwd(), 'public', file))
       return [key, `data:${type};base64,${buf.toString('base64')}`, true] as const
-    } catch {
-      return [key, `${origin.replace(/\/+$/, '')}/${file}`, false] as const
+    } catch { /* not on disk — serverless */ }
+    if (inline) {
+      try {
+        const res = await fetch(`${base}/${file}`, { signal: AbortSignal.timeout(8_000) })
+        if (res.ok) return [key, `data:${type};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`, true] as const
+      } catch { /* fall back to the URL */ }
     }
+    return [key, `${base}/${file}`, false] as const
   }))
   const assets = Object.fromEntries(entries.map(([k, v]) => [k, v])) as unknown as TicketAssets
-  // Only a full set read from disk is worth keeping for the next request.
-  if (entries.every(([, , fromDisk]) => fromDisk)) cached = assets
+  // Only a full inlined set is worth keeping for the next request.
+  if (entries.every(([, , inlined]) => inlined)) cached = assets
   return assets
 }

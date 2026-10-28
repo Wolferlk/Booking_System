@@ -51,10 +51,11 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   if (data.passengers.length === 0) return buildApiError('Add at least one passenger.', 422)
   if (data.segments.length === 0) return buildApiError('Add at least one flight (from and to airport codes).', 422)
 
-  const html = await renderTicketSheets(data, options, await ticketAssets(new URL(req.url).origin))
+  const asPdf = body.format === 'pdf'
+  const html = await renderTicketSheets(data, options, await ticketAssets(new URL(req.url).origin, { inline: asPdf }))
   const name = `Aahaas-Tickets-${data.bookingRef ?? data.orderId ?? gate.booking.bookingRef}`.replace(/[^A-Za-z0-9_-]/g, '')
 
-  if (body.format !== 'pdf') {
+  if (!asPdf) {
     return new Response(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' },
     })
@@ -65,9 +66,13 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
     browser = await launchBrowser()
     // Both launch paths return a puppeteer Page; the union hides evaluate().
     const page = (await browser.newPage()) as unknown as Page
-    // Artwork is inlined; the web fonts are the only network fetch, so wait for them.
-    await page.setContent(html, { waitUntil: 'load', timeout: 30_000 })
-    await page.evaluate(() => document.fonts.ready.then(() => true))
+    // Artwork is inlined; the web fonts are the only network fetch. Wait for them,
+    // but never past a few seconds — the request itself must end before Amplify's limit.
+    await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 15_000 })
+    await page.evaluate(() => Promise.race([
+      document.fonts.ready.then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), 6_000)),
+    ]))
     const pdf = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } })
     return new Response(new Uint8Array(pdf), {
       headers: {
@@ -80,7 +85,7 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
     console.error('[POST /api/bookings/[ref]/flight-tickets] PDF failed', err)
     return buildApiError(
       err instanceof PdfEngineUnavailableError
-        ? 'The PDF engine is not available on this server — use "Open print view" and print from the browser.'
+        ? 'The PDF engine is not available on this server.'
         : `Could not build the PDF: ${(err as Error).message}`,
       err instanceof PdfEngineUnavailableError ? 503 : 500,
     )

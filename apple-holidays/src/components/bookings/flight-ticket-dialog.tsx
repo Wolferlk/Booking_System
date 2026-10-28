@@ -78,6 +78,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
   const [notes, setNotes] = useState<string[]>([])
   const [busy, setBusy] = useState<'upload' | 'pdf' | 'html' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const [opts, setOpts] = useState<TicketPrintOptions>(DEFAULT_PRINT_OPTIONS)
   const [preview, setPreview] = useState(false)
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
@@ -134,34 +135,91 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
     }
   }
 
+  const post = (format: 'pdf' | 'html', signal?: AbortSignal) => fetch(api, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data, options: opts, format }),
+    signal,
+  })
+
+  /**
+   * The browser's own print dialog on the same sheets — "Save as PDF" gives an
+   * exact vector PDF. Used when the server's headless Chrome cannot (Amplify's
+   * Lambda is short on time and memory for it), so Download never dead-ends.
+   */
+  const printInBrowser = async () => {
+    const res = await post('html')
+    if (!res.ok) {
+      const json = await readApiResponse(res)
+      throw new Error(json.error || `Could not build the tickets (${res.status})`)
+    }
+    const html = await res.text()
+    document.getElementById('flight-ticket-print-frame')?.remove()
+    const frame = document.createElement('iframe')
+    frame.id = 'flight-ticket-print-frame'
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'
+    document.body.appendChild(frame)
+    await new Promise<void>((resolve) => { frame.onload = () => resolve(); frame.srcdoc = html })
+    const win = frame.contentWindow!
+    // Fonts and artwork must be in before the print snapshot is taken.
+    await Promise.race([
+      Promise.all([
+        win.document.fonts.ready,
+        ...Array.from(win.document.images).map((i) => (i.complete ? null : new Promise((r) => { i.onload = i.onerror = r }))),
+      ]),
+      new Promise((r) => setTimeout(r, 6_000)),
+    ])
+    win.focus()
+    win.print()
+    setTimeout(() => frame.remove(), 60_000)
+  }
+
   const render = async (format: 'pdf' | 'html') => {
     if (!data) return
     if (issues.length > 0 && !window.confirm(`These tickets are not complete:\n\n• ${issues.join('\n• ')}\n\nPrint anyway?`)) return
     setBusy(format)
     setError(null)
+    setInfo(null)
     // Open the tab now, inside the click — a window opened after an await is a popup to the browser.
     const tab = format === 'html' ? window.open('', '_blank') : null
     try {
-      const res = await fetch(api, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data, options: opts, format }),
-      })
-      if (!res.ok) {
-        const json = await readApiResponse(res)
-        throw new Error(json.error || `Could not build the tickets (${res.status})`)
-      }
-      const url = URL.createObjectURL(await res.blob())
       if (format === 'html') {
+        const res = await post('html')
+        if (!res.ok) {
+          const json = await readApiResponse(res)
+          throw new Error(json.error || `Could not build the tickets (${res.status})`)
+        }
+        const url = URL.createObjectURL(await res.blob())
         if (tab) tab.location.href = url
         else window.open(url, '_blank')
-      } else {
-        const a = document.createElement('a')
-        a.href = url
-        a.download = `Aahaas-Tickets-${data.bookingRef ?? data.orderId ?? bookingRef}.pdf`
-        a.click()
+        setTimeout(() => URL.revokeObjectURL(url), 60_000)
+        return
       }
-      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+
+      // Server PDF first, but never longer than Amplify would let it run.
+      let failure: string | null = null
+      try {
+        const res = await post('pdf', AbortSignal.timeout(35_000))
+        const type = res.headers.get('content-type') ?? ''
+        if (res.ok && type.includes('pdf')) {
+          const url = URL.createObjectURL(await res.blob())
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `Aahaas-Tickets-${data.bookingRef ?? data.orderId ?? bookingRef}.pdf`
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          setTimeout(() => URL.revokeObjectURL(url), 60_000)
+          setInfo('PDF downloaded.')
+          return
+        }
+        failure = res.ok ? 'the server sent something other than a PDF' : (await readApiResponse(res).catch(() => null))?.error || `server error ${res.status}`
+      } catch (e) {
+        failure = (e as Error).name === 'TimeoutError' || (e as Error).name === 'AbortError' ? 'the server took too long' : (e as Error).message
+      }
+      setInfo(`The server could not make the PDF (${failure}), so your browser's print window is opening instead. Choose “Save as PDF” as the printer to download it, or print straight away.`)
+      await printInBrowser()
     } catch (e) {
       tab?.close()
       setError((e as Error).message)
@@ -219,6 +277,13 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
   return (
     <Modal open={open} onClose={onClose} size="4xl" title="Print flight tickets"
       footer={
+        <div className="w-full space-y-2">
+        {/* Here, beside the buttons — at the top of the form, a failed download went unseen. */}
+        {(error || info) && (
+          <p className={cn('flex gap-2 rounded-lg border px-3 py-2 text-xs', error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-sky-50 border-sky-200 text-sky-800')}>
+            {error ? <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> : <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0" />}{error ?? info}
+          </p>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3 w-full">
           <p className="text-xs text-slate-500">
             {count.tickets} ticket{count.tickets === 1 ? '' : 's'} · {count.sheets} A4 sheet{count.sheets === 1 ? '' : 's'} ({count.sheets * 2} pages, front + back)
@@ -228,9 +293,10 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
               {busy === 'html' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Open print view
             </button>
             <button onClick={() => render('pdf')} disabled={!!busy || !count.tickets} className="btn btn-primary btn-sm">
-              {busy === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Download PDF
+              {busy === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} {busy === 'pdf' ? 'Making PDF…' : 'Download PDF'}
             </button>
           </div>
+        </div>
         </div>
       }
     >
