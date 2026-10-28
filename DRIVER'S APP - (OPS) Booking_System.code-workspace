@@ -6,6 +6,9 @@
 		},
 		{
 			"path": "../../n8n-project"
+		},
+		{
+			"path": "../Accounts_system"
 		}
 	],
 	"settings": {}

@@ -17,11 +17,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowLeftRight, Download, ExternalLink, FileText, Globe, Laptop, Loader2, Mail, MessageCircle,
-  Mic, Phone, RefreshCw, Smartphone, Store, Briefcase, HelpCircle, AlertTriangle,
+  Mic, Phone, RefreshCw, Smartphone, Store, Briefcase, HelpCircle, AlertTriangle, Ticket,
 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { readApiResponse, cn } from '@/lib/utils'
 import type { B2cOrderMoney, Amount } from '@/lib/b2c-order-money'
+import FlightTicketDialog from './flight-ticket-dialog'
 
 interface OrderPayload extends B2cOrderMoney {
   guest: { email: string | null; phone: string | null; opsEmail: string | null; corrected: boolean }
@@ -71,6 +72,7 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
   const [loading, setLoading] = useState(true)
   const [pdfBusy, setPdfBusy] = useState(false)
   const [pdfError, setPdfError] = useState<string | null>(null)
+  const [ticketsOpen, setTicketsOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -112,6 +114,7 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
   }
 
   const ChannelIcon = data ? CHANNEL_ICON[data.channel] ?? Store : Store
+  const hasFlight = Boolean(data && (data.pnrs.length > 0 || data.lines.some((l) => l.category === 'Flight' && !l.cancelled)))
 
   return (
     <section data-nav="Aahaas Order" data-nav-icon="pnl">
@@ -119,6 +122,12 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
         <CardHeader
           action={
             <div className="flex items-center gap-2">
+              {hasFlight && (
+                <button onClick={() => setTicketsOpen(true)} className="btn btn-sm bg-rose-600 hover:bg-rose-700 text-white border border-rose-700 flex items-center gap-1.5"
+                  title="Printed tickets for the guest — A4, double-sided, three a sheet">
+                  <Ticket className="w-3.5 h-3.5" /> Print tickets
+                </button>
+              )}
               <button onClick={load} disabled={loading} className="text-xs text-slate-500 hover:text-slate-700 flex items-center gap-1" title="Re-read from the Aahaas store">
                 <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} /> Refresh
               </button>
@@ -220,6 +229,7 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
           )}
         </CardBody>
       </Card>
+      {hasFlight && <FlightTicketDialog bookingRef={bookingRef} open={ticketsOpen} onClose={() => setTicketsOpen(false)} />}
     </section>
   )
 }
