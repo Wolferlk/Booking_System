@@ -13,7 +13,7 @@ import {
   operationCountryFromIso,
   operationCountryFromText,
 } from './b2c-country'
-import { describeRoute } from './b2c-flight'
+import { describeRoute, flightDateSpan } from './b2c-flight'
 import type { OperationCountry } from './country-detection'
 import type { ParsedFlightBooking } from './b2c-flight'
 import type { OrderTravellers } from './b2c-travellers'
@@ -351,8 +351,9 @@ export function mapB2cOrder(input: {
   }
 
   const itineraryItems: MappedB2cItineraryItem[] = products.map((p, i) => {
-    const date = p.service_date ?? header.arrival
     const flight = flightForLine(p)
+    // Flight lines have no service_date; the ticket's own date is the real one.
+    const date = p.service_date ?? (flight ? flightDateSpan(flight)?.first : null) ?? header.arrival
     const bits = [
       p.maincat_type,
       p.vendor_name ? `Vendor: ${p.vendor_name}` : null,

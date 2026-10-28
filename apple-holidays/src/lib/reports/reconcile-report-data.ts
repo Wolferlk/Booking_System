@@ -447,11 +447,10 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
       const id = Number(o.order_id)
       const hasPnl = coverage.withPnl.has(id)
       const hasInvoice = coverage.withInvoice.has(id)
-      // The importer selects on `service_date`; an order with none on any line
-      // is invisible to it however the day goes, so its OPS column is "not
-      // applicable" rather than "missing". Aahaas flight sales are the whole of
-      // this population in practice — the storefront stores a flight's travel
-      // date inside the itinerary blob, not in `service_date`.
+      // The importer dates an order from `service_date`, or — for flights, which
+      // the storefront leaves undated — from the flight booking. An order with
+      // neither is invisible to it, so its OPS column is "not applicable"
+      // rather than "missing".
       const datedLines = Number(o.datedLines ?? 0)
       const flightLines = Number(o.flightLines ?? 0)
       const productLines = Number(o.productLines ?? 0)
@@ -463,7 +462,7 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
         hasPnl,
         hasInvoice,
         whole: hasPnl && hasInvoice,
-        importable: datedLines > 0,
+        importable: datedLines > 0 || flightLines > 0,
         flightOnly: flightLines > 0 && flightLines === productLines,
       }
     })
@@ -477,8 +476,8 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
       orders: ids.length,
       opsHeld: inOps.size,
       opsCreated,
-      // Only orders OPS could actually have filed. A flight order with no
-      // service date is listed under `notImportable` instead, where nobody
+      // Only orders OPS could actually have filed. An order with no travel
+      // date anywhere is listed under `notImportable` instead, where nobody
       // reads it as work outstanding.
       missingInOps: lines.filter(l => l.importable && !l.inOps).map(l => l.orderId),
       notImportable: lines.filter(l => !l.importable).map(l => l.orderId),

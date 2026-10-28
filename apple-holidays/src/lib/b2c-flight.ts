@@ -6,7 +6,7 @@
  * lives in this table's two JSON blobs:
  *
  *   `requested_data`  what the customer searched and who is travelling
- *                     · searchData.routes[].fromCode / .toCode
+ *                     · searchData.routes[].fromCode / .toCode / .date
  *                     · summary.passengerCounts.{adults,children,infants}
  *                     · passengers.adults[].firstName / .lastName
  *   `response_data`   what Sabre confirmed
@@ -38,6 +38,8 @@ export interface ParsedFlightBooking {
   /** Earliest departure / latest arrival date across confirmed flights ('YYYY-MM-DD'). */
   firstDepartureDate: string | null
   lastArrivalDate: string | null
+  /** Departure date of each searched leg ('YYYY-MM-DD'), from `searchData.routes[].date`. */
+  routeDates: string[]
 }
 
 /** Safe nested read: `pick(obj, 'a', 'b', 0, 'c')`. Returns undefined on any miss. */
@@ -102,14 +104,18 @@ export function parseFlightBooking(row: {
 
   // ── Route ───────────────────────────────────────────────────────────────────
   const route: { from: string; to: string }[] = []
+  const routeDates: string[] = []
   const routes = pick(req, 'searchData', 'routes')
   if (Array.isArray(routes)) {
     for (const r of routes) {
       const from = asIata(pick(r, 'fromCode'))
       const to = asIata(pick(r, 'toCode'))
       if (from && to) route.push({ from, to })
+      const date = asDate(pick(r, 'date')) ?? asDate(pick(r, 'departureDate'))
+      if (date) routeDates.push(date)
     }
   }
+  routeDates.sort()
   // Fall back to the confirmed journeys when the search block is absent.
   if (route.length === 0) {
     const journeys = pick(res, 'data', 'fetchPnr', 'journeys')
@@ -181,7 +187,27 @@ export function parseFlightBooking(row: {
     leadPassengerName,
     firstDepartureDate: depDates[0] ?? null,
     lastArrivalDate: arrDates[arrDates.length - 1] ?? null,
+    routeDates,
   }
+}
+
+/**
+ * When the flight travels: first departure → last arrival.
+ *
+ * Aahaas leaves `service_date` empty on flight lines, so this is the only travel
+ * date such an order has. The confirmed PNR wins over the search, because a
+ * reissue moves the PNR's dates while the original search stays as it was.
+ * Null when neither carries a date.
+ */
+export function flightDateSpan(parsed: ParsedFlightBooking): { first: string; last: string } | null {
+  if (parsed.firstDepartureDate) {
+    const last = parsed.lastArrivalDate ?? parsed.firstDepartureDate
+    return { first: parsed.firstDepartureDate, last: last < parsed.firstDepartureDate ? parsed.firstDepartureDate : last }
+  }
+  if (parsed.routeDates.length > 0) {
+    return { first: parsed.routeDates[0], last: parsed.routeDates[parsed.routeDates.length - 1] }
+  }
+  return null
 }
 
 /** Human-readable route, e.g. "CMB → NRT → CMB". Null when no route was parsed. */

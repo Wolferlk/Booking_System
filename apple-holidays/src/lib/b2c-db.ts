@@ -16,6 +16,7 @@
  * credentials are reused with the schema name overridden.
  */
 import mysql from 'mysql2/promise'
+import { flightDateSpan, parseFlightBooking } from './b2c-flight'
 
 /** Hard ceiling so a stalled SSL negotiation can never hang a request forever. */
 const CONN_TIMEOUT_MS = 15_000
@@ -25,9 +26,14 @@ const CONN_TIMEOUT_MS = 15_000
 export const TRAVEL_CATEGORY_IDS = [3, 4, 5, 6] as const
 
 /** Flights. Sold worldwide, and — unlike every other category — routinely stored
- *  with no `service_date` at all, which is what puts such an order beyond the
- *  importer's reach (see {@link fetchOrderHeaders}). */
+ *  with no `service_date` at all. Such orders take their travel dates from the
+ *  flight booking instead (see {@link fetchUndatedFlightHeaders}). */
 export const FLIGHT_CATEGORY_ID = 6
+
+/** How far back the full sweep looks, by booked date, for flight orders with no
+ *  `service_date`. Airlines sell about 11 months ahead, so a year covers every
+ *  ticket that can still be in the future. */
+const UNDATED_FLIGHT_LOOKBACK_DAYS = 370
 
 /** Statements this client is willing to send. Anything else is a bug, not a query. */
 const READ_ONLY_RE = /^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i
@@ -244,6 +250,10 @@ const CATEGORY_LIST = TRAVEL_CATEGORY_IDS.join(',')
  * `HAVING MIN(service_date) >= ?` is the "upcoming travels only" gate — an order
  * whose travel has already started is not something ops can still prepare for.
  *
+ * Flight orders usually have no `service_date` at all, so the dated query alone
+ * never sees them. They come from {@link fetchUndatedFlightHeaders}, which dates
+ * them from the flight booking, and pass through the same upcoming gate.
+ *
  * Pass `bookedFrom` to restrict to recently-placed orders (the nightly run); omit
  * it to sweep every upcoming order (backfill). It is a floor rather than an exact
  * day deliberately: the nightly job fires just after midnight and passes
@@ -259,23 +269,112 @@ export async function fetchOrderHeaders(opts: {
   const { upcomingFrom, bookedFrom = null, limit = 500 } = opts
   // LIMIT is inlined (not bound) because this server rejects `LIMIT ?`.
   const lim = Math.max(1, Math.min(Number(limit) || 500, 5000))
-  return b2cQuery<B2cOrderHeader>(
+  const [dated, undated] = await Promise.all([
+    b2cQuery<B2cOrderHeader>(
+      `SELECT m.order_id                AS order_id,
+              MIN(m.service_date)       AS arrival,
+              MAX(m.service_date)       AS departure,
+              COUNT(*)                  AS productLines,
+              MIN(m.booked_date)        AS bookedDate
+         FROM checkouts_more_data m
+        WHERE m.order_id IS NOT NULL
+          AND m.service_date IS NOT NULL
+          AND m.category_id IN (${CATEGORY_LIST})
+          ${bookedFrom ? 'AND m.booked_date >= ?' : ''}
+        GROUP BY m.order_id
+       HAVING MIN(m.service_date) >= ?
+        ORDER BY arrival ASC
+        LIMIT ${lim}`,
+      bookedFrom ? [bookedFrom, upcomingFrom] : [upcomingFrom],
+    ),
+    fetchUndatedFlightHeaders({ bookedFrom: bookedFrom ?? shiftDate(upcomingFrom, -UNDATED_FLIGHT_LOOKBACK_DAYS) }),
+  ])
+
+  // An undated-flight header covers every line of its order, so it replaces the
+  // dated-only row for the same order.
+  const byOrder = new Map(dated.map((h) => [Number(h.order_id), h]))
+  for (const h of undated) {
+    if (h.arrival >= upcomingFrom) byOrder.set(Number(h.order_id), h)
+  }
+  return [...byOrder.values()]
+    .sort((a, b) => (a.arrival < b.arrival ? -1 : a.arrival > b.arrival ? 1 : Number(a.order_id) - Number(b.order_id)))
+    .slice(0, lim)
+}
+
+/**
+ * Headers for orders that hold a flight line with no `service_date`, dated from
+ * the flight itself.
+ *
+ * Aahaas keeps a flight's travel date in `aahaas_flight_bookingsv2` (confirmed
+ * PNR flights, else the search's `routes[].date`), and the storefront often
+ * repeats it in the line's name, e.g. "CMB -> IXM (2026-11-10)". Either source
+ * is used, together with any dated lines on the same order. An order that has
+ * no date anywhere is left out, as before.
+ *
+ * Pass `orderId` for one order (any travel date), or `bookedFrom` to sweep by
+ * booked date. No date floor here: callers apply their own.
+ */
+async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: number }): Promise<B2cOrderHeader[]> {
+  const scope = opts.orderId != null ? `AND order_id = ${sanitizeIds([opts.orderId])}` : 'AND booked_date >= ?'
+  const rows = await b2cQuery<B2cOrderHeader & { undatedNames: string | null }>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
             MAX(m.service_date)       AS departure,
             COUNT(*)                  AS productLines,
-            MIN(m.booked_date)        AS bookedDate
+            MIN(m.booked_date)        AS bookedDate,
+            GROUP_CONCAT(CASE WHEN m.service_date IS NULL THEN m.product_name END SEPARATOR ' | ') AS undatedNames
        FROM checkouts_more_data m
-      WHERE m.order_id IS NOT NULL
-        AND m.service_date IS NOT NULL
-        AND m.category_id IN (${CATEGORY_LIST})
-        ${bookedFrom ? 'AND m.booked_date >= ?' : ''}
-      GROUP BY m.order_id
-     HAVING MIN(m.service_date) >= ?
-      ORDER BY arrival ASC
-      LIMIT ${lim}`,
-    bookedFrom ? [bookedFrom, upcomingFrom] : [upcomingFrom],
+       JOIN (SELECT DISTINCT order_id
+               FROM checkouts_more_data
+              WHERE order_id IS NOT NULL
+                AND category_id = ${FLIGHT_CATEGORY_ID}
+                AND service_date IS NULL
+                ${scope}) u ON u.order_id = m.order_id
+      WHERE m.category_id IN (${CATEGORY_LIST})
+      GROUP BY m.order_id`,
+    opts.orderId != null ? [] : [opts.bookedFrom],
   )
+  if (rows.length === 0) return []
+
+  // Latest booking row per order: a re-priced or reissued flight leaves the
+  // earlier attempts behind with their old dates.
+  const flightRows = await fetchFlightBookings(rows.map((r) => Number(r.order_id)))
+  const spanByOrder = new Map<number, { first: string; last: string }>()
+  for (const fr of flightRows) {
+    const span = flightDateSpan(parseFlightBooking(fr))
+    if (span) spanByOrder.set(Number(fr.order_id), span)
+  }
+
+  const headers: B2cOrderHeader[] = []
+  for (const r of rows) {
+    const { undatedNames, ...row } = r
+    const dates = [row.arrival, row.departure].filter((d): d is string => Boolean(d))
+    const span = spanByOrder.get(Number(row.order_id))
+    if (span) dates.push(span.first, span.last)
+    else dates.push(...datesInText(undatedNames))
+    if (dates.length === 0) continue
+    dates.sort()
+    headers.push({ ...row, arrival: dates[0], departure: dates[dates.length - 1] } as B2cOrderHeader)
+  }
+  return headers
+}
+
+/** 'YYYY-MM-DD' dates written into free text, e.g. a flight line named "CMB -> IXM (2026-11-10)". */
+function datesInText(text: string | null): string[] {
+  if (!text) return []
+  const out: string[] = []
+  for (const m of text.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)) {
+    const d = new Date(`${m[0]}T00:00:00Z`)
+    if (!Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === m[0]) out.push(m[0])
+  }
+  return out
+}
+
+/** Calendar-day arithmetic on 'YYYY-MM-DD'. */
+function shiftDate(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -285,9 +384,12 @@ export async function fetchOrderHeaders(opts: {
  * importer but wrong for "Update booking": an order whose first service has
  * already started must still be refreshable. Same shape, same travel-category
  * filter, no date gate. Returns null when the order has no dated travel line.
+ * A flight with no `service_date` is dated from the flight booking.
  */
 export async function fetchOrderHeaderById(orderId: number): Promise<B2cOrderHeader | null> {
   const id = sanitizeIds([orderId])
+  const [flightDated] = await fetchUndatedFlightHeaders({ orderId })
+  if (flightDated) return flightDated
   const rows = await b2cQuery<B2cOrderHeader>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
