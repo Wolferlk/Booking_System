@@ -272,7 +272,13 @@ export interface ComplaintsSection {
   byCategory: { category: string; total: number; open: number }[]
   bySeverity: { severity: string; total: number; open: number }[]
   byCountry: CountryRow[]
+  /** The mail's list, cut to `maxRows`. */
   items: ComplaintLine[]
+  /**
+   * Every issue in the window, same order as `items`, uncapped — what the CSV
+   * and workbook export, so the sheet's row count matches `total`.
+   */
+  allItems: ComplaintLine[]
   /** Complaints raised before the window that are still open — carried debt. */
   carriedOpen: ComplaintLine[]
 }
@@ -1220,7 +1226,7 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
     available: false, total: 0, rawTotal: 0, duplicatesMerged: 0, resolved: 0, open: 0,
     highSeverityOpen: 0, recurringOpen: 0,
     avgResolutionHours: null, byCategory: [], bySeverity: [], byCountry: [],
-    items: [], carriedOpen: [],
+    items: [], allItems: [], carriedOpen: [],
   }
 
   let raw: Awaited<ReturnType<typeof prisma.tbl_te_important_alerts.findMany>>
@@ -1324,6 +1330,17 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
 
   const rawInWindow = raw.map(map).filter(inScope).length
 
+  // The action list, in the order someone should work it: unresolved first,
+  // then most severe, then whatever has been raised most times — an issue the
+  // guest brought up on three calls outranks a one-off of equal severity —
+  // and finally the most recently active.
+  const ranked = items.slice()
+    .sort((a, b) =>
+      Number(a.status === 'resolved') - Number(b.status === 'resolved') ||
+      (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) ||
+      b.occurrences - a.occurrences ||
+      b.lastRaisedAt.localeCompare(a.lastRaisedAt))
+
   return {
     available: true,
     total: items.length,
@@ -1344,17 +1361,8 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
       .map(([severity, v]) => ({ severity, ...v }))
       .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)),
     byCountry: rollUpByCountry(items.map(c => ({ country: c.country, pax: 0, source: 'B2B' as BookingSource }))),
-    // The action list, in the order someone should work it: unresolved first,
-    // then most severe, then whatever has been raised most times — an issue the
-    // guest brought up on three calls outranks a one-off of equal severity —
-    // and finally the most recently active.
-    items: items.slice()
-      .sort((a, b) =>
-        Number(a.status === 'resolved') - Number(b.status === 'resolved') ||
-        (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) ||
-        b.occurrences - a.occurrences ||
-        b.lastRaisedAt.localeCompare(a.lastRaisedAt))
-      .slice(0, maxRows),
+    items: ranked.slice(0, maxRows),
+    allItems: ranked,
     // Oldest-first: carried debt is ranked by how long it has been ignored.
     carriedOpen: carriedOpen.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   }

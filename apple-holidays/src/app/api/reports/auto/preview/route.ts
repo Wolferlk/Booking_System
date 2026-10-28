@@ -234,7 +234,8 @@ export async function GET(req: NextRequest) {
                 delivery: { ...built.data.insights.delivery, lines: [] },
               }
             : null
-          return { ...built.data, created, insights }
+          const { allItems: _allComplaints, ...complaints } = built.data.complaints
+          return { ...built.data, created, complaints, insights }
         })()
       : built.data
     return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data })

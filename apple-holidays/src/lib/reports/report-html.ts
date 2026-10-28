@@ -1911,10 +1911,11 @@ export function renderReportCsv(d: ReportData): string {
   }
 
   // One row per issue, matching the mail. `Times raised` and `Raised on` keep
-  // the underlying alert rows recoverable from the export.
+  // the underlying alert rows recoverable from the export. Uncapped: the mail
+  // stops at maxRows, the attachment carries every issue the KPI counts.
   block('Complaints',
     ['First raised at', 'Last raised at', 'Times raised', 'Raised on', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
-    [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [
+    [...(d.complaints.allItems ?? d.complaints.items), ...d.complaints.carriedOpen].map(c => [
       c.createdAt, c.lastRaisedAt, c.occurrences, c.trail.map(t => t.createdAt).join(' | '),
       c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.categories.join(' | '),
       c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '',
