@@ -91,17 +91,20 @@ const ICON = {
 const icon = (name: keyof typeof ICON, size = 3.4) =>
   `<svg viewBox="0 0 24 24" style="width:${size}mm;height:${size}mm" fill="currentColor" aria-hidden="true">${ICON[name]}</svg>`
 
-/** What the QR code says — readable by any phone camera, no app needed. */
-function qrText(data: FlightTicketData, t: Pick<OneTicket, 'passenger' | 'segment'>): string {
+/**
+ * What the QR code says — plain text any phone camera reads, no app or link
+ * needed. Kept short so the modules stay large enough to scan off a home
+ * printer (about 0.45 mm each at 19 mm).
+ */
+export function qrText(data: FlightTicketData, t: Pick<OneTicket, 'passenger' | 'segment'>): string {
   const s = t.segment
+  const when = [dayLabel(s.from.date), s.from.time].filter(Boolean).join(' ')
   return [
-    'AAHAAS E-TICKET ITINERARY',
-    data.orderId ? `Order ${data.orderId}` : null,
-    data.bookingRef ? `Booking ref ${data.bookingRef}` : null,
-    data.airlinePnr ? `Airline PNR ${data.airlinePnr}` : null,
-    `${s.flightNo ?? ''} ${s.from.code}-${s.to.code} ${s.from.date ?? ''} ${s.from.time ?? ''}`.trim(),
-    `Passenger ${t.passenger.name}`,
-    t.passenger.eticket ? `E-ticket ${t.passenger.eticket}` : null,
+    'AAHAAS E-TICKET',
+    [data.bookingRef && `REF ${data.bookingRef}`, data.airlinePnr && `PNR ${data.airlinePnr}`].filter(Boolean).join(' / '),
+    [s.flightNo, `${s.from.code}-${s.to.code}`, when].filter(Boolean).join(' '),
+    t.passenger.name.toUpperCase(),
+    t.passenger.eticket ? `ETKT ${t.passenger.eticket}` : null,
   ].filter(Boolean).join('\n')
 }
 
@@ -115,7 +118,10 @@ export async function buildTickets(data: FlightTicketData, perSegment: boolean):
       out.push({
         ...base,
         leg: perSegment && data.segments.length > 1 ? `Flight ${i + 1} of ${data.segments.length}` : null,
-        qr: await QRCode.toDataURL(qrText(data, base), { errorCorrectionLevel: 'M', margin: 1, width: 240, color: { dark: '#0f1f3a', light: '#ffffff' } }),
+        // Vector, so every module prints sharp at any printer resolution.
+        qr: `data:image/svg+xml;base64,${Buffer.from(await QRCode.toString(qrText(data, base), {
+          type: 'svg', errorCorrectionLevel: 'M', margin: 1, color: { dark: '#0b1530', light: '#ffffff' },
+        })).toString('base64')}`,
       })
     }
   }

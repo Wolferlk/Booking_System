@@ -15,8 +15,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Download, FileUp, Loader2, Plus, Printer, Trash2, Ticket } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Download, FileUp, Loader2, Plus, Printer, Trash2, Ticket } from 'lucide-react'
 import Modal from '@/components/ui/modal'
+import { checkTicketData } from '@/lib/flight-ticket/eticket-parse'
 import { readApiResponse, cn } from '@/lib/utils'
 import {
   DEFAULT_PRINT_OPTIONS, type FlightTicketData, type TicketPassenger, type TicketPrintOptions, type TicketSegment,
@@ -124,6 +125,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
 
   const render = async (format: 'pdf' | 'html') => {
     if (!data) return
+    if (issues.length > 0 && !window.confirm(`These tickets are not complete:\n\n• ${issues.join('\n• ')}\n\nPrint anyway?`)) return
     setBusy(format)
     setError(null)
     // Open the tab now, inside the click — a window opened after an await is a popup to the browser.
@@ -169,7 +171,8 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
     return { tickets, sheets: Math.ceil(tickets / PER_SHEET) }
   }, [data, opts.perSegment])
 
-  const missingEtickets = data?.passengers.some((p) => p.name && !p.eticket)
+  // Re-checked on every edit, so what is printed is what was checked.
+  const issues = useMemo(() => (data ? checkTicketData({ ...data, passengers: data.passengers.filter((p) => p.name.trim()) }) : []), [data])
 
   return (
     <Modal open={open} onClose={onClose} size="4xl" title="Print flight tickets"
@@ -208,15 +211,23 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
             </label>
           </div>
 
-          {(note || error || data.warnings.length > 0 || missingEtickets) && (
+          {issues.length === 0 && !error && (
+            <p className="flex gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-emerald-800">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> Every detail a ticket needs is present — booking ref, airline PNR, each passenger&apos;s e-ticket number, flight, times and dates.
+            </p>
+          )}
+          {(note || error || data.warnings.length > 0 || issues.length > 0) && (
             <div className="space-y-1.5">
               {error && <p className="flex gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{error}</p>}
               {note && <p className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{note}</p>}
               {data.warnings.map((w) => (
                 <p key={w} className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />{w}</p>
               ))}
-              {missingEtickets && !data.warnings.some((w) => /e-ticket/i.test(w)) && (
-                <p className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />A passenger has no e-ticket number — it prints as “—”.</p>
+              {issues.length > 0 && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-xs">
+                  <p className="font-semibold flex items-center gap-1.5 mb-1"><AlertTriangle className="w-3.5 h-3.5" /> Check before printing</p>
+                  <ul className="list-disc pl-5 space-y-0.5">{issues.map((w) => <li key={w}>{w}</li>)}</ul>
+                </div>
               )}
             </div>
           )}
