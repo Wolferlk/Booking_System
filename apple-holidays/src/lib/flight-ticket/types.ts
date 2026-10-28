@@ -55,7 +55,8 @@ export interface FlightTicketData {
   contact: { phone: string | null; email: string | null }
   refundable: string | null
   dateChange: string | null
-  source: 'eticket-pdf' | 'store' | 'manual'
+  /** aahaas-eticket = the issued e-ticket fetched from Aahaas; eticket-pdf = one uploaded here. */
+  source: 'aahaas-eticket' | 'eticket-pdf' | 'store' | 'manual'
   /** Things the desk should check before printing. */
   warnings: string[]
 }

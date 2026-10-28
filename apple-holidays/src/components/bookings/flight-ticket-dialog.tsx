@@ -4,18 +4,21 @@
  * Print flight tickets — A4, double-sided, three tickets a sheet, cut apart.
  *
  * Where the details come from, best first:
- *   1. the issued Aahaas e-ticket PDF (upload) — each passenger beside their
- *      own e-ticket number, the airline PNR, the real times and baggage;
- *   2. the store's flight booking (loaded on open) when no PDF is at hand;
+ *   1. the issued Aahaas e-ticket — fetched from Aahaas on open, or uploaded —
+ *      each passenger beside their own e-ticket number, the airline PNR, the
+ *      real times and baggage; gaps filled from, and checked against, …
+ *   2. the store's flight booking (the GDS record), when no e-ticket is issued;
  *   3. whatever the desk types here — every field can be corrected.
+ *
+ * "Preview" draws the real sheet front beside the form as it is edited.
  *
  * Nothing is saved: the sheets are built from what is on screen when Print is
  * pressed. Printer settings (flip edge, back-side nudge) are remembered in this
  * browser, because they belong to the printer, not the booking.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, FileUp, Loader2, Plus, Printer, Trash2, Ticket } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, CheckCircle2, Download, Eye, EyeOff, FileUp, Loader2, Plus, Printer, RefreshCw, Trash2, Ticket } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { checkTicketData } from '@/lib/flight-ticket/eticket-parse'
 import { readApiResponse, cn } from '@/lib/utils'
@@ -24,6 +27,7 @@ import {
 } from '@/lib/flight-ticket/types'
 
 const OPTIONS_KEY = 'ops.flightTicket.printOptions'
+const PREVIEW_KEY = 'ops.flightTicket.preview'
 const PER_SHEET = 3
 
 const emptySegment = (): TicketSegment => ({
@@ -40,7 +44,8 @@ const emptyData = (orderId: string | null): FlightTicketData => ({
 })
 
 const SOURCE_LABEL: Record<FlightTicketData['source'], string> = {
-  'eticket-pdf': 'From the e-ticket PDF',
+  'aahaas-eticket': 'From the issued e-ticket (fetched from Aahaas)',
+  'eticket-pdf': 'From the uploaded e-ticket PDF',
   store: 'From the Aahaas store booking',
   manual: 'Typed in',
 }
@@ -70,23 +75,28 @@ function Field({ label, value, onChange, placeholder, className, type = 'text', 
 export default function FlightTicketDialog({ bookingRef, open, onClose }: { bookingRef: string; open: boolean; onClose: () => void }) {
   const [data, setData] = useState<FlightTicketData | null>(null)
   const [loading, setLoading] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
+  const [notes, setNotes] = useState<string[]>([])
   const [busy, setBusy] = useState<'upload' | 'pdf' | 'html' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [opts, setOpts] = useState<TicketPrintOptions>(DEFAULT_PRINT_OPTIONS)
+  const [preview, setPreview] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const previewSeq = useRef(0)
 
   const api = `/api/bookings/${encodeURIComponent(bookingRef)}/flight-tickets`
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    setNote(null)
+    setNotes([])
     try {
-      const json = await readApiResponse<{ orderId: number; data: FlightTicketData | null; storeError?: string }>(await fetch(api))
+      const json = await readApiResponse<{ orderId: number; data: FlightTicketData | null; notes?: string[] }>(await fetch(api, { cache: 'no-store' }))
       if (!json.success) throw new Error(json.error || 'Could not load the flight')
       const d = json.data!
       setData(d.data ?? emptyData(String(d.orderId)))
-      if (!d.data) setNote(d.storeError ? `The store could not be read (${d.storeError}). Upload the e-ticket PDF or type the details.` : 'No flight booking was found in the store. Upload the e-ticket PDF or type the details.')
+      const n = d.notes ?? []
+      setNotes(d.data ? n : [...n, 'No issued e-ticket or store flight booking was found. Upload the e-ticket PDF or type the details.'])
     } catch (e) {
       setError((e as Error).message)
       setData(emptyData(null))
@@ -98,6 +108,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
   useEffect(() => {
     if (!open) return
     setOpts(loadOptions())
+    try { setPreview(localStorage.getItem(PREVIEW_KEY) === '1') } catch { /* private window */ }
     load()
   }, [open, load])
 
@@ -115,7 +126,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
       const json = await readApiResponse<{ data: FlightTicketData }>(await fetch(`${api}/eticket`, { method: 'POST', body: form }))
       if (!json.success || !json.data) throw new Error(json.error || 'The e-ticket could not be read')
       setData(json.data.data)
-      setNote(null)
+      setNotes([])
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -159,6 +170,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
     }
   }
 
+  const isEticket = data?.source === 'eticket-pdf' || data?.source === 'aahaas-eticket'
   const patch = (p: Partial<FlightTicketData>) => setData((d) => (d ? { ...d, ...p } : d))
   const setPax = (i: number, p: Partial<TicketPassenger>) => setData((d) => d && ({ ...d, passengers: d.passengers.map((x, j) => (j === i ? { ...x, ...p } : x)) }))
   const setSeg = (i: number, f: (s: TicketSegment) => TicketSegment) => setData((d) => d && ({ ...d, segments: d.segments.map((x, j) => (j === i ? f(x) : x)) }))
@@ -173,6 +185,36 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
 
   // Re-checked on every edit, so what is printed is what was checked.
   const issues = useMemo(() => (data ? checkTicketData({ ...data, passengers: data.passengers.filter((p) => p.name.trim()) }) : []), [data])
+
+  const togglePreview = () => {
+    const next = !preview
+    setPreview(next)
+    try { localStorage.setItem(PREVIEW_KEY, next ? '1' : '0') } catch { /* private window */ }
+  }
+
+  // The real sheet, redrawn a moment after the desk stops typing — the same
+  // renderer as the print, so the preview is what will come out of the printer.
+  useEffect(() => {
+    if (!open || !preview || !data || count.tickets === 0) { setPreviewHtml(null); return }
+    const seq = ++previewSeq.current
+    const t = setTimeout(async () => {
+      setPreviewBusy(true)
+      try {
+        const res = await fetch(api, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data, options: { ...opts, cropMarks: false }, format: 'html' }),
+        })
+        if (!res.ok || seq !== previewSeq.current) return
+        // Front of the first sheet only, fitted to the pane.
+        const html = (await res.text()).replace('</head>', '<style>body{margin:0;background:#e2e8f0;zoom:.56}.sheet~.sheet{display:none}.sheet{margin:3mm auto!important}</style></head>')
+        setPreviewHtml(html)
+      } catch { /* the form still works; the preview is a convenience */ } finally {
+        if (seq === previewSeq.current) setPreviewBusy(false)
+      }
+    }, 700)
+    return () => clearTimeout(t)
+  }, [open, preview, data, opts, api, count.tickets])
 
   return (
     <Modal open={open} onClose={onClose} size="4xl" title="Print flight tickets"
@@ -193,7 +235,7 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
       }
     >
       {loading && !data ? (
-        <div className="flex items-center gap-2 text-sm text-slate-500 py-6"><Loader2 className="w-4 h-4 animate-spin" /> Reading the flight from the Aahaas store…</div>
+        <div className="flex items-center gap-2 text-sm text-slate-500 py-6"><Loader2 className="w-4 h-4 animate-spin" /> Fetching the issued e-ticket and store booking from Aahaas…</div>
       ) : data && (
         <div className="space-y-5 text-sm">
           {/* Source */}
@@ -201,14 +243,22 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
             <div className="flex items-center gap-2">
               <Ticket className="w-4 h-4 text-rose-500" />
               <span className="font-semibold text-slate-800">{SOURCE_LABEL[data.source]}</span>
-              {data.source !== 'eticket-pdf' && <span className="text-xs text-slate-500">— the e-ticket PDF is the most exact source</span>}
+              {!isEticket && <span className="text-xs text-slate-500">— the e-ticket PDF is the most exact source</span>}
             </div>
-            <label className={cn('btn btn-sm cursor-pointer', data.source === 'eticket-pdf' ? 'btn-secondary' : 'btn-primary')}>
+            <div className="flex flex-wrap gap-2">
+            <button onClick={load} disabled={!!busy || loading} className="btn btn-secondary btn-sm" title="Read the issued e-ticket and store booking again — your edits here are replaced">
+              {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Fetch again
+            </button>
+            <button onClick={togglePreview} className={cn('btn btn-sm', preview ? 'btn-primary' : 'btn-secondary')}>
+              {preview ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />} {preview ? 'Hide preview' : 'Preview'}
+            </button>
+            <label className={cn('btn btn-sm cursor-pointer', isEticket ? 'btn-secondary' : 'btn-primary')}>
               {busy === 'upload' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileUp className="w-3.5 h-3.5" />}
-              {data.source === 'eticket-pdf' ? 'Replace e-ticket PDF' : 'Upload e-ticket PDF'}
+              {isEticket ? 'Use another e-ticket PDF' : 'Upload e-ticket PDF'}
               <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={!!busy}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
             </label>
+            </div>
           </div>
 
           {issues.length === 0 && !error && (
@@ -216,10 +266,21 @@ export default function FlightTicketDialog({ bookingRef, open, onClose }: { book
               <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" /> Every detail a ticket needs is present — booking ref, airline PNR, each passenger&apos;s e-ticket number, flight, times and dates.
             </p>
           )}
-          {(note || error || data.warnings.length > 0 || issues.length > 0) && (
+          {preview && (
+            <div className="rounded-xl border border-slate-200 bg-slate-200/60 overflow-hidden">
+              <div className="flex items-center justify-between px-3 py-1.5 text-[11px] text-slate-600 bg-white/70 border-b border-slate-200">
+                <span>Live preview — front of sheet 1, exactly as it prints</span>
+                {previewBusy && <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> updating…</span>}
+              </div>
+              {previewHtml
+                ? <iframe title="Ticket preview" srcDoc={previewHtml} sandbox="" className="w-full h-[440px] bg-slate-200" />
+                : <p className="px-3 py-10 text-center text-xs text-slate-500">{count.tickets ? 'Drawing…' : 'Add a passenger and a flight (from / to codes) to see the ticket.'}</p>}
+            </div>
+          )}
+          {(notes.length > 0 || error || data.warnings.length > 0 || issues.length > 0) && (
             <div className="space-y-1.5">
               {error && <p className="flex gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-red-700"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{error}</p>}
-              {note && <p className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />{note}</p>}
+              {notes.map((n) => <p key={n} className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />{n}</p>)}
               {data.warnings.map((w) => (
                 <p key={w} className="flex gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800 text-xs"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />{w}</p>
               ))}

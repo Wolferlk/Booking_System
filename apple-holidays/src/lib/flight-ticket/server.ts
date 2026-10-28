@@ -54,7 +54,7 @@ export function sanitizeTicketData(input: unknown): FlightTicketData {
     contact: { phone: s(contact.phone, 30), email: s(contact.email, 80) },
     refundable: s(o.refundable, 20),
     dateChange: s(o.dateChange, 20),
-    source: o.source === 'eticket-pdf' || o.source === 'store' ? o.source : 'manual',
+    source: o.source === 'aahaas-eticket' || o.source === 'eticket-pdf' || o.source === 'store' ? o.source : 'manual',
     warnings: [],
   }
 }

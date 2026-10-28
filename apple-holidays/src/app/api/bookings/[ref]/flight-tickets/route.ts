@@ -1,7 +1,8 @@
 /**
  * Printed flight tickets for an Aahaas B2C booking — A4, double-sided, cut to size.
  *
- *   GET   → the ticket data the store holds for this order, to prefill the print dialog
+ *   GET   → the ticket data for this order, to prefill the print dialog: the issued
+ *           e-ticket fetched from Aahaas, gaps filled from the store booking (sources.ts)
  *   POST  { data, options, format: 'pdf' | 'html' } → the sheets, built from what the
  *         desk confirmed in the dialog (see lib/flight-ticket/render.ts)
  *
@@ -13,7 +14,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { loadB2cBookingForOrder } from '@/lib/b2c-order-access'
-import { ticketDataFromStore } from '@/lib/flight-ticket/store-ticket'
+import { loadTicketData } from '@/lib/flight-ticket/sources'
 import { renderTicketSheets } from '@/lib/flight-ticket/render'
 import { sanitizePrintOptions, sanitizeTicketData, ticketAssets } from '@/lib/flight-ticket/server'
 import { launchBrowser, PdfEngineUnavailableError } from '@/lib/html-to-pdf'
@@ -28,14 +29,10 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   if ('error' in gate) return gate.error
   const { booking } = gate
 
-  try {
-    const data = await ticketDataFromStore(booking.orderId)
-    return buildApiSuccess({ orderId: booking.orderId, data })
-  } catch (err) {
-    console.error('[GET /api/bookings/[ref]/flight-tickets]', err)
-    // The dialog still works from an uploaded e-ticket or typed details.
-    return buildApiSuccess({ orderId: booking.orderId, data: null, storeError: (err as Error).message })
-  }
+  // Never fails: the dialog still works from an uploaded e-ticket or typed details.
+  const { data, notes } = await loadTicketData(booking.orderId)
+  if (notes.length) console.warn('[GET /api/bookings/[ref]/flight-tickets]', booking.orderId, notes)
+  return buildApiSuccess({ orderId: booking.orderId, data, notes })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { ref: string } }) {

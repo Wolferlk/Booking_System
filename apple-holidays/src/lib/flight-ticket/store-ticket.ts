@@ -163,6 +163,120 @@ function point(code: string, when: string | null): TicketPoint {
   return { code, airport: null, city: cityForAirport(code), time, date }
 }
 
+/* ── The gateway's own PNR read (`data.fetchPnr`) ─────────────────────────────
+ * Sabre GDS / NDC, Verteil and TravelNext all answer `flights/fetchPNR` in one
+ * shape (n8n-project `flight-desk/pnr-facts.js` reads the same):
+ *   travelers[]      givenName, surname, passengerCode / type
+ *   flights[]        airlineCode, flightNumber, fromAirportCode, departureDate,
+ *                    departureTime, …, cabinTypeName, durationInMinutes, meals[],
+ *                    confirmationId (the airline's own locator)
+ *   flightTickets[]  number, travelerIndex (1-based into travelers)
+ *   fareOffers[]     checked / cabin baggage allowances
+ *   fareRules[]      isRefundable, isChangeable
+ * The generic walker above misses it ("fromAirportCode" is not "from"), which
+ * is why the store booking used to print with no flight at all. */
+
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+
+function pnrDetailOf(response: unknown): Record<string, unknown> | null {
+  const r = obj(response)
+  const cands = [obj(obj(r?.data)?.fetchPnr), obj(r?.fetchPnr), obj(r?.data), r]
+  return cands.find((c) => c && arr(c.flights).some((f) => obj(f)?.fromAirportCode)) ?? null
+}
+
+const hhmm = (v: unknown) => /^([01]?\d|2[0-3]):[0-5]\d/.exec(str(v) ?? '')?.[0].padStart(5, '0') ?? null
+const ymd = (v: unknown) => /^\d{4}-\d{2}-\d{2}/.exec(str(v) ?? '')?.[0] ?? null
+const minutes = (v: unknown) => {
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return null
+  const h = Math.floor(n / 60)
+  const m = Math.round(n % 60)
+  return h ? (m ? `${h}h ${m}m` : `${h}h`) : `${m}m`
+}
+/** "30 kg", "2 pieces", "1 piece · 23 kg" — as the airline stated it, never converted. */
+function allowance(a: unknown): string | null {
+  const o = obj(a)
+  if (!o) return null
+  const kg = Number(o.totalWeightInKilograms) || Number(obj(arr(o.baggagePieces)[0])?.maximumWeightInKilograms) || 0
+  const pcs = Number(o.maximumPieces) || Number(obj(arr(o.baggagePieces)[0])?.numberOfPieces) || 0
+  if (kg && pcs) return `${pcs} piece${pcs > 1 ? 's' : ''} · ${kg} kg`
+  return kg ? `${kg} kg` : pcs ? `${pcs} piece${pcs > 1 ? 's' : ''}` : null
+}
+const typeName = (raw: unknown) => {
+  const t = (str(raw) ?? '').toUpperCase()
+  return /^(ADT|ADULT)/.test(t) ? 'Adult' : /^(CHD|CNN|C\d\d|CHILD)/.test(t) ? 'Child' : /^(INF|INS|INFANT)/.test(t) ? 'Infant' : null
+}
+const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s'-])[a-z]/g, (c) => c.toUpperCase())
+/** Order-insensitive: the GDS stores "SURNAME/GIVEN", the store "Given Surname". */
+const nameKey = (n: string) => n.toLowerCase().replace(/\b(mr|mrs|ms|miss|mstr|master|dr)\b/g, ' ').split(/[^a-z]+/).filter(Boolean).sort().join(' ')
+
+export interface PnrTicketFacts {
+  airlinePnr: string | null
+  ticketed: boolean
+  passengers: TicketPassenger[]
+  segments: TicketSegment[]
+  refundable: string | null
+  dateChange: string | null
+}
+
+/** Ticket facts from a `fetchPnr` reply. Null when the response is not one. Pure. */
+export function ticketFactsFromPnr(response: unknown, requestedPeople: TicketPassenger[] = []): PnrTicketFacts | null {
+  const d = pnrDetailOf(response)
+  if (!d) return null
+  const travelers = arr(d.travelers).map(obj)
+  const tickets = arr(d.flightTickets).map(obj).filter((t) => t && !/void|refund|exchang|cancel/i.test(String(t.ticketStatusName ?? '')))
+  const ticketOf = (i: number) => tickets.map((t) => str(t?.number)?.replace(/[\s-]/g, '')).find((n, k) => n && /^\d{13}$/.test(n) && Number(tickets[k]?.travelerIndex) === i + 1) ?? null
+
+  // The store's spelling of a name (proper case, as the guest typed it) beats the GDS's capitals.
+  const byKey = new Map(requestedPeople.map((p) => [nameKey(p.name), p]))
+  const passengers: TicketPassenger[] = travelers.map((t, i) => {
+    const gds = [str(t?.givenName), str(t?.surname)].filter(Boolean).join(' ')
+    const known = byKey.get(nameKey(gds))
+    return {
+      name: known?.name ?? titleCase(gds),
+      type: typeName(t?.passengerCode ?? t?.type) ?? known?.type ?? null,
+      eticket: ticketOf(i),
+    }
+  }).filter((p) => p.name)
+
+  const offer = obj(arr(d.fareOffers)[0])
+  const checked = allowance(offer?.checkedBaggageAllowance)
+  const cabinBag = allowance(offer?.cabinBaggageAllowance)
+
+  const segments: TicketSegment[] = arr(d.flights).map(obj).filter(Boolean).map((f) => {
+    const carrier = str(f!.airlineCode)?.toUpperCase() ?? null
+    const num = str(f!.flightNumber)
+    const from = airportOf(f!.fromAirportCode) ?? ''
+    const to = airportOf(f!.toAirportCode) ?? ''
+    return {
+      airline: str(f!.airlineName) ?? (carrier ? AIRLINES[carrier] ?? carrier : null),
+      flightNo: num ? (carrier && !num.toUpperCase().startsWith(carrier) ? `${carrier} ${num}` : num.toUpperCase()) : null,
+      cabin: str(f!.cabinTypeName),
+      status: str(f!.flightStatusName),
+      from: { code: from, airport: null, city: cityForAirport(from), time: hhmm(f!.departureTime), date: ymd(f!.departureDate) },
+      to: { code: to, airport: null, city: cityForAirport(to), time: hhmm(f!.arrivalTime), date: ymd(f!.arrivalDate) },
+      duration: minutes(f!.durationInMinutes),
+      checkedBaggage: checked,
+      cabinBaggage: cabinBag,
+      meal: arr(f!.meals).map((m) => str(obj(m)?.description) ?? str(obj(m)?.code)).find(Boolean) ?? null,
+    }
+  }).filter((s) => s.from.code && s.to.code)
+    .sort((a, b) => `${a.from.date ?? ''}${a.from.time ?? ''}`.localeCompare(`${b.from.date ?? ''}${b.from.time ?? ''}`))
+
+  const rules = arr(d.fareRules).map(obj)
+  const yesNo = (k: string, yes: string, no: string) =>
+    rules.some((r) => r?.[k] === false) ? no : rules.length && rules.every((r) => r?.[k] === true) ? yes : null
+
+  return {
+    airlinePnr: arr(d.flights).map((f) => str(obj(f)?.confirmationId)?.toUpperCase()).find((c) => c && /^[A-Z0-9]{5,8}$/.test(c)) ?? null,
+    ticketed: d.isTicketed === true || tickets.length > 0,
+    passengers,
+    segments,
+    refundable: yesNo('isRefundable', 'Yes', 'No'),
+    dateChange: yesNo('isChangeable', 'Permitted', 'Not permitted'),
+  }
+}
+
 /** Null when the store has no flight booking for the order. */
 export async function ticketDataFromStore(orderId: number): Promise<FlightTicketData | null> {
   const rows = await fetchFlightBookings([orderId])
@@ -184,7 +298,7 @@ export function ticketDataFromRow(
     : Object.values(obj(requested.passengers) ?? {}).flatMap((g) => (Array.isArray(g) ? g : []))
   const { all: tickets, byName } = ticketsOf(response)
 
-  const passengers: TicketPassenger[] = people
+  const requestedPeople: TicketPassenger[] = people
     .map((p) => obj(p))
     .filter((p): p is Record<string, unknown> => Boolean(p))
     .map((p) => {
@@ -197,15 +311,19 @@ export function ticketDataFromRow(
     })
     .filter((p) => p.name)
 
-  if (passengers.length === 1 && !passengers[0].eticket && tickets.length === 1) passengers[0].eticket = tickets[0]
-  if (tickets.length > 0 && passengers.some((p) => !p.eticket)) {
+  // The gateway's PNR read pairs every ticket with its traveller — exact, so it wins.
+  const pnr = ticketFactsFromPnr(response, requestedPeople)
+  const passengers = pnr?.passengers.length ? pnr.passengers : requestedPeople
+
+  if (!pnr && passengers.length === 1 && !passengers[0].eticket && tickets.length === 1) passengers[0].eticket = tickets[0]
+  if (!pnr && tickets.length > 0 && passengers.some((p) => !p.eticket)) {
     warnings.push(`E-ticket numbers on file (${tickets.join(', ')}) could not be matched to passengers — upload the e-ticket PDF or type them in.`)
   }
 
   // Confirmed segments from the response; else the itinerary the request carried; else the searched routes.
-  let raw = segmentsOf(response)
-  if (raw.length === 0) raw = segmentsOf(parse(requested.revalidationData) ?? requested)
-  const segments: TicketSegment[] = raw.map((s) => ({
+  let raw = pnr?.segments.length ? [] : segmentsOf(response)
+  if (raw.length === 0 && !pnr?.segments.length) raw = segmentsOf(parse(requested.revalidationData) ?? requested)
+  const segments: TicketSegment[] = pnr?.segments.length ? pnr.segments : raw.map((s) => ({
     airline: s.carrier ? AIRLINES[s.carrier] ?? s.carrier : null,
     flightNo: s.number ? `${s.carrier && !s.number.startsWith(s.carrier) ? `${s.carrier} ` : ''}${s.number}` : null,
     cabin: s.cabin && s.cabin.length > 2 ? s.cabin : s.cabin === 'Y' ? 'Economy' : s.cabin === 'C' || s.cabin === 'J' ? 'Business' : s.cabin === 'F' ? 'First' : null,
@@ -253,8 +371,8 @@ export function ticketDataFromRow(
   return {
     orderId: String(orderId),
     bookingRef: row.pnr?.trim().toUpperCase() || null,
-    airlinePnr: airlineLocator,
-    status: tickets.length ? 'TICKETED' : null,
+    airlinePnr: pnr?.airlinePnr ?? airlineLocator,
+    status: pnr?.ticketed || tickets.length ? 'TICKETED' : null,
     issuedOn: null,
     passengers,
     segments,
@@ -262,8 +380,8 @@ export function ticketDataFromRow(
       phone: str(contact?.formattedPhoneNumber) ?? str(contact?.phoneNumber),
       email: str(contact?.email)?.toLowerCase() ?? null,
     },
-    refundable: null,
-    dateChange: null,
+    refundable: pnr?.refundable ?? null,
+    dateChange: pnr?.dateChange ?? null,
     source: 'store',
     warnings,
   }

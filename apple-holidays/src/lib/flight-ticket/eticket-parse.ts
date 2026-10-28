@@ -33,8 +33,8 @@ export function isoFromLongDate(text: string): string | null {
 }
 
 const DATE_LINE = /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+\d{1,2}\s+[A-Za-z]{3}[a-z]*\s+\d{4}$/
+const DATE_ANYWHERE = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s+\d{1,2}\s+[A-Za-z]{3}[a-z]*\s+\d{4}\b/g
 const TIME_LINE = /^([01]\d|2[0-3]):[0-5]\d$/
-const CODE_LINE = /^[A-Z]{3}(\s+[A-Z]{3})*$/
 const DURATION_LINE = /^(\d+)\s*h(?:\s*(\d+)\s*m)?$|^(\d+)\s*m$/i
 const CABINS = 'Premium Economy|Economy|Business|First'
 // "Srilankan Airlines UL 137 Economy Confirmed" — the carrier code may be letters+digit ("6E", "8D").
@@ -107,11 +107,16 @@ function point(code: string, airportName: string | null, time: string | null, da
 
 function parseSegment(head: RegExpExecArray, body: Line[]): TicketSegment {
   // A side-by-side pair can come out on one line ("CMB IXM").
-  const codes = body.filter((l) => CODE_LINE.test(l.text)).flatMap((l) => l.text.split(' '))
+  // Another PDF text engine can put a code beside its time ("CMB 08:15"), or a
+  // time beside its date — so values are taken from inside lines, not whole lines.
+  const tokens = (l: Line) => l.text.split(' ')
+  const codes = body.filter((l) => tokens(l).every((t) => /^[A-Z]{3}$/.test(t) || TIME_LINE.test(t)))
+    .flatMap((l) => tokens(l).filter((t) => /^[A-Z]{3}$/.test(t)))
   const from = codes[0] ?? ''
   const to = codes.find((c, i) => i > 0 && c !== from) ?? ''
-  const times = body.filter((l) => TIME_LINE.test(l.text)).map((l) => l.text)
-  const dates = body.filter((l) => DATE_LINE.test(l.text)).map((l) => isoFromLongDate(l.text))
+  const times = body.filter((l) => !/@/.test(l.text) && !/kg|piece/i.test(l.text))
+    .flatMap((l) => l.text.match(/\b([01]\d|2[0-3]):[0-5]\d\b/g) ?? [])
+  const dates = body.flatMap((l) => l.text.match(DATE_ANYWHERE) ?? []).map((t) => isoFromLongDate(t))
 
   // The airport's name is the line right after its code, when it is prose.
   const nameAfter = (code: string) => {
@@ -163,8 +168,14 @@ export function parseAahaasEticketText(raw: string): FlightTicketData {
   const segments: TicketSegment[] = []
   let head: RegExpExecArray | null = null
   let body: Line[] = []
-  for (const l of itinerary) {
-    const h = SEGMENT_HEAD.exec(l.text)
+  for (let i = 0; i < itinerary.length; i++) {
+    const l = itinerary[i]
+    // The header can break before the cabin / status ("Srilankan Airlines UL 137" / "Economy Confirmed").
+    let h = SEGMENT_HEAD.exec(l.text)
+    if (!h && /\b[A-Z0-9]{2}\s?\d{1,4}[A-Z]?$/.test(l.text) && itinerary[i + 1]) {
+      h = SEGMENT_HEAD.exec(`${l.text} ${itinerary[i + 1].text}`)
+      if (h) i += 1
+    }
     if (h) {
       if (head) segments.push(parseSegment(head, body))
       head = h
