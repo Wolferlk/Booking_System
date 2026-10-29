@@ -144,9 +144,11 @@ interface Money { currency: string; total: number }
 
 export interface SalesPreviewData {
   window: PreviewWindow & { days: number; custom: boolean; live: boolean; previous: { label: string } }
-  bookings: { available: boolean; total: number; previousTotal: number | null; pax: number; value: Money[]; missing: number }
-  invoices: { available: boolean; newCount: number; amendedCount: number; newValue: Money[] }
-  store: { available: boolean; orders: number; value: Money[] }
+  bookings: { available: boolean; total: number; previousTotal: number | null; pax: number; value: Money[] }
+  store: {
+    available: boolean; orders: number; previousOrders: number | null; lines: number; value: Money[]
+    tests: { checked: boolean; orders: number; value: Money[] }
+  }
   pipeline: {
     available: boolean
     team: { key: string; label: string } | null
@@ -176,13 +178,13 @@ export function salesStats(d: SalesPreviewData): StatTile[] {
   const p = d.pipeline.available
   const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`)
   return [
-    { label: 'Bookings', value: d.bookings.total, sub: `${d.bookings.pax} guests${d.bookings.previousTotal !== null ? ` · ${d.bookings.previousTotal} before` : ''}` },
-    { label: 'Invoiced new', value: d.invoices.newCount, sub: d.invoices.available ? moneyShort(d.invoices.newValue) : 'accounts unavailable' },
+    { label: 'B2C orders', value: d.store.orders, sub: d.store.available ? `${moneyShort(d.store.value)}${d.store.previousOrders !== null ? ` · ${d.store.previousOrders} before` : ''}` : 'store unavailable' },
+    { label: 'Test orders', value: d.store.tests?.orders ?? 0, sub: d.store.tests?.checked === false ? 'register unreadable' : 'excluded from figures' },
+    { label: 'B2C bookings', value: d.bookings.total, sub: `${d.bookings.pax} guests${d.bookings.previousTotal !== null ? ` · ${d.bookings.previousTotal} before` : ''}` },
     { label: 'Quotations', value: p ? c.newQuotes : 0, sub: p ? `${c.amendments} amendments` : 'unavailable' },
     { label: 'Confirmed', value: p ? c.confirmations : 0, sub: p ? `${pct(c.conversion)} of quoted` : 'unavailable' },
     { label: 'Calls', value: p ? c.calls.total : 0, sub: p ? `${pct(c.calls.rate)} answered` : 'unavailable' },
     { label: 'New agencies', value: p ? c.signups.agencies : 0, sub: p ? `${c.signups.desk} onboarded by us` : 'unavailable' },
-    { label: 'B2C orders', value: d.store.orders, sub: d.store.available ? moneyShort(d.store.value) : 'store unavailable' },
     { label: 'AI prompts', value: p ? c.adoption.prompts : 0, sub: p ? `${c.adoption.activeAgencies} agencies` : 'unavailable' },
   ]
 }

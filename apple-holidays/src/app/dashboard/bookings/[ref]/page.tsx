@@ -49,6 +49,7 @@ import {
 import { LOCK_SECTION_LABELS, type LockSection } from '@/lib/data-protection'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
+import B2cOrderPanel from '@/components/bookings/b2c-order-panel'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 import LogoSpinner from '@/components/shared/logo-spinner'
 // Shared with the pre-checking engine, so the badge here and the queue's
@@ -3169,6 +3170,11 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
           </section>
+        )}
+
+        {/* Aahaas B2C: the store's figures in both currencies, channel, guest email, invoice */}
+        {(booking as any).isB2c && !isVnGroundLimited && (
+          <B2cOrderPanel bookingRef={ref} />
         )}
 
         {/* P&L Summary (if available + permitted) */}

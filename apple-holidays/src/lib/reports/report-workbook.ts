@@ -537,7 +537,7 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   if (d.complaints.available) {
     type CRow = { c: Complaint; origin: string }
     const rows: CRow[] = [
-      ...d.complaints.items.map(c => ({ c, origin: 'This period' })),
+      ...(d.complaints.allItems ?? d.complaints.items).map(c => ({ c, origin: 'This period' })),
       ...d.complaints.carriedOpen.map(c => ({ c, origin: 'Carried, still open' })),
     ]
     plan.table<CRow>({

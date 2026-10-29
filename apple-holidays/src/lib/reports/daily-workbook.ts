@@ -615,7 +615,7 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
   })
 
   // ── Complaints & upcoming
-  const complaints = [...d.complaints.items, ...d.complaints.carriedOpen]
+  const complaints = [...(d.complaints.allItems ?? d.complaints.items), ...d.complaints.carriedOpen]
   type CLine = typeof complaints[number]
   plan.table<CLine>({
     name: 'Complaints', tab: P.red,

@@ -163,7 +163,7 @@ export default function SalesReportPage() {
     <div className="min-h-screen bg-slate-50">
       <Header
         title={<span className="inline-flex items-center gap-2"><TrendingUp className="w-5 h-5 text-indigo-600" />Sales Report</span>}
-        subtitle="Bookings, invoices, quotations, calls, signups and the team — any day or any range"
+        subtitle="B2C store orders, B2C bookings, quotations, calls, signups and the team — any day or any range"
         actions={
           <Link
             href="/dashboard/reports/auto"
@@ -261,8 +261,8 @@ export default function SalesReportPage() {
             </button>
           </div>
           <p className="mt-3 text-[11px] text-slate-400">
-            Read-only: bookings from this system, invoices from Accounts, orders from the Aahaas store and quotations,
-            calls and signups from Travel Quote GPT. A range is compared with the same number of days just before it.
+            Read-only, B2C only: orders from the Aahaas store (test orders excluded), B2C bookings from this system, and
+            quotations, calls and signups from Travel Quote GPT. A range is compared with the same number of days just before it.
           </p>
         </div>
 
@@ -434,7 +434,7 @@ export default function SalesReportPage() {
         {loading && !d && (
           <div className="py-24 flex flex-col items-center justify-center text-slate-400 gap-3">
             <Loader2 className="w-7 h-7 animate-spin" />
-            <p className="text-sm">Reading bookings, invoices, the store and Travel Quote GPT…</p>
+            <p className="text-sm">Reading the store, B2C bookings and Travel Quote GPT…</p>
           </div>
         )}
       </div>

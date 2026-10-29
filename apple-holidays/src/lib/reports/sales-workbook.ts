@@ -14,7 +14,6 @@ import { formatReportDate } from './report-window'
 import type { MoneyByCurrency } from './booking-lines'
 import type { SalesReportData } from './sales-report-data'
 import { teamLabel, type AgencyRow, type AmendmentRow, type CallRow, type QuoteRow, type SignupRow, type StaffRow } from './sales-pipeline-data'
-import type { SplitLine } from './activity-split'
 import type { BookingLine } from './booking-lines'
 import { P, Canvas, SheetPlan, newWorkbook, daysBetween, type Col } from '@/lib/excel-kit'
 
@@ -50,8 +49,8 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
     `${d.window.label} · compared with ${d.window.previous.label} · ${scope} · times in ${d.window.timezone}`)
 
   cv.tiles([
-    { label: 'Confirmed bookings', value: d.bookings.total, note: `${d.bookings.pax} guests`, color: P.b2b },
-    { label: 'Invoiced new', value: d.invoices.newCount, note: moneyText(d.invoices.newValue, 2), color: P.green },
+    { label: 'B2C store orders', value: d.store.available ? d.store.orders : '—', note: moneyText(d.store.value, 2), color: P.pink },
+    { label: 'B2C bookings filed', value: d.bookings.total, note: `${d.bookings.pax} guests`, color: P.b2b },
     { label: 'Quotations', value: p ? c.newQuotes : '—', note: p ? `${c.amendments} amendments` : 'unavailable', color: P.indigo },
     { label: 'Confirmed quotes', value: p ? c.confirmations : '—', note: p && c.conversion !== null ? `${Math.round(c.conversion * 100)}% of quoted` : '', color: P.blue },
     { label: 'Calls', value: p ? c.calls.total : '—', note: p && c.calls.rate !== null ? `${Math.round(c.calls.rate * 100)}% answered` : '', color: P.amber },
@@ -62,9 +61,8 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
   cv.header(['Measure', 'Now', 'Before', 'Change', 'Source'])
   const line = (label: string, now: number | null, before: number | null | undefined, source: string) =>
     cv.line([label, now, before ?? null, now !== null && before !== null && before !== undefined ? now - before : null, source], { deltaCols: [4] })
-  line('Confirmed bookings', d.bookings.available ? d.bookings.total : null, d.bookings.previousTotal, 'Booking system')
-  line('Invoiced as new', d.invoices.available ? d.invoices.newCount : null, d.invoices.previousNewCount, 'Accounts')
   line('B2C store orders', d.store.available ? d.store.orders : null, d.store.previousOrders, 'Aahaas store')
+  line('B2C bookings filed', d.bookings.available ? d.bookings.total : null, d.bookings.previousTotal, 'Booking system')
   if (p) {
     line('New quotations', c.newQuotes, pv?.newQuotes, 'Travel Quote GPT')
     line('Amendments', c.amendments, pv?.amendments, 'Travel Quote GPT')
@@ -80,10 +78,8 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
 
   cv.title('Money, by currency', 'Never added across currencies.')
   cv.header(['What', 'Value'])
-  cv.line(['Quoted value of confirmed bookings', moneyText(d.bookings.value)])
-  cv.line(['Invoiced as new business', moneyText(d.invoices.newValue)])
-  cv.line(['Older confirmations re-issued', moneyText(d.invoices.amendedValue)])
-  cv.line(['Aahaas B2C store', moneyText(d.store.value)])
+  cv.line(['Aahaas B2C store sales', moneyText(d.store.value)])
+  cv.line(['Value of B2C bookings filed', moneyText(d.bookings.value)])
   if (p) {
     cv.line(['Quoted on new quotations', moneyText(c.quotedValue)])
     cv.line(['Confirmed quotations', moneyText(c.confirmedValue)])
@@ -106,8 +102,6 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
 function bookingCols(): Col<BookingLine>[] {
   return [
     { header: 'Booking ref', width: 13, value: b => b.bookingRef },
-    { header: 'Channel', width: 9, kind: 'source', value: b => b.source },
-    { header: 'Partner', width: 26, value: b => b.agent ?? '' },
     { header: 'Market', width: 12, value: b => b.countryLabel },
     { header: 'Destination', width: 18, value: b => b.destination ?? '' },
     { header: 'Status', width: 16, value: b => b.status.replace(/_/g, ' ') },
@@ -123,22 +117,6 @@ function bookingCols(): Col<BookingLine>[] {
     { header: 'Quoted total', width: 13, kind: 'money', value: b => b.quotedTotal, total: 'sum' },
     { header: 'Filed at', width: 17, kind: 'stamp', value: b => b.createdAt },
     { header: 'Lead time (days)', width: 11, kind: 'int', value: b => daysBetween(b.createdAt, b.arrivalDate), total: 'avg' },
-  ]
-}
-
-function invoiceCols(): Col<SplitLine>[] {
-  return [
-    { header: 'Booking ref', width: 13, value: l => l.ref },
-    { header: 'Invoice no.', width: 16, value: l => l.invoiceNumber },
-    { header: 'Document', width: 10, value: l => l.type },
-    { header: 'Partner', width: 26, value: l => l.agent },
-    { header: 'Guest', width: 24, value: l => l.guest },
-    { header: 'Currency', width: 9, value: l => l.currency },
-    { header: 'Amount', width: 14, kind: 'money', value: l => l.amount, total: 'sum', bar: P.green },
-    { header: 'Chain opened', width: 12, kind: 'date', value: l => l.firstOn },
-    { header: 'Age (days)', width: 9, kind: 'int', value: l => l.ageDays, total: 'avg' },
-    { header: 'Revisions', width: 9, kind: 'int', value: l => l.revisions },
-    { header: 'Raised at', width: 17, kind: 'stamp', value: l => l.raisedAt },
   ]
 }
 
@@ -266,84 +244,7 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
   const range = d.window.days === 1 ? formatReportDate(d.window.fromDate) : `${formatReportDate(d.window.fromDate)} to ${formatReportDate(d.window.toDate)}`
   const pl = d.pipeline
 
-  // ── Booking system & accounts
-  plan.table<BookingLine>({
-    name: 'Bookings', tab: P.b2b,
-    title: `Confirmed bookings — ${range}`,
-    description: d.bookings.created?.basis === 'apple'
-      ? 'The Apple System confirmations of the window, matched to the booking filed here — the Daily Ops Report\'s own population. Test bookings are excluded.'
-      : 'Bookings filed in this system inside the window (the Apple System ledger was unreadable). Test bookings are excluded.',
-    totals: `${d.bookings.total} bookings · ${d.bookings.pax} guests · ${moneyText(d.bookings.value)}`,
-    what: 'Every confirmed booking with partner, market, dates, pax and value',
-    cols: bookingCols(), rows: d.bookings.lines,
-    rowTint: b => (b.source === 'B2C' ? P.b2cWash : b.hotelOnly ? P.hotelWash : null),
-    empty: d.bookings.available ? 'No confirmed bookings in this window.' : `Unavailable — ${d.bookings.error ?? 'bookings could not be read'}.`,
-  })
-
-  const mc = topCurrencies(d.bookings.markets.map(m => m.quoted))
-  type M = SalesReportData['bookings']['markets'][number]
-  plan.table<M>({
-    name: 'By Market', tab: P.blue,
-    title: 'Confirmed bookings by market',
-    description: 'Country resolved from the booking (legacy SG/MY rows split by reference). Lead time is filed date to arrival.',
-    totals: `${d.bookings.markets.length} markets`,
-    what: 'Bookings, guests, channel, lead time and value per market',
-    cols: [
-      { header: 'Market', width: 18, value: m => m.label },
-      { header: 'Bookings', width: 10, kind: 'int', value: m => m.bookings, total: 'sum', bar: P.blue },
-      { header: 'Share', width: 9, kind: 'pct', value: m => (d.bookings.total ? m.bookings / d.bookings.total : null) },
-      { header: 'Guests', width: 9, kind: 'int', value: m => m.pax, total: 'sum' },
-      { header: 'B2B', width: 7, kind: 'int', value: m => m.b2b, total: 'sum' },
-      { header: 'B2C', width: 7, kind: 'int', value: m => m.b2c, total: 'sum' },
-      { header: 'Avg lead (days)', width: 10, kind: 'num', value: m => m.avgLeadDays },
-      ...mc.map((c): Col<M> => ({ header: `Quoted ${c}`, width: 14, kind: 'money', value: m => amountIn(m.quoted, c), total: 'sum' })),
-    ],
-    rows: d.bookings.markets,
-  })
-
-  const pc = topCurrencies(d.bookings.partners.flatMap(p => [p.quoted, p.invoicedNewValue]))
-  type PR = SalesReportData['bookings']['partners'][number]
-  plan.table<PR>({
-    name: 'By Partner', tab: P.indigo,
-    title: 'Partners — bookings, invoices and movement',
-    description: `Spelling variants of one partner are merged. "Before" is new invoices in ${d.window.previous.label}; a partner with business before and none now is flagged.`,
-    totals: `${d.bookings.partners.length} partners`,
-    what: 'Bookings, guests, invoiced value and movers per partner',
-    cols: [
-      { header: 'Partner', width: 28, value: p => p.agent },
-      { header: 'Bookings', width: 9, kind: 'int', value: p => p.bookings, total: 'sum', bar: P.indigo },
-      { header: 'Share', width: 8, kind: 'pct', value: p => p.share },
-      { header: 'Guests', width: 8, kind: 'int', value: p => p.pax, total: 'sum' },
-      { header: 'Invoiced new', width: 10, kind: 'int', value: p => p.invoicedNew, total: 'sum' },
-      { header: 'Re-issued', width: 9, kind: 'int', value: p => p.amended, total: 'sum' },
-      { header: 'New before', width: 9, kind: 'int', value: p => p.previousNew, total: 'sum' },
-      { header: 'Change', width: 9, kind: 'int', value: p => p.invoicedNew - p.previousNew, tone: p => (p.invoicedNew > p.previousNew ? 'good' : p.invoicedNew < p.previousNew ? 'bad' : null) },
-      ...pc.map((c): Col<PR> => ({ header: `Invoiced ${c}`, width: 14, kind: 'money', value: p => amountIn(p.invoicedNewValue, c), total: 'sum' })),
-      ...pc.map((c): Col<PR> => ({ header: `Quoted ${c}`, width: 14, kind: 'money', value: p => amountIn(p.quoted, c), total: 'sum' })),
-      { header: 'Signal', width: 14, kind: 'flag', value: p => (p.previousNew >= 2 && !p.invoicedNew ? 'Went quiet' : p.invoicedNew && !p.previousNew ? 'New / back' : '') },
-    ],
-    rows: d.bookings.partners,
-  })
-
-  plan.table<SplitLine>({
-    name: 'Invoices New', tab: P.green,
-    title: 'Invoiced as new business',
-    description: 'Accounts ledger, read-only: bookings whose invoice chain opened inside the window and was not cancelled — one line per booking, on its latest document. B2C excluded, as in the accounts mails.',
-    totals: `${d.invoices.newCount} invoices · ${moneyText(d.invoices.newValue)}`,
-    what: 'New invoices with partner, guest and amount',
-    cols: invoiceCols(), rows: d.invoices.newLines,
-    empty: d.invoices.available ? 'No new invoices in this window.' : `Unavailable — ${d.invoices.error}`,
-  })
-  plan.table<SplitLine>({
-    name: 'Invoices Reissued', tab: P.amber,
-    title: 'Older confirmations re-issued',
-    description: 'Bookings opened before the window and re-issued inside it. One line per booking however many revisions were raised.',
-    totals: `${d.invoices.amendedCount} bookings · ${moneyText(d.invoices.amendedValue)}`,
-    what: 'Older bookings amended in the window',
-    cols: invoiceCols(), rows: d.invoices.amendedLines,
-    empty: d.invoices.available ? 'Nothing re-issued in this window.' : `Unavailable — ${d.invoices.error}`,
-  })
-
+  // ── B2C only: the store, then its orders as filed bookings
   type SO = SalesReportData['store']['list'][number]
   plan.table<SO>({
     name: 'B2C Store', tab: P.pink,
@@ -364,6 +265,61 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
     rows: d.store.list,
     empty: d.store.available ? 'No storefront orders in this window.' : d.store.error ?? 'Unavailable.',
   })
+
+  type TO = SalesReportData['store']['tests']['list'][number]
+  plan.table<TO>({
+    name: 'B2C Test Orders', tab: P.muted,
+    title: 'Test orders — excluded from every figure',
+    description: d.store.tests.checked
+      ? 'Store orders in the window marked as tests in the shared test-booking register (AHS-<order id>). Not counted in orders, value or bookings.'
+      : 'The test-booking register could not be read, so test orders could not be separated.',
+    totals: `${d.store.tests.orders} test orders · ${moneyText(d.store.tests.value)}`,
+    what: 'Store orders marked as tests, with who marked them',
+    cols: [
+      { header: 'Order', width: 12, value: o => `AHS-${o.orderId}` },
+      { header: 'Booked', width: 12, kind: 'date', value: o => o.bookedDate },
+      { header: 'Products', width: 44, wrap: true, value: o => o.products },
+      { header: 'Marked by', width: 22, value: o => o.markedBy ?? '' },
+      { header: 'Reason', width: 30, wrap: true, value: o => o.reason ?? '' },
+      { header: 'Marked at', width: 17, kind: 'stamp', value: o => o.markedAt },
+      { header: 'Currency', width: 9, value: o => o.currency },
+      { header: 'Value', width: 13, kind: 'money', value: o => o.value, total: 'sum' },
+    ],
+    rows: d.store.tests.list,
+    empty: d.store.tests.checked ? 'No test orders in this window.' : 'Unavailable — the test-booking register could not be read.',
+  })
+
+  plan.table<BookingLine>({
+    name: 'Bookings', tab: P.b2b,
+    title: `B2C bookings filed — ${range}`,
+    description: 'Aahaas store orders filed as bookings in this system inside the window. Test bookings are excluded. B2B is not in this report.',
+    totals: `${d.bookings.total} bookings · ${d.bookings.pax} guests · ${moneyText(d.bookings.value)}`,
+    what: 'Every B2C booking with market, dates, pax and value',
+    cols: bookingCols(), rows: d.bookings.lines,
+    rowTint: b => (b.hotelOnly ? P.hotelWash : null),
+    empty: d.bookings.available ? 'No B2C bookings filed in this window.' : `Unavailable — ${d.bookings.error ?? 'bookings could not be read'}.`,
+  })
+
+  const mc = topCurrencies(d.bookings.markets.map(m => m.quoted))
+  type M = SalesReportData['bookings']['markets'][number]
+  plan.table<M>({
+    name: 'By Market', tab: P.blue,
+    title: 'B2C bookings by market',
+    description: 'Country resolved from the booking (legacy SG/MY rows split by reference). Lead time is filed date to arrival.',
+    totals: `${d.bookings.markets.length} markets`,
+    what: 'Bookings, guests, lead time and value per market',
+    cols: [
+      { header: 'Market', width: 18, value: m => m.label },
+      { header: 'Bookings', width: 10, kind: 'int', value: m => m.bookings, total: 'sum', bar: P.blue },
+      { header: 'Share', width: 9, kind: 'pct', value: m => (d.bookings.total ? m.bookings / d.bookings.total : null) },
+      { header: 'Guests', width: 9, kind: 'int', value: m => m.pax, total: 'sum' },
+      { header: 'Avg lead (days)', width: 10, kind: 'num', value: m => m.avgLeadDays },
+      ...mc.map((c): Col<M> => ({ header: `Quoted ${c}`, width: 14, kind: 'money', value: m => amountIn(m.quoted, c), total: 'sum' })),
+    ],
+    rows: d.bookings.markets,
+  })
+
+
 
   // ── Travel Quote GPT
   if (pl.available) {
@@ -497,9 +453,8 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
       c.title('Sources')
       c.header(['Section', 'System', 'How it is counted'])
       const rows: [string, string, string][] = [
-        ['Confirmed bookings', 'Booking system', 'Same population as the Daily Ops Report: Apple System confirmations of the window matched to the booking filed here (falls back to bookings filed in the window). Test bookings excluded.'],
-        ['Invoices', 'Accounts (read-only)', 'The invoice ledger split: chains opened in the window (new) vs older chains re-issued in it. B2C excluded.'],
-        ['B2C store', 'Aahaas store (read-only)', 'Orders by booked_date, travel categories 3–6; value = net_total_amount in base_currency.'],
+        ['B2C store', 'Aahaas store (read-only)', 'Orders by booked_date, travel categories 3–6; value = net_total_amount in base_currency. Orders marked in the test-booking register (AHS-<id>) are excluded and listed on "B2C Test Orders".'],
+        ['B2C bookings filed', 'Booking system', 'Bookings with agent "Aahaas B2C" filed in the window. Test bookings excluded. No B2B bookings, partners or invoices are read for this report.'],
         ['Quotations', 'Travel Quote GPT (read-only)', 'One quotation_ref = one quotation, dated by its first version. Owner = first internal author.'],
         ['Amendments', 'Travel Quote GPT', 'Every AMD2+ document issued in the window. The BLR digest counts only amendments of the day\'s own new quotations.'],
         ['Confirmations', 'Travel Quote GPT', 'confirmed_at inside the window, order stamped, not cancelled, not B2C.'],

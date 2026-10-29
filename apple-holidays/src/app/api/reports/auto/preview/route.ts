@@ -207,9 +207,11 @@ export async function GET(req: NextRequest) {
         subject: built.subject,
         data: {
           window: d.window,
-          bookings: { available: d.bookings.available, total: d.bookings.total, previousTotal: d.bookings.previousTotal, pax: d.bookings.pax, value: d.bookings.value, missing: d.bookings.missingRefs.length },
-          invoices: { available: d.invoices.available, newCount: d.invoices.newCount, amendedCount: d.invoices.amendedCount, newValue: d.invoices.newValue },
-          store: { available: d.store.available, orders: d.store.orders, value: d.store.value },
+          bookings: { available: d.bookings.available, total: d.bookings.total, previousTotal: d.bookings.previousTotal, pax: d.bookings.pax, value: d.bookings.value },
+          store: {
+            available: d.store.available, orders: d.store.orders, previousOrders: d.store.previousOrders, lines: d.store.lines, value: d.store.value,
+            tests: { checked: d.store.tests.checked, orders: d.store.tests.orders, value: d.store.tests.value },
+          },
           pipeline: { available: d.pipeline.available, team: d.pipeline.team, counts: d.pipeline.counts, previous: d.pipeline.previous },
           highlights: d.highlights,
           warnings: d.warnings,
@@ -232,7 +234,8 @@ export async function GET(req: NextRequest) {
                 delivery: { ...built.data.insights.delivery, lines: [] },
               }
             : null
-          return { ...built.data, created, insights }
+          const { allItems: _allComplaints, ...complaints } = built.data.complaints
+          return { ...built.data, created, complaints, insights }
         })()
       : built.data
     return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data })
