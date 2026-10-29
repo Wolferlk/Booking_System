@@ -31,7 +31,7 @@ import type {
  * B2C channel marker the list filter keys off.
  */
 export { B2C_AGENT_NAME } from './booking-source'
-import { B2C_AGENT_NAME } from './booking-source'
+import { B2C_AGENT_NAME, isStaffEmail } from './booking-source'
 
 /** `tbl_maincategory.id` for Flights — the one category with no product record. */
 const FLIGHT_CATEGORY_ID = 6
@@ -85,6 +85,13 @@ export interface MappedB2cBooking {
   contactEmail: string | null
   contactPhone: string | null
   contactCountry: string | null
+  /**
+   * The guest's own contact — never the shared desk account's address or phone
+   * and never a staff inbox. Null where the store names no guest contact. This
+   * is what may repair an existing booking or put a guest on automated calls;
+   * `contactEmail` / `contactPhone` above can fall back to the account.
+   */
+  guestContact: { email: string | null; phone: string | null }
   tourDestination: string | null
   leadPassengerName: string | null
   itineraryItems: MappedB2cItineraryItem[]
@@ -437,6 +444,7 @@ export function mapB2cOrder(input: {
           : [customer?.customer_phone, ticketContact?.contactPhone, lead.phone],
       ),
       contactCountry: customer?.customer_nationality?.trim() || null,
+      guestContact: guestContactOf(flights, lead, customer),
       tourDestination: destination ? destination.trim().slice(0, 191) : null,
       leadPassengerName: lead.name,
       itineraryItems,
@@ -468,10 +476,35 @@ export function mapB2cOrder(input: {
   }
 }
 
-/** Our own mailboxes (admin@it.aahaas.com, …) — never the guest's address. */
-export function isStaffEmail(email: string): boolean {
-  return /@([a-z0-9-]+\.)*aahaas\.com$/i.test(email.trim())
+/**
+ * The guest's own email and phone: the lead traveller's, then the latest
+ * flight's ticket contact (where the e-ticket went). The store account's comes
+ * first only when it is a real customer — on the shared desk login it is the
+ * desk's. Never a staff inbox; null rather than a guess.
+ */
+export function guestContactOf(
+  flights: ParsedFlightBooking[],
+  lead: { email?: string | null; phone?: string | null },
+  customer: B2cOrderCustomer | undefined,
+): { email: string | null; phone: string | null } {
+  const ownAccount = !looksLikeAccountName(customer?.customer_name)
+  const ticket = [...flights].reverse().find((f) => f.contactEmail || f.contactPhone)
+  const first = (values: (string | null | undefined)[], ok: (v: string) => boolean) =>
+    values.map((v) => v?.trim()).find((v): v is string => Boolean(v && ok(v))) ?? null
+  return {
+    email: first(
+      [...(ownAccount ? [customer?.customer_email] : []), lead.email, ticket?.contactEmail],
+      (v) => v.includes('@') && !isStaffEmail(v),
+    ),
+    phone: first(
+      [...(ownAccount ? [customer?.customer_phone] : []), lead.phone, ticket?.contactPhone],
+      (v) => v.replace(/\D/g, '').length >= 8,
+    ),
+  }
 }
+
+/** Our own mailboxes — defined in `booking-source.ts` so client code can share it. */
+export { isStaffEmail }
 
 /**
  * First usable contact, in the caller's order of trust. Values `skip` rejects

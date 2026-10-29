@@ -22,6 +22,22 @@ export function isB2cBooking(agent: string | null | undefined): boolean {
   return (agent ?? '').trim() === B2C_AGENT_NAME
 }
 
+/** Our own mailboxes (admin@it.aahaas.com, …) — never the guest's address. */
+export function isStaffEmail(email: string): boolean {
+  return /@([a-z0-9-]+\.)*aahaas\.com$/i.test(email.trim())
+}
+
+/**
+ * The customer email to show for a booking. A B2C booking imported from the
+ * shared desk login can still hold the desk's own inbox; printing that as the
+ * customer's address is wrong, so it is hidden until the guest's is known.
+ */
+export function customerEmailForDisplay(agent: string | null | undefined, email: string | null | undefined): string | null {
+  const v = email?.trim()
+  if (!v) return null
+  return isB2cBooking(agent) && isStaffEmail(v) ? null : v
+}
+
 export function bookingSourceOf(agent: string | null | undefined): BookingSource {
   return isB2cBooking(agent) ? 'B2C' : 'B2B'
 }

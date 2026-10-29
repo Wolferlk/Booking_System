@@ -29,6 +29,8 @@ import { getAutomationUserId } from './as-booking-import'
 import type { B2cSkipReason, MappedB2cBooking } from './b2c-booking-map'
 import { loadOrderTravellers, repairB2cLeadName } from './b2c-lead-name'
 import type { LeadNameRepair } from './b2c-lead-name'
+import { repairB2cGuestContact } from './b2c-guest-contact'
+import { engageB2cGuests } from './b2c-guest-engage'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -102,6 +104,13 @@ export interface B2cImportSummary {
    * the renames that *would* happen.
    */
   leadNamesFixed?: { bookingRef: string; from: string; to: string }[]
+  /**
+   * Already-imported bookings that held the desk's inbox (or no phone) and now
+   * carry the guest's own contact. In a preview, the ones that *would* change.
+   */
+  guestContactsFixed?: { bookingRef: string; changes: string[] }[]
+  /** Bookings put on AI calls + sent the call-permission request this run. */
+  guestsEngaged?: { bookingRef: string; status: string; approval?: string }[]
   /** Non-fatal problems, e.g. the traveller lookup was unavailable. */
   warnings?: string[]
   startedAt: string
@@ -158,7 +167,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     mode, bookedFrom, upcomingFrom,
     candidates: 0, created: [], alreadyImported: [],
     conflicts: [], skipped: [], failed: [],
-    leadNamesFixed: [], warnings: [],
+    leadNamesFixed: [], guestContactsFixed: [], guestsEngaged: [], warnings: [],
     startedAt, finishedAt: startedAt,
   }
 
@@ -200,6 +209,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   )
 
   const automationUserId = await getAutomationUserId()
+  const engageCandidates: { bookingRef: string; guestPhone: string | null; storeStatus: string | null }[] = []
 
   for (const header of headers) {
     const orderId = Number(header.order_id)
@@ -227,6 +237,8 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         else if (isB2cBooking(existing.agent)) {
           summary.alreadyImported.push(result.booking.bookingRef)
           noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, false, automationUserId))
+          await repairContact(summary, result.booking, false, automationUserId)
+          engageCandidates.push(engageCandidate(result.booking))
         }
         else summary.conflicts.push({
           bookingRef: result.booking.bookingRef,
@@ -240,6 +252,10 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       else if (outcome === 'exists') {
         summary.alreadyImported.push(result.booking.bookingRef)
         noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, true, automationUserId))
+        await repairContact(summary, result.booking, true, automationUserId)
+      }
+      if (outcome === 'created' || outcome === 'exists') {
+        engageCandidates.push(engageCandidate(result.booking))
       }
       else {
         summary.conflicts.push({
@@ -252,7 +268,57 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     }
   }
 
+  // After every order is in place, so a failure here can never cost an import.
+  try {
+    const engaged = await engageB2cGuests(engageCandidates, { apply: !dryRun, actor: 'auto (B2C import)' })
+    for (const r of engaged) {
+      if (r.status !== 'skipped') summary.guestsEngaged!.push({ bookingRef: r.bookingRef, status: r.status, approval: r.approval })
+      else if (r.reason?.startsWith('failed')) summary.warnings!.push(`${r.bookingRef}: AI call registration ${r.reason}`)
+    }
+  } catch (err) {
+    summary.warnings!.push(`AI call registration skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   return finish(summary, opts)
+}
+
+function engageCandidate(mapped: MappedB2cBooking) {
+  const status = mapped.source.checkoutStatus
+  return {
+    bookingRef: mapped.bookingRef,
+    guestPhone: mapped.guestContact.phone,
+    storeStatus: typeof status === 'string' ? status : null,
+  }
+}
+
+/**
+ * Give an already-imported booking the guest's own contact where it still holds
+ * the desk's inbox or nothing. Like the lead-name repair, a failure is a warning.
+ */
+async function repairContact(
+  summary: B2cImportSummary,
+  mapped: MappedB2cBooking,
+  apply: boolean,
+  actorId: string,
+): Promise<void> {
+  try {
+    const r = await repairB2cGuestContact({
+      bookingRef: mapped.bookingRef,
+      email: mapped.guestContact.email,
+      phone: mapped.guestContact.phone,
+      source: 'b2c-import',
+      apply,
+      actorId,
+    })
+    if (r.status !== 'unchanged') {
+      summary.guestContactsFixed!.push({
+        bookingRef: r.bookingRef,
+        changes: r.changes.map((c) => `${c.field}: ${c.from ?? '—'} → ${c.to}`),
+      })
+    }
+  } catch (err) {
+    summary.warnings!.push(`${mapped.bookingRef}: guest contact repair failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 /**

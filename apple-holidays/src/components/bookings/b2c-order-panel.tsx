@@ -25,7 +25,7 @@ import type { B2cOrderMoney, Amount } from '@/lib/b2c-order-money'
 import FlightTicketDialog from './flight-ticket-dialog'
 
 interface OrderPayload extends B2cOrderMoney {
-  guest: { email: string | null; phone: string | null; opsEmail: string | null; corrected: boolean }
+  guest: { email: string | null; phone: string | null; opsEmail: string | null; corrected: boolean; repaired?: string[] }
   invoice: { number: string; viewUrl: string; pdfUrl: string; htmlDownloadUrl: string }
 }
 
@@ -79,7 +79,12 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
     setError(null)
     try {
       const json = await readApiResponse<OrderPayload>(await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/b2c-order`))
-      if (json.success && json.data) setData(json.data)
+      if (json.success && json.data) {
+        setData(json.data)
+        // The booking took the guest's contact just now — re-pull it so the
+        // page's contact fields (and a later Save) don't hold the old value.
+        if (json.data.guest.repaired?.length) window.dispatchEvent(new Event('ops-ai:mutated'))
+      }
       else setError(json.error || 'Could not read the order from the Aahaas store')
     } catch (e) {
       setError((e as Error).message)
@@ -199,6 +204,11 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
                     : <p className="text-sm text-slate-400">No guest email on the order</p>}
                   {data.guest.phone && (
                     <a href={`tel:${data.guest.phone}`} className="flex items-center gap-1.5 text-sm text-slate-700 mt-1"><Phone className="w-3.5 h-3.5 shrink-0" />{data.guest.phone}</a>
+                  )}
+                  {!!data.guest.repaired?.length && (
+                    <p className="text-[11px] text-emerald-700 mt-1.5">
+                      Booking updated with the guest&apos;s e-ticket contact — the agenda print, WhatsApp and AI calls now use it.
+                    </p>
                   )}
                   {data.guest.corrected && (
                     <p className="text-[11px] text-amber-700 mt-1.5">

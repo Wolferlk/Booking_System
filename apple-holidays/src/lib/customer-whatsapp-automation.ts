@@ -20,8 +20,10 @@ import {
   isWithin24hWindow,
 } from '@/lib/whatsapp'
 import { sendGuestMessageTemplate, GuestTemplateUnavailableError } from '@/lib/guest-message-template'
-import type { OperationCountry } from '@prisma/client'
+import type { OperationCountry, Prisma } from '@prisma/client'
 import { SETTING_SUPER_PARTNERS, parseSuperPartners, isSuperPartner } from '@/lib/super-partners'
+import { engagedB2cRefs } from '@/lib/b2c-guest-engage'
+import { B2C_AGENT_NAME } from '@/lib/booking-source'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -54,6 +56,21 @@ function dayBounds(dateStr: string): { start: Date; end: Date } {
     start: new Date(`${dateStr}T00:00:00.000Z`),
     end:   new Date(`${dateStr}T23:59:59.999Z`),
   }
+}
+
+/**
+ * Bookings whose guests the automations may message. Aahaas B2C orders are
+ * imported as DRAFT; the ones put on AI calls by `b2c-guest-engage.ts` (guest's
+ * own WhatsApp, not cancelled in the store) count as live too.
+ */
+async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
+  const live: Prisma.BookingWhereInput = { status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] } }
+  const engaged = await engagedB2cRefs().catch((err) => {
+    console.error('[CustomerWhatsApp] B2C guest list unavailable (non-fatal):', err)
+    return [] as string[]
+  })
+  if (engaged.length === 0) return live
+  return { OR: [live, { status: 'DRAFT', agent: B2C_AGENT_NAME, bookingRef: { in: engaged } }] }
 }
 
 async function settingEnabled(key: string): Promise<boolean> {
@@ -437,7 +454,7 @@ export async function runCustomerDailyBriefing(): Promise<AutomationRunResult> {
   // Bookings whose trip covers tomorrow, with a reachable WhatsApp/phone contact
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
+      AND: [await liveBookingWhere()],
       arrivalDate:   { lte: dayEnd },
       departureDate: { gte: dayStart },
       OR: [
@@ -490,7 +507,7 @@ export async function runDueCustomerDailyBriefings(): Promise<AutomationRunResul
   const utcToday = new Date().toISOString().slice(0, 10)
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
+      AND: [await liveBookingWhere()],
       arrivalDate:   { lte: new Date(`${addDays(utcToday, 2)}T23:59:59.999Z`) },
       departureDate: { gte: new Date(`${addDays(utcToday, -1)}T00:00:00.000Z`) },
       OR: [
@@ -625,7 +642,7 @@ export async function runCustomerFeedbackRequest(): Promise<AutomationRunResult>
 
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
+      AND: [await liveBookingWhere()],
       departureDate: { gte: dayStart, lte: dayEnd },
       guestFeedback: null,
       OR: [
