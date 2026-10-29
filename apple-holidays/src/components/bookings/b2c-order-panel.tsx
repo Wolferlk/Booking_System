@@ -23,6 +23,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { readApiResponse, cn } from '@/lib/utils'
 import type { B2cOrderMoney, Amount } from '@/lib/b2c-order-money'
 import FlightTicketDialog from './flight-ticket-dialog'
+import { htmlToPdfDownload } from '@/lib/html-document-pdf'
 
 interface OrderPayload extends B2cOrderMoney {
   guest: { email: string | null; phone: string | null; opsEmail: string | null; corrected: boolean; repaired?: string[] }
@@ -102,8 +103,15 @@ export default function B2cOrderPanel({ bookingRef }: { bookingRef: string }) {
     try {
       const res = await fetch(data.invoice.pdfUrl)
       if (!res.ok || !(res.headers.get('content-type') ?? '').includes('pdf')) {
-        const json = await readApiResponse(res)
-        throw new Error(json.error || `PDF failed (${res.status})`)
+        // No PDF engine on this server (Amplify): draw the same invoice page
+        // into a PDF here in the browser instead of failing.
+        const page = await fetch(data.invoice.viewUrl)
+        if (!page.ok) {
+          const json = await readApiResponse(res)
+          throw new Error(json.error || `PDF failed (${res.status})`)
+        }
+        await htmlToPdfDownload(await page.text(), `${data.invoice.number}.pdf`)
+        return
       }
       const url = URL.createObjectURL(await res.blob())
       const a = document.createElement('a')
