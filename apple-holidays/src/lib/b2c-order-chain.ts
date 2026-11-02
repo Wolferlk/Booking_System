@@ -142,6 +142,32 @@ export async function resolveLiveOrderId(orderId: number): Promise<{ liveOrderId
   }
 }
 
+/**
+ * Amendment orders placed since `sinceDate` ('YYYY-MM-DD'), whatever their
+ * travel date — the importer only reads trips still ahead, so a booking
+ * amended mid-trip is caught here instead. Empty when the columns are missing.
+ */
+export async function fetchRecentAmendmentIds(sinceDate: string, limit = 300): Promise<number[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sinceDate)) return []
+  const lim = Math.max(1, Math.min(Number(limit) || 300, 1000))
+  try {
+    const rows = await b2cQuery<mysql.RowDataPacket & { id: number }>(
+      `SELECT id FROM tbl_checkout_ids
+        WHERE deleted_at IS NULL
+          AND original_order_id IS NOT NULL
+          AND original_order_id <> id
+          AND checkout_date >= ?
+        ORDER BY id ASC
+        LIMIT ${lim}`,
+      [sinceDate],
+    )
+    return rows.map((r) => Number(r.id))
+  } catch (err) {
+    console.warn('[b2c-order-chain] recent amendments unreadable:', err instanceof Error ? err.message : err)
+    return []
+  }
+}
+
 /** Is `amendedAt` on a later office day than `originAt`? Store stamps are local wall-clock time. */
 export function isLaterDay(originAt: string | null, amendedAt: string | null): boolean {
   if (!originAt || !amendedAt) return false
@@ -167,6 +193,15 @@ export interface B2cAmendmentNotice {
   detectedAt: string
   appliedAt?: string | null
   appliedVersion?: number | null
+  /** Applied by the automation (store amendment auto-apply), not a person. */
+  autoApplied?: boolean
+  appliedBy?: string | null
+  /** What the update changed, as the version note lists it. */
+  appliedChanges?: string[]
+  /** Changes left for a person (edited here, so not overwritten). */
+  leftForReview?: string[]
+  autoAttempts?: number
+  lastError?: string | null
   acknowledgedBy?: string | null
   acknowledgedAt?: string | null
 }

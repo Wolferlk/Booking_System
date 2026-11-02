@@ -68,6 +68,16 @@ async function patch(orderId: number, fn: (n: B2cAmendmentNotice) => B2cAmendmen
   return next
 }
 
+/** Merge fields into a notice (auto-apply bookkeeping). */
+export function updateAmendmentNotice(orderId: number, fields: Partial<B2cAmendmentNotice>) {
+  return patch(orderId, (n) => ({ ...n, ...fields }))
+}
+
+export async function getAmendmentNotice(orderId: number): Promise<B2cAmendmentNotice | null> {
+  const row = await prisma.systemSetting.findUnique({ where: { key: B2C_AMENDMENT_PREFIX + orderId } })
+  return parse(row?.value)
+}
+
 export function acknowledgeAmendmentNotice(orderId: number, by: string) {
   return patch(orderId, (n) => (n.acknowledgedAt ? n : { ...n, acknowledgedBy: by, acknowledgedAt: new Date().toISOString() }))
 }

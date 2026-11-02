@@ -49,6 +49,7 @@ import {
 import { LOCK_SECTION_LABELS, type LockSection } from '@/lib/data-protection'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
+import B2cAmendmentAttention from '@/components/bookings/b2c-amendment-attention'
 import B2cOrderPanel from '@/components/bookings/b2c-order-panel'
 import B2cFlowPanel from '@/components/bookings/b2c-flow-panel'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
@@ -1469,6 +1470,10 @@ Wishing you a wonderful trip! ✈️
         {/* Shared Test Bookings register: banner when marked, a small
             "Mark as test" control for the roles that may use it. */}
         <TestBookingBanner bookingRef={ref} />
+
+        {/* Aahaas B2C: the store amended this booking (a new store order) and it
+            was applied here — flagged until somebody has checked it. */}
+        {(booking as any)?.isB2c && <B2cAmendmentAttention bookingRef={ref} onChange={load} />}
 
         {isCancelled && (
           <div data-cancel-banner className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">

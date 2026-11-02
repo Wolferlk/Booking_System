@@ -63,8 +63,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   const isB2c = await isB2cOriginBooking(booking!.id, booking!.agent)
   const state = isB2c ? await getB2cSyncState(booking!.bookingRef) : null
   // Store amendments of this booking not yet applied here (order versions).
+  // Not applied yet, or applied to an OLD booking and not acknowledged — the
+  // booking page flags those ("updated booking — attention please").
   const amendments = isB2c
-    ? (await listAmendmentNotices({ bookingRef: booking!.bookingRef }).catch(() => [])).filter((n) => !n.appliedAt)
+    ? (await listAmendmentNotices({ bookingRef: booking!.bookingRef }).catch(() => []))
+        .filter((n) => !n.appliedAt || (n.isOld && !n.acknowledgedAt))
     : []
   return buildApiSuccess({
     bookingRef: booking!.bookingRef,

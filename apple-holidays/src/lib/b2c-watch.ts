@@ -100,12 +100,14 @@ export async function runB2cWatch(opts: {
     ])
     const newProblems = problems !== lastProblems && (summary.conflicts.length + summary.failed.length) > 0
     lastProblems = problems
-    if (summary.created.length > 0 || newProblems) {
+    const amended = (summary.amendments ?? []).filter((a) => a.action === 'applied' || a.action === 'failed')
+    if (summary.created.length > 0 || newProblems || amended.length > 0) {
       await appendRunLog(summary)
       console.log(
         `[B2cWatch] ${summary.created.length} created, ${summary.conflicts.length} conflicts, ` +
-        `${summary.failed.length} failed` +
-        (summary.created.length ? ` — ${summary.created.join(', ')}` : ''),
+        `${summary.failed.length} failed, ${amended.length} amendment(s)` +
+        (summary.created.length ? ` — ${summary.created.join(', ')}` : '') +
+        (amended.length ? ` — amended: ${amended.map((a) => `${a.bookingRef}←${a.orderId} ${a.action}`).join(', ')}` : ''),
       )
     }
     return { ran: true, summary }

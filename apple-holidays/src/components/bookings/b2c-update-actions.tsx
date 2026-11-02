@@ -76,6 +76,7 @@ interface PendingAmendment {
   amendedAt: string | null
   isOld: boolean
   duplicateRef: string | null
+  appliedAt?: string | null
 }
 
 interface LastUpdate {
@@ -189,7 +190,8 @@ export default function B2cUpdateActions({
   }
 
   if (!canUpdate && !lastUpdate && pending.length === 0) return null
-  const newest = pending[0] ?? null
+  // Applied ones are announced by the attention banner; this pill is for "not applied".
+  const newest = pending.find((n) => !n.appliedAt) ?? null
 
   const pickedCount = preview ? preview.changes.filter((c) => selected.has(c.key)).length : 0
   const accData = preview?.accounts?.status === 'ok' ? preview.accounts.data : null

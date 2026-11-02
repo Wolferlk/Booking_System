@@ -32,7 +32,7 @@ import type { LeadNameRepair } from './b2c-lead-name'
 import { repairB2cGuestContact } from './b2c-guest-contact'
 import { engageB2cGuests } from './b2c-guest-engage'
 import { fetchOrderChainFacts, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
-import { recordAmendmentNotice } from './b2c-amendments'
+import { handleAmendment, sweepRecentAmendments, type AmendmentOutcome } from './b2c-amendment-sweep'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -119,7 +119,7 @@ export interface B2cImportSummary {
    * `imported` = the original was never in ops, so the booking was created
    * under the original's ref from this version.
    */
-  amendments?: { orderId: number; bookingRef: string; version: number; isOld: boolean; action: 'noticed' | 'imported' | 'duplicate' }[]
+  amendments?: { orderId: number; bookingRef: string; version: number; isOld: boolean; action: 'noticed' | 'imported' | 'duplicate' | 'applied' | 'failed'; newVersion?: number | null }[]
   /** Non-fatal problems, e.g. the traveller lookup was unavailable. */
   warnings?: string[]
   startedAt: string
@@ -193,6 +193,15 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   // never imported, imported under the original's ref from this version).
   const chainFacts = await fetchOrderChainFacts(headers.map((h) => Number(h.order_id)))
   const chainRefFor = new Map<number, string>()
+  const handled = new Set<number>()
+  let automationUser: string | null = null
+  const automation = async () => (automationUser ??= await getAutomationUserId())
+  const noteOutcome = (r: AmendmentOutcome) => {
+    if (!r.bookingRef || r.action === 'no-booking' || r.action === 'not-b2c' || r.action === 'already-applied' || r.action === 'gave-up') return
+    const action = r.action === 'applied' || r.action === 'nothing-to-apply' ? 'applied' : r.action === 'failed' ? 'failed' : r.action
+    summary.amendments!.push({ orderId: r.orderId, bookingRef: r.bookingRef, version: r.version, isOld: r.isOld, action, newVersion: r.newVersion ?? null })
+    if (r.action === 'failed') summary.warnings!.push(`Order ${r.orderId} amends booking ${r.bookingRef} but could not be applied automatically: ${r.error}`)
+  }
   if (headers.length > 0) {
     const amendments = headers
       .map((h) => chainFacts.get(Number(h.order_id)))
@@ -219,14 +228,13 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       const isOld = isLaterDay(originFacts.get(f.chainId)?.checkoutDate ?? null, f.checkoutDate)
 
       if (original) {
-        if (!dryRun) {
-          await recordAmendmentNotice({
-            bookingRef: original.bookingRef, orderId: f.id, previousOrderId: f.previousOrderId, version: f.version,
-            amendedAt: f.checkoutDate, originAt: originFacts.get(f.chainId)?.checkoutDate ?? null, isOld,
-            duplicateRef: duplicate?.bookingRef ?? null, detectedAt: new Date().toISOString(),
-          }).catch((err) => summary.warnings!.push(`${f.id}: amendment notice not filed: ${err instanceof Error ? err.message : String(err)}`))
+        // File the notice and apply the new version to the original booking.
+        handled.add(f.id)
+        try {
+          noteOutcome(await handleAmendment(f, { originAt: originFacts.get(f.chainId)?.checkoutDate ?? null, dryRun, automationUserId: await automation() }))
+        } catch (err) {
+          summary.warnings!.push(`${f.id}: amendment not handled: ${err instanceof Error ? err.message : String(err)}`)
         }
-        summary.amendments!.push({ orderId: f.id, bookingRef: original.bookingRef, version: f.version, isOld, action: duplicate ? 'duplicate' : 'noticed' })
         if (duplicate) {
           summary.warnings!.push(`Order ${f.id} amends booking ${original.bookingRef} but was already imported as booking ${duplicate.bookingRef} — check and cancel the duplicate by hand.`)
         }
@@ -253,7 +261,22 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     headers = headers.filter((h) => !presentRefs.has(String(h.order_id)) && !presentRefs.has(chainRefFor.get(Number(h.order_id)) ?? ''))
   }
   summary.candidates = headers.length
-  if (headers.length === 0) return finish(summary, opts)
+  // Amendments of trips already under way — the header read above only sees
+  // upcoming travel. Filed and applied the same way; never costs an import.
+  // Runs on every check, including the usual "nothing new to import" one.
+  async function sweepAmendments() {
+    try {
+      const recent = await sweepRecentAmendments({ days: 3, dryRun, automationUserId: await automation(), skip: handled })
+      recent.forEach(noteOutcome)
+    } catch (err) {
+      summary.warnings!.push(`Recent-amendment sweep skipped: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  if (headers.length === 0) {
+    await sweepAmendments()
+    return finish(summary, opts)
+  }
 
   const orderIds = headers.map((h) => Number(h.order_id))
 
@@ -343,6 +366,8 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       summary.failed.push({ orderId, error: err instanceof Error ? err.message : String(err) })
     }
   }
+
+  await sweepAmendments()
 
   // After every order is in place, so a failure here can never cost an import.
   try {
