@@ -970,6 +970,49 @@ export async function getQuoteTemplate(
   return json.data
 }
 
+/**
+ * The same quote template, plus the response text it was parsed from.
+ *
+ * The Detailed P&L needs the text: JSON.parse reorders integer-like keys, and
+ * the attraction rate maps are matched to the itinerary by the order the API
+ * wrote them in (see detailed-pnl/derive.ts::extractKeyOrder).
+ */
+export async function getQuoteTemplateRaw(
+  quotationNo: string,
+  referenceId: string,
+): Promise<{ data: ASQuoteTemplate; raw: string }> {
+  const res = await asFetch('/api/quotation/template/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quotation_no: quotationNo, reference_id: referenceId }),
+  })
+  if (!res.ok) throw new Error(`AppleSystem quote template fetch failed (${res.status})`)
+  const text = await res.text()
+  const json = JSON.parse(text) as { success?: boolean; data?: ASQuoteTemplate }
+  if (!json.data) throw new Error('AppleSystem quote template returned no data')
+  // extractKeyOrder looks for pnl.budget.attraction.rates from the root, so
+  // hand it the `data` object on its own; re-serialising would lose the order.
+  return { data: json.data, raw: sliceDataObject(text) ?? text }
+}
+
+/** The raw text of the top-level `"data": {...}` value, or null if not found. */
+function sliceDataObject(text: string): string | null {
+  const m = /^\s*\{[\s\S]*?"data"\s*:\s*\{/.exec(text)
+  if (!m) return null
+  const start = m.index + m[0].length - 1
+  let depth = 0, inStr = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inStr) {
+      if (c === '\\') i++
+      else if (c === '"') inStr = false
+    } else if (c === '"') inStr = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return text.slice(start, i + 1)
+  }
+  return null
+}
+
 /** Parse an AppleSystem timestamp node ({date:"YYYY-MM-DD HH:mm:ss…"} | string) → Date | null. */
 export function parseAsDate(node: unknown): Date | null {
   const raw = typeof node === 'string' ? node : (node as { date?: string } | null)?.date
