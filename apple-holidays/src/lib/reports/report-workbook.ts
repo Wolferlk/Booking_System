@@ -110,6 +110,11 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   const plan = new SheetPlan()
   const comparable = !!i?.comparable
   const all = d.created.allBookings
+  // The monthly review is a management read and carries no integrity tabs —
+  // the parity and count-check chase lives in the daily workbook.
+  const monthly = d.window.period === 'MONTHLY'
+  const gv = d.guestVoice
+  const advice = d.advice ?? null
 
   // ── Scorecard ──────────────────────────────────────────────────────────────
   interface Score { measure: string; current: number | null; previous: number | null; note: string; better?: 'up' | 'down'; pct?: boolean }
@@ -118,10 +123,13 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     scores.push({ measure, current: current ?? null, previous: previous ?? null, note, better, pct: isPct })
   if (i) {
     const prev = (v: number | null | undefined) => (comparable ? v ?? null : null)
-    score('Bookings confirmed', i.totals.bookings, prev(i.totals.previousBookings), 'The period\'s intake, counted on the basis named on the Overview.', 'up')
-    score('Guests booked', i.totals.pax, prev(i.totals.previousPax), 'Adults + children + infants across those bookings.', 'up')
-    score('B2B bookings', i.totals.channel.b2b, prev(i.totals.previousChannel.b2b), 'Trade bookings, derived from the agent on the file.', 'up')
-    score('B2C bookings', i.totals.channel.b2c, prev(i.totals.previousChannel.b2c), 'Direct storefront orders.', 'up')
+    score('B2B bookings confirmed', i.totals.bookings, prev(i.totals.previousBookings), 'The period\'s intake, counted on the basis named on the Overview. Test bookings excluded.', 'up')
+    score('Guests booked (B2B)', i.totals.pax, prev(i.totals.previousPax), 'Adults + children + infants across those bookings.', 'up')
+    if (i.b2c.available) {
+      score('B2C store orders', i.b2c.orders, i.b2c.previousOrders, 'Aahaas storefront orders imported into OPS in the period, cancelled ones excluded. Not part of the B2B figure.', 'up')
+      score('Guests booked (B2C)', i.b2c.pax, i.b2c.previousPax, 'Guests on those storefront orders.', 'up')
+    }
+    score('Test bookings excluded', d.testBookings.total, null, 'Marked as tests in the shared register; in no other figure. Listed on "Test Bookings".')
     score('Average party size', i.totals.avgPartySize, i.totals.previousAvgPartySize, 'Guests per booking.')
     score('Average lead time (days)', i.leadTime.avgDays, i.leadTime.previousAvgDays, 'Days between filing the booking and the guest arriving. Falling means the book is being written later.', 'up')
     score('Median lead time (days)', i.leadTime.medianDays, null, 'Half the period\'s bookings were made closer to travel than this.')
@@ -140,8 +148,17 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     score('High-severity complaints open', i.quality.highSeverityOpen, null, 'Serious issues still not closed.', 'down')
     score(`D-${RECONFIRM_DUE_DAYS} compliance (%)`, i.quality.reconfirmCompliancePct === null ? null : i.quality.reconfirmCompliancePct / 100, null, `Live standing as at ${d.onGround.date}: guests inside D-${RECONFIRM_DUE_DAYS} who are not late. ${i.quality.unexplainedBreaches} breaches have no reason recorded.`, 'up', true)
     score('Arrivals ready (%)', i.quality.readinessPct === null ? null : i.quality.readinessPct / 100, null, 'Of the next three days of arrivals, the share with nothing outstanding.', 'up', true)
-    score('AppleSystem confirmations missing', i.integrity.parityMissing, null, 'Confirmed upstream, never received here. Anything above zero means the figures above understate the period.', 'down')
-    score('Count check shortfall', i.integrity.countCheckShort, null, 'Bookings, P&Ls and invoices owed but not present, per the accounts ledger.', 'down')
+    if (!monthly) {
+      score('AppleSystem confirmations missing', i.integrity.parityMissing, null, 'Confirmed upstream, never received here. Anything above zero means the figures above understate the period.', 'down')
+      score('Count check shortfall', i.integrity.countCheckShort, null, 'Bookings, P&Ls and invoices owed but not present, per the accounts ledger.', 'down')
+    }
+    if (gv.calls.available) {
+      const judged = gv.calls.verdicts.good + gv.calls.verdicts.warning + gv.calls.verdicts.bad
+      score('AI calls made', gv.calls.done, null, `Of ${gv.calls.assigned} assigned (${gv.calls.completionRate}%) — pre-tour, on-tour and post-tour.`, 'up')
+      score('AI calls that went well (%)', judged ? gv.calls.verdicts.good / judged : null, null, `${gv.calls.verdicts.good} good · ${gv.calls.verdicts.warning} warning · ${gv.calls.verdicts.bad} bad, as the AI Call Report sorts them.`, 'up', true)
+      score('Post-tour rating (out of 10)', gv.calls.postTour.avgRating, null, gv.calls.postTour.nps !== null ? `NPS ${gv.calls.postTour.nps} from ${gv.calls.postTour.rated} rated calls.` : 'From the post-tour feedback calls.', 'up')
+    }
+    if (gv.forms.available) score('Guest feedback forms', gv.forms.total, null, 'Forms guests submitted during the period.', 'up')
     score('Forward book', d.upcoming.total, null, `${d.upcoming.next30} of them arriving within 30 days.`, 'up')
   }
   const change = (s: Score) => (s.current !== null && s.previous !== null ? s.current - s.previous : null)
@@ -354,6 +371,52 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
       ],
       rows,
       rowTint: x => (x.b ? null : P.redWash),
+    })
+  }
+
+  // ── B2C store orders ───────────────────────────────────────────────────────
+  if (i?.b2c.available) {
+    plan.table({
+      name: 'B2C Orders', tab: P.b2c,
+      title: 'B2C store orders',
+      description: 'Aahaas storefront orders imported into OPS during the period, counted by import date (the store\'s own order date is not kept in OPS). Cancelled orders and test bookings are excluded. AppleSystem never carries these, so they are reported beside the B2B count, never inside it.',
+      totals: `${i.b2c.orders} orders · ${i.b2c.pax} guests · ${i.b2c.cancelled} imported then cancelled · previous period ${i.b2c.previousOrders}`,
+      what: 'Storefront orders imported in the period',
+      cols: bookingCols(),
+      rows: i.b2c.lines,
+      empty: 'No storefront orders were imported in this period.',
+    })
+  }
+
+  // ── Test bookings ──────────────────────────────────────────────────────────
+  if (i) {
+    const tb = d.testBookings
+    plan.table({
+      name: 'Test Bookings', tab: P.amber,
+      title: 'Test bookings — not counted anywhere',
+      description: tb.available
+        ? 'Every booking the period touched that the shared test register marks as a test: AppleSystem confirmations in the window and test files created in OPS. None of them is in any figure on any other sheet, in this period or the one it is compared with. "Not filed" means AppleSystem confirmed it but it never reached OPS.'
+        : 'The test register could not be read while this file was built, so nothing was excluded — any test bookings this period are inside the other sheets.',
+      totals: `${tb.total} test bookings · ${tb.pax} guests · ${tb.b2b} B2B · ${tb.b2c} B2C`,
+      what: 'Bookings marked as tests and left out of every figure',
+      cols: [
+        { header: 'Reference', width: 15, value: t => t.ref },
+        { header: 'Seen as', width: 24, value: t => t.seenAs },
+        { header: 'Channel', width: 9, kind: 'source', value: t => (t.inOps ? t.source : null) },
+        { header: 'Country', width: 16, value: t => t.countryLabel },
+        { header: 'Agent', width: 28, value: t => t.agent ?? '' },
+        { header: 'Status', width: 16, value: t => t.status.replace(/_/g, ' ') },
+        { header: 'Arrival', width: 12, kind: 'date', value: t => t.arrivalDate || null },
+        { header: 'Total pax', width: 9, kind: 'int', value: t => (t.inOps ? t.pax : null), total: 'sum' },
+        { header: 'Currency', width: 9, value: t => t.currency },
+        { header: 'Quoted total', width: 14, kind: 'money', value: t => t.quotedTotal },
+        { header: 'Filed at', width: 17, kind: 'stamp', value: t => t.createdAt || null },
+        { header: 'Marked by', width: 22, value: t => t.markedBy ?? '' },
+        { header: 'Marked at', width: 17, kind: 'stamp', value: t => t.markedAt },
+        { header: 'Reason', width: 50, wrap: true, value: t => t.reason ?? '' },
+      ],
+      rows: tb.lines,
+      empty: tb.available ? 'No test bookings in this period.' : 'Test register unreadable — nothing excluded.',
     })
   }
 
@@ -605,8 +668,154 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     empty: 'Nothing is on the forward book.',
   })
 
+  // ── Guest voice ────────────────────────────────────────────────────────────
+  if (i && (gv.calls.available || gv.forms.available || gv.desk.available)) {
+    const v = gv.calls.verdicts
+    const judged = v.good + v.warning + v.bad
+    plan.canvas({
+      name: 'Guest Voice', tab: P.b2c, width: 10, firstCol: 34,
+      what: 'AI operation calls, feedback forms and desk feedback — how guests said the period went',
+      draw: c => {
+        c.banner('Guest voice', `What guests told us — ${d.window.label.replace(/^Last \w+ — /, '')}`,
+          'AI operation calls (pre-tour reconfirmation, on-tour check-in, post-tour feedback), the guest feedback form and the TE desk. Complaints are on their own tabs and are not repeated here.')
+        c.tiles([
+          { label: 'AI calls made', value: gv.calls.done, note: `of ${gv.calls.assigned} assigned · ${gv.calls.completionRate}%`, color: P.b2c },
+          { label: 'Went well', value: judged ? `${Math.round((v.good / judged) * 100)}%` : '—', note: `${v.good} good · ${v.warning} warn · ${v.bad} bad`, color: P.green },
+          { label: 'Post-tour /10', value: gv.calls.postTour.avgRating ?? '—', note: gv.calls.postTour.nps !== null ? `NPS ${gv.calls.postTour.nps}` : '', color: P.amber },
+          { label: 'Feedback forms', value: gv.forms.total, note: gv.desk.rated ? `desk avg ${gv.desk.avgRating}/5` : '', color: P.blue },
+          { label: 'Calls to look at', value: gv.calls.issueTotals.bad + gv.calls.issueTotals.warning, note: `${gv.calls.issueTotals.bad} bad`, color: P.red },
+        ])
+        if (gv.calls.byPhase.some(p => p.assigned)) {
+          c.title('AI calls by stage', 'Made against assigned, and how the connected ones went. Bars drawn to scale.')
+          c.header(['Stage', 'Assigned', 'Made', 'Made %', 'Good', 'Warning', 'Bad', 'Good %'], [undefined, P.muted, P.b2c, P.b2c, P.green, P.amber, P.red, P.green])
+          const first = c.r
+          for (const p of gv.calls.byPhase) {
+            const j = p.good + p.warning + p.bad
+            c.line([p.label, p.assigned, p.done, p.assigned ? p.done / p.assigned : null, p.good, p.warning, p.bad, j ? p.good / j : null], { pctCols: [4, 8], alarmCols: [7] })
+          }
+          c.bars(3, first, c.r - 1, P.b2c)
+          c.bars(5, first, c.r - 1, P.green)
+          c.gap()
+        }
+        const areas = gv.calls.areaProblems.filter(a => a.bad || a.good)
+        if (areas.length) {
+          c.title('On-tour checks by area', 'What guests said about each part of the product while travelling.')
+          c.header(['Area', 'Good', 'Bad', 'Bad %'], [undefined, P.green, P.red, P.red])
+          const first = c.r
+          for (const a of areas) c.line([a.area, a.good, a.bad, a.good + a.bad ? a.bad / (a.good + a.bad) : null], { alarmCols: [3] })
+          c.bars(3, first, c.r - 1, P.red)
+          c.gap()
+        }
+        const mm = gv.calls.reconfirmMismatches
+        if (mm.dates + mm.flight + mm.pax + mm.contact) {
+          c.title('Pre-tour calls — details that did not match', 'Each one is a file that was wrong before the guest landed.')
+          c.header(['Detail', 'Mismatches'], [undefined, P.red])
+          for (const [k, n] of [['Dates', mm.dates], ['Flights', mm.flight], ['Passengers', mm.pax], ['Contact details', mm.contact]] as [string, number][]) c.line([k, n], { alarmCols: [2] })
+          c.gap()
+        }
+        const formAreas = gv.forms.areas.filter(a => a.rated)
+        if (formAreas.length) {
+          c.title('Feedback forms — score by area', 'Excellent 100 · Good 75 · Average 40 · Poor 0, averaged per area.')
+          c.header(['Area', 'Rated', 'Excellent', 'Good', 'Average', 'Poor', 'Score'], [undefined, P.muted, P.green, P.blue, P.amber, P.red, P.b2c])
+          const first = c.r
+          for (const a of formAreas) c.line([a.area, a.rated, a.excellent, a.good, a.average, a.poor, a.score], { alarmCols: [6] })
+          c.bars(7, first, c.r - 1, P.b2c)
+          c.gap()
+        }
+        if (gv.calls.source === 'api') c.note('The call database could not be read, so AI-call figures came from the capped upstream API and may be low.', P.warnInk)
+      },
+    })
+
+    if (gv.calls.issues.length) {
+      plan.table({
+        name: 'Call Issues', tab: P.red,
+        title: 'AI calls that need a look',
+        description: 'Every call in the period the AI Call Report sorted as bad or warning, plus the alerts calls raised — worst first. "Verdict by" says whether the call service\'s AI judged it, the stored answers did, or an alert was raised.',
+        totals: `${gv.calls.issueTotals.bad} bad · ${gv.calls.issueTotals.warning} warning`,
+        what: 'Every bad or warning AI call, with the reason',
+        cols: [
+          { header: 'Level', width: 10, kind: 'flag', value: x => (x.level === 'bad' ? 'Bad' : 'Warning') },
+          { header: 'Stage', width: 14, value: x => ({ pre_tour: 'Pre-tour', on_tour: 'On-tour', post_tour: 'Post-tour' } as Record<string, string>)[x.phase] ?? x.phase },
+          { header: 'Booking ref', width: 15, value: x => x.bookingRef },
+          { header: 'Call date', width: 12, kind: 'date', value: x => x.date },
+          { header: 'Reason', width: 60, wrap: true, value: x => x.reason },
+          { header: 'Detail', width: 70, wrap: true, value: x => x.detail ?? '' },
+          { header: 'Verdict by', width: 11, value: x => (x.verdictBy === 'ai' ? 'AI' : x.verdictBy === 'alert' ? 'Alert' : 'Rules') },
+          { header: 'Alert status', width: 12, value: x => x.alert?.status ?? '' },
+        ],
+        rows: gv.calls.issues,
+        rowTint: x => (x.level === 'bad' ? P.redWash : null),
+      })
+    }
+
+    if (gv.forms.remarks.length || gv.desk.low.length) {
+      type Remark = { source: string; ref: string; rating: string; text: string; at: string }
+      plan.table<Remark>({
+        name: 'Guest Remarks', tab: P.b2c,
+        title: 'Guest remarks, in their words',
+        description: 'Remarks written on feedback forms (poor and average first) and desk feedback saved with a rating of 2 or less.',
+        what: 'Feedback-form remarks and low desk ratings, verbatim',
+        cols: [
+          { header: 'Source', width: 14, value: r => r.source },
+          { header: 'Booking ref', width: 15, value: r => r.ref },
+          { header: 'Rating', width: 12, kind: 'flag', value: r => r.rating },
+          { header: 'Remark', width: 100, wrap: true, value: r => r.text },
+          { header: 'Date', width: 17, kind: 'stamp', value: r => r.at },
+        ],
+        rows: [
+          ...gv.forms.remarks.map(r => ({ source: 'Feedback form', ref: r.bookingRef, rating: r.overall ? r.overall[0] + r.overall.slice(1).toLowerCase() : '', text: r.remarks, at: r.submittedAt })),
+          ...gv.desk.low.map(r => ({ source: 'Desk', ref: r.bookingRef, rating: r.rating !== null ? `${r.rating}/5` : '', text: r.comment ?? '', at: r.savedAt })),
+        ],
+        rowTint: r => (r.rating === 'Poor' || /^[12]\/5$/.test(r.rating) ? P.redWash : null),
+      })
+    }
+  }
+
+  // ── Outlook (AI) ───────────────────────────────────────────────────────────
+  if (advice) {
+    plan.canvas({
+      name: 'Outlook', tab: P.b2c, width: 8, firstCol: 34,
+      what: 'Two-month booking forecast, complaint fixes and growth ideas — prepared with OpenAI',
+      draw: c => {
+        c.banner('Outlook · prepared with OpenAI', 'Where bookings are heading, what to fix, how to grow', advice.method)
+        if (advice.forecast.length) {
+          c.tiles(advice.forecast.map(f => ({
+            label: `${f.label} expected`,
+            value: f.aiExpected ?? f.baseline,
+            note: `range ${f.low}–${f.high}${f.aiExpected !== null ? ` · statistical ${f.baseline}` : ''}`,
+            color: P.b2c,
+          })))
+          for (const f of advice.forecast) if (f.aiReason) c.callout('watch', `Why ${f.label}`, f.aiReason)
+          c.gap()
+        }
+        if (advice.history.length) {
+          c.title('Booking history and forecast', 'B2B confirmations per month, counted exactly as the headline (tests out). Forecast rows carry the likely range.')
+          c.header(['Month', 'B2B confirmed', 'Low', 'High', 'Type'], [undefined, P.brand, P.muted, P.muted, undefined])
+          const first = c.r
+          for (const h of advice.history) c.line([h.label, h.bookings, null, null, h.bookings === null ? 'No ledger data' : 'Actual'])
+          for (const f of advice.forecast) c.line([f.label, f.aiExpected ?? f.baseline, f.low, f.high, 'Forecast'], { bg: P.blueWash, labelColor: P.b2c })
+          c.bars(2, first, c.r - 1, P.brand)
+          c.gap()
+        }
+        if (advice.complaintFixes.length) {
+          c.title('Fixing what guests complained about', 'Theme and count come from this report; the cause and the fix are OpenAI\'s reading of the complaint texts.')
+          advice.complaintFixes.forEach((f, idx) =>
+            c.callout('critical', `${idx + 1}. ${f.theme} (${f.count})`, `Likely cause: ${f.rootCause}\nFix: ${f.fix}\nOwner: ${f.owner}`))
+          c.gap()
+        }
+        if (advice.growth.length) {
+          c.title('How to grow the business', 'Each idea cites the figure from this report it rests on.')
+          advice.growth.forEach((g, idx) => c.callout('good', `${String(idx + 1).padStart(2, '0')}. ${g.title}`, `${g.detail}\nEvidence: ${g.evidence}`))
+          c.gap()
+        }
+        if (advice.aiNote) c.note(advice.aiNote, P.warnInk)
+        if (advice.model) c.note(`Written by OpenAI (${advice.model}) from this report's figures only. Its estimate is kept only inside the statistical range; complaint counts are ours. A well-briefed second opinion, not a decision.`)
+      },
+    })
+  }
+
   // ── Count check ────────────────────────────────────────────────────────────
-  if (d.countCheck.available) {
+  if (d.countCheck.available && !monthly) {
     const cc = d.countCheck
     plan.canvas({
       name: 'Count Check', tab: P.muted, width: 12, firstCol: 30,
@@ -636,7 +845,7 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   }
 
   // ── Parity ─────────────────────────────────────────────────────────────────
-  if (d.parity.available) {
+  if (d.parity.available && !monthly) {
     const pt = d.parity
     plan.table({
       name: 'AS Parity', tab: P.muted,
@@ -675,7 +884,8 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   }
 
   // ── Overview (written first, so it is the tab the file opens on) ───────────
-  const c = new Canvas(wb, 'Overview', { tab: P.deep })
+  // Wide enough for eight tiles: the first sits in column A, each other takes two.
+  const c = new Canvas(wb, 'Overview', { tab: P.deep, width: 15 })
   c.banner(
     `Apple Holidays · ${PERIOD_LABEL[d.window.period]} business review`,
     `${PERIOD_LABEL[d.window.period]} Business Review — ${d.window.label}`,
@@ -689,13 +899,24 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   }
   if (i) {
     c.tiles([
-      { label: 'Bookings confirmed', value: i.totals.bookings, note: delta(i.totals.bookings, i.totals.previousBookings) || `B2B ${i.totals.channel.b2b} · B2C ${i.totals.channel.b2c}`, color: P.brand },
+      { label: 'B2B confirmed', value: i.totals.bookings, note: delta(i.totals.bookings, i.totals.previousBookings) || `${d.testBookings.total} test excluded`, color: P.brand },
+      { label: 'B2C store orders', value: i.b2c.orders, note: `previous ${i.b2c.previousOrders}`, color: P.b2c },
       { label: 'Guests booked', value: i.totals.pax, note: delta(i.totals.pax, i.totals.previousPax), color: P.b2c },
       { label: 'Tours operated', value: i.delivery.toursOperated, note: `${i.delivery.guestDays.toLocaleString('en-US')} guest-days`, color: P.indigo },
       { label: 'Cancellations', value: i.cancellations.total, note: i.cancellations.ratePct !== null ? `${i.cancellations.ratePct}% of intake` : '', color: P.red },
       { label: 'Complaints', value: i.quality.complaints, note: i.quality.per100Tours !== null ? `${i.quality.per100Tours} per 100 tours` : '', color: P.amber },
       { label: 'Forward book', value: d.upcoming.total, note: `${d.upcoming.next30} within 30 days`, color: P.green },
+      ...(gv.calls.available
+        ? [{ label: 'AI calls went well', value: (() => { const v = gv.calls.verdicts; const j = v.good + v.warning + v.bad; return j ? `${Math.round((v.good / j) * 100)}%` : '—' })(), note: `${gv.calls.verdicts.bad} bad of ${gv.calls.done} made`, color: P.b2c }]
+        : []),
     ])
+
+    if (advice?.forecast.length) {
+      c.title('Next two months — forecast', `B2B confirmations expected. Full reasoning, complaint fixes and growth ideas on "Outlook".`)
+      c.header(['Month', 'Expected', 'Low', 'High', 'Statistical'], [undefined, P.b2c, P.muted, P.muted, P.indigo])
+      for (const f of advice.forecast) c.line([f.label, f.aiExpected ?? f.baseline, f.low, f.high, f.baseline], { bold: true })
+      c.gap()
+    }
 
     if (i.actions.length) {
       c.title('What needs attention', 'The ranked findings from the Actions tab.')
@@ -737,7 +958,7 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
 
   c.title('How to read this file')
   c.callout('watch', 'Counted population', d.created.basis === 'apple'
-    ? `Every figure counts the ${d.created.total} bookings AppleSystem confirmed inside the period — the same population the accounts invoice and P&L mails report. A booking filed here in the period against an earlier confirmation is on "Not Counted".`
+    ? `Every figure counts the ${d.created.total} B2B bookings AppleSystem confirmed inside the period — the same population the accounts invoice and P&L mails report. A booking filed here in the period against an earlier confirmation is on "Not Counted". B2C storefront orders are on their own sheet. ${d.testBookings.total} test booking(s) are excluded everywhere and listed on "Test Bookings".`
     : `The accounts Sync Ledger could not be read, so the period counts the ${d.created.total} bookings this system filed. These figures may not match the accounts mails.`)
   c.callout('watch', 'Comparisons', comparable
     ? `Every "previous" column is ${i!.previousLabel}, counted exactly the same way. Where the previous period could not be counted on the same basis the columns are left blank rather than filled.`

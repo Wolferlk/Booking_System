@@ -45,7 +45,7 @@ import { prisma } from '@/lib/prisma'
 import { groupByAgent, agentKey } from './agent-names'
 import { collectAppleCohort, cohortKey } from './apple-cohort'
 import {
-  BOOKING_SELECT, DEAD_STATUSES, channelSplit, countryWhere, daysBetween,
+  BOOKING_SELECT, DEAD_STATUSES, channelSplit, daysBetween,
   inSelectedCountries, isoDate, labelFor, resolveCountry, rollUpByCountry, sumByCurrency,
   toLine, toNumber,
   type BookingLine, type ChannelSplit, type CountryRow, type MoneyByCurrency,
@@ -54,6 +54,8 @@ import {
   formatReportDate, previousWindow, shiftDate, zonedDayStart, type ReportWindow,
 } from './report-window'
 import type { ComplaintsSection } from './report-data'
+import { reportScope } from './report-scope'
+import { B2C_AGENT_NAME } from '@/lib/booking-source'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -179,6 +181,28 @@ export interface CancellationSection {
   lines: CancellationLine[]
 }
 
+/**
+ * Storefront orders, which the AppleSystem cohort can never contain.
+ *
+ * The cohort is B2B by construction (the ledger's `as` channel), so a review
+ * built on it alone printed "B2C 0" every month however much the store sold.
+ * These are the Aahaas B2C orders imported into OPS during the period, counted
+ * by the date they were imported — the store's own order date is not kept here.
+ * Reported beside the B2B intake, never added into it.
+ */
+export interface B2cSection {
+  available: boolean
+  orders: number
+  pax: number
+  previousOrders: number
+  previousPax: number
+  byCurrency: MoneyByCurrency[]
+  /** Imported in the period and already cancelled — not in `orders`. */
+  cancelled: number
+  byCountry: CountryRow[]
+  lines: BookingLine[]
+}
+
 export interface QualitySection {
   /** Distinct complaints raised in the window (mirrors the complaints section). */
   complaints: number
@@ -262,6 +286,7 @@ export interface PeriodInsights {
   agentConcentrationPct: number | null
 
   leadTime: LeadTime
+  b2c: B2cSection
   delivery: DeliverySection
   cancellations: CancellationSection
   quality: QualitySection
@@ -276,6 +301,8 @@ export interface PeriodInsightOptions {
   counted: BookingLine[]
   basis: 'apple' | 'ops'
   complaints: ComplaintsSection
+  /** Last period's distinct complaints, de-duplicated the same way; null = unknown. */
+  previousComplaints: number | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -373,7 +400,7 @@ async function collectPrevious(
   // fallback population when the ledger cannot be read for either side.
   const filed = async () => {
     const rows = await prisma.booking.findMany({
-      where: { createdAt: { gte: prev.start, lt: prev.end }, ...(countryWhere(countries) ?? {}) },
+      where: { createdAt: { gte: prev.start, lt: prev.end }, ...((await reportScope(countries)) ?? {}) },
       select: BOOKING_SELECT,
     })
     return rows.map(toLine).filter(l => inSelectedCountries(l.country, countries))
@@ -381,14 +408,34 @@ async function collectPrevious(
 
   if (basis !== 'apple') return { lines: await filed(), comparable: true, label }
 
-  const cohort = await collectAppleCohort(prev)
-  if (!cohort.available || !cohort.keys.size) {
+  // Tests out on both sides, or the delta carries last month's test files.
+  const held = await cohortLinesForRange(prev, countries)
+  if (held === null) {
     // The ledger could not answer for the previous window while it answered for
     // this one. Rather than compare a confirmation count with an intake count —
     // which reads as a trend and is not one — the deltas are marked
     // incomparable and the mail says so instead of drawing an arrow.
-    return { lines: cohort.available ? [] : await filed(), comparable: cohort.available, label }
+    return { lines: await filed(), comparable: false, label }
   }
+  return { lines: held, comparable: true, label }
+}
+
+/**
+ * The bookings AppleSystem confirmed in a date range that this system holds,
+ * test bookings excluded and country-scoped — counted exactly the way the
+ * report's headline is. `null` when the ledger could not be read.
+ *
+ * Shared by the previous-period comparison and the monthly history the
+ * forecast is drawn from, so a bar on the history chart and the "prev" figure
+ * beside the headline can never be two different counts of the same month.
+ */
+export async function cohortLinesForRange(
+  range: { fromDate: string; toDate: string },
+  countries: string[],
+): Promise<BookingLine[] | null> {
+  const cohort = await collectAppleCohort(range, { excludeTests: true })
+  if (!cohort.available) return null
+  if (!cohort.keys.size) return []
 
   const refs = Array.from(cohort.keys)
   const rows = await prisma.booking.findMany({
@@ -401,12 +448,7 @@ async function collectPrevious(
     const key = cohortKey(line.bookingRef)
     if (key && cohort.keys.has(key) && !held.has(key)) held.set(key, line)
   }
-
-  return {
-    lines: Array.from(held.values()).filter(l => inSelectedCountries(l.country, countries)),
-    comparable: true,
-    label,
-  }
+  return Array.from(held.values()).filter(l => inSelectedCountries(l.country, countries))
 }
 
 /** "VN41054" as this system usually stores it — "VN 41054". */
@@ -429,6 +471,7 @@ async function collectDelivery(
 
   try {
     const prev = previousWindow(window)
+    const scope = (await reportScope(countries)) ?? {}
     const [rows, previousArrivals] = await Promise.all([
       // Overlap, not containment: a fortnight's tour that straddles the whole
       // week never starts or ends inside it, and a report that only counted
@@ -438,7 +481,7 @@ async function collectDelivery(
           arrivalDate: { lt: window.end },
           departureDate: { gte: window.start },
           status: { notIn: [...DEAD_STATUSES] },
-          ...(countryWhere(countries) ?? {}),
+          ...scope,
         },
         select: BOOKING_SELECT,
       }),
@@ -446,7 +489,7 @@ async function collectDelivery(
         where: {
           arrivalDate: { gte: prev.start, lt: prev.end },
           status: { notIn: [...DEAD_STATUSES] },
-          ...(countryWhere(countries) ?? {}),
+          ...scope,
         },
       }),
     ])
@@ -523,9 +566,10 @@ async function collectCancellations(
 
   try {
     const prev = previousWindow(window)
+    const scope = (await reportScope(countries)) ?? {}
     const [rows, previousTotal] = await Promise.all([
       prisma.booking.findMany({
-        where: { cancelledAt: { gte: window.start, lt: window.end }, ...(countryWhere(countries) ?? {}) },
+        where: { cancelledAt: { gte: window.start, lt: window.end }, ...scope },
         select: {
           ...BOOKING_SELECT,
           cancelledAt: true,
@@ -536,7 +580,7 @@ async function collectCancellations(
         orderBy: { cancelledAt: 'desc' },
       }),
       prisma.booking.count({
-        where: { cancelledAt: { gte: prev.start, lt: prev.end }, ...(countryWhere(countries) ?? {}) },
+        where: { cancelledAt: { gte: prev.start, lt: prev.end }, ...scope },
       }),
     ])
 
@@ -592,17 +636,48 @@ async function collectCancellations(
   }
 }
 
-/** The previous period's complaint count, for the direction of service quality. */
-async function previousComplaintCount(window: ReportWindow): Promise<number | null> {
-  const prev = previousWindow(window)
+// ─── Storefront orders ────────────────────────────────────────────────────────
+
+async function collectB2c(window: ReportWindow, countries: string[]): Promise<B2cSection> {
+  const empty: B2cSection = {
+    available: false, orders: 0, pax: 0, previousOrders: 0, previousPax: 0,
+    byCurrency: [], cancelled: 0, byCountry: [], lines: [],
+  }
+
   try {
-    return await prisma.tbl_te_important_alerts.count({
-      where: { created_at: { gte: prev.start, lt: prev.end } },
-    })
-  } catch {
-    // The TE stack is not deployed everywhere. No number is not zero, and the
-    // mail says "not comparable" rather than inventing an improvement.
-    return null
+    const prev = previousWindow(window)
+    const scope = (await reportScope(countries)) ?? {}
+    const [rows, prevRows] = await Promise.all([
+      prisma.booking.findMany({
+        where: { agent: B2C_AGENT_NAME, createdAt: { gte: window.start, lt: window.end }, ...scope },
+        select: BOOKING_SELECT,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.booking.findMany({
+        where: { agent: B2C_AGENT_NAME, createdAt: { gte: prev.start, lt: prev.end }, ...scope },
+        select: BOOKING_SELECT,
+      }),
+    ])
+
+    const shape = (rs: typeof rows) => rs.map(toLine).filter(l => inSelectedCountries(l.country, countries))
+    const all = shape(rows)
+    const live = all.filter(l => !(DEAD_STATUSES as readonly string[]).includes(l.status))
+    const prevLive = shape(prevRows).filter(l => !(DEAD_STATUSES as readonly string[]).includes(l.status))
+
+    return {
+      available: true,
+      orders: live.length,
+      pax: live.reduce((n, l) => n + l.pax, 0),
+      previousOrders: prevLive.length,
+      previousPax: prevLive.reduce((n, l) => n + l.pax, 0),
+      byCurrency: sumByCurrency(live),
+      cancelled: all.length - live.length,
+      byCountry: rollUpByCountry(live),
+      lines: live,
+    }
+  } catch (err) {
+    console.warn('[Reports] B2C block failed:', err instanceof Error ? err.message : err)
+    return empty
   }
 }
 
@@ -625,8 +700,11 @@ function deriveActions(
 ): PeriodAction[] {
   const out: PeriodAction[] = []
   const periodWord = window.period === 'MONTHLY' ? 'month' : 'week'
+  // The monthly review carries no integrity block; the parity and count-check
+  // chase is the daily mail's job, so it is not a monthly action either.
+  const integrity = window.period !== 'MONTHLY'
 
-  if (i.integrity.parityMissing > 0) {
+  if (integrity && i.integrity.parityMissing > 0) {
     out.push({
       severity: 'critical',
       title: `${i.integrity.parityMissing} AppleSystem confirmation${i.integrity.parityMissing === 1 ? '' : 's'} never reached this system`,
@@ -635,7 +713,7 @@ function deriveActions(
     })
   }
 
-  if (i.integrity.countCheckAvailable && i.integrity.countCheckShort > 0) {
+  if (integrity && i.integrity.countCheckAvailable && i.integrity.countCheckShort > 0) {
     out.push({
       severity: 'critical',
       title: `Count check is short by ${i.integrity.countCheckShort} across the ${periodWord}`,
@@ -727,14 +805,19 @@ function deriveActions(
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export async function collectPeriodInsights(opts: PeriodInsightOptions): Promise<PeriodInsights> {
-  const { window, countries, counted, basis, complaints } = opts
+  const { window, countries, counted, basis, complaints, previousComplaints } = opts
 
-  const [previous, delivery, cancellations, previousComplaints] = await Promise.all([
+  const [previous, delivery, b2c, cancelledRaw] = await Promise.all([
     collectPrevious(window, countries, basis),
     collectDelivery(window, countries),
+    collectB2c(window, countries),
     collectCancellations(window, countries, counted.length),
-    previousComplaintCount(window),
   ])
+  // Cancellations span both channels, so the rate is taken against both: the
+  // B2B confirmations and the storefront orders the period took.
+  const cancellations: CancellationSection = cancelledRaw.available
+    ? { ...cancelledRaw, ratePct: pct(cancelledRaw.total, counted.length + b2c.orders + cancelledRaw.total) }
+    : cancelledRaw
 
   // ---- Trend series ----
   // A week is read day by day; a month day by day would be thirty-one bars
@@ -884,6 +967,7 @@ export async function collectPeriodInsights(opts: PeriodInsightOptions): Promise
       beyond90: leadDays.filter(d => d > 90).length,
       previousAvgDays: previous.comparable ? avg(prevLeadDays) : null,
     },
+    b2c,
     delivery,
     cancellations,
     quality: {

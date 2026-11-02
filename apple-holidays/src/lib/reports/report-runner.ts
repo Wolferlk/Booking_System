@@ -13,6 +13,7 @@ import { collectReportData, todayNewAndUpdated, type ReportData } from './report
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
 import { renderReportWorkbook } from './report-workbook'
+import { baselineForecast, mergeAiForecast, type ComplaintFix, type GrowthIdea, type PeriodAdvice } from './period-outlook'
 import { renderDailyWorkbook } from './daily-workbook'
 import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
 import {
@@ -273,16 +274,35 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY || !i) return null
 
   const periodWord = d.window.period === 'MONTHLY' ? 'month' : 'week'
+
+  // What actually moved the total, by bookings rather than by percentage: a
+  // market going 4 → 1 is "−75%" and three bookings, and a paragraph that blamed
+  // a 60-booking fall on it was quoting the percentage and missing the cause.
+  const net = i.totals.bookings - i.totals.previousBookings
+  const drivers = (rows: typeof i.countryMovers, name: 'market' | 'partner') => rows
+    .filter(m => m.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 4)
+    .map(m => ({
+      [name]: m.label,
+      before: m.previous,
+      now: m.current,
+      changeInBookings: m.delta,
+      shareOfNetChangePct: net !== 0 && Math.sign(m.delta) === Math.sign(net) ? Math.round((m.delta / net) * 100) : null,
+    }))
+
   const facts = {
     period: PERIOD_LABEL[d.window.period],
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     comparedWith: i.comparable ? i.previousLabel : 'not comparable — no baseline on the same basis',
     intake: {
-      confirmed: i.totals.bookings,
-      previousConfirmed: i.comparable ? i.totals.previousBookings : null,
-      guests: i.totals.pax,
-      b2b: i.totals.channel.b2b,
-      b2c: i.totals.channel.b2c,
+      b2bConfirmedInAppleSystem: i.totals.bookings,
+      previousB2bConfirmed: i.comparable ? i.totals.previousBookings : null,
+      netChangeInBookings: i.comparable ? net : null,
+      guestsBooked: i.totals.pax,
+      b2cStoreOrders: i.b2c.available ? i.b2c.orders : null,
+      previousB2cStoreOrders: i.b2c.available ? i.b2c.previousOrders : null,
+      testBookingsExcluded: d.testBookings.total,
       bookingsPerDay: i.runRate.current,
       previousBookingsPerDay: i.runRate.previous,
       busiest: i.busiest ? { when: i.busiest.label, bookings: i.busiest.bookings } : null,
@@ -292,9 +312,12 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
       avgPartySize: i.totals.avgPartySize,
       valueByCurrency: i.totals.byCurrency,
     },
-    markets: i.countryMovers.slice(0, 6).map(m => ({ market: m.label, now: m.current, before: m.previous, changePct: m.pct })),
+    markets: i.countryMovers.slice(0, 6).map(m => ({ market: m.label, now: m.current, before: m.previous })),
+    whatMovedTheTotal: i.comparable
+      ? { markets: drivers(i.countryMovers, 'market'), partners: drivers(i.agentMovers, 'partner') }
+      : null,
     partners: {
-      top: i.agentMovers.filter(a => a.current > 0).slice(0, 5).map(a => ({ partner: a.label, now: a.current, before: a.previous, changePct: a.pct })),
+      top: i.agentMovers.filter(a => a.current > 0).slice(0, 5).map(a => ({ partner: a.label, now: a.current, before: a.previous })),
       newThisPeriod: i.newAgents,
       wentQuiet: i.lapsedAgents,
       topThreeSharePct: i.agentConcentrationPct,
@@ -326,11 +349,21 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
       reconfirmCompliancePct: i.quality.reconfirmCompliancePct,
       unexplainedBreaches: i.quality.unexplainedBreaches,
     },
-    integrity: {
-      appleSystemConfirmationsMissing: i.integrity.parityMissing,
-      countCheckShortfall: i.integrity.countCheckShort,
-      accountsLedgerNeverSwept: i.integrity.unswept,
-    },
+    integrity: d.window.period === 'MONTHLY'
+      ? undefined
+      : {
+          appleSystemConfirmationsMissing: i.integrity.parityMissing,
+          countCheckShortfall: i.integrity.countCheckShort,
+          accountsLedgerNeverSwept: i.integrity.unswept,
+        },
+    guestFeedback: d.guestVoice.calls.available
+      ? {
+          aiCallsGood: d.guestVoice.calls.verdicts.good,
+          aiCallsWarning: d.guestVoice.calls.verdicts.warning,
+          aiCallsBad: d.guestVoice.calls.verdicts.bad,
+          postTourRatingOutOf10: d.guestVoice.calls.postTour.avgRating,
+        }
+      : null,
     forwardBook: { total: d.upcoming.total, next7: d.upcoming.next7, next30: d.upcoming.next30 },
     actionsAlreadyListedInTheReport: i.actions.map(a => a.title),
   }
@@ -345,13 +378,15 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
           role: 'system',
           content: `You write the opening paragraph of a ${periodWord}ly business review for the senior management of a `
             + 'travel operator. Four to five sentences, plain English, no markdown, no bullet points, no greeting, no sign-off. '
-            + `Sentence 1: what the ${periodWord} did on intake and which way it moved against the comparison period — always give both numbers. `
-            + `Sentence 2: where that movement came from — name the market or the partner that drove it, up or down. `
-            + `Sentence 3: what operations actually delivered, and how service quality and attrition read against the volume. `
+            + `Sentence 1: what the ${periodWord} did on B2B intake (AppleSystem confirmations) and which way it moved against the comparison period — always give both numbers; mention B2C store orders separately if there are any. `
+            + `Sentence 2: where that movement came from, using whatMovedTheTotal only — name the one or two markets or partners with the largest changeInBookings in the same direction as the total, and quote them in bookings (for example "Make My Trip fell by 34 bookings"). `
+            + 'Never describe a market or partner by a percentage, and never call something the main driver when its shareOfNetChangePct is under 25 or null. '
+            + `Sentence 3: what operations actually delivered (toursOperated and guestsCarried — these are different from guestsBooked, do not mix them), and how service quality and attrition read against the volume. `
             + `Sentence 4: the single most important thing to fix, taken from the actions already listed in the report — restate it in your own words, never invent a new one. `
             + 'Optionally one more sentence on the forward book. '
             + 'Only use the numbers given. Never invent a figure, a partner, a market or a cause. '
             + 'If a comparison is marked not comparable, say the period cannot be compared rather than describing a trend. '
+            + 'Test bookings are already excluded from every figure; do not mention them. '
             + 'Write for someone deciding where to spend attention, not for someone auditing a spreadsheet.',
         },
         { role: 'user', content: JSON.stringify(facts) },
@@ -363,6 +398,152 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
   } catch (err) {
     console.warn('[Reports] period narrative failed:', err instanceof Error ? err.message : err)
     return null
+  }
+}
+
+/** The model the monthly outlook is written with — once a month, so the better one. */
+const ADVICE_MODEL = 'gpt-4o'
+
+/**
+ * The monthly outlook: a two-month booking forecast, fixes for what guests
+ * complained about, and ways to grow — the closing section of the monthly mail.
+ *
+ * The numbers are not the model's. The forecast baseline and its range come
+ * from `baselineForecast()`; the model may place its estimate inside that range
+ * and say why, and anything outside it is dropped. Complaint themes are picked
+ * from a list whose counts were made here, and the count printed is ours. Growth
+ * ideas must each cite a figure from the report. What the model adds is the
+ * reasoning — which is the part a spreadsheet cannot do.
+ *
+ * No guest names, phone numbers or emails are sent: complaint text goes as the
+ * category, title and a trimmed description only.
+ */
+async function buildPeriodAdvice(d: ReportData, opts: { ai: boolean }): Promise<PeriodAdvice | null> {
+  const i = d.insights
+  if (d.window.period !== 'MONTHLY' || !i) return null
+
+  const { forecast, method } = baselineForecast(d.history)
+  const base: PeriodAdvice = {
+    history: d.history, forecast, method, complaintFixes: [], growth: [], model: null, aiNote: null,
+  }
+  if (!opts.ai) return { ...base, aiNote: 'AI summaries are switched off on this schedule, so only the statistical forecast is shown.' }
+  if (!process.env.OPENAI_API_KEY) return { ...base, aiNote: 'OpenAI is not configured on this server, so only the statistical forecast is shown.' }
+
+  const gv = d.guestVoice
+  const trim = (t: string | null | undefined, n: number) => (t ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
+
+  // Every theme the model may name, with the count it will be printed with.
+  const themes = new Map<string, number>()
+  for (const c of d.complaints.byCategory) themes.set(`Complaint: ${c.category}`, c.total)
+  for (const a of gv.calls.areaProblems) if (a.bad) themes.set(`On-tour call: ${a.area.toLowerCase()} rated bad`, a.bad)
+  for (const a of gv.forms.areas) if (a.poor + a.average) themes.set(`Feedback form: ${a.area.toLowerCase()} average or poor`, a.poor + a.average)
+  const mm = gv.calls.reconfirmMismatches
+  const mismatch = mm.dates + mm.flight + mm.pax + mm.contact
+  if (mismatch) themes.set('Pre-tour call: booking details did not match', mismatch)
+
+  const facts = {
+    month: d.window.fromDate.slice(0, 7),
+    bookingHistory: d.history.map(h => ({ month: h.month, b2bConfirmed: h.bookings })),
+    statisticalForecast: forecast.map(f => ({ month: f.month, baseline: f.baseline, low: f.low, high: f.high })),
+    forwardBookArrivalsByMonth: d.upcoming.byMonth.map(m => ({ month: m.month, tours: m.bookings, guests: m.pax })),
+    thisMonth: {
+      b2bConfirmed: i.totals.bookings,
+      previous: i.comparable ? i.totals.previousBookings : null,
+      b2cStoreOrders: i.b2c.available ? i.b2c.orders : null,
+      previousB2cStoreOrders: i.b2c.available ? i.b2c.previousOrders : null,
+      avgLeadTimeDays: i.leadTime.avgDays,
+      bookedWithin7Days: i.leadTime.within7,
+      avgPartySize: i.totals.avgPartySize,
+      topThreePartnerSharePct: i.agentConcentrationPct,
+      cancellations: i.cancellations.total,
+      cancellationRatePct: i.cancellations.ratePct,
+      topCancellationReasons: i.cancellations.topReasons.slice(0, 4),
+      toursOperated: i.delivery.toursOperated,
+    },
+    markets: i.countryMovers.slice(0, 8).map(m => ({ market: m.label, now: m.current, before: m.previous })),
+    partners: i.agentMovers.slice(0, 10).map(a => ({ partner: a.label, now: a.current, before: a.previous })),
+    partnersWentQuiet: i.lapsedAgents,
+    newPartners: i.newAgents,
+    guestVoice: {
+      aiCalls: gv.calls.available
+        ? {
+            connected: gv.calls.verdicts.calls, good: gv.calls.verdicts.good, warning: gv.calls.verdicts.warning, bad: gv.calls.verdicts.bad,
+            postTourAvgRatingOutOf10: gv.calls.postTour.avgRating, nps: gv.calls.postTour.nps,
+            completionRatePct: gv.calls.completionRate,
+          }
+        : null,
+      feedbackForms: gv.forms.available ? gv.forms.areas.filter(a => a.rated).map(a => ({ area: a.area, rated: a.rated, score: a.score })) : null,
+    },
+    themes: Array.from(themes.entries()).map(([theme, count]) => ({ theme, count })),
+    complaintSamples: d.complaints.allItems.slice(0, 30).map(c => ({
+      category: c.category, severity: c.severity, timesRaised: c.occurrences, title: trim(c.title, 120), details: trim(c.details, 220),
+    })),
+    callIssueSamples: gv.calls.issues.slice(0, 20).map(x => ({ level: x.level, reason: trim(x.reason, 160), detail: trim(x.detail, 200) })),
+    guestRemarks: gv.forms.remarks.slice(0, 15).map(r => ({ overall: r.overall, remarks: trim(r.remarks, 220) })),
+  }
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: ADVICE_MODEL,
+      temperature: 0.3,
+      max_tokens: 1600,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are the commercial and operations analyst for a destination management company (inbound tours in Sri Lanka, '
+            + 'Vietnam, Singapore and Malaysia, sold mostly through B2B travel partners plus a direct B2C store). You write the closing '
+            + '"outlook" of the monthly business review for senior management. Answer with one JSON object and nothing else:\n'
+            + '{"forecast":[{"month":"yyyy-mm","expected":number,"reason":string}],'
+            + '"complaintFixes":[{"theme":string,"rootCause":string,"fix":string,"owner":string}],'
+            + '"growth":[{"title":string,"detail":string,"evidence":string}]}\n'
+            + 'Rules:\n'
+            + '- forecast: one entry per month in statisticalForecast. "expected" MUST be between that month\'s low and high. Move away '
+            + 'from the baseline only for a reason visible in the data (forward-book arrivals, a partner gained or lost, last year\'s season, '
+            + 'lead time) and state it in "reason" in one sentence with the numbers.\n'
+            + '- complaintFixes: 3 to 5 entries, biggest first. "theme" must be copied exactly from the themes list. rootCause: the most '
+            + 'likely cause given the samples. fix: concrete steps the team can start this month (who does what, a check, a supplier '
+            + 'conversation, a script change) — not generic advice. owner: one of Ground Team, Booking Team, Travel Experience, '
+            + 'Reservations, Accounts, Management.\n'
+            + '- growth: 4 to 6 practical ideas to grow bookings or margin next quarter. Each must rest on a figure given here and quote it '
+            + 'in "evidence" (for example "Top 3 partners hold 61% of bookings"). Prefer actions on named partners and markets.\n'
+            + '- Never invent a number, partner, market or complaint. Plain English, short sentences, no markdown.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    }, { timeout: 45_000, maxRetries: 0 })
+
+    await logAiUsage({ callType: 'report_period_advice', model: ADVICE_MODEL, usage: res.usage, source: 'report' })
+
+    const parsed = JSON.parse(res.choices[0]?.message?.content || '{}') as {
+      forecast?: { month?: unknown; expected?: unknown; reason?: unknown }[]
+      complaintFixes?: Partial<Record<keyof ComplaintFix, unknown>>[]
+      growth?: Partial<Record<keyof GrowthIdea, unknown>>[]
+    }
+    const str = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
+
+    const complaintFixes: ComplaintFix[] = (parsed.complaintFixes ?? [])
+      .map(f => ({ theme: str(f.theme, 120), rootCause: str(f.rootCause, 400), fix: str(f.fix, 600), owner: str(f.owner, 40) || 'Management' }))
+      // A theme not on the list has no count behind it — dropped, not printed.
+      .filter(f => themes.has(f.theme) && f.fix)
+      .map(f => ({ ...f, count: themes.get(f.theme) ?? 0 }))
+      .slice(0, 5)
+
+    const growth: GrowthIdea[] = (parsed.growth ?? [])
+      .map(g => ({ title: str(g.title, 120), detail: str(g.detail, 500), evidence: str(g.evidence, 200) }))
+      .filter(g => g.title && g.detail && g.evidence)
+      .slice(0, 6)
+
+    return {
+      ...base,
+      forecast: mergeAiForecast(forecast, parsed.forecast),
+      complaintFixes,
+      growth,
+      model: ADVICE_MODEL,
+    }
+  } catch (err) {
+    console.warn('[Reports] period advice failed:', err instanceof Error ? err.message : err)
+    return { ...base, aiNote: 'The AI outlook could not be written for this send, so only the statistical forecast is shown.' }
   }
 }
 
@@ -664,6 +845,12 @@ async function buildOpsReport(s: BuildShape, opts: BuildOptions): Promise<BuiltR
   const narrative = s.aiSummary
     ? periodic ? await buildPeriodNarrative(data) : await buildNarrative(data)
     : null
+
+  // The monthly outlook rides on the same switch as the narrative: a schedule
+  // that turned AI off gets the statistical forecast only.
+  if (periodic && data.window.period === 'MONTHLY') {
+    data.advice = await buildPeriodAdvice(data, { ai: !!s.aiSummary })
+  }
 
   // Built once, here: the mail lists the sheet names it is promising, so a
   // workbook that could not be written must not be advertised in the footer.
