@@ -108,6 +108,8 @@ export interface MappedB2cBooking {
 export type B2cSkipReason =
   | 'no-travel-products'
   | 'missing-dates'
+  /** Replaced by a newer version of the same booking (see b2c-order-chain). */
+  | 'superseded'
 
 export type MapResult =
   | { ok: true; booking: MappedB2cBooking }

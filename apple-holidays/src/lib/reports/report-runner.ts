@@ -300,8 +300,11 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
       previousB2bConfirmed: i.comparable ? i.totals.previousBookings : null,
       netChangeInBookings: i.comparable ? net : null,
       guestsBooked: i.totals.pax,
-      b2cStoreOrders: i.b2c.available ? i.b2c.orders : null,
-      previousB2cStoreOrders: i.b2c.available ? i.b2c.previousOrders : null,
+      b2cStoreOrders: i.storeMix.available ? i.storeMix.b2c : null,
+      previousB2cStoreOrders: i.storeMix.available ? i.storeMix.previousB2c : null,
+      storeOrdersByBoard: i.storeMix.available
+        ? { b2bPackages: i.storeMix.b2bPackages, b2bFlights: i.storeMix.b2bFlights, b2c: i.storeMix.b2c, all: i.storeMix.all }
+        : null,
       testBookingsExcluded: d.testBookings.total,
       bookingsPerDay: i.runRate.current,
       previousBookingsPerDay: i.runRate.previous,
@@ -449,8 +452,11 @@ async function buildPeriodAdvice(d: ReportData, opts: { ai: boolean }): Promise<
     thisMonth: {
       b2bConfirmed: i.totals.bookings,
       previous: i.comparable ? i.totals.previousBookings : null,
-      b2cStoreOrders: i.b2c.available ? i.b2c.orders : null,
-      previousB2cStoreOrders: i.b2c.available ? i.b2c.previousOrders : null,
+      b2cStoreOrders: i.storeMix.available ? i.storeMix.b2c : null,
+      previousB2cStoreOrders: i.storeMix.available ? i.storeMix.previousB2c : null,
+      storeOrdersByBoard: i.storeMix.available
+        ? { b2bPackages: i.storeMix.b2bPackages, b2bFlights: i.storeMix.b2bFlights, b2c: i.storeMix.b2c, all: i.storeMix.all }
+        : null,
       avgLeadTimeDays: i.leadTime.avgDays,
       bookedWithin7Days: i.leadTime.within7,
       avgPartySize: i.totals.avgPartySize,

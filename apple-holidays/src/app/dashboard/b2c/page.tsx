@@ -20,6 +20,8 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { CountryFlag } from '@/components/ui/country-flag'
+import B2cAmendmentsPanel from '@/components/bookings/b2c-amendments-panel'
+import StoreOrderMixCard from '@/components/b2c/store-order-mix-card'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -280,6 +282,12 @@ export default function B2cControlCentre() {
       <Header title="B2C — Aahaas" subtitle="Storefront orders flowing into operations" />
 
       <div className="space-y-5 p-4 sm:p-6">
+        {/* ── Store amendments: old bookings re-opened as a new order ────── */}
+        <B2cAmendmentsPanel />
+
+        {/* ── Store order mix: the month on the AahaasFlow boards ───────── */}
+        <StoreOrderMixCard />
+
         {/* ── Hero: connection + schedule ───────────────────────────────── */}
         <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-fuchsia-50 via-white to-violet-50 p-5 shadow-sm">
           <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-fuchsia-400/10 blur-3xl" />

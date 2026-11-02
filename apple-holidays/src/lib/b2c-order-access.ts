@@ -12,11 +12,15 @@ import { looksLikeAccountName } from './b2c-confirmed-lead'
 import { isStaffEmail } from './b2c-booking-map'
 import type { B2cOrderMoney } from './b2c-order-money'
 import type { B2cInvoiceParties } from './b2c-invoice-html'
+import { resolveLiveOrderId } from './b2c-order-chain'
 
 export interface B2cBookingForOrder {
   id: string
   bookingRef: string
+  /** The store order the booking reads from now — the chain's live version. */
   orderId: number
+  /** The order the booking was filed under (its chain's original). */
+  baseOrderId: number
   contactEmail: string | null
   contactPhone: string | null
   leadName: string | null
@@ -47,16 +51,19 @@ export async function loadB2cBookingForOrder(
     return { error: buildApiError('This is not an Aahaas B2C booking.', 404) }
   }
 
-  const orderId = Number(/^\d+$/.test(booking.bookingRef) ? booking.bookingRef : booking.isNumber)
-  if (!Number.isInteger(orderId) || orderId <= 0) {
+  const baseOrderId = Number(/^\d+$/.test(booking.bookingRef) ? booking.bookingRef : booking.isNumber)
+  if (!Number.isInteger(baseOrderId) || baseOrderId <= 0) {
     return { error: buildApiError(`Cannot tell which store order ${booking.bookingRef} came from.`, 422) }
   }
+  // An amended booking reads its current version (order versions — b2c-order-chain).
+  const { liveOrderId: orderId } = await resolveLiveOrderId(baseOrderId)
 
   return {
     booking: {
       id: booking.id,
       bookingRef: booking.bookingRef,
       orderId,
+      baseOrderId,
       contactEmail: booking.contactEmail,
       contactPhone: booking.contactPhone,
       leadName: booking.passengers[0]?.name ?? null,

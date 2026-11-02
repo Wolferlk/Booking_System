@@ -56,6 +56,7 @@ import {
 import type { ComplaintsSection } from './report-data'
 import { reportScope } from './report-scope'
 import { B2C_AGENT_NAME } from '@/lib/booking-source'
+import { collectStoreOrderMix, type StoreOrderMix } from './store-order-mix'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -287,6 +288,12 @@ export interface PeriodInsights {
 
   leadTime: LeadTime
   b2c: B2cSection
+  /**
+   * Every Aahaas store order booked in the period, on the AahaasFlow boards
+   * (B2B Packages · B2B Flights · B2C). The true store-side figure; `b2c` above
+   * is only what OPS imported, whoever placed it. All markets — not country-scoped.
+   */
+  storeMix: StoreOrderMix
   delivery: DeliverySection
   cancellations: CancellationSection
   quality: QualitySection
@@ -807,11 +814,12 @@ function deriveActions(
 export async function collectPeriodInsights(opts: PeriodInsightOptions): Promise<PeriodInsights> {
   const { window, countries, counted, basis, complaints, previousComplaints } = opts
 
-  const [previous, delivery, b2c, cancelledRaw] = await Promise.all([
+  const [previous, delivery, b2c, cancelledRaw, storeMix] = await Promise.all([
     collectPrevious(window, countries, basis),
     collectDelivery(window, countries),
     collectB2c(window, countries),
     collectCancellations(window, countries, counted.length),
+    collectStoreOrderMix({ fromDate: window.fromDate, toDate: window.toDate, previous: previousWindow(window) }),
   ])
   // Cancellations span both channels, so the rate is taken against both: the
   // B2B confirmations and the storefront orders the period took.
@@ -968,6 +976,7 @@ export async function collectPeriodInsights(opts: PeriodInsightOptions): Promise
       previousAvgDays: previous.comparable ? avg(prevLeadDays) : null,
     },
     b2c,
+    storeMix,
     delivery,
     cancellations,
     quality: {

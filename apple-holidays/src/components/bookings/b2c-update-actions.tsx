@@ -68,6 +68,16 @@ interface SyncResult {
   accounts?: AccountsCall<AccountsPreview>
 }
 
+/** A store amendment of this booking not applied yet (see b2c-amendments). */
+interface PendingAmendment {
+  orderId: number
+  previousOrderId: number | null
+  version: number
+  amendedAt: string | null
+  isOld: boolean
+  duplicateRef: string | null
+}
+
 interface LastUpdate {
   at: string
   by: string
@@ -93,14 +103,18 @@ export default function B2cUpdateActions({
   const [selected, setSelected] = useState<Set<ChangeKey>>(new Set())
   const [showItin, setShowItin] = useState(false)
   const [lastUpdate, setLastUpdate] = useState<LastUpdate | null>(null)
+  const [pending, setPending] = useState<PendingAmendment[]>([])
   const [accPnl, setAccPnl] = useState(false)
   const [accInvoice, setAccInvoice] = useState(false)
 
   const loadStatus = useCallback(async () => {
     try {
       const res = await fetch(`/api/bookings/${bookingRef}/b2c-sync`)
-      const json = await readApiResponse<{ lastUpdate: LastUpdate | null }>(res)
-      if (json.success) setLastUpdate(json.data?.lastUpdate ?? null)
+      const json = await readApiResponse<{ lastUpdate: LastUpdate | null; amendments?: PendingAmendment[] }>(res)
+      if (json.success) {
+        setLastUpdate(json.data?.lastUpdate ?? null)
+        setPending(json.data?.amendments ?? [])
+      }
     } catch {
       /* the pill is informational */
     }
@@ -174,7 +188,8 @@ export default function B2cUpdateActions({
     })
   }
 
-  if (!canUpdate && !lastUpdate) return null
+  if (!canUpdate && !lastUpdate && pending.length === 0) return null
+  const newest = pending[0] ?? null
 
   const pickedCount = preview ? preview.changes.filter((c) => selected.has(c.key)).length : 0
   const accData = preview?.accounts?.status === 'ok' ? preview.accounts.data : null
@@ -191,6 +206,24 @@ export default function B2cUpdateActions({
           title="Check the Aahaas store order for changes and update this booking as a new version"
         >
           <Store className="w-3.5 h-3.5" /> Update Booking
+        </button>
+      )}
+
+      {newest && (
+        <button
+          type="button"
+          onClick={canUpdate ? runPreview : undefined}
+          className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold ${
+            newest.isOld ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-violet-200 bg-violet-50 text-violet-700'
+          }`}
+          title={`The Aahaas store amended this booking: order ${newest.orderId} (version ${newest.version}) replaces order ${newest.previousOrderId ?? '—'}${
+            newest.amendedAt ? ` on ${newest.amendedAt.slice(0, 16)}` : ''
+          }.${newest.isOld ? ' The booking was sold on an earlier day — check drivers, tickets and suppliers.' : ''}${
+            newest.duplicateRef ? ` It was also imported as booking ${newest.duplicateRef} — cancel that duplicate.` : ''
+          } Press Update Booking to apply it here as a new version.`}
+        >
+          <AlertTriangle className="w-3 h-3" />
+          Amended in store → order {newest.orderId} (v{newest.version}){newest.isOld ? ' · old booking' : ''} — not applied
         </button>
       )}
 

@@ -31,6 +31,8 @@ import { loadOrderTravellers, repairB2cLeadName } from './b2c-lead-name'
 import type { LeadNameRepair } from './b2c-lead-name'
 import { repairB2cGuestContact } from './b2c-guest-contact'
 import { engageB2cGuests } from './b2c-guest-engage'
+import { fetchOrderChainFacts, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
+import { recordAmendmentNotice } from './b2c-amendments'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -111,6 +113,13 @@ export interface B2cImportSummary {
   guestContactsFixed?: { bookingRef: string; changes: string[] }[]
   /** Bookings put on AI calls + sent the call-permission request this run. */
   guestsEngaged?: { bookingRef: string; status: string; approval?: string }[]
+  /**
+   * Store orders that are a NEW VERSION of a booking (b2c-order-chain). Never a
+   * second booking: filed as a notice on the original, applied by Update Booking.
+   * `imported` = the original was never in ops, so the booking was created
+   * under the original's ref from this version.
+   */
+  amendments?: { orderId: number; bookingRef: string; version: number; isOld: boolean; action: 'noticed' | 'imported' | 'duplicate' }[]
   /** Non-fatal problems, e.g. the traveller lookup was unavailable. */
   warnings?: string[]
   startedAt: string
@@ -167,7 +176,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     mode, bookedFrom, upcomingFrom,
     candidates: 0, created: [], alreadyImported: [],
     conflicts: [], skipped: [], failed: [],
-    leadNamesFixed: [], guestContactsFixed: [], guestsEngaged: [], warnings: [],
+    leadNamesFixed: [], guestContactsFixed: [], guestsEngaged: [], amendments: [], warnings: [],
     startedAt, finishedAt: startedAt,
   }
 
@@ -177,13 +186,71 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   }
 
   let headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
+
+  // ── Order versions: one booking per chain, filed under the ORIGINAL id ─────
+  // A superseded order is never imported fresh; an amendment never becomes a
+  // second booking — it is noticed on the original (or, when the original was
+  // never imported, imported under the original's ref from this version).
+  const chainFacts = await fetchOrderChainFacts(headers.map((h) => Number(h.order_id)))
+  const chainRefFor = new Map<number, string>()
+  if (headers.length > 0) {
+    const amendments = headers
+      .map((h) => chainFacts.get(Number(h.order_id)))
+      .filter((f): f is B2cOrderFact => !!f && f.isAmendment && f.supersededBy === null)
+    const originFacts = await fetchOrderChainFacts(amendments.map((f) => f.chainId))
+    const keep: typeof headers = []
+    for (const h of headers) {
+      const f = chainFacts.get(Number(h.order_id))
+      if (f?.supersededBy) {
+        const present = await prisma.booking.findUnique({ where: { bookingRef: String(h.order_id) }, select: { id: true } })
+        // Already in ops: it is the booking, and Update Booking follows its chain.
+        if (present) keep.push(h)
+        else summary.skipped.push({ orderId: f.id, reason: 'superseded', detail: `Amended into order ${f.supersededBy} — that version is the booking.` })
+        continue
+      }
+      if (!f?.isAmendment) { keep.push(h); continue }
+
+      const chainRef = String(f.chainId)
+      const refs = Array.from(new Set([chainRef, f.previousOrderId ? String(f.previousOrderId) : null].filter((r): r is string => !!r)))
+      const [original, duplicate] = await Promise.all([
+        prisma.booking.findFirst({ where: { bookingRef: { in: refs } }, select: { bookingRef: true }, orderBy: { createdAt: 'asc' } }),
+        prisma.booking.findUnique({ where: { bookingRef: String(f.id) }, select: { bookingRef: true } }),
+      ])
+      const isOld = isLaterDay(originFacts.get(f.chainId)?.checkoutDate ?? null, f.checkoutDate)
+
+      if (original) {
+        if (!dryRun) {
+          await recordAmendmentNotice({
+            bookingRef: original.bookingRef, orderId: f.id, previousOrderId: f.previousOrderId, version: f.version,
+            amendedAt: f.checkoutDate, originAt: originFacts.get(f.chainId)?.checkoutDate ?? null, isOld,
+            duplicateRef: duplicate?.bookingRef ?? null, detectedAt: new Date().toISOString(),
+          }).catch((err) => summary.warnings!.push(`${f.id}: amendment notice not filed: ${err instanceof Error ? err.message : String(err)}`))
+        }
+        summary.amendments!.push({ orderId: f.id, bookingRef: original.bookingRef, version: f.version, isOld, action: duplicate ? 'duplicate' : 'noticed' })
+        if (duplicate) {
+          summary.warnings!.push(`Order ${f.id} amends booking ${original.bookingRef} but was already imported as booking ${duplicate.bookingRef} — check and cancel the duplicate by hand.`)
+        }
+        continue
+      }
+      if (duplicate) {
+        // Imported on its own before versions were understood, original absent: leave it be.
+        summary.amendments!.push({ orderId: f.id, bookingRef: duplicate.bookingRef, version: f.version, isOld, action: 'duplicate' })
+        continue
+      }
+      chainRefFor.set(f.id, chainRef)
+      summary.amendments!.push({ orderId: f.id, bookingRef: chainRef, version: f.version, isOld, action: 'imported' })
+      keep.push(h)
+    }
+    headers = keep
+  }
+
   if (opts.onlyNew && headers.length > 0) {
     const present = await prisma.booking.findMany({
       where: { bookingRef: { in: headers.map((h) => String(h.order_id)) } },
       select: { bookingRef: true },
     })
     const presentRefs = new Set(present.map((p) => p.bookingRef))
-    headers = headers.filter((h) => !presentRefs.has(String(h.order_id)))
+    headers = headers.filter((h) => !presentRefs.has(String(h.order_id)) && !presentRefs.has(chainRefFor.get(Number(h.order_id)) ?? ''))
   }
   summary.candidates = headers.length
   if (headers.length === 0) return finish(summary, opts)
@@ -225,6 +292,15 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       if (!result.ok) {
         summary.skipped.push({ orderId, reason: result.reason, detail: result.detail })
         continue
+      }
+
+      // A booking whose original never reached ops: filed under the original's
+      // ref, so ops, Accounts (AHS-{original}) and the customer's thread agree.
+      const chainRef = chainRefFor.get(orderId)
+      if (chainRef) {
+        result.booking.bookingRef = chainRef
+        result.booking.isNumber = chainRef
+        result.booking.source = { ...result.booking.source, storeOrderId: orderId, chainId: Number(chainRef) }
       }
 
       // Preview mode: report what *would* happen without writing anything.
