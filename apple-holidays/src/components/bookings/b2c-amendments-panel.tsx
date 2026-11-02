@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSession } from 'next-auth/react'
 import { AlertTriangle, CheckCircle2, GitBranch, Loader2 } from 'lucide-react'
 import { readApiResponse } from '@/lib/utils'
 
@@ -22,6 +23,8 @@ interface Notice {
   duplicateRef: string | null
   appliedAt?: string | null
   appliedVersion?: number | null
+  autoApplied?: boolean
+  lastError?: string | null
   acknowledgedBy?: string | null
   acknowledgedAt?: string | null
 }
@@ -31,13 +34,19 @@ export default function B2cAmendmentsPanel() {
   const [all, setAll] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<number | null>(null)
+  const [autoApply, setAutoApply] = useState<boolean | null>(null)
+  const { data: session } = useSession()
+  const isSuper = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(String(session?.user?.role ?? ''))
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await fetch(`/api/b2c/amendments${all ? '?all=1' : ''}`)
-      const json = await readApiResponse<{ notices: Notice[] }>(res)
-      if (json.success) setNotices(json.data?.notices ?? [])
+      const json = await readApiResponse<{ notices: Notice[]; autoApply?: boolean }>(res)
+      if (json.success) {
+        setNotices(json.data?.notices ?? [])
+        setAutoApply(json.data?.autoApply ?? null)
+      }
     } finally {
       setLoading(false)
     }
@@ -60,7 +69,18 @@ export default function B2cAmendmentsPanel() {
     }
   }
 
-  if (!loading && notices.length === 0 && !all) return null
+  async function toggleAuto() {
+    if (autoApply === null) return
+    const res = await fetch('/api/b2c/amendments', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoApply: !autoApply }),
+    })
+    const json = await readApiResponse<{ autoApply: boolean }>(res)
+    if (json.success) setAutoApply(json.data?.autoApply ?? !autoApply)
+  }
+
+  if (!loading && notices.length === 0 && !all && !isSuper) return null
 
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
@@ -69,9 +89,22 @@ export default function B2cAmendmentsPanel() {
           <GitBranch className="w-4 h-4" /> Booking updates from the store
           {!all && notices.length > 0 && <span className="text-xs font-normal">— {notices.length} old booking{notices.length === 1 ? '' : 's'} amended, waiting for acknowledgement</span>}
         </div>
-        <button type="button" className="text-xs text-amber-800 underline" onClick={() => setAll((v) => !v)}>
-          {all ? 'Old & open only' : 'Show all'}
-        </button>
+        <div className="flex items-center gap-3">
+          {autoApply !== null && (
+            <button
+              type="button"
+              disabled={!isSuper}
+              onClick={toggleAuto}
+              title={isSuper ? 'Switch automatic apply on/off' : 'Only a super admin can change this'}
+              className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${autoApply ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-white text-slate-600'} disabled:cursor-default`}
+            >
+              Auto-apply {autoApply ? 'ON' : 'OFF'}
+            </button>
+          )}
+          <button type="button" className="text-xs text-amber-800 underline" onClick={() => setAll((v) => !v)}>
+            {all ? 'Old & open only' : 'Show all'}
+          </button>
+        </div>
       </div>
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-slate-500"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
@@ -100,8 +133,9 @@ export default function B2cAmendmentsPanel() {
                 </td>
                 <td>
                   {n.appliedAt
-                    ? <span className="text-emerald-700">applied → V{n.appliedVersion ?? '?'}</span>
+                    ? <span className="text-emerald-700">{n.autoApplied ? 'auto-applied' : 'applied'} → V{n.appliedVersion ?? '?'}</span>
                     : <span className="text-amber-800">not applied — open the booking → Update Booking</span>}
+                  {!n.appliedAt && n.lastError && <div className="text-rose-700">{n.lastError}</div>}
                   {n.duplicateRef && (
                     <div className="flex items-center gap-1 text-rose-700"><AlertTriangle className="w-3 h-3" /> also imported as {n.duplicateRef} — cancel the duplicate</div>
                   )}

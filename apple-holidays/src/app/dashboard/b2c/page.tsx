@@ -72,7 +72,7 @@ interface RunSummary {
 }
 
 interface PreviewOrder {
-  status: 'new' | 'imported' | 'conflict'
+  status: 'new' | 'imported' | 'conflict' | 'amendment'
   bookingRef: string
   operationCountry: string | null
   countryVia: string
@@ -111,6 +111,7 @@ const STATUS_STYLE: Record<PreviewOrder['status'], { label: string; cls: string 
   new:      { label: 'Will import', cls: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/25' },
   imported: { label: 'Already in ops', cls: 'bg-slate-500/10 text-slate-500 border-slate-500/25' },
   conflict: { label: 'Ref conflict', cls: 'bg-red-500/10 text-red-600 border-red-500/25' },
+  amendment: { label: 'Amendment → updates booking', cls: 'bg-amber-500/10 text-amber-700 border-amber-500/25' },
 }
 
 const VIA_LABEL: Record<string, string> = {

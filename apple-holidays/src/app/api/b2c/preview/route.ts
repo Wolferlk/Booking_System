@@ -21,6 +21,7 @@ import {
 import { mapB2cOrder } from '@/lib/b2c-booking-map'
 import { parseFlightBooking } from '@/lib/b2c-flight'
 import { dateInTz } from '@/lib/b2c-import'
+import { fetchOrderChainFacts } from '@/lib/b2c-order-chain'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -57,8 +58,13 @@ export async function GET(req: NextRequest) {
     const customerByOrder = new Map(customers.map((c) => [Number(c.order_id), c]))
     const flightsByOrder = groupBy(flightRows.map(parseFlightBooking), (f) => f.orderId)
 
+    // Order versions: an amendment updates its ORIGINAL booking, never makes a
+    // new one; a superseded order is never imported on its own.
+    const chain = await fetchOrderChainFacts(orderIds)
+    const chainRef = (id: number) => String(chain.get(id)?.chainId ?? id)
+
     // Which refs already exist on our side, and as what.
-    const refs = orderIds.map(String)
+    const refs = Array.from(new Set([...orderIds.map(String), ...orderIds.map(chainRef)]))
     const existing = await prisma.booking.findMany({
       where: { bookingRef: { in: refs } },
       select: { bookingRef: true, agent: true },
@@ -83,8 +89,18 @@ export async function GET(req: NextRequest) {
       }
 
       const b = result.booking
-      const prior = existingByRef.get(b.bookingRef)
-      const status = !prior ? 'new' : isB2cBooking(prior.agent) ? 'imported' : 'conflict'
+      const fact = chain.get(id)
+      const own = existingByRef.get(b.bookingRef)
+      if (fact?.supersededBy && !own) {
+        skipped.push({ orderId: id, reason: 'superseded', detail: `Amended into order ${fact.supersededBy} — that version is the booking.` })
+        continue
+      }
+      // An amendment is filed under its original's ref: it updates that booking.
+      if (fact?.isAmendment) b.bookingRef = chainRef(id)
+      const prior = own ?? existingByRef.get(b.bookingRef)
+      const status = fact?.isAmendment && prior && isB2cBooking(prior.agent)
+        ? 'amendment'
+        : !prior ? 'new' : isB2cBooking(prior.agent) ? 'imported' : 'conflict'
 
       // Cost/sell totals let Accounts eyeball the margin before committing.
       const sell = b.pnlLines.reduce((s, l) => s + l.mmtRate, 0)
@@ -133,7 +149,7 @@ export async function GET(req: NextRequest) {
       counts: {
         candidates: headers.length,
         new: orders.filter((o) => o.status === 'new').length,
-        imported: orders.filter((o) => o.status === 'imported').length,
+        imported: orders.filter((o) => o.status === 'imported' || o.status === 'amendment').length,
         conflict: orders.filter((o) => o.status === 'conflict').length,
         skipped: skipped.length,
       },
