@@ -1031,13 +1031,9 @@ function b2cSection(i: PeriodInsights, periodWord: string): string {
       tableOpen([
         { text: 'Board' },
         { text: 'Orders', align: 'right', width: '60' },
-        { text: 'Prev', align: 'right', width: '55' },
-        { text: 'In OPS', align: 'right', width: '60' },
       ]) + m.boards.map(r => `<tr>
         ${td(esc(r.label), { bold: true, color: r.board === 'cancelled' ? C.bad : r.board.startsWith('b2c') ? C.b2c : C.b2b })}
         ${td(num(r.orders), { align: 'right', bold: true, color: C.ink })}
-        ${td(r.previous === null ? '—' : num(r.previous), { align: 'right' })}
-        ${td(r.board === 'cancelled' ? '—' : num(r.filedInOps), { align: 'right' })}
       </tr>`).join('') + TABLE_CLOSE +
       `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:8px;">
          Counted by the date each order was booked in the Aahaas store, on the same boards and the same rule as AahaasFlow: confirmed on the console as B2B or B2C, or placed by a B2B portal account, or a direct customer; a flight order is one whose every product is a flight.
@@ -1045,30 +1041,15 @@ function b2cSection(i: PeriodInsights, periodWord: string): string {
          ${m.cancelled ? `${num(m.cancelled)} order${m.cancelled === 1 ? '' : 's'} with every product cancelled or refunded ${m.cancelled === 1 ? 'is' : 'are'} not in the counts.` : ''}
          ${m.tests.orders ? `${num(m.tests.orders)} test order${m.tests.orders === 1 ? ' is' : 's are'} left out.` : ''}
          ${m.tests.checked ? '' : 'The test-order register could not be read, so test orders may be in the counts.'}
-         ${m.notInOps ? `${num(m.notInOps)} live order${m.notInOps === 1 ? ' is' : 's are'} not filed in OPS yet.` : ''}
          ${m.truncated ? '<strong>The period held more orders than one read allows, so every count is a floor.</strong>' : ''}
        </div>`
     : emptyNote(m.error ?? 'The Aahaas store could not be read, so the orders could not be split by board.')
-
-  const imported = b.available && (b.orders || b.cancelled)
-    ? `<div class="h3">Imported into OPS this ${periodWord}</div>` +
-      kpiRow([
-        { label: 'Files', value: num(b.orders), note: `Prev ${num(b.previousOrders)}` },
-        { label: 'Guests', value: num(b.pax), note: `Prev ${num(b.previousPax)}` },
-        { label: 'Value', value: `<span style="font-size:15px;line-height:1.4;">${currencyLine(b.byCurrency, 2)}</span>`, note: 'Quoted, per currency' },
-        { label: 'Cancelled', value: num(b.cancelled), note: 'Imported, then cancelled', color: b.cancelled ? C.bad : C.ink },
-      ]) +
-      (b.byCountry.length ? countryOnlyTable(b.byCountry) : '') +
-      `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:8px;">
-         Store orders filed in OPS by the date they were imported, B2B and B2C alike — a back-filled import lands in the ${periodWord} it ran, so this is not the order count above. Every file is on the “B2C Orders” sheet.
-       </div>`
-    : ''
 
   return section(
     'Aahaas store orders',
     `Every order the Aahaas store took this ${periodWord}, split as AahaasFlow shows it — reported beside the AppleSystem B2B count, not added to it`,
     C.b2c,
-    store + imported,
+    store,
   )
 }
 
