@@ -23,6 +23,7 @@ import { parseFlightBooking } from '@/lib/b2c-flight'
 import { dateInTz } from '@/lib/b2c-import'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 const TZ = process.env.AUTO_BOOKING_TZ || 'Asia/Colombo'
 

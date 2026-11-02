@@ -182,7 +182,7 @@ export default function B2cControlCentre() {
     setLoadingOverview(true)
     try {
       const res = await fetch('/api/b2c/overview')
-      const json = await res.json()
+      const json = await readJson(res)
       if (json.success) setOverview(json.data)
       else setError(json.error ?? 'Failed to load overview')
     } catch (e) {
@@ -197,7 +197,7 @@ export default function B2cControlCentre() {
     setError(null)
     try {
       const res = await fetch('/api/b2c/preview')
-      const json = await res.json()
+      const json = await readJson(res)
       if (json.success) setPreview(json.data)
       else setError(json.error ?? 'Preview failed')
     } catch (e) {
@@ -840,4 +840,14 @@ function ActivityLog({ runs }: { runs: RunSummary[] }) {
       })}
     </ol>
   )
+}
+
+/** Parse an API reply, turning a plain-text gateway error into a readable message. */
+async function readJson(res: Response): Promise<{ success?: boolean; data?: any; error?: string }> {
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { success: false, error: `Server error ${res.status}${res.status >= 500 ? ' — the Aahaas store may be slow; try Refresh preview' : ''}` }
+  }
 }

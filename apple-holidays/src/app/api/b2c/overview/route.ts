@@ -2,7 +2,7 @@
  * B2C control-centre data: source-side health from the Aahaas store (read-only)
  * plus ops-side import state. Powers the stat tiles on /dashboard/b2c.
  */
-import { NextRequest } from 'next/server'
+import type { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -18,10 +18,23 @@ import { fetchOrderHeaders, isB2cConfigured } from '@/lib/b2c-db'
 import { getB2cWatchSettings, WATCH_LAST_AT } from '@/lib/b2c-watch'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
+/** The store count is a nice-to-have; the ops tiles must not wait on it forever. */
+const SOURCE_TIMEOUT_MS = 20_000
 
 const TZ = process.env.AUTO_BOOKING_TZ || 'Asia/Colombo'
 
 export async function GET(_req: NextRequest) {
+  try {
+    return await overview()
+  } catch (err) {
+    console.error('[GET /api/b2c/overview]', err)
+    return buildApiError(err instanceof Error ? err.message : 'Overview failed', 500)
+  }
+}
+
+async function overview() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   if (session.user.role === 'CLIENT') return buildApiError('Forbidden', 403)
@@ -35,7 +48,12 @@ export async function GET(_req: NextRequest) {
   const configured = isB2cConfigured()
   if (configured) {
     try {
-      const headers = await fetchOrderHeaders({ upcomingFrom: today, limit: 1000 })
+      const headers = await Promise.race([
+        fetchOrderHeaders({ upcomingFrom: today, limit: 1000 }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Aahaas store did not answer within ${SOURCE_TIMEOUT_MS / 1000}s`)), SOURCE_TIMEOUT_MS),
+        ),
+      ])
       sourceUpcoming = headers.length
     } catch (err) {
       sourceError = err instanceof Error ? err.message : String(err)
