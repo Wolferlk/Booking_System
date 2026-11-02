@@ -908,7 +908,7 @@ function scorecard(d: ReportData, i: PeriodInsights): string {
   const lead: { label: string; value: string; sub: string }[] = d.window.period === 'MONTHLY'
     ? [
         {
-          label: 'Today new & updated',
+          label: 'This month new & updated',
           value: num(todayNewAndUpdated(d)),
           sub: `<span style="color:${HERO.dim};">${sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'accounts unreachable'}</span>`,
         },
@@ -1276,7 +1276,7 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${d.window.period === 'MONTHLY'
-  ? `${num(todayNewAndUpdated(d))} new &amp; updated, ${d.split.available ? num(d.split.oldCount) : '—'} old amendments, ${num(i.delivery.departures)} completed trips,`
+  ? `${num(todayNewAndUpdated(d))} this month new &amp; updated, ${d.split.available ? num(d.split.oldCount) : '—'} old amendments, ${num(i.delivery.departures)} completed trips,`
   : `${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(b2cOrders(i).orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated,`} ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
@@ -1318,7 +1318,7 @@ export function renderPeriodSubject(d: ReportData, opts: { prefix?: string; test
 
   const parts: string[] = []
   if (i && d.window.period === 'MONTHLY') {
-    parts.push(`${todayNewAndUpdated(d)} new & updated`)
+    parts.push(`${todayNewAndUpdated(d)} this month new & updated`)
     if (d.split.available) parts.push(`${d.split.oldCount} old amendments`)
     if (i.delivery.available) parts.push(`${i.delivery.departures} completed trips`)
     if (i.cancellations.total) parts.push(`${i.cancellations.total} cancelled`)

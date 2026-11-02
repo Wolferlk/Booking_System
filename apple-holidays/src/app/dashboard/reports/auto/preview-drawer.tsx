@@ -192,12 +192,13 @@ export function salesStats(d: SalesPreviewData): StatTile[] {
 interface StatTile { label: string; value: number; sub: string }
 
 function opsStats(d: OpsPreviewData): StatTile[] {
+  const newLabel = d.window.period === 'MONTHLY' ? 'This month new & updated' : 'Today new & updated'
   return [
     // Same rule as `todayNewAndUpdated()` (server-only module): the accounts
     // invoice mail's new + same-day-amended plus order confirmations edited.
     d.split?.available
-      ? { label: 'Today new & updated', value: d.split.todayCount + d.split.oldCount, sub: `${d.split.todayCount} new + ${d.split.oldCount} amended` }
-      : { label: 'Today new & updated', value: d.split?.appleCount || d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
+      ? { label: newLabel, value: d.split.todayCount + d.split.oldCount, sub: `${d.split.todayCount} new + ${d.split.oldCount} amended` }
+      : { label: newLabel, value: d.split?.appleCount || d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
     {
       label: 'Next 3 days',
