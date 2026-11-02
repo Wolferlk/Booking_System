@@ -11,7 +11,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
-import { syncInboundForPhone, syncDeliveryReceiptsForPhone } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -35,10 +35,18 @@ export async function GET(req: NextRequest) {
   // sent come back the same way — that is what moves the ✓ / ✓✓ / blue ✓✓.
   await Promise.all([syncInboundForPhone(phone), syncDeliveryReceiptsForPhone(phone)])
 
-  const messages = await prisma.whatsAppMessage.findMany({
+  const rows = await prisma.whatsAppMessage.findMany({
     where:   { phone },
     orderBy: { createdAt: 'asc' },
   })
+
+  // A red "!" alone says nothing — attach Meta's reason to every failed send.
+  const reasons = await failureReasonsFor(
+    rows.filter(m => m.status === 'failed' && m.waMessageId).map(m => m.waMessageId!),
+  )
+  const messages = rows.map(m => m.status === 'failed'
+    ? { ...m, failureReason: (m.waMessageId && reasons.get(m.waMessageId)) || null }
+    : m)
 
   await prisma.whatsAppMessage.updateMany({
     where: { phone, direction: 'inbound', read: false },

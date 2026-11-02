@@ -5,9 +5,9 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertCircle, ArrowDown, ArrowLeft, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
+  AlertCircle, ArrowDown, ArrowLeft, BarChart3, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
   Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderSearch, Hash, Inbox, Keyboard, LayoutTemplate,
-  Loader2, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, Search,
+  Loader2, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, RotateCcw, Search,
   Send, Smile, Sparkles, Trash2, User, WifiOff, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -21,6 +21,7 @@ import {
   type BookingLookup, type Conversation, type PendingMessage, type SearchField, type QuickReply, type RelatedThread, type ThreadBooking, type WaMessage,
 } from '@/components/whatsapp-inbox/shared'
 import { TemplatesModal } from '@/components/whatsapp-inbox/templates-modal'
+import { MessageReportModal, RetryFailedModal } from '@/components/whatsapp-inbox/bulk-tools'
 import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 
@@ -146,6 +147,8 @@ function WhatsAppInboxInner() {
   const [newChatOpen, setNewChatOpen] = useState(false)
   const [newChatPhone, setNewChatPhone] = useState('')
   const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [retryOpen, setRetryOpen] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
@@ -1005,9 +1008,17 @@ function WhatsAppInboxInner() {
 
         <div className="flex shrink-0 items-center justify-between border-t border-slate-100 px-4 py-2 text-[10.5px] text-slate-400">
           <span>{unreadTotal > 0 ? `${unreadTotal} unread in ${unreadChats} chat${unreadChats === 1 ? '' : 's'}` : 'All caught up'}</span>
-          <button onClick={() => setShortcutsOpen(true)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold transition hover:bg-slate-100 hover:text-slate-600">
-            <Keyboard className="h-3 w-3" /> Shortcuts
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button onClick={() => setRetryOpen(true)} title="Resend every message that failed today" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold text-rose-500 transition hover:bg-rose-50 hover:text-rose-600">
+              <RotateCcw className="h-3 w-3" /> Retry failed
+            </button>
+            <button onClick={() => setReportOpen(true)} title="Message counts for a date range" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold transition hover:bg-slate-100 hover:text-slate-600">
+              <BarChart3 className="h-3 w-3" /> Report
+            </button>
+            <button onClick={() => setShortcutsOpen(true)} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold transition hover:bg-slate-100 hover:text-slate-600">
+              <Keyboard className="h-3 w-3" /> Shortcuts
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -1464,6 +1475,22 @@ function WhatsAppInboxInner() {
         )}
       </AnimatePresence>
 
+      {/* ============ Retry failed / message report ============ */}
+      <AnimatePresence>
+        {retryOpen && (
+          <RetryFailedModal
+            onClose={() => setRetryOpen(false)}
+            onDone={() => {
+              if (selected) { scrollModeRef.current = 'force'; loadMessages(selected) }
+              loadConversations()
+            }}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {reportOpen && <MessageReportModal onClose={() => setReportOpen(false)} />}
+      </AnimatePresence>
+
       {/* ============ Image lightbox ============ */}
       <AnimatePresence>
         {lightbox && (
@@ -1773,11 +1800,13 @@ const TICK_LABEL: Record<string, string> = {
   delivered: 'Delivered',
   read:      'Seen',
   failed:    'Not delivered',
+  retried:   'Not delivered — resent',
 }
 
 function StatusTicks({ status, className = '' }: { status: string; className?: string }) {
   const icon =
     status === 'failed'    ? <AlertCircle className="h-3.5 w-3.5 text-rose-500" /> :
+    status === 'retried'   ? <RotateCcw className="h-3.5 w-3.5 text-amber-500" /> :
     status === 'read'      ? <CheckCheck className="h-3.5 w-3.5 text-sky-500" /> :
     status === 'delivered' ? <CheckCheck className="h-3.5 w-3.5 text-slate-400" /> :
     status === 'sent'      ? <Check className="h-3.5 w-3.5 text-slate-400" /> :
@@ -1857,6 +1886,17 @@ function MessageBubble({ m, first, last, query, isActiveMatch, onImage, onMediaL
           {fmtTime(m.createdAt)}
           {isOut && <StatusTicks status={m.status} />}
         </p>
+        {isOut && m.status === 'failed' && (
+          <p className="mt-1 flex items-start gap-1 border-t border-rose-200 pt-1 text-[11px] leading-snug text-rose-600">
+            <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+            <span>Not delivered: {m.failureReason || 'WhatsApp could not deliver this message.'}</span>
+          </p>
+        )}
+        {isOut && m.status === 'retried' && (
+          <p className="mt-1 flex items-center gap-1 border-t border-amber-200 pt-1 text-[11px] text-amber-700">
+            <RotateCcw className="h-3 w-3 shrink-0" /> Not delivered the first time — resent below.
+          </p>
+        )}
       </div>
       {m.body && (
         <div className="flex shrink-0 gap-0.5 opacity-0 transition group-hover:opacity-100">

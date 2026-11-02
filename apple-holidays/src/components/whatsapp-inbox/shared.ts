@@ -53,6 +53,8 @@ export interface WaMessage {
   createdAt: string
   mediaUrl: string | null
   mediaType: string | null
+  /** Meta's reason, in plain words, when status is "failed". */
+  failureReason?: string | null
 }
 
 export interface ThreadBooking extends ConversationBooking {
