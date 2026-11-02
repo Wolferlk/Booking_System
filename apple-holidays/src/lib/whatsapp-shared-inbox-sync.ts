@@ -240,6 +240,71 @@ export async function syncDeliveryReceipts(wamids: string[]): Promise<number> {
   }
 }
 
+/**
+ * Meta's failure codes, in words the desk can act on. A bare red "!" told
+ * nobody whether to retry, call the guest or wait — these say which.
+ */
+const FAILURE_HINTS: Record<number, string> = {
+  131049: 'Meta held it back to protect the guest from too many business messages (per-user limit). Retrying will not help; call the guest or wait for them to write.',
+  131026: 'This number cannot receive WhatsApp messages (not on WhatsApp, old app version, or it has not accepted the latest terms).',
+  131047: 'More than 24 hours since the guest last wrote, so plain text was dropped. Send an approved template instead.',
+  131050: 'The guest has stopped business messages from us on WhatsApp.',
+  131048: 'Our number is being rate-limited for spam (quality rating). Messages are being held back by Meta.',
+  131056: 'Too many messages to this guest in a short time. Wait a few minutes before sending again.',
+  130472: "Meta withheld it as part of a WhatsApp experiment on this guest's number. Reach them another way.",
+  131042: 'Meta blocked it because the WhatsApp Business account has a payment problem. Templates (anything outside the 24h window) will keep failing until the card / credit line is fixed in Meta Business Manager → Billing. Replies inside the 24h window still go through.',
+  131031: 'The WhatsApp business account is locked or restricted by Meta.',
+  131053: 'The attachment could not be processed by WhatsApp.',
+  131000: 'WhatsApp had an internal error. Try sending again.',
+}
+
+/** Meta failure codes where sending the same message again cannot help. */
+export const NON_RETRYABLE_FAILURES = new Set([131026, 131049, 131050])
+
+/**
+ * Why each failed message failed, by wamid, from n8n's receipts — Meta's code
+ * and the reason in plain words. Empty when the shared DB is not configured or
+ * the query fails — never throws.
+ */
+export async function failureDetailsFor(wamids: string[]): Promise<Map<string, { code: number | null; reason: string }>> {
+  const out = new Map<string, { code: number | null; reason: string }>()
+  const db = getPool()
+  const all = Array.from(new Set(wamids.filter(Boolean)))
+  if (!db || all.length === 0) return out
+  try {
+    for (let i = 0; i < all.length; i += 500) {
+      const ids = all.slice(i, i + 500)
+      const [rows] = await db.query<mysql.RowDataPacket[]>(
+        `SELECT wa_message_id, error_code, error_title
+         FROM tbl_whatsapp_status_receipts
+         WHERE status = 'failed' AND wa_message_id IN (${ids.map(() => '?').join(',')})`,
+        ids,
+      )
+      for (const r of rows as unknown as SharedReceipt[]) {
+        const code = r.error_code != null ? Number(r.error_code) : null
+        const hint = code != null ? FAILURE_HINTS[code] : undefined
+        const meta = [code != null ? `Meta ${code}` : null, r.error_title].filter(Boolean).join(': ')
+        out.set(r.wa_message_id, {
+          code,
+          reason: hint ? `${hint}${meta ? ` (${meta})` : ''}` : meta || 'WhatsApp could not deliver this message.',
+        })
+      }
+    }
+  } catch (err) {
+    const code = (err as { code?: string })?.code
+    if (code !== 'ER_NO_SUCH_TABLE') {
+      console.error('[WA SharedSync] failure reason lookup failed:', err instanceof Error ? err.message : err)
+    }
+  }
+  return out
+}
+
+/** Why each failed message failed, by wamid, as a sentence. Never throws. */
+export async function failureReasonsFor(wamids: string[]): Promise<Map<string, string>> {
+  const details = await failureDetailsFor(wamids.slice(0, 500))
+  return new Map(Array.from(details, ([id, d]) => [id, d.reason]))
+}
+
 /** Receipts for one thread — every outbound message that can still change ticks. */
 export async function syncDeliveryReceiptsForPhone(phone: string, opts: { sinceDays?: number } = {}) {
   if (!getPool()) return 0
