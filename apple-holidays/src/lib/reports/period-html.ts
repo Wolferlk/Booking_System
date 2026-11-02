@@ -47,7 +47,7 @@ import {
   bar, C, compact, emptyNote, esc, FONT, kpiRow, money, moreNote, num, pill, section,
   STYLE_BLOCK, TABLE_CLOSE, tableOpen, td, truncate,
 } from './email-kit'
-import type { ReportData } from './report-data'
+import { todayNewAndUpdated, type ReportData } from './report-data'
 import type { MoverRow, PeriodAction, PeriodInsights, PeriodPoint } from './period-insights'
 import type { PeriodAdvice } from './period-outlook'
 import type { CountryRow } from './booking-lines'
@@ -859,7 +859,9 @@ function headerBlock(d: ReportData, opts: PeriodRenderOptions): string {
     `<span style="display:inline-block;margin:0 0 6px 5px;padding:3px 9px;border-radius:999px;background:${HERO.tile};border:1px solid ${HERO.tileLine};color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
   ).join('')
 
-  const headline = i
+  // The monthly review leads with the activity split in the scorecard below,
+  // not a B2B confirmed headline.
+  const headline = i && w.period !== 'MONTHLY'
     ? `<div style="font:700 10px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.12em;">B2B confirmed</div>
        <div style="font:800 40px/1.05 ${FONT};color:#ffffff;letter-spacing:-0.03em;padding-top:2px;">${num(i.totals.bookings)}</div>
        <div style="font:400 12px/1.5 ${FONT};padding-top:3px;">${heroDelta(i.totals.bookings, i.comparable ? i.totals.previousBookings : null)}<span style="color:${HERO.dim};"> vs ${esc(i.previousLabel)}</span></div>`
@@ -899,14 +901,41 @@ function guestTile(d: ReportData): { label: string; value: string; sub: string }
 function scorecard(d: ReportData, i: PeriodInsights): string {
   const short = i.integrity.parityMissing + i.integrity.countCheckShort
   const b2c = b2cOrders(i)
+  const sp = d.split
+  // The monthly review opens on the same two-pass split as the daily mails —
+  // the month's own files, then older files re-opened — and the trips that
+  // finished inside the month.
+  const lead: { label: string; value: string; sub: string }[] = d.window.period === 'MONTHLY'
+    ? [
+        {
+          label: 'Today new & updated',
+          value: num(todayNewAndUpdated(d)),
+          sub: `<span style="color:${HERO.dim};">${sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'accounts unreachable'}</span>`,
+        },
+        {
+          label: 'Old amendments',
+          value: sp.available ? num(sp.oldCount) : '—',
+          sub: `<span style="color:${HERO.dim};">${sp.available
+            ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
+            : 'accounts unreachable'}</span>`,
+        },
+        {
+          label: 'Completed trips',
+          value: i.delivery.available ? num(i.delivery.departures) : '—',
+          sub: `<span style="color:${HERO.dim};">${i.delivery.available ? 'tours that ended this month' : 'unavailable'}</span>`,
+        },
+      ]
+    : [
+        {
+          label: 'B2C store orders',
+          value: b2c.available ? num(b2c.orders) : '—',
+          sub: b2c.available ? heroDelta(b2c.orders, b2c.previous) : `<span style="color:${HERO.dim};">unavailable</span>`,
+        },
+        { label: 'Guests booked', value: num(i.totals.pax + (i.b2c.available ? i.b2c.pax : 0)), sub: `<span style="color:${HERO.dim};">${num(i.totals.pax)} B2B · ${num(i.b2c.pax)} store, in OPS</span>` },
+        { label: 'Tours operated', value: num(i.delivery.toursOperated), sub: `<span style="color:${HERO.dim};">${num(i.delivery.pax)} guests · ${num(i.delivery.guestDays)} guest-days</span>` },
+      ]
   const cells: { label: string; value: string; sub: string }[] = [
-    {
-      label: 'B2C store orders',
-      value: b2c.available ? num(b2c.orders) : '—',
-      sub: b2c.available ? heroDelta(b2c.orders, b2c.previous) : `<span style="color:${HERO.dim};">unavailable</span>`,
-    },
-    { label: 'Guests booked', value: num(i.totals.pax + (i.b2c.available ? i.b2c.pax : 0)), sub: `<span style="color:${HERO.dim};">${num(i.totals.pax)} B2B · ${num(i.b2c.pax)} store, in OPS</span>` },
-    { label: 'Tours operated', value: num(i.delivery.toursOperated), sub: `<span style="color:${HERO.dim};">${num(i.delivery.pax)} guests · ${num(i.delivery.guestDays)} guest-days</span>` },
+    ...lead,
     { label: 'Forward book', value: num(d.upcoming.total), sub: `<span style="color:${HERO.dim};">${num(d.upcoming.next30)} arriving in 30 days</span>` },
     {
       label: 'Cancelled',
@@ -1246,7 +1275,9 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(b2cOrders(i).orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated, ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${d.window.period === 'MONTHLY'
+  ? `${num(todayNewAndUpdated(d))} new &amp; updated, ${d.split.available ? num(d.split.oldCount) : '—'} old amendments, ${num(i.delivery.departures)} completed trips,`
+  : `${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(b2cOrders(i).orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated,`} ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -1286,7 +1317,14 @@ export function renderPeriodSubject(d: ReportData, opts: { prefix?: string; test
   const range = periodName(d.window)
 
   const parts: string[] = []
-  if (i) {
+  if (i && d.window.period === 'MONTHLY') {
+    parts.push(`${todayNewAndUpdated(d)} new & updated`)
+    if (d.split.available) parts.push(`${d.split.oldCount} old amendments`)
+    if (i.delivery.available) parts.push(`${i.delivery.departures} completed trips`)
+    if (i.cancellations.total) parts.push(`${i.cancellations.total} cancelled`)
+    if (d.complaints.open) parts.push(`${d.complaints.open} open complaint${d.complaints.open === 1 ? '' : 's'}`)
+    if (d.testBookings.total) parts.push(`${d.testBookings.total} test excluded`)
+  } else if (i) {
     const move = i.comparable && i.totals.previousBookings > 0
       ? ` (${i.totals.bookings >= i.totals.previousBookings ? '+' : ''}${Math.round(((i.totals.bookings - i.totals.previousBookings) / i.totals.previousBookings) * 100)}%)`
       : ''
