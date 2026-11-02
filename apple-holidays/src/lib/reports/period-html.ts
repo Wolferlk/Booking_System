@@ -20,18 +20,22 @@
  *
  * ## The shape
  *
- *  1. **Scorecard** — the eight numbers, each with its own delta.
+ *  1. **Header + scorecard** — the B2B headline with its delta, then eight
+ *     numbers in two rows, each carrying its own movement.
  *  2. **What to do** — the derived action list. Deliberately above the analysis:
  *     a reader who stops after one screen should have stopped in the right place.
- *  3. **Trend** — intake by day (week) or week (month), drawn against the
+ *  3. **Biggest moves** — the rising and falling partner and market, in bookings.
+ *  4. **Trend** — intake by day (week) or week (month), drawn against the
  *     arrivals it produced.
- *  4. **Markets / partners** — who grew, who slipped, who went quiet.
- *  5. **Commercial** — value, party size, lead time, concentration.
- *  6. **Delivered** — what operations actually carried, in guest-days.
- *  7. **Attrition** — cancellations, their notice and their cost.
- *  8. **Service quality** — complaints per hundred tours, resolution, D-10.
- *  9. **Integrity** — parity, the count check, the reconciler's own work.
- * 10. **Forward book** — what the next period is already carrying.
+ *  5. **Markets / partners** — who grew, who slipped, who went quiet.
+ *  6. **B2C store orders** — beside the B2B count, never inside it.
+ *  7. **Commercial** — value, party size, lead time, concentration.
+ *  8. **Delivered** — what operations actually carried, in guest-days.
+ *  9. **Attrition** — cancellations, their notice and their cost.
+ * 10. **Service quality** — complaints per hundred tours, resolution, D-10.
+ * 11. **Integrity** — parity, the count check, the reconciler's own work.
+ * 12. **Forward book** — what the next period is already carrying.
+ * 13. **Test bookings** — every test left out of the figures, named.
  *
  * Written for mail clients under exactly the rules `email-kit` documents:
  * tables, a 680px shell, classes over inline styles, nothing Word drops.
@@ -40,11 +44,12 @@ import {
   formatReportDate, PERIOD_LABEL, type ReportWindow,
 } from './report-window'
 import {
-  bar, C, compact, emptyNote, esc, FONT, kpiRow, money, num, pill, section,
+  bar, C, compact, emptyNote, esc, FONT, kpiRow, money, moreNote, num, pill, section,
   STYLE_BLOCK, TABLE_CLOSE, tableOpen, td, truncate,
 } from './email-kit'
 import type { ReportData } from './report-data'
 import type { MoverRow, PeriodAction, PeriodInsights, PeriodPoint } from './period-insights'
+import type { PeriodAdvice } from './period-outlook'
 import type { CountryRow } from './booking-lines'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 
@@ -521,6 +526,269 @@ function forwardSection(d: ReportData, periodWord: string): string {
   )
 }
 
+// ─── Guest voice ──────────────────────────────────────────────────────────────
+
+/** One stacked good / warning / bad bar. */
+function verdictBar(good: number, warning: number, bad: number): string {
+  const total = good + warning + bad
+  if (!total) return `<div style="font:400 11px/1.4 ${FONT};color:${C.faint};">No calls judged</div>`
+  const w = (n: number) => Math.max(n ? 2 : 0, Math.round((n / total) * 100))
+  const cell = (n: number, color: string) => n
+    ? `<td width="${w(n)}%" style="background:${color};height:10px;line-height:10px;font-size:0;">&nbsp;</td>`
+    : ''
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:999px;overflow:hidden;"><tr>${cell(good, C.good)}${cell(warning, C.warn)}${cell(bad, C.bad)}</tr></table>`
+}
+
+const LEVEL_STYLE = { bad: { ink: '#991b1b', bg: '#fef2f2', word: 'BAD' }, warning: { ink: '#92400e', bg: '#fffbeb', word: 'WARNING' } }
+const RATING_STYLE: Record<string, { ink: string; bg: string }> = {
+  EXCELLENT: { ink: '#065f46', bg: '#ecfdf5' }, GOOD: { ink: '#1e40af', bg: '#eff6ff' },
+  AVERAGE: { ink: '#92400e', bg: '#fffbeb' }, POOR: { ink: '#991b1b', bg: '#fef2f2' },
+}
+
+/**
+ * What guests said — the AI operation calls, the feedback forms and the desk.
+ *
+ * Complaints are not repeated here: they are the alerts these calls raised, and
+ * the service-quality block above already counts them once, de-duplicated.
+ */
+function guestVoiceSection(d: ReportData, periodWord: string): string {
+  const { calls, forms, desk } = d.guestVoice
+  if (!calls.available && !forms.available && !desk.available) return ''
+
+  const v = calls.verdicts
+  const judged = v.good + v.warning + v.bad
+  const pt = calls.postTour
+
+  const tiles = kpiRow([
+    {
+      label: 'AI calls made',
+      value: calls.available ? num(calls.done) : '—',
+      note: calls.available ? `of ${num(calls.assigned)} assigned · ${calls.completionRate}%` : 'Call service unavailable',
+    },
+    {
+      label: 'Went well',
+      value: judged ? `${Math.round((v.good / judged) * 100)}%` : '—',
+      note: judged ? `${num(v.good)} good · ${num(v.warning)} warn · ${num(v.bad)} bad` : 'No calls judged',
+      color: judged && v.bad / judged > 0.15 ? C.bad : C.good,
+    },
+    {
+      label: 'Post-tour rating',
+      value: pt.avgRating !== null ? `${pt.avgRating}<span style="font-size:13px;color:${C.faint};">/10</span>` : '—',
+      note: pt.nps !== null ? `NPS ${pt.nps > 0 ? '+' : ''}${pt.nps} · ${num(pt.rated)} rated` : `${num(pt.calls)} post-tour calls`,
+      color: pt.avgRating !== null && pt.avgRating < 7 ? C.warn : C.ink,
+    },
+    {
+      label: 'Feedback forms',
+      value: forms.available ? num(forms.total) : '—',
+      note: desk.rated ? `Desk avg ${desk.avgRating}/5 (${num(desk.rated)})` : forms.total ? `${num(forms.overall.EXCELLENT + forms.overall.GOOD)} rated good+` : '&nbsp;',
+    },
+  ])
+
+  const phases = calls.available && calls.byPhase.some(p => p.assigned)
+    ? `<div class="h3">AI calls by stage</div>` +
+      tableOpen([
+        { text: 'Stage' },
+        { text: 'Made', align: 'right', width: '55' },
+        { text: 'Assigned', align: 'right', width: '65' },
+        { text: 'How they went', width: '200' },
+        { text: 'Bad', align: 'right', width: '40' },
+      ]) +
+      calls.byPhase.map(p => `<tr>
+        ${td(esc(p.label), { bold: true, color: C.ink })}
+        ${td(num(p.done), { align: 'right', bold: true, color: C.ink })}
+        ${td(num(p.assigned), { align: 'right', color: C.muted })}
+        ${td(verdictBar(p.good, p.warning, p.bad))}
+        ${td(num(p.bad), { align: 'right', color: p.bad ? C.bad : C.muted })}
+      </tr>`).join('') + TABLE_CLOSE +
+      `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding:6px 0 14px 0;">
+         <span style="color:${C.good};">■</span> good &nbsp; <span style="color:${C.warn};">■</span> warning &nbsp; <span style="color:${C.bad};">■</span> bad — the same sort the AI Call Report page uses.
+       </div>`
+    : ''
+
+  const areas = calls.areaProblems.filter(a => a.bad || a.good)
+  const areaBlock = areas.length
+    ? `<div class="h3">On-tour checks — where guests said it went wrong</div>` +
+      tableOpen([{ text: 'Area' }, { text: 'Bad', align: 'right', width: '50' }, { text: 'Good', align: 'right', width: '50' }, { text: 'Share bad', width: '160' }]) +
+      areas.map(a => `<tr>
+        ${td(esc(a.area), { bold: true, color: C.ink })}
+        ${td(num(a.bad), { align: 'right', bold: true, color: a.bad ? C.bad : C.muted })}
+        ${td(num(a.good), { align: 'right', color: C.muted })}
+        ${td(bar(a.bad, Math.max(1, a.bad + a.good), C.bad))}
+      </tr>`).join('') + TABLE_CLOSE
+    : ''
+
+  const issues = calls.issues.slice(0, 8)
+  const issueBlock = issues.length
+    ? `<div class="h3" style="padding-top:16px;">Calls that need a look — ${num(calls.issueTotals.bad)} bad, ${num(calls.issueTotals.warning)} warning</div>` +
+      issues.map(x => {
+        const st = LEVEL_STYLE[x.level]
+        return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${C.line};border-left:3px solid ${st.ink};border-radius:8px;margin-bottom:7px;border-collapse:separate;">
+          <tr><td style="padding:9px 12px;">
+            <span class="pill" style="background:${st.bg};color:${st.ink};">${st.word}</span>
+            <span style="font:700 12px/1.5 ${FONT};color:${C.ink};padding-left:6px;">${esc(x.bookingRef)}</span>
+            <span style="font:400 11px/1.5 ${FONT};color:${C.faint};"> · ${esc(PHASE_NAME[x.phase] ?? x.phase)}${x.date ? ` · ${esc(formatReportDate(x.date))}` : ''}</span>
+            <div style="font:400 12px/1.6 ${FONT};color:${C.body};padding-top:4px;">${truncate(x.reason, 160)}</div>
+          </td></tr>
+        </table>`
+      }).join('') + moreNote(issues.length, calls.issueTotals.bad + calls.issueTotals.warning, 'calls')
+    : ''
+
+  const formAreas = forms.areas.filter(a => a.rated)
+  const formBlock = formAreas.length
+    ? `<div class="h3" style="padding-top:16px;">Feedback forms — score by area</div>` +
+      tableOpen([
+        { text: 'Area' },
+        { text: 'Rated', align: 'right', width: '50' },
+        { text: 'Excellent', align: 'right', width: '65' },
+        { text: 'Poor', align: 'right', width: '45' },
+        { text: 'Score', width: '150' },
+      ]) +
+      formAreas.map(a => `<tr>
+        ${td(esc(a.area), { bold: true, color: C.ink })}
+        ${td(num(a.rated), { align: 'right' })}
+        ${td(num(a.excellent), { align: 'right', color: C.good })}
+        ${td(num(a.poor), { align: 'right', color: a.poor ? C.bad : C.muted })}
+        ${td(`${bar(a.score ?? 0, 100, (a.score ?? 0) >= 75 ? C.good : (a.score ?? 0) >= 50 ? C.warn : C.bad)}<div style="font:700 10px/1.4 ${FONT};color:${C.muted};padding-top:2px;">${a.score ?? '—'}/100</div>`)}
+      </tr>`).join('') + TABLE_CLOSE
+    : ''
+
+  const remarks = forms.remarks.slice(0, 4)
+  const remarkBlock = remarks.length
+    ? `<div class="h3" style="padding-top:16px;">In their words</div>` +
+      remarks.map(r => {
+        const st = RATING_STYLE[r.overall ?? ''] ?? { ink: C.muted, bg: C.wash }
+        return `<div style="border-left:3px solid ${st.ink};background:${st.bg};border-radius:0 8px 8px 0;padding:9px 12px;margin-bottom:7px;">
+          <div style="font:italic 400 12px/1.65 ${FONT};color:${C.body};">“${truncate(r.remarks, 240)}”</div>
+          <div style="font:400 11px/1.5 ${FONT};color:${C.faint};padding-top:3px;">${esc(r.bookingRef)} · ${esc(r.country)}${r.overall ? ` · overall ${esc(r.overall.toLowerCase())}` : ''}</div>
+        </div>`
+      }).join('')
+    : ''
+
+  const partial = calls.source === 'api'
+    ? `<div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 12px;font:400 11px/1.6 ${FONT};color:#92400e;">The call database could not be read, so the AI-call figures came from the capped upstream API and may be low.</div>`
+    : ''
+
+  return section(
+    'Guest voice — AI calls & feedback',
+    `What guests told the AI operation calls, the feedback forms and the desk this ${periodWord} — every call is on the “Guest Voice” sheet`,
+    C.b2c,
+    tiles + phases + areaBlock + issueBlock + formBlock + remarkBlock + partial,
+  )
+}
+
+const PHASE_NAME: Record<string, string> = { pre_tour: 'Pre-tour call', on_tour: 'On-tour call', post_tour: 'Post-tour call' }
+
+// ─── AI outlook ───────────────────────────────────────────────────────────────
+
+/** The booking history as a column chart, drawn with table cells so Outlook keeps it. */
+function historyChart(history: PeriodAdvice['history'], forecast: PeriodAdvice['forecast']): string {
+  const shown = history.slice(-12)
+  const points = [
+    ...shown.map(h => ({ label: h.label.slice(0, 3), value: h.bookings, kind: 'actual' as const })),
+    ...forecast.map(f => ({ label: f.label.slice(0, 3), value: f.aiExpected ?? f.baseline, kind: 'forecast' as const })),
+  ]
+  const max = Math.max(1, ...points.map(p => p.value ?? 0), ...forecast.map(f => f.high))
+  const H = 110
+  const cols = points.map((p, idx) => {
+    const h = p.value ? Math.max(3, Math.round((p.value / max) * H)) : 0
+    const last = idx === shown.length - 1
+    const color = p.kind === 'forecast' ? '#c4b5fd' : last ? C.brand : '#99d5cf'
+    return `<td valign="bottom" align="center" style="padding:0 2px;">
+      <div style="font:700 9px/1.2 ${FONT};color:${p.kind === 'forecast' ? C.b2c : C.muted};padding-bottom:2px;">${p.value === null ? '' : num(p.value)}</div>
+      ${h ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="${h}" style="height:${h}px;background:${color};border-radius:4px 4px 0 0;${p.kind === 'forecast' ? `border:1px dashed ${C.b2c};` : ''}font-size:0;line-height:0;">&nbsp;</td></tr></table>`
+        : `<div style="font:400 9px/1.2 ${FONT};color:${C.faint};">n/a</div>`}
+    </td>`
+  }).join('')
+  const labels = points.map(p => `<td align="center" style="font:600 9px/1.4 ${FONT};color:${p.kind === 'forecast' ? C.b2c : C.faint};padding-top:4px;">${esc(p.label)}</td>`).join('')
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;border-bottom:1px solid ${C.line};"><tr>${cols}</tr></table>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="table-layout:fixed;"><tr>${labels}</tr></table>
+    <div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:6px;">
+      <span style="color:#99d5cf;">■</span> B2B confirmed per month &nbsp; <span style="color:${C.brand};">■</span> this month &nbsp; <span style="color:#c4b5fd;">■</span> forecast
+    </div>`
+}
+
+const OWNER_COLOR: Record<string, string> = {
+  'Ground Team': C.good, 'Booking Team': C.b2b, 'Travel Experience': C.b2c, Reservations: '#0891b2', Accounts: C.warn, Management: C.ink,
+}
+
+/**
+ * The closing section: where bookings are heading, how to fix what guests
+ * complained about, and how to grow — written with OpenAI from this report's
+ * own figures, with the forecast anchored on a statistical baseline.
+ */
+function outlookSection(d: ReportData): string {
+  const a = d.advice
+  if (!a) return ''
+
+  const forecastCards = a.forecast.length
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -5px 14px -5px;"><tr>${a.forecast.map(f => `
+        <td width="${Math.floor(100 / a.forecast.length)}%" valign="top" style="padding:0 5px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;border-collapse:separate;">
+            <tr><td style="padding:14px 15px;">
+              <div style="font:700 10px/1.3 ${FONT};color:${C.b2c};text-transform:uppercase;letter-spacing:.08em;">${esc(f.label)} · expected B2B bookings</div>
+              <div style="font:800 32px/1.1 ${FONT};color:${C.ink};padding-top:6px;letter-spacing:-.02em;">${num(f.aiExpected ?? f.baseline)}</div>
+              <div style="font:400 12px/1.5 ${FONT};color:${C.muted};padding-top:3px;">likely range <strong style="color:${C.ink};">${num(f.low)} – ${num(f.high)}</strong>${f.aiExpected !== null && f.aiExpected !== f.baseline ? ` · statistical ${num(f.baseline)}` : ''}</div>
+              ${f.aiReason ? `<div style="font:400 12px/1.6 ${FONT};color:${C.body};padding-top:8px;border-top:1px solid #ddd6fe;margin-top:9px;">${esc(f.aiReason)}</div>` : ''}
+            </td></tr>
+          </table>
+        </td>`).join('')}</tr></table>`
+    : emptyNote(a.method)
+
+  const chart = a.history.some(h => h.bookings !== null) ? historyChart(a.history, a.forecast) : ''
+
+  const fixes = a.complaintFixes.length
+    ? `<div class="h3" style="padding-top:20px;">Fixing what guests complained about</div>` +
+      a.complaintFixes.map((f, idx) => `
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${C.line};border-radius:10px;margin-bottom:9px;border-collapse:separate;">
+          <tr>
+            <td width="34" valign="top" style="padding:12px 0 12px 12px;">
+              <div style="width:26px;height:26px;border-radius:13px;background:${C.bad};color:#ffffff;font:800 12px/26px ${FONT};text-align:center;">${idx + 1}</div>
+            </td>
+            <td style="padding:11px 13px 12px 10px;">
+              <div style="font:700 13px/1.4 ${FONT};color:${C.ink};">${esc(f.theme)} <span style="font-weight:400;color:${C.muted};">· ${num(f.count)} this month</span></div>
+              <div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding-top:4px;"><strong style="color:${C.body};">Likely cause:</strong> ${esc(f.rootCause)}</div>
+              <div style="font:400 12px/1.6 ${FONT};color:${C.body};padding-top:4px;"><strong style="color:${C.good};">Fix:</strong> ${esc(f.fix)}</div>
+              <div style="padding-top:6px;"><span class="pill" style="background:${C.wash};color:${OWNER_COLOR[f.owner] ?? C.ink};border:1px solid ${C.line};">Owner · ${esc(f.owner)}</span></div>
+            </td>
+          </tr>
+        </table>`).join('')
+    : ''
+
+  const growth = a.growth.length
+    ? `<div class="h3" style="padding-top:20px;">How to grow the business</div>` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">` +
+      a.growth.map((g, idx) => `
+        <tr><td style="padding:0 0 9px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;border-collapse:separate;">
+            <tr>
+              <td width="34" valign="top" style="padding:12px 0 12px 12px;font:800 16px/1.2 ${FONT};color:${C.good};">${String(idx + 1).padStart(2, '0')}</td>
+              <td style="padding:11px 13px 12px 8px;">
+                <div style="font:700 13px/1.4 ${FONT};color:${C.ink};">${esc(g.title)}</div>
+                <div style="font:400 12px/1.6 ${FONT};color:${C.body};padding-top:3px;">${esc(g.detail)}</div>
+                <div style="font:600 11px/1.5 ${FONT};color:#047857;padding-top:5px;">↳ ${esc(g.evidence)}</div>
+              </td>
+            </tr>
+          </table>
+        </td></tr>`).join('') + '</table>'
+    : ''
+
+  const note = a.aiNote
+    ? `<div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 12px;font:400 12px/1.6 ${FONT};color:#92400e;">${esc(a.aiNote)}</div>`
+    : ''
+
+  const howMade = `<div style="margin-top:14px;padding-top:12px;border-top:1px dashed ${C.line};font:400 11px/1.65 ${FONT};color:${C.faint};">
+      <strong style="color:${C.muted};">How this was made.</strong> ${esc(a.method)}
+      ${a.model ? ` The estimate, the fixes and the growth ideas were written by OpenAI (${esc(a.model)}) from this report's own figures only; its estimate is kept only when it falls inside the statistical range, each complaint count is ours, and each idea cites the figure it rests on. Treat it as a well-briefed second opinion, not a decision.` : ''}
+    </div>`
+
+  return section(
+    'Outlook — forecast, fixes and growth',
+    'The next two months, what to fix, and where to grow — prepared with OpenAI from this report',
+    C.b2c,
+    forecastCards + chart + fixes + growth + note + howMade,
+  )
+}
+
 // ─── Shell ────────────────────────────────────────────────────────────────────
 
 export interface PeriodRenderOptions {
@@ -546,52 +814,271 @@ export interface PeriodRenderOptions {
   workbookSheets?: string[]
 }
 
-function headerBlock(w: ReportWindow, opts: PeriodRenderOptions): string {
+/**
+ * Solid colours only on the dark header. Outlook's Word renderer drops `rgba()`
+ * and falls back to black, which is how the labels on the old scorecard ended
+ * up near-invisible dark grey on dark teal.
+ */
+const HERO = {
+  deep: '#0b3d3a',
+  tile: '#115e59',
+  tileLine: '#1f7a72',
+  eyebrow: '#99f6e4',
+  soft: '#ccfbf1',
+  dim: '#a7d3cc',
+  up: '#6ee7b7',
+  down: '#fca5a5',
+}
+
+/** "October 2026" for a month, "03 Aug – 09 Aug 2026" for a week. */
+function periodName(w: ReportWindow): string {
+  return w.period === 'MONTHLY'
+    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' })
+        .format(new Date(`${w.fromDate}T00:00:00Z`))
+    : `${formatReportDate(w.fromDate)} – ${formatReportDate(w.toDate)}`
+}
+
+/** "▲ 12 (+4%)" in the colour of its verdict, for the dark header. */
+function heroDelta(current: number, previous: number | null, opts: { invert?: boolean; comparable?: boolean } = {}): string {
+  if (previous === null || opts.comparable === false) return `<span style="color:${HERO.dim};">no baseline</span>`
+  const delta = current - previous
+  if (delta === 0) return `<span style="color:${HERO.dim};">level with last</span>`
+  const up = delta > 0
+  const good = opts.invert ? !up : up
+  const pctText = previous > 0 ? ` (${up ? '+' : '−'}${Math.abs(Math.round((delta / previous) * 100))}%)` : ''
+  return `<span style="color:${good ? HERO.up : HERO.down};font-weight:700;">${up ? '▲' : '▼'} ${num(Math.abs(delta))}${pctText}</span>`
+}
+
+function headerBlock(d: ReportData, opts: PeriodRenderOptions): string {
+  const w = d.window
+  const i = d.insights
   const badge = [
     opts.testSend ? 'TEST SEND' : '',
     w.anchored ? `BACK-DATED TO ${formatReportDate(w.toDate).toUpperCase()}` : '',
   ].filter(Boolean).map(text =>
-    `<span style="display:inline-block;margin-left:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
+    `<span style="display:inline-block;margin:0 0 6px 5px;padding:3px 9px;border-radius:999px;background:${HERO.tile};border:1px solid ${HERO.tileLine};color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
   ).join('')
 
+  const headline = i
+    ? `<div style="font:700 10px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.12em;">B2B confirmed</div>
+       <div style="font:800 40px/1.05 ${FONT};color:#ffffff;letter-spacing:-0.03em;padding-top:2px;">${num(i.totals.bookings)}</div>
+       <div style="font:400 12px/1.5 ${FONT};padding-top:3px;">${heroDelta(i.totals.bookings, i.comparable ? i.totals.previousBookings : null)}<span style="color:${HERO.dim};"> vs ${esc(i.previousLabel)}</span></div>`
+    : ''
+
   return `
-  <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${C.brandDeep} 0%,${C.brand} 100%);padding:26px 24px;border-radius:16px 16px 0 0;">
+  <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${C.brandDeep} 0%,${C.brand} 100%);padding:28px 26px 24px 26px;border-radius:16px 16px 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td>
-          <div style="font:700 11px/1.4 ${FONT};color:rgba(255,255,255,.72);text-transform:uppercase;letter-spacing:.14em;">AppleHolidays Operations</div>
-          <div style="font:800 24px/1.25 ${FONT};color:#ffffff;padding-top:6px;letter-spacing:-0.02em;">${esc(PERIOD_LABEL[w.period])} Business Review</div>
-          <div style="font:400 13px/1.5 ${FONT};color:rgba(255,255,255,.82);padding-top:5px;">${esc(w.label)}</div>
+        <td valign="top">
+          <div style="font:700 11px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.14em;">AppleHolidays Operations · ${esc(PERIOD_LABEL[w.period])} Review</div>
+          <div style="font:800 30px/1.15 ${FONT};color:#ffffff;padding-top:8px;letter-spacing:-0.02em;">${esc(periodName(w))}</div>
+          <div style="font:400 13px/1.5 ${FONT};color:${HERO.soft};padding-top:6px;">${esc(formatReportDate(w.fromDate))} – ${esc(formatReportDate(w.toDate))} · ${esc(w.timezone)}</div>
         </td>
-        <td align="right" valign="top" style="white-space:nowrap;">${badge}</td>
+        <td align="right" valign="top" style="white-space:nowrap;padding-left:12px;">${badge}${headline}</td>
       </tr>
     </table>
   </td></tr>`
 }
 
-/** The scorecard strip — eight numbers, each carrying its own movement. */
+/** "82% good" — the share of connected AI calls that went well. */
+function guestTile(d: ReportData): { label: string; value: string; sub: string } {
+  const v = d.guestVoice.calls.verdicts
+  const judged = v.good + v.warning + v.bad
+  if (!d.guestVoice.calls.available || !judged) {
+    return { label: 'Guest feedback', value: '—', sub: `<span style="color:${HERO.dim};">no AI calls judged</span>` }
+  }
+  const good = Math.round((v.good / judged) * 100)
+  return {
+    label: 'Guest feedback',
+    value: `${good}%`,
+    sub: `<span style="color:${good >= 80 ? HERO.up : HERO.down};font-weight:700;">good</span><span style="color:${HERO.dim};"> · ${num(v.bad)} bad of ${num(judged)} calls</span>`,
+  }
+}
+
+/** The scorecard — two rows of four, each number carrying its own movement. */
 function scorecard(d: ReportData, i: PeriodInsights): string {
+  const short = i.integrity.parityMissing + i.integrity.countCheckShort
   const cells: { label: string; value: string; sub: string }[] = [
-    { label: 'Confirmed', value: num(i.totals.bookings), sub: i.comparable ? `prev ${num(i.totals.previousBookings)}` : 'no baseline' },
-    { label: 'Guests', value: num(i.totals.pax), sub: i.comparable ? `prev ${num(i.totals.previousPax)}` : '—' },
-    { label: 'B2B / B2C', value: `${num(i.totals.channel.b2b)}/${num(i.totals.channel.b2c)}`, sub: `prev ${num(i.totals.previousChannel.b2b)}/${num(i.totals.previousChannel.b2c)}` },
-    { label: 'Operated', value: num(i.delivery.toursOperated), sub: `${num(i.delivery.guestDays)} guest-days` },
-    { label: 'Cancelled', value: num(i.cancellations.total), sub: i.cancellations.ratePct !== null ? `${i.cancellations.ratePct}% of book` : '—' },
-    { label: 'Complaints', value: num(i.quality.complaints), sub: i.quality.per100Tours !== null ? `${i.quality.per100Tours}/100 tours` : `${num(d.complaints.open)} open` },
-    { label: 'Integrity', value: i.integrity.parityMissing || i.integrity.countCheckShort ? 'SHORT' : 'OK', sub: i.integrity.parityMissing || i.integrity.countCheckShort ? `${num(i.integrity.parityMissing + i.integrity.countCheckShort)} to chase` : 'parity + accounts' },
-    { label: 'Forward book', value: num(d.upcoming.total), sub: `${num(d.upcoming.next30)} in 30d` },
+    {
+      label: 'B2C store orders',
+      value: i.b2c.available ? num(i.b2c.orders) : '—',
+      sub: i.b2c.available ? heroDelta(i.b2c.orders, i.b2c.previousOrders) : `<span style="color:${HERO.dim};">unavailable</span>`,
+    },
+    { label: 'Guests booked', value: num(i.totals.pax + (i.b2c.available ? i.b2c.pax : 0)), sub: `<span style="color:${HERO.dim};">${num(i.totals.pax)} B2B · ${num(i.b2c.pax)} B2C</span>` },
+    { label: 'Tours operated', value: num(i.delivery.toursOperated), sub: `<span style="color:${HERO.dim};">${num(i.delivery.pax)} guests · ${num(i.delivery.guestDays)} guest-days</span>` },
+    { label: 'Forward book', value: num(d.upcoming.total), sub: `<span style="color:${HERO.dim};">${num(d.upcoming.next30)} arriving in 30 days</span>` },
+    {
+      label: 'Cancelled',
+      value: num(i.cancellations.total),
+      sub: i.cancellations.ratePct !== null
+        ? `<span style="color:${HERO.dim};">${i.cancellations.ratePct}% of intake · </span>${heroDelta(i.cancellations.total, i.cancellations.previousTotal, { invert: true, comparable: i.comparable })}`
+        : '—',
+    },
+    {
+      label: 'Complaints',
+      value: num(i.quality.complaints),
+      sub: `${heroDelta(i.quality.complaints, i.quality.previousComplaints, { invert: true })}${i.quality.per100Tours !== null ? `<span style="color:${HERO.dim};"> · ${i.quality.per100Tours}/100 tours</span>` : ''}`,
+    },
+    // The monthly review is for management and carries no integrity block —
+    // that chase lives in the daily mail — so its tile is the guests' verdict.
+    d.window.period === 'MONTHLY'
+      ? guestTile(d)
+      : {
+          label: 'Integrity',
+          value: short ? 'SHORT' : 'OK',
+          sub: short
+            ? `<span style="color:${HERO.down};font-weight:700;">${num(short)} to chase</span>`
+            : `<span style="color:${HERO.up};font-weight:700;">parity + accounts agree</span>`,
+        },
+    {
+      label: 'Test bookings',
+      value: num(d.testBookings.total),
+      sub: `<span style="color:${HERO.dim};">${d.testBookings.available ? 'left out of every figure' : 'register unreadable'}</span>`,
+    },
   ]
 
+  const tile = (c: { label: string; value: string; sub: string }) => `
+    <td width="25%" valign="top" style="padding:5px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${HERO.tile};border:1px solid ${HERO.tileLine};border-radius:12px;border-collapse:separate;">
+        <tr><td style="padding:12px 12px 11px 12px;">
+          <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;">${esc(c.label)}</div>
+          <div style="font:800 24px/1.15 ${FONT};color:#ffffff;padding-top:5px;letter-spacing:-0.02em;">${esc(c.value)}</div>
+          <div style="font:400 11px/1.45 ${FONT};padding-top:4px;">${c.sub}</div>
+        </td></tr>
+      </table>
+    </td>`
+
   return `
-  <tr><td style="background:#0b3d3a;padding:14px 18px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${cells.map(c => `<td width="${Math.floor(100 / cells.length)}%" align="center" style="padding:2px 4px;">
-        <div style="font:800 21px/1.2 ${FONT};color:#ffffff;">${esc(c.value)}</div>
-        <div style="font:700 10px/1.4 ${FONT};color:rgba(255,255,255,.66);text-transform:uppercase;letter-spacing:.08em;padding-top:3px;">${esc(c.label)}</div>
-        <div style="font:400 10px/1.4 ${FONT};color:rgba(255,255,255,.45);padding-top:2px;">${esc(c.sub)}</div>
-      </td>`).join('')}
-    </tr></table>
+  <tr><td style="background:${HERO.deep};padding:12px 13px 14px 13px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>${cells.slice(0, 4).map(tile).join('')}</tr>
+      <tr>${cells.slice(4).map(tile).join('')}</tr>
+    </table>
   </td></tr>`
+}
+
+/**
+ * The four biggest moves of the period, by bookings — the rising and falling
+ * partner, the rising and falling market. Absolute numbers on purpose: "−75%"
+ * on a market that went 4 → 1 is three bookings, and a percentage strip would
+ * put it above a partner that lost forty.
+ */
+function moversStrip(i: PeriodInsights, periodWord: string): string {
+  if (!i.comparable) return ''
+  const pick = (rows: MoverRow[], dir: 1 | -1) => rows
+    .filter(m => Math.sign(m.delta) === dir)
+    .sort((a, b) => dir * (b.delta - a.delta))[0] ?? null
+
+  const cards = [
+    { title: 'Partner up', m: pick(i.agentMovers, 1), up: true },
+    { title: 'Partner down', m: pick(i.agentMovers, -1), up: false },
+    { title: 'Market up', m: pick(i.countryMovers, 1), up: true },
+    { title: 'Market down', m: pick(i.countryMovers, -1), up: false },
+  ]
+  if (cards.every(c => !c.m)) return ''
+
+  const cell = (c: (typeof cards)[number]) => {
+    const tone = c.up ? { ink: '#065f46', bg: '#ecfdf5', line: '#a7f3d0' } : { ink: '#991b1b', bg: '#fef2f2', line: '#fecaca' }
+    const body = c.m
+      ? `<div style="font:700 13px/1.35 ${FONT};color:${C.ink};padding-top:5px;">${truncate(c.m.label, 26)}</div>
+         <div style="font:800 18px/1.2 ${FONT};color:${tone.ink};padding-top:4px;">${c.up ? '▲' : '▼'} ${num(Math.abs(c.m.delta))}</div>
+         <div style="font:400 11px/1.4 ${FONT};color:${C.muted};padding-top:2px;">${num(c.m.previous)} → ${num(c.m.current)} bookings</div>`
+      : `<div style="font:400 12px/1.5 ${FONT};color:${C.faint};padding-top:8px;">Nothing ${c.up ? 'grew' : 'fell'}</div>`
+    return `<td width="25%" valign="top" style="padding:0 4px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${tone.bg};border:1px solid ${tone.line};border-radius:10px;border-collapse:separate;">
+        <tr><td style="padding:11px 12px;">
+          <div style="font:700 10px/1.3 ${FONT};color:${tone.ink};text-transform:uppercase;letter-spacing:.08em;">${c.title}</div>
+          ${body}
+        </td></tr>
+      </table>
+    </td>`
+  }
+
+  return section(
+    'Biggest moves',
+    `What changed most against ${i.previousLabel}, in bookings — the ${periodWord}'s story in four cards`,
+    C.b2b,
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -4px;"><tr>${cards.map(cell).join('')}</tr></table>`,
+  )
+}
+
+/** Storefront orders, beside the B2B intake and never inside it. */
+function b2cSection(i: PeriodInsights, periodWord: string): string {
+  const b = i.b2c
+  if (!b.available) return ''
+  if (!b.orders && !b.previousOrders && !b.cancelled) return ''
+
+  const tiles = kpiRow([
+    { label: 'Orders', value: num(b.orders), note: deltaChip(b.orders, b.previousOrders), color: C.b2c },
+    { label: 'Guests', value: num(b.pax), note: `Prev ${num(b.previousPax)}` },
+    { label: 'Value', value: `<span style="font-size:15px;line-height:1.4;">${currencyLine(b.byCurrency, 2)}</span>`, note: 'Quoted, per currency' },
+    { label: 'Cancelled', value: num(b.cancelled), note: 'Imported, then cancelled', color: b.cancelled ? C.bad : C.ink },
+  ])
+
+  return section(
+    'B2C store orders',
+    `Aahaas storefront orders imported this ${periodWord} — reported beside the B2B count, not added to it`,
+    C.b2c,
+    tiles + (b.byCountry.length ? `<div class="h3">By market</div>${countryOnlyTable(b.byCountry)}` : '') +
+      `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:8px;">
+         Counted by the date each order was imported into OPS. AppleSystem never carries storefront orders, so they cannot be part of the confirmed figure above. Every order is on the “B2C Orders” sheet.
+       </div>`,
+  )
+}
+
+/**
+ * Test bookings — named, counted, and kept out of everything else.
+ *
+ * A figure that silently drops rows reads as a number that does not add up. So
+ * every test the period left out is listed here with who marked it and why, and
+ * nothing in any other block of this mail includes it.
+ */
+function testBookingSection(d: ReportData, periodWord: string): string {
+  const t = d.testBookings
+  if (!t.available && !t.total) {
+    return section(
+      'Test bookings',
+      'Kept out of every figure in this report',
+      C.warn,
+      emptyNote('The test-booking register could not be read while this report was written, so nothing was left out. If test bookings exist this period, they are inside the figures above.'),
+    )
+  }
+  if (!t.total) return ''
+
+  const shown = t.lines.slice(0, 25)
+  const rows = shown.map(l => `<tr>
+    ${td(esc(l.ref), { bold: true, color: C.ink, nowrap: true })}
+    ${td(l.inOps ? (l.source === 'B2C' ? pill('B2C', '#ffffff', C.b2c) : pill('B2B', '#ffffff', C.b2b)) : pill('not filed', C.muted, C.wash))}
+    ${td(truncate(l.agent, 22))}
+    ${td(l.inOps ? num(l.pax) : '—', { align: 'right' })}
+    ${td(l.quotedTotal !== null && l.currency ? money(l.quotedTotal, l.currency) : '—', { align: 'right', nowrap: true })}
+    ${td(truncate(l.markedBy, 18))}
+    ${td(truncate(l.reason, 40), { color: l.reason ? C.body : C.faint })}
+  </tr>`).join('')
+
+  return section(
+    `Test bookings — ${num(t.total)} not counted`,
+    `Marked as tests in the shared register and left out of every figure in this ${periodWord}'s report`,
+    C.warn,
+    kpiRow([
+      { label: 'Test bookings', value: num(t.total), note: `${num(t.b2b)} B2B · ${num(t.b2c)} B2C`, color: C.warn },
+      { label: 'Guests', value: num(t.pax), note: 'Not in guests booked' },
+      { label: 'Value', value: `<span style="font-size:15px;line-height:1.4;">${t.byCurrency.length ? currencyLine(t.byCurrency, 2) : '—'}</span>`, note: 'Not in revenue' },
+    ]) +
+    tableOpen([
+      { text: 'Reference' },
+      { text: 'Channel', width: '70' },
+      { text: 'Agent' },
+      { text: 'Pax', align: 'right', width: '40' },
+      { text: 'Value', align: 'right', width: '110' },
+      { text: 'Marked by', width: '90' },
+      { text: 'Reason' },
+    ]) + rows + TABLE_CLOSE +
+    moreNote(shown.length, t.lines.length, 'test bookings') +
+    `<div style="margin-top:12px;background:#fffbeb;border:1px dashed #f59e0b;border-radius:10px;padding:10px 13px;font:400 12px/1.65 ${FONT};color:#92400e;">
+       A booking marked as a test is out of confirmed, guests, value, tours operated, cancellations and every comparison — this ${periodWord} and the one it is compared with. Release it in the register and it comes back in on the next send.
+     </div>`,
+  )
 }
 
 /**
@@ -630,9 +1117,25 @@ function workbookNote(opts: PeriodRenderOptions, periodWord: string): string {
   </td></tr>`
 }
 
+/**
+ * Drop the font stack from every inline `font:` shorthand.
+ *
+ * The style block already gives body, table, td, div and span the family, so
+ * the stack repeated inline is ~80 bytes of nothing, a few hundred times over —
+ * enough to push a full monthly review past Gmail's ~102 KB clip. The weight,
+ * size, line height and style stay inline, where per-element values belong.
+ */
+function slimFonts(html: string): string {
+  const stack = FONT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`font:(italic )?(\\d+) (\\d+px)\\/([\\d.]+px|[\\d.]+) ${stack};`, 'g')
+  return html.replace(re, (_m, italic: string | undefined, weight: string, size: string, lh: string) =>
+    `${italic ? 'font-style:italic;' : ''}font-weight:${weight};font-size:${size};line-height:${lh};`)
+}
+
 export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {}): string {
   const i = d.insights
   const periodWord = d.window.period === 'MONTHLY' ? 'month' : 'week'
+  const monthly = d.window.period === 'MONTHLY'
 
   // Insights are best-effort; without them there is nothing this renderer can
   // honestly say, so the caller falls back to the daily layout instead.
@@ -656,9 +1159,10 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
   const basisNote = `<tr><td style="padding:0 0 22px 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${C.wash};border:1px solid ${C.line};border-radius:14px;">
         <tr><td style="padding:13px 16px;font:400 12px/1.7 ${FONT};color:${C.muted};">
-          <strong style="color:${C.ink};">Counted: the ${num(i.totals.bookings)} booking${i.totals.bookings === 1 ? '' : 's'} ${
+          <strong style="color:${C.ink};">Counted: the ${num(i.totals.bookings)} B2B booking${i.totals.bookings === 1 ? '' : 's'} ${
             i.basis === 'apple' ? 'AppleSystem confirmed' : 'this system filed'
-          } in ${esc(d.window.label.replace(/^Last \w+ — /, ''))}.</strong>
+          } in ${esc(periodName(d.window))}${i.b2c.available ? `, plus ${num(i.b2c.orders)} B2C store order${i.b2c.orders === 1 ? '' : 's'} shown separately` : ''}.</strong>
+          ${d.testBookings.total ? `${num(d.testBookings.total)} test booking${d.testBookings.total === 1 ? ' is' : 's are'} left out of every figure and listed at the end.` : ''}
           ${i.basis === 'apple'
             ? 'The same population the accounts invoice and P&amp;L mails report, so the three figures line up.'
             : 'The accounts Sync Ledger could not be read for this period, so the count is this system\'s own intake and may not match the accounts mails.'}
@@ -679,37 +1183,47 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
 
   const body = [
     actionSection(i, periodWord),
+    want.commercial ? moversStrip(i, periodWord) : '',
     want.commercial ? trendSection(i, periodWord) : '',
     want.commercial ? marketSection(i, periodWord) : '',
     want.commercial ? partnerSection(i, periodWord) : '',
+    want.commercial ? b2cSection(i, periodWord) : '',
     want.commercial ? commercialSection(i, periodWord) : '',
     want.delivery ? deliverySection(i, periodWord) : '',
     // Attrition rides with intake: a period's cancellations are the other half
     // of what it sold, and reading one without the other overstates the book.
     want.commercial ? attritionSection(i, periodWord) : '',
     want.quality ? qualitySection(d, i, periodWord) : '',
-    want.integrity ? integritySection(d, i, periodWord) : '',
+    want.quality ? guestVoiceSection(d, periodWord) : '',
+    // The monthly review is a management read: the parity / count-check chase
+    // belongs to the daily mail and the workbook, not here.
+    want.integrity && !monthly ? integritySection(d, i, periodWord) : '',
     want.forward ? forwardSection(d, periodWord) : '',
+    // Never gated: a schedule that hid this block would hide why its totals
+    // are lower than the raw counts somebody else is quoting.
+    testBookingSection(d, periodWord),
+    // Last on purpose — the look forward closes the review.
+    monthly ? outlookSection(d) : '',
   ].join('')
 
   const footerLink = opts.dashboardUrl
     ? `<a href="${esc(opts.dashboardUrl)}" style="display:inline-block;padding:10px 20px;background:${C.brand};color:#ffffff;text-decoration:none;border-radius:8px;font:700 13px/1 ${FONT};">Open the dashboard</a>`
     : ''
 
-  return compact(`<!DOCTYPE html>
+  return slimFonts(compact(`<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
-<title>${esc(PERIOD_LABEL[d.window.period])} Business Review</title>
+<title>${esc(PERIOD_LABEL[d.window.period])} Business Review · ${esc(periodName(d.window))}</title>
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(i.totals.bookings)} confirmed (prev ${num(i.totals.previousBookings)}), ${num(i.delivery.toursOperated)} tours operated, ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(i.b2c.orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated, ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
-      ${headerBlock(d.window, opts)}
+      ${headerBlock(d, opts)}
       ${scorecard(d, i)}
       <tr><td style="background:#ffffff;padding:20px 18px 6px 18px;border-left:1px solid ${C.line};border-right:1px solid ${C.line};">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -730,7 +1244,7 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
     </table>
   </td></tr>
 </table>
-</body></html>`)
+</body></html>`))
 }
 
 /**
@@ -742,23 +1256,24 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
  */
 export function renderPeriodSubject(d: ReportData, opts: { prefix?: string; testSend?: boolean } = {}): string {
   const i = d.insights
-  const range = d.window.period === 'MONTHLY'
-    ? new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' })
-        .format(new Date(`${d.window.fromDate}T00:00:00Z`))
-    : `${formatReportDate(d.window.fromDate)}–${formatReportDate(d.window.toDate)}`
+  const range = periodName(d.window)
 
   const parts: string[] = []
   if (i) {
     const move = i.comparable && i.totals.previousBookings > 0
       ? ` (${i.totals.bookings >= i.totals.previousBookings ? '+' : ''}${Math.round(((i.totals.bookings - i.totals.previousBookings) / i.totals.previousBookings) * 100)}%)`
       : ''
-    parts.push(`${i.totals.bookings} confirmed${move}`)
+    parts.push(`${i.totals.bookings} B2B confirmed${move}`)
+    if (i.b2c.available && i.b2c.orders) parts.push(`${i.b2c.orders} B2C orders`)
     if (i.delivery.available) parts.push(`${i.delivery.toursOperated} tours operated`)
-    if (i.integrity.parityMissing) parts.push(`${i.integrity.parityMissing} MISSING upstream`)
-    if (i.integrity.countCheckShort) parts.push(`count check short ${i.integrity.countCheckShort}`)
+    if (d.window.period !== 'MONTHLY') {
+      if (i.integrity.parityMissing) parts.push(`${i.integrity.parityMissing} MISSING upstream`)
+      if (i.integrity.countCheckShort) parts.push(`count check short ${i.integrity.countCheckShort}`)
+    }
     if (i.cancellations.total) parts.push(`${i.cancellations.total} cancelled`)
     if (i.quality.unexplainedBreaches) parts.push(`${i.quality.unexplainedBreaches} D-${RECONFIRM_DUE_DAYS} unexplained`)
     if (d.complaints.open) parts.push(`${d.complaints.open} open complaint${d.complaints.open === 1 ? '' : 's'}`)
+    if (d.testBookings.total) parts.push(`${d.testBookings.total} test excluded`)
   } else {
     parts.push(`${d.created.total} confirmed`)
   }

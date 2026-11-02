@@ -21,6 +21,7 @@ import { renderReportWorkbook } from '../src/lib/reports/report-workbook'
 import { buildReportWindow, DEFAULT_REPORT_TZ, type ReportPeriod } from '../src/lib/reports/report-window'
 import { finaliseInsights, type PeriodInsights } from '../src/lib/reports/period-insights'
 import type { ReportData } from '../src/lib/reports/report-data'
+import { baselineForecast, mergeAiForecast, shiftMonth } from '../src/lib/reports/period-outlook'
 
 const period = (process.argv[2] ?? 'WEEKLY').toUpperCase() as ReportPeriod
 const outDir = path.resolve(process.argv[3] ?? '.render-check/period-report')
@@ -92,6 +93,12 @@ const insightsBase: PeriodInsights = {
   lapsedAgents: ['Ceylon Roots'],
   agentConcentrationPct: 77.1,
   leadTime: { measured: 44, avgDays: 38, medianDays: 29, within7: 6, within30: 23, beyond90: 5, previousAvgDays: 46 },
+  b2c: {
+    available: true, orders: 9, pax: 21, previousOrders: 5, previousPax: 12,
+    byCurrency: [{ currency: 'USD', total: 14300 }], cancelled: 1,
+    byCountry: [{ country: 'SRI_LANKA', label: 'Sri Lanka', bookings: 7, pax: 17, b2b: 0, b2c: 7 }, { country: 'MALAYSIA', label: 'Malaysia', bookings: 2, pax: 4, b2b: 0, b2c: 2 }],
+    lines: counted.filter(b => b.source === 'B2C').slice(0, 9),
+  },
   delivery: {
     available: true, toursOperated: 63, arrivals: 29, departures: 26, pax: 178, guestDays: 742,
     avgPartySize: 2.8, avgTourNights: 6.1, hotelOnly: 7,
@@ -228,9 +235,71 @@ const data = {
     imminent: counted.slice(0, 10),
   },
   insights: null,
+  guestVoice: {
+    calls: {
+      available: true, source: 'database', warnings: [], assigned: 212, done: 171, missed: 29, completionRate: 80.7,
+      verdicts: { calls: 171, good: 128, warning: 27, bad: 11, none: 5 },
+      byPhase: [
+        { phase: 'pre_tour', label: 'Pre-tour', assigned: 64, done: 55, good: 44, warning: 8, bad: 2 },
+        { phase: 'on_tour', label: 'On-tour', assigned: 110, done: 86, good: 61, warning: 16, bad: 7 },
+        { phase: 'post_tour', label: 'Post-tour', assigned: 38, done: 30, good: 23, warning: 3, bad: 2 },
+      ],
+      postTour: { calls: 30, rated: 26, avgRating: 8.4, nps: 42, promoters: 15, detractors: 4, recommendYes: 24, recommendNo: 2 },
+      areaProblems: [{ area: 'Hotel', bad: 6, good: 70 }, { area: 'Driver', bad: 3, good: 78 }, { area: 'Meals', bad: 2, good: 60 }, { area: 'Vehicle', bad: 1, good: 80 }],
+      reconfirmMismatches: { dates: 2, flight: 3, pax: 1, contact: 0 },
+      issues: [
+        { id: '1', phase: 'on_tour', level: 'bad', source: 'call', bookingRef: 'SL 41012', customerName: null, phone: null, date: window.fromDate, at: `${window.fromDate}T08:00:00Z`, reason: 'Guest unhappy with hotel room — moved to a smaller room than booked', detail: null, verdictBy: 'ai', alert: null },
+        { id: '2', phase: 'pre_tour', level: 'warning', source: 'call', bookingRef: 'VN 40221', customerName: null, phone: null, date: window.fromDate, at: `${window.fromDate}T07:00:00Z`, reason: 'Flight number does not match the booking', detail: null, verdictBy: 'rules', alert: null },
+      ],
+      issueTotals: { bad: 11, warning: 27 },
+    },
+    forms: {
+      available: true, total: 14, overall: { EXCELLENT: 7, GOOD: 5, AVERAGE: 1, POOR: 1 },
+      areas: [
+        { area: 'Hotel room', rated: 14, excellent: 6, good: 5, average: 2, poor: 1, score: 76 },
+        { area: 'Driver', rated: 13, excellent: 10, good: 3, average: 0, poor: 0, score: 94 },
+        { area: 'Restaurant food', rated: 12, excellent: 3, good: 4, average: 3, poor: 2, score: 59 },
+      ],
+      remarks: [
+        { bookingRef: 'SL 41044', country: 'Sri Lanka', overall: 'POOR', remarks: 'The hotel in Ella was not what the itinerary showed and nobody called us back.', submittedAt: `${window.toDate}T10:00:00Z` },
+        { bookingRef: 'SL 41009', country: 'Sri Lanka', overall: 'EXCELLENT', remarks: 'Our driver Chaminda made the trip — would book again.', submittedAt: `${window.toDate}T11:00:00Z` },
+      ],
+    },
+    desk: { available: true, total: 9, rated: 8, avgRating: 4.1, low: [{ bookingRef: 'MY 20011', rating: 2, comment: 'Late pickup on day 1', savedAt: `${window.toDate}T09:00:00Z` }] },
+  },
+  history: [] as unknown[],
+  testBookings: {
+    available: true, total: 3, pax: 6, b2b: 2, b2c: 1,
+    byCurrency: [{ currency: 'USD', total: 2400 }],
+    lines: [
+      { ref: 'SL 41888', seenAs: 'AppleSystem confirmation', inOps: true, agent: 'Make My Trip', source: 'B2B', countryLabel: 'Sri Lanka', status: 'CONFIRMED', arrivalDate: window.toDate, pax: 2, currency: 'USD', quotedTotal: 1200, createdAt: `${window.fromDate}T04:00:00.000Z`, markedBy: 'Sasindu D.', markedAt: `${window.fromDate}T05:00:00.000Z`, reason: 'Integration test from AppleSystem sandbox' },
+      { ref: 'AHS15001', seenAs: 'Filed in OPS', inOps: true, agent: 'Aahaas B2C', source: 'B2C', countryLabel: 'Sri Lanka', status: 'CONFIRMED', arrivalDate: window.toDate, pax: 4, currency: 'USD', quotedTotal: 1200, createdAt: `${window.fromDate}T06:00:00.000Z`, markedBy: 'Shafraz A.', markedAt: null, reason: 'Store checkout test' },
+      { ref: 'VN 40999', seenAs: 'AppleSystem confirmation', inOps: false, agent: null, source: 'B2B', countryLabel: '—', status: 'NOT FILED', arrivalDate: '', pax: 0, currency: '', quotedTotal: null, createdAt: '', markedBy: 'Karthik S', markedAt: null, reason: null },
+    ],
+  },
 } as unknown as ReportData
 
 async function main() {
+  // Fifteen months of history ending in this one, and the real baseline over it.
+  const month = window.fromDate.slice(0, 7)
+  const shape = [31, 34, 38, 44, 41, 36, 33, 35, 39, 46, 49, 44, 40, 43]
+  const label = (m: string) => new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'short', year: 'numeric' }).format(new Date(`${m}-01T00:00:00Z`))
+  data.history = [...shape.map((n, k) => ({ month: shiftMonth(month, k - 14), label: label(shiftMonth(month, k - 14)), bookings: k < 2 ? null : n })), { month, label: label(month), bookings: counted.length }]
+  const { forecast, method } = baselineForecast(data.history)
+  data.advice = {
+    history: data.history, method,
+    forecast: mergeAiForecast(forecast, forecast.map((f, k) => ({ month: f.month, expected: f.baseline + (k ? -2 : 3), reason: k ? 'Forward book for this month is lighter than last year, so slightly under the baseline.' : 'November last year rose 9% on October and 74 tours are already on the book for it.' }))),
+    complaintFixes: [
+      { theme: 'Complaint: hotel', count: 3, rootCause: 'Rooms sold from the contract sheet do not match what the property allocates on arrival.', fix: 'Reservations to reconfirm room category in writing at D-7 for every stay; Ground Team to check in person on arrival day for repeat offenders.', owner: 'Reservations' },
+      { theme: 'Pre-tour call: booking details did not match', count: 6, rootCause: 'Flight details changed after the TC was issued and were never updated.', fix: 'Booking Team to re-pull flight details from the partner at D-10 and update before the reconfirmation call.', owner: 'Booking Team' },
+    ],
+    growth: [
+      { title: 'Win back Ceylon Roots', detail: 'They booked 6 last month and none this month — a call this week with a November offer.', evidence: 'Ceylon Roots: 6 → 0 bookings' },
+      { title: 'Reduce dependence on the top three partners', detail: 'Activate two mid-sized partners with a co-marketing push in India.', evidence: 'Top 3 partners hold 77.1% of bookings' },
+    ],
+    model: 'gpt-4o', aiNote: null,
+  } as never
+
   // Run the real finaliser so the action list under test is the one a send
   // would derive, not a list written by hand in this file.
   data.insights = finaliseInsights(insightsBase, {

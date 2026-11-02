@@ -28,6 +28,7 @@
  */
 import type { RowDataPacket } from 'mysql2/promise'
 import { accountsQuery } from '@/lib/accounts-db'
+import { loadTestBookings, testBookingKey } from '@/lib/test-bookings'
 import type { ReportWindow } from './report-window'
 
 /**
@@ -65,6 +66,12 @@ export interface AppleCohort {
   cancelled: number
   /** ISO instant of the last sweep covering these dates; null = never swept. */
   sweptAt: string | null
+  /**
+   * Confirmations in the window that the shared test register marks as tests.
+   * Only populated when the cohort was asked to `excludeTests`; they are then
+   * absent from `keys`, `entries` and every count above.
+   */
+  tests: CohortEntry[]
 }
 
 interface CohortRow extends RowDataPacket {
@@ -80,7 +87,7 @@ interface CohortRow extends RowDataPacket {
 
 const UNAVAILABLE: AppleCohort = {
   available: false, error: null, keys: new Set(), entries: [],
-  total: 0, expected: 0, cancelled: 0, sweptAt: null,
+  total: 0, expected: 0, cancelled: 0, sweptAt: null, tests: [],
 }
 
 /**
@@ -92,6 +99,7 @@ const UNAVAILABLE: AppleCohort = {
  */
 export async function collectAppleCohort(
   window: Pick<ReportWindow, 'fromDate' | 'toDate'>,
+  opts: { excludeTests?: boolean } = {},
 ): Promise<AppleCohort> {
   let rows: CohortRow[]
 
@@ -111,14 +119,35 @@ export async function collectAppleCohort(
     return { ...UNAVAILABLE, error: `The accounts database could not be read (${message}).` }
   }
 
+  // The weekly / monthly reviews leave test bookings out of every figure, the
+  // same way the count check does. Fail-open: an unreadable register hides nothing.
+  const testKeys = opts.excludeTests
+    ? new Set((await loadTestBookings()).marks.keys())
+    : new Set<string>()
+
   const entries: CohortEntry[] = []
+  const tests: CohortEntry[] = []
   const keys = new Set<string>()
+  const seenTests = new Set<string>()
   let cancelled = 0
   let sweptAt: number | null = null
 
   for (const row of rows) {
     const key = cohortKey(row.is_key)
-    if (!key || keys.has(key)) continue
+    if (!key || keys.has(key) || seenTests.has(key)) continue
+
+    if (testKeys.size && testKeys.has(testBookingKey(row.is_key))) {
+      seenTests.add(key)
+      tests.push({
+        key,
+        ref: String(row.booking_ref || row.is_number || row.is_key || '').trim() || key,
+        cancelled: Boolean(row.as_cancelled),
+        bookingPresent: Boolean(row.booking_present),
+        pnlPresent: Boolean(row.pnl_present),
+        invoicePresent: Boolean(row.invoice_present),
+      })
+      continue
+    }
 
     keys.add(key)
     if (row.as_cancelled) cancelled++
@@ -145,5 +174,6 @@ export async function collectAppleCohort(
     expected: Math.max(0, keys.size - cancelled),
     cancelled,
     sweptAt: sweptAt === null ? null : new Date(sweptAt).toISOString(),
+    tests,
   }
 }

@@ -211,7 +211,7 @@ const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((s, x) => s + x
 
 /** No Apple System cohort: that ledger is B2B. Counting falls to what was filed here. */
 const NO_COHORT: AppleCohort = {
-  available: false, error: null, keys: new Set(), entries: [], total: 0, expected: 0, cancelled: 0, sweptAt: null,
+  available: false, error: null, keys: new Set(), entries: [], total: 0, expected: 0, cancelled: 0, sweptAt: null, tests: [],
 }
 
 async function collectBookings(
