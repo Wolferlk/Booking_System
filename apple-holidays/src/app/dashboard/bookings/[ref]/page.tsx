@@ -50,6 +50,7 @@ import { LOCK_SECTION_LABELS, type LockSection } from '@/lib/data-protection'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
 import B2cAmendmentAttention from '@/components/bookings/b2c-amendment-attention'
+import B2cVersionPanel, { type VersionViewState } from '@/components/bookings/b2c-version-panel'
 import B2cOrderPanel from '@/components/bookings/b2c-order-panel'
 import B2cFlowPanel from '@/components/bookings/b2c-flow-panel'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
@@ -170,6 +171,10 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [booking, setBooking] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  // Aahaas B2C store versions: an older version replaced by a newer booking is
+  // blurred and locked under its banner (peek lifts the blur, never the lock).
+  const [versionState, setVersionState] = useState<VersionViewState>(null)
+  const [versionPeek, setVersionPeek] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [changeModal, setChangeModal] = useState(false)
   const [cancelModal, setCancelModal] = useState(false)
@@ -1465,7 +1470,25 @@ Wishing you a wonderful trip! ✈️
       <div className={cn(
         'p-8 space-y-6',
         isCancelled && 'bg-slate-100/70 [&>*:not(:first-child):not([data-cancel-banner])]:opacity-75 [&>*:not(:first-child):not([data-cancel-banner])]:grayscale-[45%]',
+        versionState === 'superseded' && cn(
+          'bg-violet-50/40 [&>*:not([data-version-banner])]:pointer-events-none [&>*:not([data-version-banner])]:select-none [&>*:not([data-version-banner])]:transition-all',
+          versionPeek
+            ? '[&>*:not([data-version-banner])]:opacity-80 [&>*:not([data-version-banner])]:grayscale-[60%]'
+            : '[&>*:not([data-version-banner])]:opacity-50 [&>*:not([data-version-banner])]:blur-[3px] [&>*:not([data-version-banner])]:grayscale',
+        ),
       )}>
+
+        {/* Aahaas B2C store versions: replaced → banner + locked page; active →
+            version timeline and the previous booking's details. Sits first so
+            it is never under the blur. */}
+        {(booking as any)?.isB2c && (
+          <B2cVersionPanel
+            bookingRef={ref}
+            onState={(s) => { setVersionState(s); setVersionPeek(false) }}
+            peeking={versionPeek}
+            onPeek={setVersionPeek}
+          />
+        )}
 
         {/* Shared Test Bookings register: banner when marked, a small
             "Mark as test" control for the roles that may use it. */}

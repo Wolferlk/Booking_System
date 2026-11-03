@@ -105,7 +105,7 @@ export default function B2cAmendmentAttention({ bookingRef, onChange }: { bookin
           {n.duplicateRef && (
             <p className="flex items-start gap-1 text-xs font-semibold text-rose-700">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Order {n.orderId} was also imported as booking {n.duplicateRef} before versions were understood — cancel that duplicate.
+              Order {n.orderId} has its own booking {n.duplicateRef} — that is the active version; this one is shown as replaced.
             </p>
           )}
           {notices.length > 1 && <p className="text-xs text-amber-800">+{notices.length - 1} earlier amendment(s) of this booking also unacknowledged.</p>}

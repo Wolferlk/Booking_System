@@ -33,6 +33,7 @@ import { repairB2cGuestContact } from './b2c-guest-contact'
 import { engageB2cGuests } from './b2c-guest-engage'
 import { fetchOrderChainFacts, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
 import { handleAmendment, sweepRecentAmendments, type AmendmentOutcome } from './b2c-amendment-sweep'
+import { syncRecentVersionLinks } from './b2c-version-links'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -236,7 +237,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
           summary.warnings!.push(`${f.id}: amendment not handled: ${err instanceof Error ? err.message : String(err)}`)
         }
         if (duplicate) {
-          summary.warnings!.push(`Order ${f.id} amends booking ${original.bookingRef} but was already imported as booking ${duplicate.bookingRef} — check and cancel the duplicate by hand.`)
+          summary.warnings!.push(`Order ${f.id} amends booking ${original.bookingRef} and has its own booking ${duplicate.bookingRef} — ${duplicate.bookingRef} is the active version; ${original.bookingRef} is shown as replaced.`)
         }
         continue
       }
@@ -271,6 +272,9 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     } catch (err) {
       summary.warnings!.push(`Recent-amendment sweep skipped: ${err instanceof Error ? err.message : String(err)}`)
     }
+    // Link bookings of the same store chain (old version → active booking).
+    // Throttled inside; never throws.
+    if (!dryRun) await syncRecentVersionLinks(30)
   }
 
   if (headers.length === 0) {

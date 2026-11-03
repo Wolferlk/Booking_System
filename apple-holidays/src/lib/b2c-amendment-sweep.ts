@@ -82,6 +82,20 @@ export async function handleAmendment(
 
   const notice = await getAmendmentNotice(f.id)
   if (notice?.appliedAt) return { ...out, action: 'already-applied' }
+
+  // The new version already has a booking of its own (imported before versions
+  // were understood): that booking IS the active version (b2c-version-links)
+  // and the original is shown as replaced — applying it onto the original too
+  // would only keep two live copies in step. Settle the notice instead.
+  if (duplicate) {
+    const at = new Date().toISOString()
+    await updateAmendmentNotice(f.id, {
+      appliedAt: at, appliedVersion: null, autoApplied: true, appliedBy: 'Own booking',
+      appliedChanges: [], leftForReview: [], lastError: null,
+      acknowledgedAt: at, acknowledgedBy: `Auto · active booking ${duplicate.bookingRef}`,
+    })
+    return { ...out, action: 'duplicate' }
+  }
   if ((notice?.autoAttempts ?? 0) >= MAX_ATTEMPTS) return { ...out, action: 'gave-up', error: notice?.lastError ?? undefined }
   if (!(await amendmentAutoApplyOn())) return { ...out, action: duplicate ? 'duplicate' : 'noticed' }
 
