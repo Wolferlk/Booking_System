@@ -24,6 +24,7 @@ import { prisma } from './prisma'
 import { isB2cBooking } from './booking-source'
 import { normalizePhone, teGet, tePatch, tePost } from './te/te-api'
 import { markApproved, recordApprovalRequest } from './te/call-approvals'
+import { getVersionLinks } from './b2c-version-links'
 
 export const ENGAGE_ENABLED = 'auto_b2c_guest_engage_enabled'
 /** One row per booking, written once the booking has been handled. */
@@ -93,6 +94,9 @@ export async function engageB2cGuest(params: {
   if (!phone) return skip('no WhatsApp number with a country code')
   const guest = internationalDigits(params.guestPhone)
   if (!guest || guest !== phone) return skip("WhatsApp number is not the guest's own per the store")
+
+  const version = (await getVersionLinks([bookingRef]).catch(() => new Map())).get(bookingRef)
+  if (version?.state === 'superseded') return skip(`replaced by updated booking ${version.activeRef ?? ''}`.trim())
 
   if (await prisma.systemSetting.findUnique({ where: { key: LEDGER_PREFIX + bookingRef } })) {
     return skip('already handled once')

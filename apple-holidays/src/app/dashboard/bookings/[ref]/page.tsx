@@ -1487,6 +1487,7 @@ Wishing you a wonderful trip! ✈️
             onState={(s) => { setVersionState(s); setVersionPeek(false) }}
             peeking={versionPeek}
             onPeek={setVersionPeek}
+            onChange={load}
           />
         )}
 

@@ -18,6 +18,7 @@ import Link from 'next/link'
 import { ArrowRight, ChevronDown, Eye, EyeOff, GitBranch, History, Layers, Sparkles } from 'lucide-react'
 import { readApiResponse } from '@/lib/utils'
 import type { B2cVersionLink } from '@/lib/b2c-version-links'
+import B2cCarryoverReview from './b2c-carryover-review'
 
 interface Snapshot {
   ref: string
@@ -70,11 +71,14 @@ export default function B2cVersionPanel({
   onState,
   peeking,
   onPeek,
+  onChange,
 }: {
   bookingRef: string
   onState?: (s: VersionViewState) => void
   peeking?: boolean
   onPeek?: (on: boolean) => void
+  /** The carry-over wrote to this booking — reload it. */
+  onChange?: () => void
 }) {
   const [link, setLink] = useState<B2cVersionLink | null>(null)
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
@@ -273,6 +277,7 @@ export default function B2cVersionPanel({
           {changed.length === 0 && <p className="mt-2 text-xs text-slate-500">The headline details match — the change is in the store lines (services, rates or extras).</p>}
         </div>
       )}
+      {previous && <B2cCarryoverReview bookingRef={bookingRef} fromRef={previous.ref} onApplied={onChange} />}
       {!previous && earlierInStoreOnly.length > 0 && (
         <p className="border-t border-slate-100 px-5 py-3 text-xs text-slate-500">
           Earlier version{earlierInStoreOnly.length > 1 ? 's' : ''} {earlierInStoreOnly.map((v) => v.orderId).join(', ')} {earlierInStoreOnly.length > 1 ? 'were' : 'was'} never imported to OPS on {earlierInStoreOnly.length > 1 ? 'their' : 'its'} own — this booking carries the whole history.

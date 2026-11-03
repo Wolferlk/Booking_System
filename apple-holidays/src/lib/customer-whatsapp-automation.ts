@@ -24,6 +24,7 @@ import type { OperationCountry, Prisma } from '@prisma/client'
 import { SETTING_SUPER_PARTNERS, parseSuperPartners, isSuperPartner } from '@/lib/super-partners'
 import { engagedB2cRefs } from '@/lib/b2c-guest-engage'
 import { B2C_AGENT_NAME } from '@/lib/booking-source'
+import { listVersionLinks } from '@/lib/b2c-version-links'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -69,8 +70,15 @@ async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
     console.error('[CustomerWhatsApp] B2C guest list unavailable (non-fatal):', err)
     return [] as string[]
   })
-  if (engaged.length === 0) return live
-  return { OR: [live, { status: 'DRAFT', agent: B2C_AGENT_NAME, bookingRef: { in: engaged } }] }
+  // A B2C booking replaced by a newer store version is never messaged — the
+  // guest gets the plan of the active booking only (b2c-version-links).
+  const replaced = await listVersionLinks()
+    .then((ls) => ls.filter((l) => l.state === 'superseded').map((l) => l.ref))
+    .catch(() => [] as string[])
+  const base: Prisma.BookingWhereInput = engaged.length === 0
+    ? live
+    : { OR: [live, { status: 'DRAFT', agent: B2C_AGENT_NAME, bookingRef: { in: engaged } }] }
+  return replaced.length ? { AND: [base, { bookingRef: { notIn: replaced } }] } : base
 }
 
 async function settingEnabled(key: string): Promise<boolean> {
