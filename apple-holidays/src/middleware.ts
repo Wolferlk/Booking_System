@@ -36,6 +36,7 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/trans-reconsultation', // Trans-Reconsultation — the half-month transport sheet built from it
   '/dashboard/checklist-vn',      // Check List VN — costing sheets (also opened per booking)
   '/dashboard/driver-auto',       // Driver-Auto — open trips, driver requests, approvals
+  '/dashboard/agent-digest',      // Agent Daily Digest — daily agent WhatsApp/email with allocations
   '/dashboard/ground/drivers',    // Driver management
   '/dashboard/ground/vendors',    // Vehicle vendor management
   '/dashboard/ground/analytics',  // Partner performance (read-only analytics)

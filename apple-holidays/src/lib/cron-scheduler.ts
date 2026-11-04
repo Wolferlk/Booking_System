@@ -375,6 +375,17 @@ async function startDriverAutoSchedulerTask() {
   }
 }
 
+async function startAgentDigestSchedulerTask() {
+  try {
+    // Agent Daily Digest: 5-minute node-cron tick; each rule sends at its own
+    // local time, once a day, only when its autoSend switch is on (default off).
+    const { startAgentDigestScheduler } = await import('./agent-digest/scheduler')
+    await startAgentDigestScheduler()
+  } catch (err) {
+    console.error('[Scheduler] agent-digest scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startFileHandlerResolveSweepScheduler() {
   try {
     // Interval sweep: replaces the "30sundays Aahaas" placeholder file handler
@@ -474,6 +485,7 @@ export function startCronJobs() {
   void startDriverLogAutoSendScheduler()
   void startDriverBriefReportSchedulerTask()
   void startDriverAutoSchedulerTask()
+  void startAgentDigestSchedulerTask()
 
   // 30 Sundays placeholder file handler → the real handler from apple_quote_ai.
   // Interval sweep every 5 min over bookings created at least 10 min ago; the
