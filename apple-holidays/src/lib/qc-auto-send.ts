@@ -9,7 +9,7 @@ import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
-import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
+import { emergencyContactsBlockFor } from '@/lib/guest-emergency-contacts'
 
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
@@ -139,7 +139,7 @@ We kindly request:
 1️⃣ Meal preference — Vegetarian or Non-Vegetarian?
 2️⃣ Any special assistance required?
 
-${buildEmergencyContactsBlock((booking as unknown as { operationCountry?: string | null }).operationCountry)}
+${await emergencyContactsBlockFor((booking as unknown as { operationCountry?: string | null }).operationCountry)}
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏
@@ -234,7 +234,7 @@ This document includes:
 
 Please keep this document handy throughout your travel.
 
-${buildEmergencyContactsBlock((booking as unknown as { operationCountry?: string | null }).operationCountry)}
+${await emergencyContactsBlockFor((booking as unknown as { operationCountry?: string | null }).operationCountry)}
 
 Wishing you a wonderful trip! ✈️
 *${teamName}*`

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw, FileSpreadsheet, PlaneTakeoff } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw, FileSpreadsheet, PlaneTakeoff, PhoneCall } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -16,6 +16,8 @@ import CancellationRecoveryCard from '@/components/settings/cancellation-recover
 import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
 import AirportPickupCard from '@/components/settings/airport-pickup-card'
+import GuestEmergencyContactsCard from '@/components/settings/guest-emergency-contacts-card'
+import { GUEST_EMERGENCY_KEY, parseGuestEmergencyPolicy } from '@/lib/emergency-contacts'
 import MovementWhatsAppCard from '@/components/settings/movement-whatsapp-card'
 import CustomerDailyBriefingCard from '@/components/settings/customer-daily-briefing-card'
 import DataProtectionCard from '@/components/settings/data-protection-card'
@@ -329,6 +331,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
   { id: 'customer-daily', title: 'Customer Daily Trip Details', group: 'Operations',    icon: MessageCircle, keywords: 'guest customer whatsapp daily briefing plan auto send default time 18:00 6pm trip portal next day super partner agent mmt makemytrip branding white label appleholidays' },
   { id: 'movement-whatsapp', title: 'Movement WhatsApp Briefing', group: 'Operations',   icon: MessageCircle, keywords: 'agenda movement chart driver vendor guide tour vendor whatsapp template send single item is number phone duplicate meta approve' },
+  { id: 'guest-emergency', title: 'Guest Emergency Contacts',     group: 'Operations',      icon: PhoneCall,    keywords: 'emergency contact phone call guest customer pdf tour confirmation full details vouchers t-3 t-7 whatsapp hotline 24/7 country' },
   { id: 'airport-pickup', title: 'Airport Pickup Timings',       group: 'Operations',      icon: PlaneTakeoff, keywords: 'flight departure arrival pickup meeting time hours before after landing buffer check-in movement chart agenda' },
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
@@ -741,6 +744,10 @@ export default function ConfigPage() {
     'automation':     automationOn === 2 ? { label: 'On', tone: 'on' } : automationOn === 1 ? { label: '1/2', tone: 'warn' } : { label: 'Off', tone: 'off' },
     'ai-tokens':      { label: `${aiOnCount}/4`, tone: aiOnCount === 4 ? 'on' : aiOnCount === 0 ? 'off' : 'warn' },
     'partners':       { label: String(partnerCount), tone: partnerCount > 0 ? 'on' : 'off' },
+    'guest-emergency': (() => {
+      const p = parseGuestEmergencyPolicy((settings as Record<string, string | undefined>)[GUEST_EMERGENCY_KEY])
+      return p.configured ? { label: String(p.contacts.length), tone: p.contacts.length ? 'on' : 'warn' } : { label: 'Default', tone: 'muted' }
+    })(),
     'airport-pickup': { label: durationLabel(parseFlightPickupRules(settings.flight_pickup_rules).departureIntlMin), tone: 'on' },
     'data-protection': { label: `${dataProtectionOn}/4`, tone: dataProtectionOn === 4 ? 'on' : dataProtectionOn === 0 ? 'off' : 'warn' },
     // Sealed cancellation is the louder fact, so it wins the pill when it is live.
@@ -1163,6 +1170,11 @@ export default function ConfigPage() {
             <Section id="movement-whatsapp" visible={show('movement-whatsapp')} flashed={flashId === 'movement-whatsapp'}>
               {/* WhatsApp one movement to its driver / vendor / guide / tour vendor */}
               <MovementWhatsAppCard settings={settings} saving={saving} onSave={saveSetting} />
+            </Section>
+
+            <Section id="guest-emergency" visible={show('guest-emergency')} flashed={flashId === 'guest-emergency'}>
+              {/* Emergency numbers printed on the guest PDFs / WhatsApp */}
+              <GuestEmergencyContactsCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="airport-pickup" visible={show('airport-pickup')} flashed={flashId === 'airport-pickup'}>

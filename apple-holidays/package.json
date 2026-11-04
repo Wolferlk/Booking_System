@@ -72,6 +72,7 @@
     "next-auth": "^4.24.7",
     "node-cron": "^4.6.0",
     "openai": "^6.49.0",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.4.296",
     "pdfkit": "^0.19.1",

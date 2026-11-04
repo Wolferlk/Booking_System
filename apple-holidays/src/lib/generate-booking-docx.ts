@@ -15,7 +15,7 @@ import {
   readLocalUploadAsBuffer, readUploadAsBuffer, getDocxImageType,
   imageDimensions, fitImage,
 } from './local-upload'
-import { withoutRetiredContacts } from './emergency-contacts'
+import { guestEmergencyContactsFor } from './guest-emergency-contacts'
 import { serviceTypeShortLabel } from './service-types'
 import { filledPackageNotes } from './booking-package-notes'
 
@@ -155,7 +155,7 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
   children.push(new Paragraph({
     children: [
       new TextRun({ text: booking.bookingRef ?? '', bold: true, size: 32, color: CLR.amber, font: 'Courier New' }),
-      new TextRun({ text: `   ${(booking.status ?? '').replace(/_/g, ' ')}`, size: 17, color: CLR.muted, font: 'Arial' }),
+      new TextRun({ text: `   ${fmt(booking.arrivalDate)} – ${fmt(booking.departureDate)}`, size: 17, color: CLR.muted, font: 'Arial' }),
     ],
     spacing: { before: 80, after: 40 },
   }))
@@ -181,7 +181,6 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
   children.push(sectionTitle('Booking Summary'))
   children.push(
     ...infoRow('Booking Reference', booking.bookingRef),
-    ...infoRow('Status', (booking.status ?? '').replace(/_/g, ' ')),
     ...infoRow('Arrival', fmt(booking.arrivalDate)),
     ...infoRow('Departure', fmt(booking.departureDate)),
     ...infoRow('Passengers', `${booking.paxAdults ?? 0} Adults, ${booking.paxChildren ?? 0} Children`),
@@ -236,8 +235,9 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
   }
 
   // ── 3b. Emergency Contacts ────────────────────────────────────────────────
+  // Settings → Guest Emergency Contacts, plus the TC's own rows when enabled.
   // Resigned staff never reach the guest — see `lib/emergency-contacts.ts`.
-  const emergencyContacts: any[] = withoutRetiredContacts(booking.emergencyContacts ?? [])
+  const emergencyContacts: any[] = await guestEmergencyContactsFor(booking)
   if (emergencyContacts.length > 0) {
     children.push(sectionTitle('Emergency Contacts'))
     children.push(new Table({
@@ -316,7 +316,6 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
         shading: { type: ShadingType.CLEAR, color: 'auto', fill: CLR.slate },
         spacing: { before: 140, after: 60 },
       }))
-      if (item.description) children.push(...body(item.description))
       if (item.inclusions) {
         children.push(new Paragraph({
           children: [
@@ -438,10 +437,10 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
         width: { size: 100, type: WidthType.PERCENTAGE },
         layout: TableLayoutType.FIXED,
         rows: [
-          new TableRow({ children: ['#', 'Ticket', 'Supplier · Reference · Status'].map(h => hCell(h)) }),
+          new TableRow({ children: ['#', 'Ticket', 'Supplier · Reference'].map(h => hCell(h)) }),
           ...tickets.map((t, i) => {
             const shade = i % 2 === 0 ? CLR.white : CLR.rowAlt
-            const meta = [t.supplier, t.reference, t.status?.replace(/_/g, ' ')].filter(Boolean).join('  ·  ')
+            const meta = [t.supplier, t.reference].filter(Boolean).join('  ·  ')
             return new TableRow({
               children: [
                 dCell(String(i + 1), { color: CLR.muted, shade }),
@@ -477,11 +476,6 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
           ...infoRow('Supplier', ticket.supplier),
           ...infoRow('Quantity', String(ticket.qty ?? 1)),
           ...infoRow('Reference No.', ticket.reference),
-          ...infoRow('Status', ticket.status?.replace(/_/g, ' ')),
-          ...infoRow('Purchased On', ticket.purchasedAt ? fmt(ticket.purchasedAt) : undefined),
-          ...infoRow('Total Cost', ticket.totalCost
-            ? `${ticket.currency ?? 'USD'} ${Number(ticket.totalCost).toLocaleString()}`
-            : undefined),
           ...infoRow('Notes', parseTicketNotes(ticket.notes)),
         )
 
