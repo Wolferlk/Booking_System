@@ -650,7 +650,9 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
 /** The exact body submitted to Meta as `aahaas_agent_daily_digest`. */
 export const AGENT_DIGEST_TEMPLATE_BODY =
   'Hi {{1}}, your daily operations update for {{2}} ({{3}}) is ready: {{4}} bookings and {{5}} service lines, ' +
-  'with the allocated driver, guide and vendor details.\n\nView the full update here: {{6}}'
+  'with the allocated driver, guide and vendor details.\n\nView the full update here: {{6}}\n\n' +
+  // Meta rejects a body that starts or ends with a variable — keep text after {{6}}.
+  'Please reply to this message if anything needs to change.'
 
 function tplParam(v: string): string {
   const clean = v.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()

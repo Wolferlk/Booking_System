@@ -1044,7 +1044,16 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
     try { const { data } = await api<RunDetail>(`/api/agent-digest/runs/${runId}`); setDetail(data) } catch (e) { toast.error((e as Error).message) }
   }
   const registerTpl = async () => {
-    try { const { message } = await api('/api/agent-digest/template', { method: 'POST' }); toast.success(message ?? 'Submitted') } catch (e) { toast.error((e as Error).message) }
+    try {
+      const { message } = await api('/api/agent-digest/template', { method: 'POST' })
+      toast.success(message ?? 'Submitted')
+      setTpl(t => (t ? { ...t, error: undefined } : t))
+    } catch (e) {
+      // Keep Meta's reason on screen — a toast disappears before it can be read.
+      const msg = (e as Error).message
+      toast.error(msg, { duration: 15000 })
+      setTpl(t => (t ? { ...t, error: msg } : t))
+    }
   }
   const quick = (a: number, b: number) => { setFrom(addDays(today, a)); setTo(addDays(today, b)) }
 
@@ -1060,9 +1069,10 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
           tpl.approved ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900')}>
           <span className="flex items-center gap-2">
             {tpl.approved ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-            WhatsApp link template <code className="font-mono text-xs">{tpl.name}</code> is {tpl.approved ? 'approved' : tpl.approved === false ? 'not approved yet — recipients outside the 24h window will not receive WhatsApp' : `unknown (${tpl.error ?? 'Meta not reachable'})`}.
+            WhatsApp link template <code className="font-mono text-xs">{tpl.name}</code> is {tpl.approved ? 'approved' : tpl.approved === false ? 'not approved yet — no WhatsApp digest can be sent until it is (email still works)' : `unknown (${tpl.error ?? 'Meta not reachable'})`}.
           </span>
           {!tpl.approved && <Button size="sm" variant="secondary" onClick={registerTpl}>Submit to Meta</Button>}
+          {!tpl.approved && tpl.error && <p className="w-full rounded-lg bg-white/70 px-3 py-2 font-mono text-[11px] text-rose-700">{tpl.error}</p>}
         </div>
       )}
 
