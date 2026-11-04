@@ -12,12 +12,22 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   const staff = await requireDaStaff()
   if ('error' in staff) return buildApiError(staff.error, staff.status)
+  const base = { name: AGENT_DIGEST_TEMPLATE_DEF.name, language: AGENT_DIGEST_TEMPLATE_DEF.language, body: AGENT_DIGEST_TEMPLATE_DEF.bodyText }
   try {
-    const approved = await listMetaTemplates('APPROVED')
-    const ok = approved.some(t => t.name === AGENT_DIGEST_TEMPLATE_DEF.name)
-    return buildApiSuccess({ name: AGENT_DIGEST_TEMPLATE_DEF.name, approved: ok, body: AGENT_DIGEST_TEMPLATE_DEF.bodyText })
+    // Every status, not only APPROVED — so a template waiting for review reads
+    // as PENDING rather than "missing" (and nobody re-submits it).
+    const all = await listMetaTemplates('ALL')
+    const hit = all.find(t => t.name === AGENT_DIGEST_TEMPLATE_DEF.name && t.language === AGENT_DIGEST_TEMPLATE_DEF.language)
+      ?? all.find(t => t.name === AGENT_DIGEST_TEMPLATE_DEF.name)
+    return buildApiSuccess({
+      ...base,
+      status: hit ? hit.status : 'MISSING',
+      approved: hit?.status === 'APPROVED',
+      metaBody: hit?.bodyText ?? null,
+      metaLanguage: hit?.language ?? null,
+    })
   } catch (err) {
-    return buildApiSuccess({ name: AGENT_DIGEST_TEMPLATE_DEF.name, approved: null, error: err instanceof Error ? err.message : String(err), body: AGENT_DIGEST_TEMPLATE_DEF.bodyText })
+    return buildApiSuccess({ ...base, status: null, approved: null, metaBody: null, metaLanguage: null, error: err instanceof Error ? err.message : String(err) })
   }
 }
 

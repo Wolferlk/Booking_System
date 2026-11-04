@@ -1027,7 +1027,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
   const [rows, setRows] = useState<HistoryRow[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState<RunDetail | null>(null)
-  const [tpl, setTpl] = useState<{ name: string; approved: boolean | null; error?: string } | null>(null)
+  const [tpl, setTpl] = useState<TemplateInfo | null>(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -1037,7 +1037,8 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
     } catch (e) { toast.error((e as Error).message) } finally { setBusy(false) }
   }, [from, to, ruleId, status])
   useEffect(() => { void load() }, [load])
-  useEffect(() => { api<{ name: string; approved: boolean | null; error?: string }>('/api/agent-digest/template').then(r => setTpl(r.data)).catch(() => undefined) }, [])
+  const loadTpl = useCallback(() => { api<TemplateInfo>('/api/agent-digest/template').then(r => setTpl(r.data)).catch(() => undefined) }, [])
+  useEffect(() => { loadTpl() }, [loadTpl])
 
   const openRun = async (runId: string | null) => {
     if (!runId) return
@@ -1047,12 +1048,13 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
     try {
       const { message } = await api('/api/agent-digest/template', { method: 'POST' })
       toast.success(message ?? 'Submitted')
-      setTpl(t => (t ? { ...t, error: undefined } : t))
+      loadTpl()
     } catch (e) {
       // Keep Meta's reason on screen — a toast disappears before it can be read.
       const msg = (e as Error).message
       toast.error(msg, { duration: 15000 })
       setTpl(t => (t ? { ...t, error: msg } : t))
+      loadTpl()
     }
   }
   const quick = (a: number, b: number) => { setFrom(addDays(today, a)); setTo(addDays(today, b)) }
@@ -1064,17 +1066,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
 
   return (
     <div className="space-y-4">
-      {tpl && (
-        <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-3.5 text-sm',
-          tpl.approved ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900')}>
-          <span className="flex items-center gap-2">
-            {tpl.approved ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-            WhatsApp link template <code className="font-mono text-xs">{tpl.name}</code> is {tpl.approved ? 'approved' : tpl.approved === false ? 'not approved yet — no WhatsApp digest can be sent until it is (email still works)' : `unknown (${tpl.error ?? 'Meta not reachable'})`}.
-          </span>
-          {!tpl.approved && <Button size="sm" variant="secondary" onClick={registerTpl}>Submit to Meta</Button>}
-          {!tpl.approved && tpl.error && <p className="w-full rounded-lg bg-white/70 px-3 py-2 font-mono text-[11px] text-rose-700">{tpl.error}</p>}
-        </div>
-      )}
+      {tpl && <TemplateBanner tpl={tpl} onSubmit={registerTpl} onRefresh={loadTpl} />}
 
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex gap-1.5">
@@ -1127,6 +1119,52 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
       </div>
 
       {detail && <RunDrawer detail={detail} onClose={() => setDetail(null)} />}
+    </div>
+  )
+}
+
+interface TemplateInfo {
+  name: string
+  language: string
+  body: string
+  /** APPROVED | PENDING | REJECTED | PAUSED | DISABLED | MISSING, or null when Meta could not be reached. */
+  status: string | null
+  approved: boolean | null
+  metaBody: string | null
+  metaLanguage: string | null
+  error?: string
+}
+
+const TPL_STATUS: Record<string, { tone: string; text: string }> = {
+  APPROVED: { tone: 'border-emerald-200 bg-emerald-50 text-emerald-800', text: 'is approved — WhatsApp digests can be sent.' },
+  PENDING:  { tone: 'border-sky-200 bg-sky-50 text-sky-800', text: 'is submitted and waiting for Meta’s review (usually minutes to a few hours). Nothing to do — WhatsApp sends start working once it is approved.' },
+  IN_APPEAL:{ tone: 'border-sky-200 bg-sky-50 text-sky-800', text: 'is in appeal with Meta.' },
+  REJECTED: { tone: 'border-rose-200 bg-rose-50 text-rose-800', text: 'was rejected by Meta. Open WhatsApp Manager → Message templates to see the reason and edit it, then it goes back to review.' },
+  PAUSED:   { tone: 'border-amber-200 bg-amber-50 text-amber-900', text: 'is paused by Meta (quality). WhatsApp sends fail until it is unpaused.' },
+  DISABLED: { tone: 'border-rose-200 bg-rose-50 text-rose-800', text: 'is disabled by Meta.' },
+  MISSING:  { tone: 'border-amber-200 bg-amber-50 text-amber-900', text: 'does not exist on Meta yet — submit it. No WhatsApp digest can be sent until it is approved (email still works).' },
+}
+
+function TemplateBanner({ tpl, onSubmit, onRefresh }: { tpl: TemplateInfo; onSubmit: () => void; onRefresh: () => void }) {
+  const meta = tpl.status ? TPL_STATUS[tpl.status] ?? { tone: 'border-amber-200 bg-amber-50 text-amber-900', text: `has status ${tpl.status}.` }
+    : { tone: 'border-slate-200 bg-slate-50 text-slate-700', text: `status unknown — Meta not reachable (${tpl.error ?? 'no detail'}).` }
+  const differs = tpl.metaBody && tpl.metaBody.trim() !== tpl.body.trim()
+  return (
+    <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-3.5 text-sm', meta.tone)}>
+      <span className="flex items-center gap-2">
+        {tpl.approved ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : tpl.status === 'PENDING' ? <Clock className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+        <span>WhatsApp template <code className="font-mono text-xs">{tpl.name}</code>{tpl.metaLanguage ? ` (${tpl.metaLanguage})` : ''} {meta.text}</span>
+      </span>
+      <div className="flex gap-2">
+        <Button size="sm" variant="ghost" icon={<RefreshCw className="h-3.5 w-3.5" />} onClick={onRefresh}>Check again</Button>
+        {tpl.status === 'MISSING' && <Button size="sm" variant="secondary" onClick={onSubmit}>Submit to Meta</Button>}
+      </div>
+      {differs && (
+        <p className="w-full rounded-lg bg-white/70 px-3 py-2 text-[11px] text-slate-600">
+          The wording on Meta is an earlier version — that is fine, it takes the same 6 values. Meta’s text: <span className="italic">{tpl.metaBody}</span>
+        </p>
+      )}
+      {tpl.status !== 'APPROVED' && tpl.error && tpl.status === 'MISSING' && <p className="w-full rounded-lg bg-white/70 px-3 py-2 font-mono text-[11px] text-rose-700">{tpl.error}</p>}
     </div>
   )
 }
