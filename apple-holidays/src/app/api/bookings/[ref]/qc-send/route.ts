@@ -251,4 +251,3 @@ Thank you! 🙏
   return buildApiSuccess(results, 'QC Type-1 messages sent')
 }
 
-export { computeQCStatus }
