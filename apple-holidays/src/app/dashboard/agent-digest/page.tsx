@@ -981,7 +981,7 @@ function UpcomingTab({ onOpen }: { onOpen: (r: DigestRuleView) => void }) {
                 <div className={cn('rounded-xl py-2', it.payload.totals.missing ? 'bg-rose-50' : 'bg-slate-50')}><div className={cn('text-lg font-bold', it.payload.totals.missing && 'text-rose-600')}>{it.payload.totals.missing}</div><div className="text-[10px] uppercase text-slate-400">pending</div></div>
               </div>
               {it.payload.totals.missing > 0 && (
-                <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> {it.payload.totals.missing} line(s) still without a driver — allocate before the send to avoid “Driver pending”.</p>
+                <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> {it.payload.totals.missing} line(s) with nobody allocated (no driver, vehicle or vendor) — allocate before the send to avoid “Driver pending”.</p>
               )}
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {it.recipients.map((r, i) => (

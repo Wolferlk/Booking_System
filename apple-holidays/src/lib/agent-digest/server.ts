@@ -26,7 +26,7 @@ import { detectCountryFromRef } from '@/lib/country-detection'
 import { serviceTypeLabel } from '@/lib/service-types'
 import { testBookingWhere } from '@/lib/test-bookings'
 import {
-  addDays, agentMatches, DIGEST_COUNTRIES, emailSubject, isEmail, isEmptyPayload,
+  addDays, agentMatches, allocationPending, DIGEST_COUNTRIES, emailSubject, isEmail, isEmptyPayload,
   normaliseConfig, nowHmIn, renderEmailHtml, renderTemplateText, renderWhatsApp, templateParams, todayIn,
   AGENT_DIGEST_TEMPLATE_BODY,
   type DigestBlockResult, type DigestBooking, type DigestConfig, type DigestCountry, type DigestItem,
@@ -247,7 +247,7 @@ function toDigestBooking(b: LoadedBooking, day: string, scope: 'ITEM' | 'TOUR', 
       guides: uniqParties(allItems.map(i => i.guide)),
       tourVendors: uniqParties(allItems.map(i => i.tourVendor)),
     },
-    missing: counted.filter(i => i.needsDriver && !i.driver?.name).length,
+    missing: counted.filter(allocationPending).length,
   }
 }
 

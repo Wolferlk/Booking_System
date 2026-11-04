@@ -407,6 +407,15 @@ export function isEmptyPayload(p: DigestPayload): boolean {
   return p.blocks.every(b => b.bookings.length === 0)
 }
 
+/**
+ * A line is only "pending" when it needs transport and NOBODY is on it yet:
+ * no driver, no vehicle, no driver vendor and no tour vendor. Any one of those
+ * means someone is handling it, so we show what we have instead of a warning.
+ */
+export function allocationPending(it: Pick<DigestItem, 'needsDriver' | 'driver' | 'vehicle' | 'driverVendor' | 'tourVendor'>): boolean {
+  return it.needsDriver && !it.driver?.name && !it.vehicle && !it.driverVendor?.name && !it.tourVendor?.name
+}
+
 // ── Rendering ───────────────────────────────────────────────────────────────
 
 export function fillTokens(text: string, p: DigestPayload, recipient: string): string {
@@ -458,7 +467,7 @@ function itemLinesWa(it: DigestItem, f: DigestFields, style: DigestStyle): strin
     const d = partyText(it.driver, f.driverPhone)
     const veh = f.vehicle && it.vehicle ? it.vehicle : ''
     if (d || veh) sub.push(`🚗 ${[d, veh].filter(Boolean).join(' · ')}`)
-    else if (f.flagMissing && it.needsDriver) sub.push('⚠️ Driver pending')
+    else if (f.flagMissing && allocationPending(it)) sub.push('⚠️ Driver pending')
   } else if (f.vehicle && it.vehicle) sub.push(`🚗 ${it.vehicle}`)
   if (f.driverVendor) { const v = partyText(it.driverVendor, f.driverPhone); if (v) sub.push(`🏢 ${v}`) }
   if (f.guide) { const g = partyText(it.guide, f.guidePhone); if (g) sub.push(`🧭 Guide: ${g}`) }
@@ -599,8 +608,8 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
           const head = [f.time && it.time ? `<b style="color:#0f172a">${esc(it.time)}</b>` : '', f.route ? esc(it.route) : '', f.serviceType && it.service ? `<span style="color:#94a3b8">(${esc(it.service)})</span>` : '']
             .filter(Boolean).join(' ')
           const people = [
-            f.driver ? partyHtml('🚗', 'Driver', it.driver, f.driverPhone, f.vehicle ? it.vehicle : null) : '',
-            f.driver && !it.driver?.name && f.flagMissing && it.needsDriver ? '<div style="font-size:12px;color:#b91c1c;margin-top:3px">⚠️ Driver pending</div>' : '',
+            f.driver ? (it.driver?.name ? partyHtml('🚗', 'Driver', it.driver, f.driverPhone, f.vehicle ? it.vehicle : null) : partyHtml('🚗', 'Vehicle', null, false, f.vehicle ? it.vehicle : null)) : '',
+            f.driver && f.flagMissing && allocationPending(it) ? '<div style="font-size:12px;color:#b91c1c;margin-top:3px">⚠️ Driver pending</div>' : '',
             f.driverVendor ? partyHtml('🏢', 'Driver vendor', it.driverVendor, f.driverPhone) : '',
             f.guide ? partyHtml('🧭', 'Guide', it.guide, f.guidePhone) : '',
             f.tourVendor ? partyHtml('🎟️', 'Tour vendor', it.tourVendor, f.tourVendorPhone) : '',
