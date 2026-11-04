@@ -33,6 +33,13 @@
  * An apply that writes anything snapshots the current state first (back-filling
  * V1 for bookings imported before versioning reached B2C), then appends a new
  * version with source `b2c` and a note listing what changed.
+ *
+ * ── Order versions (store amendments) ───────────────────────────────────────
+ * The store raises an amendment as a NEW order on the same booking (see
+ * b2c-order-chain). The booking stays filed under its original order id; this
+ * update reads the chain's LIVE version instead, and P&L lines the store
+ * carried into the new order (same product, new line id) are re-linked rather
+ * than added twice and flagged "removed".
  */
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -50,6 +57,8 @@ import { loadOrderTravellers, repairB2cLeadName } from '@/lib/b2c-lead-name'
 import { B2C_AGENT_NAME, B2C_IMPORT_NOTE_PREFIX, isB2cOrigin } from '@/lib/booking-source'
 import { appendVersionAndSnapshot, recordAmendmentVersion } from '@/lib/booking-versions'
 import { logActivity, ACTION } from '@/lib/activity'
+import { isLaterDay, fetchOrderChainFacts, resolveLiveOrderId } from '@/lib/b2c-order-chain'
+import { markAmendmentApplied } from '@/lib/b2c-amendments'
 
 // ── Origin ───────────────────────────────────────────────────────────────────
 
@@ -176,6 +185,16 @@ export interface B2cSyncResult {
   orderId: number
   /** Booking version the preview was made against / the version after apply. */
   version: number
+  /** Set when the store amended this booking: which order it reads from now. */
+  amendment: {
+    baseOrderId: number
+    liveOrderId: number
+    chainId: number
+    storeVersion: number
+    previousOrderId: number | null
+    amendedAt: string | null
+    isOld: boolean
+  } | null
   /** Set on apply when a new version was written. */
   newVersion: number | null
   changes: B2cChange[]
@@ -310,9 +329,26 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
 
   // The B2C importer uses the store order id as the ref; the IS number is the
   // same id, and is the fallback if a ref was ever renamed.
-  const orderId = Number(/^\d+$/.test(booking.bookingRef) ? booking.bookingRef : booking.isNumber)
-  if (!Number.isInteger(orderId) || orderId <= 0) {
+  const baseOrderId = Number(/^\d+$/.test(booking.bookingRef) ? booking.bookingRef : booking.isNumber)
+  if (!Number.isInteger(baseOrderId) || baseOrderId <= 0) {
     throw new B2cSyncError(`Cannot tell which store order ${booking.bookingRef} came from.`, 422)
+  }
+
+  // Follow the booking to the store's current version of it.
+  const live = await resolveLiveOrderId(baseOrderId)
+  const orderId = live.liveOrderId
+  let amendment: B2cSyncResult['amendment'] = null
+  if (orderId !== baseOrderId) {
+    const origin = (await fetchOrderChainFacts([live.chainId])).get(live.chainId)
+    amendment = {
+      baseOrderId,
+      liveOrderId: orderId,
+      chainId: live.chainId,
+      storeVersion: live.fact.version,
+      previousOrderId: live.fact.previousOrderId,
+      amendedAt: live.fact.checkoutDate,
+      isOld: isLaterDay(origin?.checkoutDate ?? null, live.fact.checkoutDate),
+    }
   }
 
   // ── Read the store (read-only) ─────────────────────────────────────────────
@@ -353,6 +389,12 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
   }
 
   const warnings: string[] = []
+  if (amendment) {
+    warnings.push(
+      `Amended in the store: order ${orderId} (version ${amendment.storeVersion}) replaces order ${amendment.previousOrderId ?? baseOrderId}` +
+      `${amendment.amendedAt ? ` on ${amendment.amendedAt.slice(0, 10)}` : ''}. This update reads the new version; the booking keeps ref ${booking.bookingRef}.`,
+    )
+  }
   if (travellers.error) warnings.push(`Traveller names unavailable from the store: ${travellers.error}`)
   const checkoutStatus = nonEmpty(customer.checkout_status)
   if (checkoutStatus && /cancel|refund|reject/i.test(checkoutStatus)) {
@@ -384,7 +426,8 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
   }
   const theirs: Record<ScalarKey, string | null> = {
     agent: B2C_AGENT_NAME,
-    isNumber: nonEmpty(mapped.isNumber),
+    // An amended booking keeps the number it was filed under (its original order).
+    isNumber: amendment ? nonEmpty(booking.isNumber) : nonEmpty(mapped.isNumber),
     arrivalDate: mapped.arrivalDate,
     departureDate: mapped.departureDate,
     paxAdults: paxDefaulted ? null : String(mapped.paxAdults),
@@ -545,11 +588,34 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     const upstreamIds = new Set<number>()
     let nextSort = Math.max(-1, ...booking.pnl.lineItems.map((l) => l.sortOrder)) + 1
 
+    // A store amendment clones the carried lines into the new order under new
+    // line ids. Those are the same services: match them to the line already
+    // here by category + activity, so they are re-linked, not added twice.
+    const newIds = new Set(mapped.pnlLines.map((l) => storeLineId(l.notes)).filter((n): n is number => n !== null))
+    const orphans = new Map<string, number[]>()
+    if (amendment) {
+      existingById.forEach((li, oldId) => {
+        if (newIds.has(oldId)) return
+        const sig = `${norm(li.category)}|${norm(li.activity.replace(/^\[Removed from store order\] /, ''))}`
+        orphans.set(sig, [...(orphans.get(sig) ?? []), oldId])
+      })
+    }
+
     for (const raw of mapped.pnlLines) {
       const l = lineFor(raw)
       const id = storeLineId(l.notes)
       if (id !== null) upstreamIds.add(id)
-      const cur = id !== null ? existingById.get(id) : undefined
+      let cur = id !== null ? existingById.get(id) : undefined
+      let relinked = false
+      if (!cur && amendment) {
+        const pool = orphans.get(`${norm(l.category)}|${norm(l.activity)}`)
+        const oldId = pool?.shift()
+        if (oldId !== undefined) {
+          cur = existingById.get(oldId)
+          upstreamIds.add(oldId)   // carried, not removed
+          relinked = true
+        }
+      }
 
       if (!cur) {
         pnlCreates.push({ ...l, sortOrder: nextSort++ })
@@ -572,6 +638,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
       if (cur.paymentStatus === 'PENDING' && l.paymentStatus === 'CONFIRMED') {
         data.paymentStatus = 'CONFIRMED'; diff.push('paymentStatus')
       }
+      if (relinked && (cur.notes ?? '') !== l.notes) diff.push('relinked to new store line')
       if (diff.length === 0) continue
       if ((cur.notes ?? '') !== l.notes) data.notes = l.notes
 
@@ -642,7 +709,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
   }
   const lastUpdate = state ? { at: state.at, by: state.by, version: state.version } : null
   const baseResult = {
-    bookingRef: booking.bookingRef, orderId, changes, itinerary, pnl: plan,
+    bookingRef: booking.bookingRef, orderId, amendment, changes, itinerary, pnl: plan,
     store: storeInfo, warnings, lastUpdate, at,
   }
 
@@ -759,8 +826,14 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     newVersion = await appendVersionAndSnapshot(booking.id, {
       createdById: opts.actorId,
       source: 'b2c',
-      amendmentNote: note.slice(0, 4000),
+      amendmentNote: (amendment ? `[Store amendment v${amendment.storeVersion}: order ${orderId} replaces ${amendment.previousOrderId ?? baseOrderId}] ` : '') + note.slice(0, 3900),
     })
+  }
+
+  // The notice for this store version is answered by the update.
+  if (amendment && newVersion) {
+    await markAmendmentApplied(booking.bookingRef, orderId, newVersion)
+      .catch((err) => console.error('[b2c-sync] amendment notice not marked applied:', err instanceof Error ? err.message : err))
   }
 
   await writeB2cSyncState(booking.bookingRef, {

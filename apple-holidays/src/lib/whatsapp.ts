@@ -468,9 +468,15 @@ export async function createMetaTemplate(params: {
     body: JSON.stringify(payload),
   })
   const text = await res.text()
-  let json: { id?: string; status?: string; category?: string; error?: { message?: string } } | null = null
+  let json: { id?: string; status?: string; category?: string; error?: { message?: string; error_user_title?: string; error_user_msg?: string } } | null = null
   try { json = text ? JSON.parse(text) : null } catch { json = null }
-  if (!res.ok) throw new Error(json?.error?.message || `Graph API ${res.status}`)
+  if (!res.ok) {
+    // Meta's top-level message is usually just "Invalid parameter"; the real
+    // reason is in error_user_title / error_user_msg.
+    const e = json?.error
+    const detail = [e?.error_user_title, e?.error_user_msg].filter(Boolean).join(': ')
+    throw new Error([e?.message, detail].filter(Boolean).join(' — ') || `Graph API ${res.status}`)
+  }
   return { id: json?.id ?? null, status: json?.status ?? 'PENDING', category: json?.category ?? payload.category, name: templateName }
 }
 

@@ -10,6 +10,7 @@ import { useSidebar } from '@/hooks/use-sidebar'
 import NotificationsBell from '@/components/layout/notifications-bell'
 import LastMinuteAlert from '@/components/layout/last-minute-alert'
 import LastMinutePanel from '@/components/layout/last-minute-panel'
+import B2cAmendmentChip from '@/components/layout/b2c-amendment-chip'
 import ChatHeaderButton from '@/components/chat/chat-header-button'
 import type { UserRole } from '@prisma/client'
 
@@ -61,6 +62,10 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
               the moment everything is acknowledged — this icon does not, so the
               week's late files stay reachable after the alarm has been answered. */}
           <LastMinutePanel />
+
+          {/* Aahaas B2C bookings amended in the store (old bookings re-opened)
+              that nobody has checked yet. Renders nothing when there are none. */}
+          <B2cAmendmentChip />
 
           {/* Live traveller-experience alerts (complaints raised on AI calls) */}
           <NotificationsBell />

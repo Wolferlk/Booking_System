@@ -47,7 +47,7 @@ import {
   bar, C, compact, emptyNote, esc, FONT, kpiRow, money, moreNote, num, pill, section,
   STYLE_BLOCK, TABLE_CLOSE, tableOpen, td, truncate,
 } from './email-kit'
-import type { ReportData } from './report-data'
+import { todayNewAndUpdated, type ReportData } from './report-data'
 import type { MoverRow, PeriodAction, PeriodInsights, PeriodPoint } from './period-insights'
 import type { PeriodAdvice } from './period-outlook'
 import type { CountryRow } from './booking-lines'
@@ -859,7 +859,9 @@ function headerBlock(d: ReportData, opts: PeriodRenderOptions): string {
     `<span style="display:inline-block;margin:0 0 6px 5px;padding:3px 9px;border-radius:999px;background:${HERO.tile};border:1px solid ${HERO.tileLine};color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
   ).join('')
 
-  const headline = i
+  // The monthly review leads with the activity split in the scorecard below,
+  // not a B2B confirmed headline.
+  const headline = i && w.period !== 'MONTHLY'
     ? `<div style="font:700 10px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.12em;">B2B confirmed</div>
        <div style="font:800 40px/1.05 ${FONT};color:#ffffff;letter-spacing:-0.03em;padding-top:2px;">${num(i.totals.bookings)}</div>
        <div style="font:400 12px/1.5 ${FONT};padding-top:3px;">${heroDelta(i.totals.bookings, i.comparable ? i.totals.previousBookings : null)}<span style="color:${HERO.dim};"> vs ${esc(i.previousLabel)}</span></div>`
@@ -898,14 +900,42 @@ function guestTile(d: ReportData): { label: string; value: string; sub: string }
 /** The scorecard — two rows of four, each number carrying its own movement. */
 function scorecard(d: ReportData, i: PeriodInsights): string {
   const short = i.integrity.parityMissing + i.integrity.countCheckShort
+  const b2c = b2cOrders(i)
+  const sp = d.split
+  // The monthly review opens on the same two-pass split as the daily mails —
+  // the month's own files, then older files re-opened — and the trips that
+  // finished inside the month.
+  const lead: { label: string; value: string; sub: string }[] = d.window.period === 'MONTHLY'
+    ? [
+        {
+          label: 'This month new & updated',
+          value: num(todayNewAndUpdated(d)),
+          sub: `<span style="color:${HERO.dim};">${sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'accounts unreachable'}</span>`,
+        },
+        {
+          label: 'Old amendments',
+          value: sp.available ? num(sp.oldCount) : '—',
+          sub: `<span style="color:${HERO.dim};">${sp.available
+            ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
+            : 'accounts unreachable'}</span>`,
+        },
+        {
+          label: 'Completed trips',
+          value: i.delivery.available ? num(i.delivery.departures) : '—',
+          sub: `<span style="color:${HERO.dim};">${i.delivery.available ? 'tours that ended this month' : 'unavailable'}</span>`,
+        },
+      ]
+    : [
+        {
+          label: 'B2C store orders',
+          value: b2c.available ? num(b2c.orders) : '—',
+          sub: b2c.available ? heroDelta(b2c.orders, b2c.previous) : `<span style="color:${HERO.dim};">unavailable</span>`,
+        },
+        { label: 'Guests booked', value: num(i.totals.pax + (i.b2c.available ? i.b2c.pax : 0)), sub: `<span style="color:${HERO.dim};">${num(i.totals.pax)} B2B · ${num(i.b2c.pax)} store, in OPS</span>` },
+        { label: 'Tours operated', value: num(i.delivery.toursOperated), sub: `<span style="color:${HERO.dim};">${num(i.delivery.pax)} guests · ${num(i.delivery.guestDays)} guest-days</span>` },
+      ]
   const cells: { label: string; value: string; sub: string }[] = [
-    {
-      label: 'B2C store orders',
-      value: i.b2c.available ? num(i.b2c.orders) : '—',
-      sub: i.b2c.available ? heroDelta(i.b2c.orders, i.b2c.previousOrders) : `<span style="color:${HERO.dim};">unavailable</span>`,
-    },
-    { label: 'Guests booked', value: num(i.totals.pax + (i.b2c.available ? i.b2c.pax : 0)), sub: `<span style="color:${HERO.dim};">${num(i.totals.pax)} B2B · ${num(i.b2c.pax)} B2C</span>` },
-    { label: 'Tours operated', value: num(i.delivery.toursOperated), sub: `<span style="color:${HERO.dim};">${num(i.delivery.pax)} guests · ${num(i.delivery.guestDays)} guest-days</span>` },
+    ...lead,
     { label: 'Forward book', value: num(d.upcoming.total), sub: `<span style="color:${HERO.dim};">${num(d.upcoming.next30)} arriving in 30 days</span>` },
     {
       label: 'Cancelled',
@@ -1002,27 +1032,53 @@ function moversStrip(i: PeriodInsights, periodWord: string): string {
   )
 }
 
-/** Storefront orders, beside the B2B intake and never inside it. */
-function b2cSection(i: PeriodInsights, periodWord: string): string {
-  const b = i.b2c
-  if (!b.available) return ''
-  if (!b.orders && !b.previousOrders && !b.cancelled) return ''
+/**
+ * The period's B2C order count — the store's own figure, split the way the
+ * AahaasFlow board splits it, when it could be read; otherwise what OPS imported.
+ */
+function b2cOrders(i: PeriodInsights): { available: boolean; orders: number; previous: number | null } {
+  if (i.storeMix.available) return { available: true, orders: i.storeMix.b2c, previous: i.storeMix.previousB2c }
+  return { available: i.b2c.available, orders: i.b2c.orders, previous: i.b2c.available ? i.b2c.previousOrders : null }
+}
 
-  const tiles = kpiRow([
-    { label: 'Orders', value: num(b.orders), note: deltaChip(b.orders, b.previousOrders), color: C.b2c },
-    { label: 'Guests', value: num(b.pax), note: `Prev ${num(b.previousPax)}` },
-    { label: 'Value', value: `<span style="font-size:15px;line-height:1.4;">${currencyLine(b.byCurrency, 2)}</span>`, note: 'Quoted, per currency' },
-    { label: 'Cancelled', value: num(b.cancelled), note: 'Imported, then cancelled', color: b.cancelled ? C.bad : C.ink },
-  ])
+/** Every Aahaas store order, on the AahaasFlow boards. Beside the B2B intake, never inside it. */
+function b2cSection(i: PeriodInsights, periodWord: string): string {
+  const m = i.storeMix
+  const b = i.b2c
+  if (!m.available && !b.available) return ''
+  if (!m.all && !m.cancelled && !b.orders && !b.previousOrders && !b.cancelled) return ''
+
+  const chip = (now: number, prev: number | null) => (prev === null ? deltaChip(now, 0, { comparable: false }) : deltaChip(now, prev))
+  const store = m.available
+    ? kpiRow([
+      { label: 'All orders', value: num(m.all), note: chip(m.all, m.previousAll), color: C.ink },
+      { label: 'B2B Packages', value: num(m.b2bPackages), note: chip(m.b2bPackages, m.previousB2bPackages), color: C.b2b },
+      { label: 'B2B Flights', value: num(m.b2bFlights), note: chip(m.b2bFlights, m.previousB2bFlights), color: C.b2b },
+      { label: 'B2C', value: num(m.b2c), note: chip(m.b2c, m.previousB2c), color: C.b2c },
+    ]) +
+      `<div class="h3">By board</div>` +
+      tableOpen([
+        { text: 'Board' },
+        { text: 'Orders', align: 'right', width: '60' },
+      ]) + m.boards.map(r => `<tr>
+        ${td(esc(r.label), { bold: true, color: r.board === 'cancelled' ? C.bad : r.board.startsWith('b2c') ? C.b2c : C.b2b })}
+        ${td(num(r.orders), { align: 'right', bold: true, color: C.ink })}
+      </tr>`).join('') + TABLE_CLOSE +
+      `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:8px;">
+         Counted by the date each order was booked in the Aahaas store, on the same boards and the same rule as AahaasFlow: confirmed on the console as B2B or B2C, or placed by a B2B portal account, or a direct customer; a flight order is one whose every product is a flight.
+         Travel orders only (shop goods are not bookings), all markets.
+         ${m.cancelled ? `${num(m.cancelled)} order${m.cancelled === 1 ? '' : 's'} with every product cancelled or refunded ${m.cancelled === 1 ? 'is' : 'are'} not in the counts.` : ''}
+         ${m.tests.orders ? `${num(m.tests.orders)} test order${m.tests.orders === 1 ? ' is' : 's are'} left out.` : ''}
+         ${m.tests.checked ? '' : 'The test-order register could not be read, so test orders may be in the counts.'}
+         ${m.truncated ? '<strong>The period held more orders than one read allows, so every count is a floor.</strong>' : ''}
+       </div>`
+    : emptyNote(m.error ?? 'The Aahaas store could not be read, so the orders could not be split by board.')
 
   return section(
-    'B2C store orders',
-    `Aahaas storefront orders imported this ${periodWord} — reported beside the B2B count, not added to it`,
+    'Aahaas store orders',
+    `Every order the Aahaas store took this ${periodWord}, split as AahaasFlow shows it — reported beside the AppleSystem B2B count, not added to it`,
     C.b2c,
-    tiles + (b.byCountry.length ? `<div class="h3">By market</div>${countryOnlyTable(b.byCountry)}` : '') +
-      `<div style="font:400 11px/1.6 ${FONT};color:${C.faint};padding-top:8px;">
-         Counted by the date each order was imported into OPS. AppleSystem never carries storefront orders, so they cannot be part of the confirmed figure above. Every order is on the “B2C Orders” sheet.
-       </div>`,
+    store,
   )
 }
 
@@ -1161,7 +1217,7 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
         <tr><td style="padding:13px 16px;font:400 12px/1.7 ${FONT};color:${C.muted};">
           <strong style="color:${C.ink};">Counted: the ${num(i.totals.bookings)} B2B booking${i.totals.bookings === 1 ? '' : 's'} ${
             i.basis === 'apple' ? 'AppleSystem confirmed' : 'this system filed'
-          } in ${esc(periodName(d.window))}${i.b2c.available ? `, plus ${num(i.b2c.orders)} B2C store order${i.b2c.orders === 1 ? '' : 's'} shown separately` : ''}.</strong>
+          } in ${esc(periodName(d.window))}${b2cOrders(i).available ? `, plus ${num(b2cOrders(i).orders)} B2C store order${b2cOrders(i).orders === 1 ? '' : 's'} shown separately` : ''}.</strong>
           ${d.testBookings.total ? `${num(d.testBookings.total)} test booking${d.testBookings.total === 1 ? ' is' : 's are'} left out of every figure and listed at the end.` : ''}
           ${i.basis === 'apple'
             ? 'The same population the accounts invoice and P&amp;L mails report, so the three figures line up.'
@@ -1219,7 +1275,9 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(i.b2c.orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated, ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(periodName(d.window))} — ${d.window.period === 'MONTHLY'
+  ? `${num(todayNewAndUpdated(d))} this month new &amp; updated, ${d.split.available ? num(d.split.oldCount) : '—'} old amendments, ${num(i.delivery.departures)} completed trips,`
+  : `${num(i.totals.bookings)} B2B confirmed (prev ${num(i.totals.previousBookings)}), ${num(b2cOrders(i).orders)} B2C orders, ${num(i.delivery.toursOperated)} tours operated,`} ${num(i.cancellations.total)} cancelled, ${num(i.quality.complaints)} complaints, ${i.actions.length} action${i.actions.length === 1 ? '' : 's'} to take. Every booking is in the attached workbook.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -1259,12 +1317,20 @@ export function renderPeriodSubject(d: ReportData, opts: { prefix?: string; test
   const range = periodName(d.window)
 
   const parts: string[] = []
-  if (i) {
+  if (i && d.window.period === 'MONTHLY') {
+    parts.push(`${todayNewAndUpdated(d)} this month new & updated`)
+    if (d.split.available) parts.push(`${d.split.oldCount} old amendments`)
+    if (i.delivery.available) parts.push(`${i.delivery.departures} completed trips`)
+    if (i.cancellations.total) parts.push(`${i.cancellations.total} cancelled`)
+    if (d.complaints.open) parts.push(`${d.complaints.open} open complaint${d.complaints.open === 1 ? '' : 's'}`)
+    if (d.testBookings.total) parts.push(`${d.testBookings.total} test excluded`)
+  } else if (i) {
     const move = i.comparable && i.totals.previousBookings > 0
       ? ` (${i.totals.bookings >= i.totals.previousBookings ? '+' : ''}${Math.round(((i.totals.bookings - i.totals.previousBookings) / i.totals.previousBookings) * 100)}%)`
       : ''
     parts.push(`${i.totals.bookings} B2B confirmed${move}`)
-    if (i.b2c.available && i.b2c.orders) parts.push(`${i.b2c.orders} B2C orders`)
+    const b2c = b2cOrders(i)
+    if (b2c.available && b2c.orders) parts.push(`${b2c.orders} B2C orders`)
     if (i.delivery.available) parts.push(`${i.delivery.toursOperated} tours operated`)
     if (d.window.period !== 'MONTHLY') {
       if (i.integrity.parityMissing) parts.push(`${i.integrity.parityMissing} MISSING upstream`)

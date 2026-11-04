@@ -99,6 +99,19 @@ const insightsBase: PeriodInsights = {
     byCountry: [{ country: 'SRI_LANKA', label: 'Sri Lanka', bookings: 7, pax: 17, b2b: 0, b2c: 7 }, { country: 'MALAYSIA', label: 'Malaysia', bookings: 2, pax: 4, b2b: 0, b2c: 2 }],
     lines: counted.filter(b => b.source === 'B2C').slice(0, 9),
   },
+  storeMix: {
+    available: true, error: null, fromDate: window.fromDate, toDate: window.toDate,
+    all: 41, previousAll: 33, b2bPackages: 6, b2bFlights: 26, b2c: 9,
+    previousB2bPackages: 4, previousB2bFlights: 24, previousB2c: 5,
+    boards: [
+      { board: 'b2b_packages', label: 'B2B Packages', orders: 6, previous: 4, filedInOps: 5 },
+      { board: 'b2b_flights', label: 'B2B Flights', orders: 26, previous: 24, filedInOps: 22 },
+      { board: 'b2c_packages', label: 'B2C packages', orders: 7, previous: 4, filedInOps: 7 },
+      { board: 'b2c_flights', label: 'B2C flights', orders: 2, previous: 1, filedInOps: 1 },
+      { board: 'cancelled', label: 'Cancelled', orders: 2, previous: null, filedInOps: 0 },
+    ],
+    cancelled: 2, tests: { checked: true, orders: 1 }, notInOps: 6, truncated: false,
+  },
   delivery: {
     available: true, toursOperated: 63, arrivals: 29, departures: 26, pax: 178, guestDays: 742,
     avgPartySize: 2.8, avgTourNights: 6.1, hotelOnly: 7,

@@ -17,6 +17,7 @@ import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
 } from './ticket-notes'
+import { customerEmailForDisplay } from './booking-source'
 
 // ── Palette (matches generate-booking-pdf.ts) ────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -400,11 +401,12 @@ export async function generateAgendaPdf(
     })
     doc.y = stripY + 42
 
-    // Customer contact
+    // Customer contact — a B2C booking's desk inbox is never shown as the customer's
+    const customerEmail = customerEmailForDisplay(booking.agent, booking.contactEmail)
     const contactBits = [
       booking.contactPhone ? `Phone: ${booking.contactPhone}` : null,
       booking.contactWhatsapp ? `WhatsApp: ${booking.contactWhatsapp}` : null,
-      booking.contactEmail ? `Email: ${booking.contactEmail}` : null,
+      customerEmail ? `Email: ${customerEmail}` : null,
     ].filter(Boolean)
     if (contactBits.length > 0) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)

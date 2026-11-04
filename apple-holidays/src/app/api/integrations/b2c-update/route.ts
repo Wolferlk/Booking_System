@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { B2cSyncError, isB2cOriginBooking, recordAccountsOutcome, syncB2cBooking } from '@/lib/b2c-booking-sync'
+import { fetchOrderChainFacts } from '@/lib/b2c-order-chain'
 import { getAutomationUserId } from '@/lib/as-booking-import'
 import { bookingSourceWhere } from '@/lib/booking-source'
 
@@ -50,9 +51,15 @@ export async function POST(req: NextRequest) {
   // The importer uses the store order id as the ref (and as the IS number).
   // Exact ref first: an AppleSystem file can carry the same digits as its IS number.
   const select = { id: true, bookingRef: true, agent: true } as const
+  // An amendment order (a new version) is filed under its chain's original id.
+  const chainRef = async () => {
+    const f = (await fetchOrderChainFacts([orderId])).get(orderId)
+    return f && f.chainId !== orderId ? String(f.chainId) : null
+  }
   const booking =
     (await prisma.booking.findUnique({ where: { bookingRef: String(orderId) }, select })) ??
-    (await prisma.booking.findFirst({ where: { isNumber: String(orderId), ...bookingSourceWhere('B2C') }, select }))
+    (await prisma.booking.findFirst({ where: { isNumber: String(orderId), ...bookingSourceWhere('B2C') }, select })) ??
+    (await chainRef().then((ref) => (ref ? prisma.booking.findUnique({ where: { bookingRef: ref }, select }) : null)))
   if (!booking || !(await isB2cOriginBooking(booking.id, booking.agent))) {
     return NextResponse.json(
       { success: false, error: `Store order ${orderId} is not in the OPS booking system (not imported yet, or not travelling).` },

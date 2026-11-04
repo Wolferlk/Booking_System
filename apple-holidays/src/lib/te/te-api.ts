@@ -57,6 +57,24 @@ export async function tePost<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
+export async function tePatch<T>(path: string, body: unknown): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const res = await fetch(`${TE_BASE}/${path.replace(/^\//, '')}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(TE_SECRET ? { 'x-te-secret': TE_SECRET } : {}) },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(`TE ${path} → ${res.status} ${text.slice(0, 200)}`)
+    try { return JSON.parse(text) as T } catch { return { raw: text } as T }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * The list endpoints answer either as a bare array or wrapped — normalise once
  * here so every caller can assume an array.

@@ -338,11 +338,18 @@ async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: 
 
   // Latest booking row per order: a re-priced or reissued flight leaves the
   // earlier attempts behind with their old dates.
-  const flightRows = await fetchFlightBookings(rows.map((r) => Number(r.order_id)))
+  // Date fragments only — the full request/response blobs for a year of flight
+  // orders were heavy enough to take down the overview/preview Lambda. If the
+  // slim query fails for any reason, fall back to the dates in the line names.
   const spanByOrder = new Map<number, { first: string; last: string }>()
-  for (const fr of flightRows) {
-    const span = flightDateSpan(parseFlightBooking(fr))
-    if (span) spanByOrder.set(Number(fr.order_id), span)
+  try {
+    const flightRows = await fetchFlightDateRows(rows.map((r) => Number(r.order_id)))
+    for (const fr of flightRows) {
+      const span = flightDateSpan(parseFlightBooking(fr))
+      if (span) spanByOrder.set(Number(fr.order_id), span)
+    }
+  } catch (err) {
+    console.error('[b2c-db] flight date lookup failed; using line names', err)
   }
 
   const headers: B2cOrderHeader[] = []
@@ -518,6 +525,43 @@ export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlight
       WHERE f.order_id IN (${ids})
       ORDER BY f.order_id, f.id`,
   )
+}
+
+/**
+ * Like {@link fetchFlightBookings}, but carries only what {@link flightDateSpan}
+ * reads: `searchData.routes` and `data.fetchPnr.flights`, extracted server-side
+ * and rewrapped in the original shape so {@link parseFlightBooking} is unchanged.
+ * `JSON_VALID` guards keep a malformed blob from failing the whole query.
+ */
+async function fetchFlightDateRows(orderIds: number[]): Promise<B2cFlightBooking[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const rows = await b2cQuery<mysql.RowDataPacket & {
+    order_id: number
+    pnr: string | null
+    flight_provider: string | null
+    routes: unknown
+    flights: unknown
+  }>(
+    `SELECT f.order_id, f.pnr, f.flight_provider,
+            CASE WHEN JSON_VALID(f.requested_data) THEN JSON_EXTRACT(f.requested_data, '$.searchData.routes') END AS routes,
+            CASE WHEN JSON_VALID(f.response_data)  THEN JSON_EXTRACT(f.response_data,  '$.data.fetchPnr.flights') END AS flights
+       FROM aahaas_flight_bookingsv2 f
+      WHERE f.order_id IN (${ids})
+      ORDER BY f.order_id, f.id`,
+  )
+  // MariaDB returns the fragment as text, MySQL's JSON type as a parsed value.
+  const asValue = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v ?? null
+    try { return JSON.parse(v) } catch { return null }
+  }
+  return rows.map((r) => ({
+    order_id: r.order_id,
+    pnr: r.pnr,
+    flight_provider: r.flight_provider,
+    requested_data: JSON.stringify({ searchData: { routes: asValue(r.routes) } }),
+    response_data: JSON.stringify({ data: { fetchPnr: { flights: asValue(r.flights) } } }),
+  })) as B2cFlightBooking[]
 }
 
 /**

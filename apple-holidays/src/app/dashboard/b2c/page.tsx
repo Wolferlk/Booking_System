@@ -20,6 +20,8 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { CountryFlag } from '@/components/ui/country-flag'
+import B2cAmendmentsPanel from '@/components/bookings/b2c-amendments-panel'
+import StoreOrderMixCard from '@/components/b2c/store-order-mix-card'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,7 +72,7 @@ interface RunSummary {
 }
 
 interface PreviewOrder {
-  status: 'new' | 'imported' | 'conflict'
+  status: 'new' | 'imported' | 'conflict' | 'amendment'
   bookingRef: string
   operationCountry: string | null
   countryVia: string
@@ -109,6 +111,7 @@ const STATUS_STYLE: Record<PreviewOrder['status'], { label: string; cls: string 
   new:      { label: 'Will import', cls: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/25' },
   imported: { label: 'Already in ops', cls: 'bg-slate-500/10 text-slate-500 border-slate-500/25' },
   conflict: { label: 'Ref conflict', cls: 'bg-red-500/10 text-red-600 border-red-500/25' },
+  amendment: { label: 'Amendment → updates booking', cls: 'bg-amber-500/10 text-amber-700 border-amber-500/25' },
 }
 
 const VIA_LABEL: Record<string, string> = {
@@ -182,7 +185,7 @@ export default function B2cControlCentre() {
     setLoadingOverview(true)
     try {
       const res = await fetch('/api/b2c/overview')
-      const json = await res.json()
+      const json = await readJson(res)
       if (json.success) setOverview(json.data)
       else setError(json.error ?? 'Failed to load overview')
     } catch (e) {
@@ -197,7 +200,7 @@ export default function B2cControlCentre() {
     setError(null)
     try {
       const res = await fetch('/api/b2c/preview')
-      const json = await res.json()
+      const json = await readJson(res)
       if (json.success) setPreview(json.data)
       else setError(json.error ?? 'Preview failed')
     } catch (e) {
@@ -280,6 +283,12 @@ export default function B2cControlCentre() {
       <Header title="B2C — Aahaas" subtitle="Storefront orders flowing into operations" />
 
       <div className="space-y-5 p-4 sm:p-6">
+        {/* ── Store amendments: old bookings re-opened as a new order ────── */}
+        <B2cAmendmentsPanel />
+
+        {/* ── Store order mix: the month on the AahaasFlow boards ───────── */}
+        <StoreOrderMixCard />
+
         {/* ── Hero: connection + schedule ───────────────────────────────── */}
         <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-fuchsia-50 via-white to-violet-50 p-5 shadow-sm">
           <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-fuchsia-400/10 blur-3xl" />
@@ -840,4 +849,14 @@ function ActivityLog({ runs }: { runs: RunSummary[] }) {
       })}
     </ol>
   )
+}
+
+/** Parse an API reply, turning a plain-text gateway error into a readable message. */
+async function readJson(res: Response): Promise<{ success?: boolean; data?: any; error?: string }> {
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch {
+    return { success: false, error: `Server error ${res.status}${res.status >= 500 ? ' — the Aahaas store may be slow; try Refresh preview' : ''}` }
+  }
 }

@@ -125,9 +125,18 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     const prev = (v: number | null | undefined) => (comparable ? v ?? null : null)
     score('B2B bookings confirmed', i.totals.bookings, prev(i.totals.previousBookings), 'The period\'s intake, counted on the basis named on the Overview. Test bookings excluded.', 'up')
     score('Guests booked (B2B)', i.totals.pax, prev(i.totals.previousPax), 'Adults + children + infants across those bookings.', 'up')
+    const m = i.storeMix
+    if (m.available) {
+      const board = 'Booked in the Aahaas store in the period, on the AahaasFlow board of the same name and by the same rule. Cancelled and test orders excluded. Not part of the B2B figure.'
+      score('Store orders — all boards', m.all, m.previousAll, board, 'up')
+      score('Store orders — B2B Packages', m.b2bPackages, m.previousB2bPackages, board, 'up')
+      score('Store orders — B2B Flights', m.b2bFlights, m.previousB2bFlights, board, 'up')
+      score('B2C store orders', m.b2c, m.previousB2c, board, 'up')
+      score('Store orders — every product cancelled', m.cancelled, null, 'Booked in the period, then every product cancelled or refunded. In none of the counts above.')
+    }
     if (i.b2c.available) {
-      score('B2C store orders', i.b2c.orders, i.b2c.previousOrders, 'Aahaas storefront orders imported into OPS in the period, cancelled ones excluded. Not part of the B2B figure.', 'up')
-      score('Guests booked (B2C)', i.b2c.pax, i.b2c.previousPax, 'Guests on those storefront orders.', 'up')
+      score('Store orders imported into OPS', i.b2c.orders, i.b2c.previousOrders, 'Store orders (B2B and B2C) filed in OPS in the period, by import date. Listed on "B2C Orders".', 'up')
+      score('Guests on imported store orders', i.b2c.pax, i.b2c.previousPax, 'Guests on those files.', 'up')
     }
     score('Test bookings excluded', d.testBookings.total, null, 'Marked as tests in the shared register; in no other figure. Listed on "Test Bookings".')
     score('Average party size', i.totals.avgPartySize, i.totals.previousAvgPartySize, 'Guests per booking.')
@@ -378,8 +387,8 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   if (i?.b2c.available) {
     plan.table({
       name: 'B2C Orders', tab: P.b2c,
-      title: 'B2C store orders',
-      description: 'Aahaas storefront orders imported into OPS during the period, counted by import date (the store\'s own order date is not kept in OPS). Cancelled orders and test bookings are excluded. AppleSystem never carries these, so they are reported beside the B2B count, never inside it.',
+      title: 'Store orders imported into OPS',
+      description: 'Aahaas store orders imported into OPS during the period, counted by import date — B2B portal, agency flights and B2C alike, so this is not the B2C order count (see the store-order rows on the scorecard). Cancelled orders and test bookings are excluded. AppleSystem never carries these, so they are reported beside the B2B count, never inside it.',
       totals: `${i.b2c.orders} orders · ${i.b2c.pax} guests · ${i.b2c.cancelled} imported then cancelled · previous period ${i.b2c.previousOrders}`,
       what: 'Storefront orders imported in the period',
       cols: bookingCols(),
@@ -900,7 +909,9 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
   if (i) {
     c.tiles([
       { label: 'B2B confirmed', value: i.totals.bookings, note: delta(i.totals.bookings, i.totals.previousBookings) || `${d.testBookings.total} test excluded`, color: P.brand },
-      { label: 'B2C store orders', value: i.b2c.orders, note: `previous ${i.b2c.previousOrders}`, color: P.b2c },
+      i.storeMix.available
+        ? { label: 'B2C store orders', value: i.storeMix.b2c, note: `previous ${i.storeMix.previousB2c ?? '—'} · ${i.storeMix.b2bPackages + i.storeMix.b2bFlights} B2B store`, color: P.b2c }
+        : { label: 'Store orders in OPS', value: i.b2c.orders, note: `previous ${i.b2c.previousOrders}`, color: P.b2c },
       { label: 'Guests booked', value: i.totals.pax, note: delta(i.totals.pax, i.totals.previousPax), color: P.b2c },
       { label: 'Tours operated', value: i.delivery.toursOperated, note: `${i.delivery.guestDays.toLocaleString('en-US')} guest-days`, color: P.indigo },
       { label: 'Cancellations', value: i.cancellations.total, note: i.cancellations.ratePct !== null ? `${i.cancellations.ratePct}% of intake` : '', color: P.red },

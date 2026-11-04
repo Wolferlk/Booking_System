@@ -3910,3 +3910,77 @@ model TransReconLineParty {
   @@index([supplierSource, supplierId], map: "trans_recon_line_parties_supplier_idx")
   @@map("trans_recon_line_parties")
 }
+
+/// Agent Daily Digest — one digest design: which agent's bookings, which
+/// countries, which date blocks (on-ground today, arriving tomorrow …), which
+/// allocation fields, who receives it and when. The design lives in `config`
+/// (JSON, see src/lib/agent-digest/shared.ts) so new options need no ALTER.
+/// Created by prisma/sql/2026-11-04-agent-digest.sql — never `db push`.
+model AgentDigestRule {
+  id            String    @id @default(cuid())
+  name          String    @db.VarChar(191)
+  isActive      Boolean   @default(true)
+  autoSend      Boolean   @default(false)
+  sendTime      String    @default("07:00") @db.VarChar(5)
+  timezone      String    @default("Asia/Colombo") @db.VarChar(64)
+  config        Json
+  archivedAt    DateTime?
+  createdByName String?   @db.VarChar(191)
+  updatedByName String?   @db.VarChar(191)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([isActive, autoSend], map: "agent_digest_rules_active_idx")
+  @@map("agent_digest_rules")
+}
+
+/// A frozen snapshot of one digest — what the WhatsApp link shows.
+/// Created by prisma/sql/2026-11-04-agent-digest.sql — never `db push`.
+model AgentDigestRun {
+  id            String   @id @default(cuid())
+  token         String   @db.VarChar(64)
+  ruleId        String?  @db.VarChar(191)
+  ruleName      String   @db.VarChar(191)
+  runDate       String   @db.VarChar(10)
+  trigger       String   @db.VarChar(16)
+  bookingCount  Int      @default(0)
+  itemCount     Int      @default(0)
+  payload       Json
+  createdByName String?  @db.VarChar(191)
+  createdAt     DateTime @default(now())
+
+  @@index([ruleId, runDate], map: "agent_digest_runs_rule_date_idx")
+  @@index([runDate], map: "agent_digest_runs_date_idx")
+  @@map("agent_digest_runs")
+}
+
+/// One recipient × channel delivery. `dedupeKey` UNIQUE = once per rule/day/recipient.
+/// Created by prisma/sql/2026-11-04-agent-digest.sql — never `db push`.
+model AgentDigestSend {
+  id            String   @id @default(cuid())
+  dedupeKey     String   @unique(map: "agent_digest_sends_dedupeKey_key") @db.VarChar(191)
+  runId         String?  @db.VarChar(191)
+  ruleId        String?  @db.VarChar(191)
+  ruleName      String   @db.VarChar(191)
+  runDate       String   @db.VarChar(10)
+  channel       String   @db.VarChar(16)
+  recipient     String   @db.VarChar(191)
+  recipientName String?  @db.VarChar(191)
+  status        String   @db.VarChar(16)
+  mode          String?  @db.VarChar(16)
+  subject       String?  @db.VarChar(255)
+  body          String?  @db.MediumText
+  waMessageId   String?  @db.VarChar(191)
+  error         String?  @db.Text
+  trigger       String   @db.VarChar(16)
+  sentByName    String?  @db.VarChar(191)
+  bookingCount  Int      @default(0)
+  itemCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([runDate], map: "agent_digest_sends_date_idx")
+  @@index([ruleId, runDate], map: "agent_digest_sends_rule_idx")
+  @@index([createdAt], map: "agent_digest_sends_created_idx")
+  @@map("agent_digest_sends")
+}
