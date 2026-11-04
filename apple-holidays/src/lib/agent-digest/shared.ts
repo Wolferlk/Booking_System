@@ -416,6 +416,26 @@ export function allocationPending(it: Pick<DigestItem, 'needsDriver' | 'driver' 
   return it.needsDriver && !it.driver?.name && !it.vehicle && !it.driverVendor?.name && !it.tourVendor?.name
 }
 
+
+/**
+ * Re-derives the "pending" counts from the stored lines, so snapshots saved
+ * before the allocation rule changed (e.g. a tour vendor counting as covered)
+ * render correctly too. ITEM blocks carry their lines; TOUR blocks don't, so
+ * their stored count is kept.
+ */
+export function withFreshPending(p: DigestPayload): DigestPayload {
+  let missing = 0
+  const blocks = p.blocks.map(blk => ({
+    ...blk,
+    bookings: blk.bookings.map(b => {
+      const m = blk.scope === 'ITEM' ? (b.items ?? []).filter(allocationPending).length : (b.missing ?? 0)
+      missing += m
+      return m === b.missing ? b : { ...b, missing: m }
+    }),
+  }))
+  return { ...p, blocks, totals: { ...p.totals, missing } }
+}
+
 // ── Rendering ───────────────────────────────────────────────────────────────
 
 export function fillTokens(text: string, p: DigestPayload, recipient: string): string {
@@ -496,6 +516,7 @@ function teamLinesWa(b: DigestBooking, f: DigestFields): string[] {
 
 /** One string per block — the sender splits long digests on these seams. */
 export function renderWhatsAppParts(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null): string[] {
+  p = withFreshPending(p)
   const f = c.fields
   const parts: string[] = []
   const intro = fillTokens(c.intro, p, recipient).trim()
@@ -571,6 +592,7 @@ export function emailSubject(p: DigestPayload): string {
 }
 
 export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null): string {
+  p = withFreshPending(p)
   const f = c.fields
   const intro = esc(fillTokens(c.intro, p, recipient)).replace(/\n/g, '<br>')
   const footer = esc(fillTokens(c.footer, p, recipient)).replace(/\n/g, '<br>')
