@@ -25,6 +25,7 @@ import {
   MessageCircle, Plus, RefreshCw, Rocket, RotateCcw, Save, Search, Send, Smartphone, Sparkles, Trash2, Users, X, XCircle, Zap,
 } from 'lucide-react'
 import Button from '@/components/ui/button'
+import Modal from '@/components/ui/modal'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
 import {
@@ -98,6 +99,20 @@ function countdown(iso: string | null): string {
   const h = Math.floor(ms / 3_600_000)
   const m = Math.floor((ms % 3_600_000) / 60_000)
   return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : h ? `in ${h}h ${m}m` : `in ${m}m`
+}
+
+/** Stops the page behind a popup scrolling, without the layout jumping when the scrollbar goes. */
+function useBodyScrollLock() {
+  useEffect(() => {
+    const { overflow, paddingRight } = document.body.style
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth
+    document.body.style.overflow = 'hidden'
+    if (scrollbar > 0) document.body.style.paddingRight = `${scrollbar}px`
+    return () => {
+      document.body.style.overflow = overflow
+      document.body.style.paddingRight = paddingRight
+    }
+  }, [])
 }
 
 function ago(iso: string): string {
@@ -380,9 +395,10 @@ function EmptyState({ onNew, disabled }: { onNew: () => void; disabled: boolean 
 }
 
 function PresetGallery({ onPick, onClose }: { onPick: (key: string) => void; onClose: () => void }) {
+  useBodyScrollLock()
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-3xl rounded-3xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="max-h-full w-full max-w-3xl overflow-y-auto overscroll-contain rounded-3xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Start a new digest</h2>
@@ -419,6 +435,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
   const c = draft.config
   const [saving, setSaving] = useState(false)
   const [sending, setSending] = useState(false)
+  const [confirmSend, setConfirmSend] = useState(false)
   const [showTest, setShowTest] = useState(false)
   const [lastResult, setLastResult] = useState<SendResult | null>(null)
 
@@ -443,11 +460,14 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
     } catch (e) { toast.error((e as Error).message) }
   }
 
-  const sendNow = async () => {
+  const askSendNow = () => {
     if (!draft.id) return toast.error('Save the digest first')
     if (dirty) return toast.error('Save your changes first — “Send now” uses the saved design')
-    const who = c.recipients.length
-    if (!confirm(`Send today’s digest now to ${who} recipient${who === 1 ? '' : 's'}?\nAnyone already sent today is skipped; failed ones are retried.`)) return
+    setConfirmSend(true)
+  }
+
+  const sendNow = async () => {
+    setConfirmSend(false)
     setSending(true)
     try {
       const { data, message } = await api<SendResult>('/api/agent-digest/send', { method: 'POST', body: JSON.stringify({ ruleId: draft.id }) })
@@ -467,7 +487,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
           <div className="flex flex-wrap gap-2">
             <Button variant="ghost" size="sm" icon={<Archive className="h-3.5 w-3.5" />} onClick={archive}>{draft.id ? 'Archive' : 'Discard'}</Button>
             <Button variant="secondary" size="sm" icon={<FlaskConical className="h-3.5 w-3.5" />} onClick={() => setShowTest(true)} disabled={setupRequired}>Send test</Button>
-            <Button variant="secondary" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={sendNow} loading={sending} disabled={setupRequired || !draft.id}>Send now</Button>
+            <Button variant="secondary" size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={askSendNow} loading={sending} disabled={setupRequired || !draft.id}>Send now</Button>
             <Button size="sm" icon={<Save className="h-3.5 w-3.5" />} onClick={save} loading={saving} disabled={setupRequired}>Save</Button>
           </div>
         </div>
@@ -486,6 +506,17 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
       </div>
 
       {showTest && <TestDialog draft={draft} me={me} onClose={() => setShowTest(false)} onResult={setLastResult} />}
+      <Modal
+        open={confirmSend} onClose={() => setConfirmSend(false)} title="Send today’s digest now?"
+        footer={<>
+          <Button variant="secondary" size="sm" onClick={() => setConfirmSend(false)}>Cancel</Button>
+          <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={sendNow}>Send now</Button>
+        </>}
+      >
+        <p className="text-sm text-slate-600">
+          This goes to {c.recipients.length} recipient{c.recipients.length === 1 ? '' : 's'}. Anyone already sent today is skipped; failed ones are retried.
+        </p>
+      </Modal>
     </div>
   )
 }
@@ -901,6 +932,7 @@ function WaText({ text }: { text: string }) {
 // ── Test dialog + result ─────────────────────────────────────────────────────
 
 function TestDialog({ draft, me, onClose, onResult }: { draft: Draft; me: string; onClose: () => void; onResult: (r: SendResult) => void }) {
+  useBodyScrollLock()
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [day, setDay] = useState(() => todayIn(draft.timezone))
@@ -924,7 +956,7 @@ function TestDialog({ draft, me, onClose, onResult }: { draft: Draft; me: string
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+      <div className="max-h-full w-full max-w-md overflow-y-auto overscroll-contain rounded-3xl bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2"><FlaskConical className="h-5 w-5 text-teal-600" /><h2 className="text-lg font-semibold text-slate-900">Send a test copy</h2></div>
         <p className="mt-1 text-sm text-slate-500">Goes only to what you type here — never to the agent. Uses the design as it is on screen, saved or not.</p>
         <div className="mt-4 space-y-3">
@@ -1207,6 +1239,7 @@ function TemplateBanner({ tpl, onSubmit, onRefresh }: { tpl: TemplateInfo; onSub
 }
 
 function RunDrawer({ detail, onClose }: { detail: RunDetail; onClose: () => void }) {
+  useBodyScrollLock()
   const [tab, setTab] = useState<'message' | 'snapshot'>('message')
   const [sel, setSel] = useState(detail.sends[0]?.id ?? null)
   const send = detail.sends.find(s => s.id === sel)
