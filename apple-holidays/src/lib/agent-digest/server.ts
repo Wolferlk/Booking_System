@@ -351,6 +351,16 @@ export function toRuleView(r: RuleRow, last?: { at: Date; status: string } | nul
   }
 }
 
+/** Archived digests, newest first — what the designer offers to restore. */
+export async function listArchivedRules(): Promise<{ id: string; name: string; archivedAt: string; archivedByName: string | null }[]> {
+  const rows = await prisma.agentDigestRule.findMany({
+    where: { archivedAt: { not: null } },
+    orderBy: { archivedAt: 'desc' },
+    select: { id: true, name: true, archivedAt: true, updatedByName: true },
+  })
+  return rows.map(r => ({ id: r.id, name: r.name, archivedAt: r.archivedAt!.toISOString(), archivedByName: r.updatedByName }))
+}
+
 export async function listRules(): Promise<DigestRuleView[]> {
   const rows = await prisma.agentDigestRule.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'asc' } })
   const last = new Map<string, { at: Date; status: string }>()

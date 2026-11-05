@@ -5,7 +5,7 @@
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { requireDaStaff } from '@/lib/driver-auto/api-auth'
-import { isDigestTableMissing, listRules, SETUP_MESSAGE, TEMPLATE_AGENT_DIGEST } from '@/lib/agent-digest/server'
+import { isDigestTableMissing, listArchivedRules, listRules, SETUP_MESSAGE, TEMPLATE_AGENT_DIGEST } from '@/lib/agent-digest/server'
 import { addDays, todayIn } from '@/lib/agent-digest/shared'
 
 export const dynamic = 'force-dynamic'
@@ -15,8 +15,9 @@ export async function GET() {
   if ('error' in staff) return buildApiError(staff.error, staff.status)
   const today = todayIn('Asia/Colombo')
   try {
-    const [rules, sends] = await Promise.all([
+    const [rules, archived, sends] = await Promise.all([
       listRules(),
+      listArchivedRules(),
       prisma.agentDigestSend.groupBy({
         by: ['runDate', 'status'],
         where: { runDate: { gte: addDays(today, -1), lte: today }, trigger: { not: 'test' } },
@@ -29,10 +30,10 @@ export async function GET() {
       if (s.status === 'sent') bucket.sent += s._count._all
       if (s.status === 'failed') bucket.failed += s._count._all
     }
-    return buildApiSuccess({ setupRequired: false, setupMessage: null, rules, counters, today, templateName: TEMPLATE_AGENT_DIGEST, me: staff.name })
+    return buildApiSuccess({ setupRequired: false, setupMessage: null, rules, archived, counters, today, templateName: TEMPLATE_AGENT_DIGEST, me: staff.name })
   } catch (err) {
     if (isDigestTableMissing(err)) {
-      return buildApiSuccess({ setupRequired: true, setupMessage: SETUP_MESSAGE, rules: [], counters: null, today, templateName: TEMPLATE_AGENT_DIGEST, me: staff.name })
+      return buildApiSuccess({ setupRequired: true, setupMessage: SETUP_MESSAGE, rules: [], archived: [], counters: null, today, templateName: TEMPLATE_AGENT_DIGEST, me: staff.name })
     }
     return buildApiError(err instanceof Error ? err.message : 'Failed to load', 500)
   }

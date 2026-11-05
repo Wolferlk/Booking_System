@@ -3,6 +3,7 @@
  * PUT    /api/agent-digest/rules?id=…   — update it
  * DELETE /api/agent-digest/rules?id=…   — archive it (soft: the row and its
  *                                          send history stay)
+ * PATCH  /api/agent-digest/rules?id=…   — restore an archived digest
  *
  * Writes only to agent_digest_rules.
  */
@@ -56,6 +57,26 @@ export async function PUT(req: NextRequest) {
     const data = parseBody(await req.json())
     const row = await prisma.agentDigestRule.update({ where: { id }, data: { ...data, updatedByName: staff.name } })
     return buildApiSuccess(toRuleView(row), 'Digest updated')
+  } catch (err) { return fail(err) }
+}
+
+export async function PATCH(req: NextRequest) {
+  const staff = await requireDaStaff()
+  if ('error' in staff) return buildApiError(staff.error, staff.status)
+  const id = req.nextUrl.searchParams.get('id')
+  if (!id) return buildApiError('id required')
+  try {
+    const existing = await prisma.agentDigestRule.findUnique({ where: { id }, select: { archivedAt: true } })
+    if (!existing) return buildApiError('Digest not found', 404)
+    if (!existing.archivedAt) return buildApiError('This digest is not archived', 409)
+    // Archive clears autoSend without keeping its old value, and this mail goes
+    // to external agents — so a restored digest stays manual until someone
+    // turns auto-send back on.
+    const row = await prisma.agentDigestRule.update({
+      where: { id },
+      data: { archivedAt: null, isActive: true, autoSend: false, updatedByName: staff.name },
+    })
+    return buildApiSuccess(toRuleView(row), 'Digest restored')
   } catch (err) { return fail(err) }
 }
 

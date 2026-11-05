@@ -577,14 +577,34 @@ export function chunkParts(parts: string[], max = 3800): string[] {
 const esc = (s: string | null | undefined) =>
   String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!))
 
+/**
+ * Email layout rules. Outlook drops gradients and ignores flex, inline-block
+ * padding and rgba, so structure is tables and every fill is a solid colour set
+ * both as bgcolor and in CSS. Text is always dark on a light fill: if a client
+ * strips a background the words stay readable.
+ */
+const EMAIL_FONT = "font-family:'Segoe UI',Arial,Helvetica,sans-serif"
+const TABLE_RESET = 'border="0" cellpadding="0" cellspacing="0" role="presentation"'
+
 function chip(text: string, bg: string, fg: string): string {
-  return `<span style="display:inline-block;background:${bg};color:${fg};border-radius:999px;padding:2px 9px;font-size:11px;font-weight:600;margin:2px 4px 2px 0">${esc(text)}</span>`
+  return `<span style="display:inline-block;background-color:${bg};color:${fg};border-radius:999px;padding:3px 10px;font-size:12px;font-weight:600;line-height:16px;margin:4px 4px 0 0;white-space:nowrap">${esc(text)}</span>`
+}
+
+function detailLine(html: string, color = '#475569'): string {
+  return `<div style="font-size:13px;line-height:20px;color:${color};margin-top:2px">${html}</div>`
 }
 
 function partyHtml(icon: string, label: string, p: DigestParty | null, phone: boolean, extra?: string | null): string {
   if (!p?.name && !p?.phone && !extra) return ''
-  const tel = phone && p?.phone ? ` <a href="tel:${esc(p.phone.replace(/\s+/g, ''))}" style="color:#0f766e;text-decoration:none">${esc(p.phone)}</a>` : ''
-  return `<div style="font-size:12px;color:#334155;margin-top:3px">${icon} <span style="color:#94a3b8">${label}</span> <b>${esc(p?.name ?? '')}</b>${tel}${extra ? ` <span style="color:#64748b">· ${esc(extra)}</span>` : ''}</div>`
+  const tel = phone && p?.phone ? ` <a href="tel:${esc(p.phone.replace(/\s+/g, ''))}" style="color:#0f766e;text-decoration:none;white-space:nowrap">${esc(p.phone)}</a>` : ''
+  return detailLine(`${icon} <span style="color:#64748b">${label}</span> <b style="color:#0f172a">${esc(p?.name ?? '')}</b>${tel}${extra ? ` <span style="color:#64748b">· ${esc(extra)}</span>` : ''}`, '#334155')
+}
+
+function statTile(value: number, label: string, bg: string, border: string, fg: string): string {
+  return `<td width="33%" bgcolor="${bg}" align="left" valign="top" style="background-color:${bg};border:1px solid ${border};border-radius:12px;padding:12px 14px">
+    <div style="font-size:24px;line-height:28px;font-weight:700;color:${fg}">${value}</div>
+    <div style="font-size:12px;line-height:16px;color:#475569;margin-top:2px">${label}</div>
+  </td>`
 }
 
 export function emailSubject(p: DigestPayload): string {
@@ -611,69 +631,82 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
         f.flight && b.flight ? `✈️ ${esc(b.flight)}` : '',
         f.hotel && b.hotel ? `🏨 ${esc(b.hotel)}` : '',
         blk.scope === 'TOUR' ? `🗓️ ${esc(fmtShort(b.arrival))} → ${esc(fmtShort(b.departure))}` : '',
-      ].filter(Boolean).join(' &nbsp;·&nbsp; ')
+      ].filter(Boolean).map(m => detailLine(m)).join('')
 
       let body = ''
       if (blk.scope === 'TOUR') {
         const t = b.team
         body = [
           ...(f.driver ? t.drivers.map(d => partyHtml('🚗', 'Driver', d, f.driverPhone, f.vehicle ? d.vehicle : null)) : []),
-          ...(f.driver && !t.drivers.length && f.flagMissing && b.missing ? ['<div style="font-size:12px;color:#b91c1c;margin-top:3px">⚠️ Driver pending</div>'] : []),
+          ...(f.driver && !t.drivers.length && f.flagMissing && b.missing ? [detailLine('⚠️ <b>Driver pending</b>', '#b91c1c')] : []),
           ...(f.driverVendor ? t.driverVendors.map(v => partyHtml('🏢', 'Driver vendor', v, f.driverPhone)) : []),
           ...(f.guide ? t.guides.map(g => partyHtml('🧭', 'Guide', g, f.guidePhone)) : []),
           ...(f.tourVendor ? t.tourVendors.map(v => partyHtml('🎟️', 'Tour vendor', v, f.tourVendorPhone)) : []),
         ].join('')
       } else if (!b.items.length) {
-        body = '<div style="font-size:12px;color:#94a3b8">No agenda lines this day.</div>'
+        body = detailLine('No agenda lines this day.', '#64748b')
       } else {
         body = b.items.map(it => {
-          const head = [f.time && it.time ? `<b style="color:#0f172a">${esc(it.time)}</b>` : '', f.route ? esc(it.route) : '', f.serviceType && it.service ? `<span style="color:#94a3b8">(${esc(it.service)})</span>` : '']
+          const head = [f.time && it.time ? `<b style="color:#0f172a">${esc(it.time)}</b>` : '', f.route ? esc(it.route) : '', f.serviceType && it.service ? `<span style="color:#64748b">(${esc(it.service)})</span>` : '']
             .filter(Boolean).join(' ')
           const people = [
             f.driver ? (it.driver?.name ? partyHtml('🚗', 'Driver', it.driver, f.driverPhone, f.vehicle ? it.vehicle : null) : partyHtml('🚗', 'Vehicle', null, false, f.vehicle ? it.vehicle : null)) : '',
-            f.driver && f.flagMissing && allocationPending(it) ? '<div style="font-size:12px;color:#b91c1c;margin-top:3px">⚠️ Driver pending</div>' : '',
+            f.driver && f.flagMissing && allocationPending(it) ? detailLine('⚠️ <b>Driver pending</b>', '#b91c1c') : '',
             f.driverVendor ? partyHtml('🏢', 'Driver vendor', it.driverVendor, f.driverPhone) : '',
             f.guide ? partyHtml('🧭', 'Guide', it.guide, f.guidePhone) : '',
             f.tourVendor ? partyHtml('🎟️', 'Tour vendor', it.tourVendor, f.tourVendorPhone) : '',
-            f.movementNote && it.note ? `<div style="font-size:12px;color:#64748b;margin-top:3px">📝 ${esc(it.note)}</div>` : '',
+            f.movementNote && it.note ? detailLine(`📝 ${esc(it.note)}`, '#64748b') : '',
           ].join('')
-          return `<div style="border-left:3px solid ${it.isLeisure ? '#a7f3d0' : '#5eead4'};padding:6px 0 6px 10px;margin:8px 0">
-            <div style="font-size:13px;color:#334155">${head || 'Agenda line'}${it.isLeisure ? ' <span style="color:#059669">· leisure</span>' : ''}</div>${people}</div>`
+          return `<table ${TABLE_RESET} width="100%" style="margin-top:10px"><tr>
+            <td style="border-left:3px solid ${it.isLeisure ? '#a7f3d0' : '#14b8a6'};padding:2px 0 2px 12px">
+              <div style="font-size:14px;line-height:20px;color:#334155">${head || 'Agenda line'}${it.isLeisure ? ' <span style="color:#047857">· leisure</span>' : ''}</div>${people}
+            </td></tr></table>`
         }).join('')
       }
 
-      return `<div style="border:1px solid #e2e8f0;border-radius:14px;padding:14px 16px;margin:10px 0;background:#fff">
-        <div style="font-size:15px;font-weight:700;color:#0f172a">${esc(ids.join(' / ') || b.ref)}${f.leadGuest && b.lead ? ` <span style="font-weight:500;color:#475569">· ${esc(b.lead)}</span>` : ''}</div>
-        <div style="margin-top:4px">${chips}</div>
-        ${meta ? `<div style="font-size:12px;color:#64748b;margin-top:6px">${meta}</div>` : ''}
-        <div style="margin-top:6px">${body}</div>
-      </div>`
+      return `<table ${TABLE_RESET} width="100%" bgcolor="#ffffff" style="background-color:#ffffff;border:1px solid #e2e8f0;border-collapse:separate;border-radius:12px;margin-top:12px"><tr>
+        <td style="padding:14px 16px">
+          <div style="font-size:16px;line-height:22px;font-weight:700;color:#0f172a">${esc(ids.join(' / ') || b.ref)}</div>
+          ${f.leadGuest && b.lead ? `<div style="font-size:14px;line-height:20px;color:#334155">${esc(b.lead)}</div>` : ''}
+          ${chips ? `<div style="margin-top:2px">${chips}</div>` : ''}
+          ${meta ? `<div style="margin-top:8px">${meta}</div>` : ''}
+          ${body ? `<div style="margin-top:8px">${body}</div>` : ''}
+        </td></tr></table>`
     }).join('')
-    return `<div style="margin-top:22px">
-      <div style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#0f766e;font-weight:700">${BASIS_META[blk.basis].emoji} ${esc(blk.label)} · ${esc(fmtShort(blk.date))} · ${blk.bookings.length}</div>
-      ${cards || '<div style="font-size:13px;color:#94a3b8;padding:10px 0">Nothing scheduled.</div>'}
-    </div>`
+    return `<table ${TABLE_RESET} width="100%" style="margin-top:24px"><tr><td style="border-bottom:2px solid #ccfbf1;padding-bottom:6px">
+        <span style="font-size:13px;line-height:18px;letter-spacing:.06em;text-transform:uppercase;color:#0f766e;font-weight:700">${BASIS_META[blk.basis].emoji} ${esc(blk.label)} · ${esc(fmtShort(blk.date))}</span>
+      </td><td align="right" style="border-bottom:2px solid #ccfbf1;padding-bottom:6px;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;white-space:nowrap">${blk.bookings.length}</td></tr></table>
+      ${cards || '<div style="font-size:14px;line-height:20px;color:#64748b;padding:12px 0 0">Nothing scheduled.</div>'}`
   }).join('')
 
-  return `<!doctype html><html><body style="margin:0;background:#f1f5f9;font-family:Segoe UI,Arial,sans-serif">
-  <div style="max-width:680px;margin:0 auto;padding:24px">
-    <div style="background:linear-gradient(135deg,#0f172a,#134e4a);color:#fff;border-radius:18px;padding:24px">
-      <div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:#5eead4">Daily operations update</div>
-      <div style="font-size:24px;font-weight:700;margin-top:6px">${esc(p.agentLabel)}</div>
-      <div style="font-size:13px;color:#cbd5e1;margin-top:2px">${esc(fmtDay(p.runDate))}</div>
-      <div style="margin-top:16px">
-        <span style="display:inline-block;background:rgba(255,255,255,.1);border-radius:12px;padding:8px 14px;margin-right:8px"><b style="font-size:20px">${p.totals.bookings}</b><br><span style="font-size:11px;color:#94a3b8">bookings</span></span>
-        <span style="display:inline-block;background:rgba(255,255,255,.1);border-radius:12px;padding:8px 14px;margin-right:8px"><b style="font-size:20px">${p.totals.lines}</b><br><span style="font-size:11px;color:#94a3b8">service lines</span></span>
-        ${f.flagMissing ? `<span style="display:inline-block;background:${p.totals.missing ? 'rgba(248,113,113,.25)' : 'rgba(255,255,255,.1)'};border-radius:12px;padding:8px 14px"><b style="font-size:20px">${p.totals.missing}</b><br><span style="font-size:11px;color:#94a3b8">pending</span></span>` : ''}
-      </div>
-    </div>
-    <div style="background:#fff;border-radius:18px;padding:20px;margin-top:12px">
-      <p style="margin:0;color:#0f172a;font-size:14px;line-height:1.55">${intro}</p>
-      ${blocks}
-      ${link ? `<div style="margin-top:18px"><a href="${esc(link)}" style="display:inline-block;background:#0f766e;color:#fff;text-decoration:none;font-weight:600;padding:11px 18px;border-radius:10px">Open the live view</a></div>` : ''}
-      ${footer ? `<p style="margin:20px 0 0;color:#64748b;font-size:13px;line-height:1.55">${footer}</p>` : ''}
-    </div>
-  </div></body></html>`
+  const pendingTile = p.totals.missing
+    ? statTile(p.totals.missing, 'pending', '#fef2f2', '#fecaca', '#b91c1c')
+    : statTile(0, 'pending', '#ecfdf5', '#a7f3d0', '#047857')
+  const tiles = [
+    statTile(p.totals.bookings, 'bookings', '#f0fdfa', '#ccfbf1', '#0f172a'),
+    statTile(p.totals.lines, 'service lines', '#f0fdfa', '#ccfbf1', '#0f172a'),
+    ...(f.flagMissing ? [pendingTile] : []),
+  ].join('<td width="8" style="font-size:0;line-height:0">&nbsp;</td>')
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background-color:#f1f5f9;${EMAIL_FONT}">
+  <table ${TABLE_RESET} width="100%" bgcolor="#f1f5f9" style="background-color:#f1f5f9;${EMAIL_FONT}"><tr><td align="center" style="padding:16px 8px">
+    <table ${TABLE_RESET} width="680" style="width:100%;max-width:680px">
+      <tr><td height="5" bgcolor="#0f766e" style="background-color:#0f766e;font-size:0;line-height:0;height:5px">&nbsp;</td></tr>
+      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:20px">
+        <div style="font-size:12px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:#0f766e">Daily operations update</div>
+        <div style="font-size:26px;line-height:32px;font-weight:700;color:#0f172a;margin-top:4px">${esc(p.agentLabel)}</div>
+        <div style="font-size:14px;line-height:20px;color:#475569">${esc(fmtDay(p.runDate))}</div>
+        <table ${TABLE_RESET} width="100%" style="margin-top:16px;border-collapse:separate"><tr>${tiles}</tr></table>
+      </td></tr>
+      <tr><td height="10" style="font-size:0;line-height:0;height:10px">&nbsp;</td></tr>
+      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:20px">
+        <div style="color:#0f172a;font-size:15px;line-height:23px">${intro}</div>
+        ${blocks}
+        ${link ? `<table ${TABLE_RESET} style="margin-top:22px"><tr><td bgcolor="#0f766e" style="background-color:#0f766e;border-radius:8px;padding:11px 20px"><a href="${esc(link)}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;line-height:20px">Open the live view</a></td></tr></table>` : ''}
+        ${footer ? `<div style="margin-top:20px;color:#475569;font-size:14px;line-height:22px">${footer}</div>` : ''}
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`
 }
 
 // ── WhatsApp template (every WhatsApp send uses it) ─────────────────────────

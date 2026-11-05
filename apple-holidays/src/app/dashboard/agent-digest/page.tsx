@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Archive, BellRing, CalendarClock, CalendarDays, Check, CheckCircle2,
   ChevronLeft, ChevronRight, Clock, ExternalLink, Eye, FlaskConical, History, Layers, Loader2, Mail,
-  MessageCircle, Plus, RefreshCw, Rocket, Save, Search, Send, Smartphone, Sparkles, Trash2, Users, X, XCircle, Zap,
+  MessageCircle, Plus, RefreshCw, Rocket, RotateCcw, Save, Search, Send, Smartphone, Sparkles, Trash2, Users, X, XCircle, Zap,
 } from 'lucide-react'
 import Button from '@/components/ui/button'
 import { CountryFlag } from '@/components/ui/country-flag'
@@ -43,10 +43,13 @@ async function api<T>(url: string, init?: RequestInit): Promise<{ data: T; messa
   return { data: json.data as T, message: json.message }
 }
 
+interface ArchivedRule { id: string; name: string; archivedAt: string; archivedByName: string | null }
+
 interface Overview {
   setupRequired: boolean
   setupMessage: string | null
   rules: DigestRuleView[]
+  archived?: ArchivedRule[]
   counters: { today: { sent: number; failed: number }; yesterday: { sent: number; failed: number } } | null
   today: string
   templateName: string
@@ -183,6 +186,16 @@ export default function AgentDigestPage() {
     setDraft(fromRule(r)); setDirty(false); setTab('designer')
   }
 
+  const restore = async (r: ArchivedRule) => {
+    if (dirty && !confirm('Discard unsaved changes?')) return
+    try {
+      await api(`/api/agent-digest/rules?id=${r.id}`, { method: 'PATCH' })
+      toast.success(`Restored “${r.name}” — auto-send is off until you turn it on`)
+      setTab('designer')
+      await load(r.id)
+    } catch (e) { toast.error((e as Error).message) }
+  }
+
   const startFromPreset = (key: string) => {
     const preset = DIGEST_PRESETS.find(p => p.key === key)!
     const built = preset.build()
@@ -266,7 +279,7 @@ export default function AgentDigestPage() {
 
         {tab === 'designer' && (
           <div className="grid gap-5 xl:grid-cols-[260px_minmax(0,1fr)]">
-            <RuleRail rules={rules} activeId={draft?.id ?? null} onPick={pick} onNew={() => setShowGallery(true)} loading={loading} />
+            <RuleRail rules={rules} archived={overview?.archived ?? []} activeId={draft?.id ?? null} onPick={pick} onRestore={restore} onNew={() => setShowGallery(true)} loading={loading} />
             {draft ? (
               <Designer
                 draft={draft} dirty={dirty} patch={patch} patchConfig={patchConfig}
@@ -289,10 +302,12 @@ export default function AgentDigestPage() {
 
 // ── Left rail ────────────────────────────────────────────────────────────────
 
-function RuleRail({ rules, activeId, onPick, onNew, loading }: {
-  rules: DigestRuleView[]; activeId: string | null; onPick: (r: DigestRuleView) => void; onNew: () => void; loading: boolean
+function RuleRail({ rules, archived, activeId, onPick, onRestore, onNew, loading }: {
+  rules: DigestRuleView[]; archived: ArchivedRule[]; activeId: string | null; onPick: (r: DigestRuleView) => void
+  onRestore: (r: ArchivedRule) => void; onNew: () => void; loading: boolean
 }) {
   const [, tick] = useState(0)
+  const [showArchived, setShowArchived] = useState(false)
   useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30_000); return () => clearInterval(t) }, [])
   return (
     <aside className="space-y-2">
@@ -327,6 +342,28 @@ function RuleRail({ rules, activeId, onPick, onNew, loading }: {
         </button>
       ))}
       {!loading && !rules.length && <p className="px-1 py-4 text-xs text-slate-400">No digests yet.</p>}
+      {archived.length > 0 && (
+        <div className="pt-2">
+          <button onClick={() => setShowArchived(v => !v)} aria-expanded={showArchived}
+            className="flex w-full items-center gap-1.5 rounded-lg px-1 py-1 text-xs font-semibold text-slate-500 hover:text-slate-700">
+            <Archive className="h-3.5 w-3.5" /> Archived ({archived.length})
+            <span className="ml-auto text-[11px] font-medium">{showArchived ? 'Hide' : 'Show'}</span>
+          </button>
+          {showArchived && (
+            <div className="mt-1 space-y-1.5">
+              {archived.map(r => (
+                <div key={r.id} className="rounded-xl border border-dashed border-slate-300 bg-white/60 p-2.5">
+                  <p className="text-[13px] font-medium leading-tight text-slate-700">{r.name}</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Archived {ago(r.archivedAt)}{r.archivedByName ? ` by ${r.archivedByName}` : ''}</p>
+                  <button onClick={() => onRestore(r)} className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-900">
+                    <RotateCcw className="h-3 w-3" /> Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </aside>
   )
 }
@@ -399,7 +436,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
 
   const archive = async () => {
     if (!draft.id) { onArchived(); return }
-    if (!confirm(`Archive “${draft.name}”? It stops sending; its history is kept.`)) return
+    if (!confirm(`Archive “${draft.name}”? It stops sending and moves to Archived in the left list, where you can restore it. Its history is kept.`)) return
     try {
       await api(`/api/agent-digest/rules?id=${draft.id}`, { method: 'DELETE' })
       toast.success('Archived'); onArchived()
