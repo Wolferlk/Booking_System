@@ -42,8 +42,10 @@ export async function POST(
     return buildApiError('This version is already active', 400)
   }
 
+  let lockedSections: string[] = []
   try {
-    await restoreBookingVersion(booking.id, versionNo)
+    const restored = await restoreBookingVersion(booking.id, versionNo)
+    lockedSections = restored.lockedSections
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'Failed to restore version', 400)
   }
@@ -53,8 +55,8 @@ export async function POST(
     action:     'BOOKING_VERSION_RESTORED',
     entityType: 'Booking',
     entityId:   booking.id,
-    details:    { bookingRef: params.ref, from: booking.version, to: versionNo },
+    details:    { bookingRef: params.ref, from: booking.version, to: versionNo, lockedSections },
   })
 
-  return buildApiSuccess({ version: versionNo })
+  return buildApiSuccess({ version: versionNo, lockedSections })
 }

@@ -1,12 +1,11 @@
 /**
  * Cron: Customer WhatsApp daily briefing
- * Fires daily at 11:00 UTC = 18:00 local (default UTC+7 offset,
- * configurable via CUSTOMER_MSG_TZ_OFFSET_HOURS).
- * Sends tomorrow's itinerary (flights, hotel, driver, activities) to each
- * guest whose trip is ongoing. Triggered by Vercel cron or GCP Cloud Scheduler.
+ * Call every 5–15 minutes. Each booking is briefed once its own send time (the
+ * WhatsApp Auto default, or the booking's override) has passed in the guest's
+ * timezone; already-briefed days are skipped, so frequent calls are safe.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { runCustomerDailyBriefing } from '@/lib/customer-whatsapp-automation'
+import { runDueCustomerDailyBriefings } from '@/lib/customer-whatsapp-automation'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,6 +18,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const result = await runCustomerDailyBriefing()
+  const result = await runDueCustomerDailyBriefings()
   return NextResponse.json({ ok: true, ...result })
 }

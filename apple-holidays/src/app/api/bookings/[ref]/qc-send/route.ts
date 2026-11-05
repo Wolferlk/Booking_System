@@ -6,7 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
 import { putUpload } from '@/lib/storage'
-import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
+import { emergencyContactsBlockFor } from '@/lib/guest-emergency-contacts'
 
 export const dynamic = 'force-dynamic'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -195,7 +195,7 @@ We kindly request the following information:
 1️⃣ Meal preference — Vegetarian or Non-Vegetarian?
 2️⃣ Any special assistance required for seniors or infants?
 
-${buildEmergencyContactsBlock((booking as unknown as { operationCountry?: string | null }).operationCountry)}
+${await emergencyContactsBlockFor((booking as unknown as { operationCountry?: string | null }).operationCountry)}
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏
@@ -251,4 +251,3 @@ Thank you! 🙏
   return buildApiSuccess(results, 'QC Type-1 messages sent')
 }
 
-export { computeQCStatus }

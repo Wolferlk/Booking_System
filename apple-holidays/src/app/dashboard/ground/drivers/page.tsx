@@ -20,6 +20,7 @@ import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
 import PartnerPerformance from '@/components/ground/partner-performance'
+import DriverSignupsPanel from '@/components/ground/driver-signups-panel'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,7 @@ export default function DriversPage() {
 
   // ── Drivers state ──────────────────────────────────────────────────────────
   const [drivers, setDrivers]       = useState<Driver[]>([])
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set())
   const [loadingD, setLoadingD]     = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
@@ -547,6 +549,9 @@ export default function DriversPage() {
           ))}
         </div>
 
+        {/* ── Self-registered drivers waiting for approval ───────────────── */}
+        <DriverSignupsPanel country={countryFilter} canDecide={isAdmin} onChanged={loadDrivers} onPending={setPendingIds} refreshKey={drivers} />
+
         {/* ── Tabs ───────────────────────────────────────────────────────── */}
         <div className="flex border-b border-slate-200 gap-1">
           {([
@@ -662,8 +667,8 @@ export default function DriversPage() {
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-semibold text-slate-900">{driver.name}</p>
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${driver.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                                {driver.isActive ? 'Active' : 'Inactive'}
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${driver.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : pendingIds.has(driver.id) ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {driver.isActive ? 'Active' : pendingIds.has(driver.id) ? 'Pending approval' : 'Inactive'}
                               </span>
                               {driver.country && (
                                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${COUNTRY_BADGE[driver.country] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>

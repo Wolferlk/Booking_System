@@ -163,10 +163,15 @@ export async function applyDeliveryStatuses(statuses: MetaDeliveryStatus[]): Pro
 
     // The chat log. `updateMany` because a wamid is unique in practice but not
     // by constraint, and a receipt for a message we never stored is a no-op
-    // rather than an error.
+    // rather than an error. Same ladder as the documents below, so a late
+    // `sent` can't turn a blue tick back into a grey one.
+    const below = Object.keys(RANK).filter(k => k !== 'failed' && RANK[k] < rank)
     try {
       const moved = await prisma.whatsAppMessage.updateMany({
-        where: { waMessageId: s.id },
+        where: {
+          waMessageId: s.id,
+          ...(status === 'failed' ? {} : { status: { in: below } }),
+        },
         data:  { status },
       })
       result.messages += moved.count

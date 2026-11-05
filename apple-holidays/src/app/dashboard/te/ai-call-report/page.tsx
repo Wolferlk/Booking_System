@@ -15,7 +15,7 @@ import {
   AlertTriangle, BarChart2, Bot, CalendarDays, CalendarRange, CheckCircle2,
   ClipboardCheck, Clock, Download, FileSpreadsheet, Filter, Loader2, Mail,
   MailCheck, PhoneCall, PhoneMissed, Printer, RefreshCw, Search, Send,
-  ShieldCheck, Award, XCircle, Users,
+  ShieldCheck, Award, XCircle, Users, Database, ThumbsDown, ThumbsUp, Star,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -48,6 +48,39 @@ interface ReportRow {
   nextCallAt: string | null
   lastOutcome: string | null
   lastSentiment: string | null
+  feedback: { worst: Verdict | null; good: number; warning: number; bad: number }
+}
+
+type Verdict = 'good' | 'warning' | 'bad' | 'none'
+type CheckArea = 'hotel' | 'meals' | 'driver' | 'vehicle'
+
+interface CallIssue {
+  id: string
+  phase: CallPhase
+  level: 'bad' | 'warning'
+  source: 'call' | 'alert'
+  bookingRef: string
+  customerName: string | null
+  phone: string | null
+  date: string | null
+  at: string | null
+  reason: string
+  detail: string | null
+  verdictBy: 'ai' | 'rules' | 'alert'
+  alert: { severity: string | null; category: string | null; status: string | null } | null
+}
+
+interface VerdictCounts { calls: number; good: number; warning: number; bad: number; none: number }
+
+interface Insights {
+  verdicts: Record<CallPhase, VerdictCounts>
+  reconfirm: { calls: number; confirmed: number; changeRequested: number; specialRequests: number; mismatched: { dates: number; flight: number; pax: number; contact: number } }
+  onTour: { calls: number; sentiment: { positive: number; neutral: number; negative: number; unknown: number }; areas: Record<CheckArea, { good: number; bad: number; unclear: number }> }
+  postTour: { calls: number; rated: number; avgRating: number | null; promoters: number; passives: number; detractors: number; nps: number | null; recommendYes: number; recommendNo: number; notHomeSafely: number }
+  alerts: { total: number; open: number; ack: number; resolved: number; high: number; medium: number; low: number; byCategory: { category: string; count: number }[] }
+  ops: { overdue: number; overdueBookings: number; neverReached: number; notApprovedWithPending: number; failures: { reason: string; count: number }[] }
+  issues: CallIssue[]
+  issueTotals: { bad: number; warning: number; shown: number }
 }
 
 interface DailyRow {
@@ -70,6 +103,8 @@ interface ReportData {
   }
   rows: ReportRow[]
   daily: DailyRow[]
+  insights: Insights
+  source: 'database' | 'api'
   generatedAt: string
   warnings: string[]
 }
@@ -124,6 +159,13 @@ const APPROVAL_META: Record<ApprovalState, { label: string; cls: string }> = {
   approved:      { label: 'Approved',   cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
   pending:       { label: 'Awaiting',   cls: 'bg-amber-100 text-amber-700 border-amber-200' },
   not_requested: { label: 'Not sent',   cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+}
+
+const VERDICT_META: Record<Verdict, { label: string; cls: string; bar: string }> = {
+  good:    { label: 'Good',    cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', bar: 'bg-emerald-500' },
+  warning: { label: 'Warning', cls: 'bg-amber-100 text-amber-700 border-amber-200',       bar: 'bg-amber-400' },
+  bad:     { label: 'Bad',     cls: 'bg-red-100 text-red-700 border-red-200',             bar: 'bg-red-500' },
+  none:    { label: 'No feedback', cls: 'bg-slate-100 text-slate-500 border-slate-200',  bar: 'bg-slate-300' },
 }
 
 const DONE_META: Record<CallDoneState, { label: string; cls: string }> = {
@@ -245,13 +287,22 @@ export default function AICallReportPage() {
             { label: 'Bookings',       value: totals?.bookings ?? 0,       color: 'text-slate-200' },
             { label: 'Urgent',         value: totals?.urgentBookings ?? 0, color: (totals?.urgentBookings ?? 0) > 0 ? 'text-red-400' : 'text-slate-400' },
             { label: 'Approved',       value: totals?.approval.approved ?? 0, color: 'text-emerald-400' },
+            { label: 'Bad calls',      value: data?.insights.issueTotals.bad ?? 0, color: (data?.insights.issueTotals.bad ?? 0) > 0 ? 'text-red-400' : 'text-slate-400' },
+            { label: 'Warnings',       value: data?.insights.issueTotals.warning ?? 0, color: (data?.insights.issueTotals.warning ?? 0) > 0 ? 'text-amber-400' : 'text-slate-400' },
           ].map(s => (
             <div key={s.label} className="flex items-center gap-2">
               <span className={`text-lg font-black ${s.color}`}>{s.value}</span>
               <span className="text-[10px] text-slate-400 uppercase tracking-wide">{s.label}</span>
             </div>
           ))}
-          <div className="ml-auto text-[10px] text-slate-500 hidden sm:block">
+          <div className="ml-auto text-[10px] text-slate-500 hidden sm:flex items-center gap-2">
+            {data && (
+              <span title={data.source === 'database' ? 'Every call row read from the call database' : 'Built from the capped upstream API — figures may be low'}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${
+                  data.source === 'database' ? 'border-emerald-700/50 text-emerald-400' : 'border-amber-700/50 text-amber-400'}`}>
+                <Database className="w-2.5 h-2.5" /> {data.source === 'database' ? 'Live DB · complete' : 'API · partial'}
+              </span>
+            )}
             {data ? `${data.window.label} · ${data.window.timezone}` : '—'}
           </div>
         </div>
@@ -294,6 +345,9 @@ export default function AICallReportPage() {
         ) : data ? (
           <>
             <DailyCallsPanel data={data} />
+            <OpsWarnings data={data} />
+            <FeedbackInsightsPanel data={data} />
+            <IssuesPanel data={data} />
             {showDaily && <ByDateTable daily={data.daily} />}
             <BookingTable data={data} />
           </>
@@ -554,7 +608,13 @@ function ByDateTable({ daily }: { daily: DailyRow[] }) {
 
 // ─── Assigned calls by booking ────────────────────────────────────────────────
 
+const BOOKING_PAGE = 100
+
 function BookingTable({ data }: { data: ReportData }) {
+  const [limit, setLimit] = useState(BOOKING_PAGE)
+  useEffect(() => { setLimit(BOOKING_PAGE) }, [data])
+  const shown = data.rows.slice(0, limit)
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
       <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3 flex-wrap">
@@ -581,6 +641,7 @@ function BookingTable({ data }: { data: ReportData }) {
                   { label: 'Pre / On / Post', align: 'text-center' },
                   { label: 'Done · Pending', align: 'text-left' },
                   { label: 'Call done', align: 'text-center' },
+                  { label: 'Feedback', align: 'text-center' },
                   { label: 'Last call', align: 'text-left' },
                 ].map(h => (
                   <th key={h.label}
@@ -591,7 +652,7 @@ function BookingTable({ data }: { data: ReportData }) {
               </tr>
             </thead>
             <tbody>
-              {data.rows.map(r => (
+              {shown.map(r => (
                 <tr key={r.bookingRef}
                   className={`border-b border-slate-100 last:border-0 transition-colors ${r.urgent.open ? 'bg-red-50/40 hover:bg-red-50/70' : 'hover:bg-slate-50/60'}`}>
                   <td className="px-3 py-2.5">
@@ -657,6 +718,16 @@ function BookingTable({ data }: { data: ReportData }) {
                     </span>
                   </td>
 
+                  <td className="px-3 py-2.5 text-center">
+                    {r.feedback.worst ? (
+                      <span title={`${r.feedback.good} good · ${r.feedback.warning} warning · ${r.feedback.bad} bad`}
+                        className={`inline-flex items-center border font-bold rounded-full text-[9px] px-2 py-0.5 ${VERDICT_META[r.feedback.worst].cls}`}>
+                        {VERDICT_META[r.feedback.worst].label}
+                        {(r.feedback.worst === 'bad' || r.feedback.worst === 'warning') && ` ${r.feedback[r.feedback.worst]}`}
+                      </span>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+
                   <td className="px-3 py-2.5 text-slate-400 whitespace-nowrap">
                     {fmtDT(r.lastCallAt)}
                     {r.nextCallAt && <div className="text-[10px] text-blue-400">next {fmtDT(r.nextCallAt)}</div>}
@@ -665,6 +736,332 @@ function BookingTable({ data }: { data: ReportData }) {
               ))}
             </tbody>
           </table>
+          {data.rows.length > limit && (
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span>Showing {shown.length} of {data.rows.length} bookings — the CSV has them all</span>
+              <button onClick={() => setLimit(l => l + BOOKING_PAGE * 3)} className="btn-secondary btn btn-sm">Show more</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Operational warnings ─────────────────────────────────────────────────────
+
+function OpsWarnings({ data }: { data: ReportData }) {
+  const o = data.insights.ops
+  const items = [
+    o.overdue > 0 && { tone: 'red', text: `${o.overdue} call${o.overdue === 1 ? '' : 's'} still pending on a day that has passed`, note: `${o.overdueBookings} booking${o.overdueBookings === 1 ? '' : 's'} — these will not be dialled` },
+    o.neverReached > 0 && { tone: 'amber', text: `${o.neverReached} booking${o.neverReached === 1 ? '' : 's'} never reached`, note: 'every call so far was missed or failed' },
+    o.notApprovedWithPending > 0 && { tone: 'amber', text: `${o.notApprovedWithPending} booking${o.notApprovedWithPending === 1 ? '' : 's'} not WhatsApp-approved`, note: 'calls are pending but the guest has not accepted' },
+  ].filter(Boolean) as { tone: 'red' | 'amber'; text: string; note: string }[]
+  if (!items.length && !o.failures.length) return null
+  const peak = Math.max(1, ...o.failures.map(f => f.count))
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+        <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center"><AlertTriangle className="w-4 h-4 text-amber-600" /></div>
+        <div>
+          <h3 className="text-sm font-bold text-slate-900">Operational warnings</h3>
+          <p className="text-xs text-slate-500">Calls that will not, or did not, happen</p>
+        </div>
+      </div>
+      <div className="p-4 grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          {items.length === 0 && <p className="text-xs text-slate-400 italic">No scheduling warnings.</p>}
+          {items.map(i => (
+            <div key={i.text} className={`rounded-xl border px-4 py-2.5 ${i.tone === 'red' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+              <p className={`text-xs font-bold ${i.tone === 'red' ? 'text-red-700' : 'text-amber-700'}`}>{i.text}</p>
+              <p className={`text-[11px] ${i.tone === 'red' ? 'text-red-600' : 'text-amber-600'}`}>{i.note}</p>
+            </div>
+          ))}
+        </div>
+        {o.failures.length > 0 && (
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2">Why calls were missed / failed</p>
+            <div className="space-y-1.5">
+              {o.failures.map(f => (
+                <div key={f.reason} className="flex items-center gap-2 text-xs">
+                  <span className="flex-1 min-w-0 truncate text-slate-600" title={f.reason}>{f.reason}</span>
+                  <div className="w-24 h-1.5 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-red-400" style={{ width: `${(f.count / peak) * 100}%` }} /></div>
+                  <span className="w-12 text-right font-bold text-slate-800">{f.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Feedback insights: reconfirmation · on-tour · post-tour ──────────────────
+
+function pctOf(part: number, whole: number): string {
+  return whole ? `${Math.round((part / whole) * 100)}%` : '—'
+}
+
+function VerdictBar({ v }: { v: VerdictCounts }) {
+  const total = v.good + v.warning + v.bad + v.none
+  return (
+    <div>
+      <div className="h-2 rounded-full bg-slate-100 overflow-hidden flex">
+        {total > 0 && (['good', 'warning', 'bad', 'none'] as Verdict[]).map(k => (
+          <div key={k} className={`${VERDICT_META[k].bar} h-full`} style={{ width: `${(v[k] / total) * 100}%` }} />
+        ))}
+      </div>
+      <div className="flex items-center gap-2.5 mt-1.5 text-[10px] font-semibold">
+        <span className="text-emerald-600">{v.good} good</span>
+        <span className="text-amber-600">{v.warning} warning</span>
+        <span className="text-red-600">{v.bad} bad</span>
+        {v.none > 0 && <span className="text-slate-400">{v.none} no feedback</span>}
+      </div>
+    </div>
+  )
+}
+
+function Stat({ label, value, tone = 'text-slate-800' }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between text-xs py-1 border-b border-slate-100 last:border-0">
+      <span className="text-slate-500">{label}</span>
+      <span className={`font-bold ${tone}`}>{value}</span>
+    </div>
+  )
+}
+
+function FeedbackInsightsPanel({ data }: { data: ReportData }) {
+  const ins = data.insights
+  const rc = ins.reconfirm
+  const ot = ins.onTour
+  const pt = ins.postTour
+  const captured = ins.verdicts.pre_tour.calls + ins.verdicts.on_tour.calls + ins.verdicts.post_tour.calls
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3 flex-wrap">
+        <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center"><ThumbsUp className="w-4 h-4 text-emerald-600" /></div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-bold text-slate-900">Call feedback — reconfirmation · on-tour · post-tour</h3>
+          <p className="text-xs text-slate-500">{captured} call{captured === 1 ? '' : 's'} captured a result · {data.window.label}</p>
+        </div>
+      </div>
+
+      <div className="p-4 grid gap-3 lg:grid-cols-4 sm:grid-cols-2">
+        {/* Reconfirmation */}
+        <div className="rounded-2xl border border-sky-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-sky-600 to-blue-500 px-4 py-2.5 flex items-center gap-2">
+            <ClipboardCheck className="w-3.5 h-3.5 text-white/90" />
+            <span className="text-[11px] font-bold text-white uppercase tracking-wide">Reconfirmation</span>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-baseline gap-2"><p className="text-3xl font-black text-slate-900 leading-none">{rc.calls}</p><p className="text-[10px] text-slate-400 uppercase">calls captured</p></div>
+            <VerdictBar v={ins.verdicts.pre_tour} />
+            <div>
+              <Stat label="Confirmed" value={`${rc.confirmed} · ${pctOf(rc.confirmed, rc.calls)}`} tone="text-emerald-600" />
+              <Stat label="Change requested" value={rc.changeRequested} tone={rc.changeRequested ? 'text-amber-600' : 'text-slate-400'} />
+              <Stat label="Special requests" value={rc.specialRequests} tone={rc.specialRequests ? 'text-sky-600' : 'text-slate-400'} />
+              <Stat label="Dates wrong" value={rc.mismatched.dates} tone={rc.mismatched.dates ? 'text-red-600' : 'text-slate-400'} />
+              <Stat label="Flights wrong" value={rc.mismatched.flight} tone={rc.mismatched.flight ? 'text-red-600' : 'text-slate-400'} />
+              <Stat label="Passengers wrong" value={rc.mismatched.pax} tone={rc.mismatched.pax ? 'text-red-600' : 'text-slate-400'} />
+              <Stat label="Contact wrong" value={rc.mismatched.contact} tone={rc.mismatched.contact ? 'text-red-600' : 'text-slate-400'} />
+            </div>
+          </div>
+        </div>
+
+        {/* On-tour */}
+        <div className="rounded-2xl border border-violet-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-violet-600 to-purple-500 px-4 py-2.5 flex items-center gap-2">
+            <PhoneCall className="w-3.5 h-3.5 text-white/90" />
+            <span className="text-[11px] font-bold text-white uppercase tracking-wide">On-tour check-ins</span>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-baseline gap-2"><p className="text-3xl font-black text-slate-900 leading-none">{ot.calls}</p><p className="text-[10px] text-slate-400 uppercase">calls captured</p></div>
+            <VerdictBar v={ins.verdicts.on_tour} />
+            <div>
+              <Stat label="Positive" value={`${ot.sentiment.positive} · ${pctOf(ot.sentiment.positive, ot.calls)}`} tone="text-emerald-600" />
+              <Stat label="Neutral / mixed" value={ot.sentiment.neutral} />
+              <Stat label="Negative" value={ot.sentiment.negative} tone={ot.sentiment.negative ? 'text-red-600' : 'text-slate-400'} />
+              {(['hotel', 'meals', 'driver', 'vehicle'] as CheckArea[]).map(k => (
+                <Stat key={k} label={`${k[0].toUpperCase()}${k.slice(1)} — bad / good`}
+                  value={<><span className={ot.areas[k].bad ? 'text-red-600' : 'text-slate-400'}>{ot.areas[k].bad}</span><span className="text-slate-300"> / </span><span className="text-emerald-600">{ot.areas[k].good}</span></>} />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Post-tour */}
+        <div className="rounded-2xl border border-amber-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2.5 flex items-center gap-2">
+            <Award className="w-3.5 h-3.5 text-white/90" />
+            <span className="text-[11px] font-bold text-white uppercase tracking-wide">Post-tour feedback</span>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-baseline gap-2">
+              <p className="text-3xl font-black text-slate-900 leading-none">{pt.avgRating ?? '—'}</p>
+              <p className="text-[10px] text-slate-400 uppercase">avg /10 · {pt.calls} calls</p>
+            </div>
+            <VerdictBar v={ins.verdicts.post_tour} />
+            <div>
+              <Stat label="Rated" value={pt.rated} />
+              <Stat label="NPS" value={pt.nps ?? '—'} tone={pt.nps == null ? 'text-slate-400' : pt.nps >= 50 ? 'text-emerald-600' : pt.nps >= 0 ? 'text-amber-600' : 'text-red-600'} />
+              <Stat label="Promoters 9–10" value={pt.promoters} tone="text-emerald-600" />
+              <Stat label="Passives 7–8" value={pt.passives} />
+              <Stat label="Detractors 0–6" value={pt.detractors} tone={pt.detractors ? 'text-red-600' : 'text-slate-400'} />
+              <Stat label="Would recommend · not" value={`${pt.recommendYes} · ${pt.recommendNo}`} />
+              <Stat label="Not home safely" value={pt.notHomeSafely} tone={pt.notHomeSafely ? 'text-red-600' : 'text-slate-400'} />
+            </div>
+          </div>
+        </div>
+
+        {/* Alerts */}
+        <div className="rounded-2xl border border-red-200 overflow-hidden">
+          <div className="bg-gradient-to-r from-red-600 to-rose-500 px-4 py-2.5 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-white/90" />
+            <span className="text-[11px] font-bold text-white uppercase tracking-wide">Alerts raised</span>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="flex items-baseline gap-2"><p className="text-3xl font-black text-slate-900 leading-none">{ins.alerts.total}</p><p className="text-[10px] text-slate-400 uppercase">{ins.alerts.open} still open</p></div>
+            <div>
+              <Stat label="High severity" value={ins.alerts.high} tone={ins.alerts.high ? 'text-red-600' : 'text-slate-400'} />
+              <Stat label="Medium" value={ins.alerts.medium} tone={ins.alerts.medium ? 'text-amber-600' : 'text-slate-400'} />
+              <Stat label="Low" value={ins.alerts.low} />
+              <Stat label="Acknowledged" value={ins.alerts.ack} />
+              <Stat label="Resolved" value={ins.alerts.resolved} tone="text-emerald-600" />
+              {ins.alerts.byCategory.slice(0, 5).map(c => (
+                <Stat key={c.category} label={c.category} value={c.count} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Warnings & issues ────────────────────────────────────────────────────────
+
+const ISSUE_PAGE = 50
+
+function IssuesPanel({ data }: { data: ReportData }) {
+  const ins = data.insights
+  const [phase, setPhase] = useState<'all' | CallPhase>('all')
+  const [level, setLevel] = useState<'all' | 'bad' | 'warning'>('all')
+  const [q, setQ] = useState('')
+  const [limit, setLimit] = useState(ISSUE_PAGE)
+  useEffect(() => { setLimit(ISSUE_PAGE) }, [data, phase, level, q])
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    return ins.issues.filter(i =>
+      (phase === 'all' || i.phase === phase)
+      && (level === 'all' || i.level === level)
+      && (!needle || `${i.bookingRef} ${i.customerName ?? ''} ${i.reason} ${i.detail ?? ''}`.toLowerCase().includes(needle)))
+  }, [ins.issues, phase, level, q])
+
+  const countFor = (p: 'all' | CallPhase) => ins.issues.filter(i => p === 'all' || i.phase === p).length
+  const total = ins.issueTotals.bad + ins.issueTotals.warning
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3 flex-wrap">
+        <div className="w-8 h-8 rounded-xl bg-red-100 flex items-center justify-center"><ThumbsDown className="w-4 h-4 text-red-600" /></div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-bold text-slate-900">Warnings &amp; issues</h3>
+          <p className="text-xs text-slate-500">
+            <span className="text-red-600 font-semibold">{ins.issueTotals.bad} bad</span> ·{' '}
+            <span className="text-amber-600 font-semibold">{ins.issueTotals.warning} warning</span> · {data.window.label}
+            {ins.issueTotals.shown < total && ` · newest ${ins.issueTotals.shown} shown, all in the CSV`}
+          </p>
+        </div>
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Booking, name, issue…"
+            className="form-input pl-8 w-56 text-xs" />
+        </div>
+      </div>
+
+      <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+        {(['all', 'pre_tour', 'on_tour', 'post_tour'] as const).map(p => (
+          <button key={p} onClick={() => setPhase(p)}
+            className={`text-[11px] font-semibold rounded-full px-3 py-1 border transition-colors ${
+              phase === p ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+            {p === 'all' ? 'All' : p === 'pre_tour' ? 'Reconfirmation' : p === 'on_tour' ? 'On-tour' : 'Post-tour / feedback'} · {countFor(p)}
+          </button>
+        ))}
+        <span className="w-px h-5 bg-slate-200 mx-1" />
+        {(['all', 'bad', 'warning'] as const).map(l => (
+          <button key={l} onClick={() => setLevel(l)}
+            className={`text-[11px] font-semibold rounded-full px-3 py-1 border transition-colors ${
+              level === l
+                ? l === 'bad' ? 'bg-red-600 text-white border-red-600' : l === 'warning' ? 'bg-amber-500 text-white border-amber-500' : 'bg-slate-900 text-white border-slate-900'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+            {l === 'all' ? 'Bad + warning' : l === 'bad' ? 'Bad only' : 'Warning only'}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="text-xs text-slate-400 italic px-5 py-10 text-center">
+          {total ? 'No issues match these filters.' : 'No bad or warning calls in this window.'}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50/60">
+                {['Level', 'Call', 'Booking', 'Issue', 'Alert'].map(h => (
+                  <th key={h} className="px-3 py-2 text-[10px] font-semibold text-slate-400 uppercase tracking-wide text-left whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.slice(0, limit).map(i => (
+                <tr key={i.id} className={`border-b border-slate-100 last:border-0 align-top ${i.level === 'bad' ? 'bg-red-50/30' : ''}`}>
+                  <td className="px-3 py-2.5">
+                    <span className={`inline-flex items-center border font-bold rounded-full text-[9px] px-2 py-0.5 ${VERDICT_META[i.level].cls}`}>
+                      {VERDICT_META[i.level].label}
+                    </span>
+                    <div className="text-[9px] text-slate-400 mt-1">{i.verdictBy === 'ai' ? 'AI review' : i.verdictBy === 'alert' ? 'alert' : 'rules'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <span className={`font-semibold ${PHASE_META[i.phase].text}`}>{i.phase === 'pre_tour' ? 'Reconfirmation' : PHASE_META[i.phase].label}</span>
+                    <div className="text-[10px] text-slate-400">{i.date ? fmtDay(i.date) : '—'}</div>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    <div className="font-mono font-bold text-slate-900">{i.bookingRef}</div>
+                    {i.customerName && <div className="text-[10px] text-slate-400 truncate max-w-[150px]">{i.customerName}</div>}
+                    {i.phone && <div className="text-[10px] text-slate-300 font-mono">{i.phone}</div>}
+                  </td>
+                  <td className="px-3 py-2.5 min-w-[280px]">
+                    <p className="font-semibold text-slate-800">{i.reason}</p>
+                    {i.detail && <p className="text-[11px] text-slate-500 mt-0.5 whitespace-pre-line">{i.detail}</p>}
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap">
+                    {i.alert ? (
+                      <>
+                        <span className={`inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${
+                          i.alert.severity === 'high' ? 'bg-red-100 text-red-700 border-red-200'
+                            : i.alert.severity === 'medium' ? 'bg-amber-100 text-amber-700 border-amber-200'
+                              : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                          <Star className="w-2.5 h-2.5" /> {i.alert.severity ?? '—'}
+                        </span>
+                        <div className="text-[10px] text-slate-400 mt-0.5">{(i.alert.category ?? '').replace(/_/g, ' ')} · {i.alert.status ?? 'open'}</div>
+                      </>
+                    ) : <span className="text-slate-300">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {filtered.length > limit && (
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span>Showing {limit} of {filtered.length}</span>
+              <button onClick={() => setLimit(l => l + ISSUE_PAGE * 2)} className="btn-secondary btn btn-sm">Show more</button>
+            </div>
+          )}
         </div>
       )}
     </div>

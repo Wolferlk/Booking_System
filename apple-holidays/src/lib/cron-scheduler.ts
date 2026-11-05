@@ -288,6 +288,18 @@ async function startAsReconcileParityScheduler() {
   }
 }
 
+async function startB2cWatchLiveScheduler() {
+  try {
+    // Near-realtime Aahaas B2C watch: every N minutes (default 5) imports any
+    // upcoming store order not yet in ops, instead of waiting for 00:30.
+    // INSERT-only and idempotent on bookingRef.
+    const { startB2cWatchScheduler } = await import('./b2c-watch-scheduler')
+    await startB2cWatchScheduler()
+  } catch (err) {
+    console.error('[Scheduler] b2c-watch scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startB2cImportCreateScheduler() {
   try {
     // node-cron scheduler: fires once daily just after midnight (default 00:30
@@ -360,6 +372,17 @@ async function startDriverAutoSchedulerTask() {
     await startDriverAutoScheduler()
   } catch (err) {
     console.error('[Scheduler] driver-auto scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
+async function startAgentDigestSchedulerTask() {
+  try {
+    // Agent Daily Digest: 5-minute node-cron tick; each rule sends at its own
+    // local time, once a day, only when its autoSend switch is on (default off).
+    const { startAgentDigestScheduler } = await import('./agent-digest/scheduler')
+    await startAgentDigestScheduler()
+  } catch (err) {
+    console.error('[Scheduler] agent-digest scheduler error:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -446,6 +469,9 @@ export function startCronJobs() {
   // (timezone-aware, boot catch-up). Imports today's orders with upcoming travel.
   void startB2cImportCreateScheduler()
 
+  // Aahaas B2C live watch: imports new store orders within minutes.
+  void startB2cWatchLiveScheduler()
+
   // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
   // catch-up). Started once at boot instead of a per-minute interval.
   void startCustomerWhatsAppMessagingScheduler()
@@ -459,6 +485,7 @@ export function startCronJobs() {
   void startDriverLogAutoSendScheduler()
   void startDriverBriefReportSchedulerTask()
   void startDriverAutoSchedulerTask()
+  void startAgentDigestSchedulerTask()
 
   // 30 Sundays placeholder file handler → the real handler from apple_quote_ai.
   // Interval sweep every 5 min over bookings created at least 10 min ago; the

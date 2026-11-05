@@ -29,7 +29,8 @@ export function normalisePhone(raw: string): string {
  * booking WhatsApp messages and the daily trip details from the booking page,
  * so it was answering guests through a window it could not read. The inbox is
  * the same one every other desk sees — country scoping is applied per
- * conversation, not by withholding the page.
+ * conversation (see `whatsappInboxCountry` / `canAccessWhatsAppPhone`), not by
+ * withholding the page.
  */
 export const WHATSAPP_STAFF_ROLES = [
   'BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
@@ -57,6 +58,42 @@ export async function findBookingByPhone(phone: string) {
     },
     orderBy: { createdAt: 'desc' },
   })
+}
+
+/**
+ * The single operation country a role's inbox is confined to, or null when the
+ * role sees every conversation. Only the Vietnam desk (`GT_VN_USER`) is
+ * confined: it gets the chats linked to a Vietnam booking and nothing else —
+ * no other country's guests, and no unlinked numbers.
+ */
+export function whatsappInboxCountry(role: string | undefined | null): 'VIETNAM' | null {
+  return role === 'GT_VN_USER' ? 'VIETNAM' : null
+}
+
+/**
+ * May this role read or message this phone number? Resolves the booking the
+ * same way the inbox does — by phone first, then by the bookingRef the number's
+ * own messages were filed under — so a thread visible in the list can be opened,
+ * and one hidden from the list cannot be reached by typing its number.
+ */
+export async function canAccessWhatsAppPhone(role: string | undefined | null, phone: string): Promise<boolean> {
+  const country = whatsappInboxCountry(role)
+  if (!country) return true
+
+  const byPhone = await findBookingByPhone(phone)
+  if (byPhone) return byPhone.operationCountry === country
+
+  const filed = await prisma.whatsAppMessage.findFirst({
+    where:   { phone: normalisePhone(phone), NOT: { bookingRef: { startsWith: 'UNKNOWN:' } } },
+    orderBy: { createdAt: 'desc' },
+    select:  { bookingRef: true },
+  })
+  if (!filed?.bookingRef) return false
+  const booking = await prisma.booking.findUnique({
+    where:  { bookingRef: filed.bookingRef },
+    select: { operationCountry: true },
+  })
+  return booking?.operationCountry === country
 }
 
 /**
@@ -431,9 +468,15 @@ export async function createMetaTemplate(params: {
     body: JSON.stringify(payload),
   })
   const text = await res.text()
-  let json: { id?: string; status?: string; category?: string; error?: { message?: string } } | null = null
+  let json: { id?: string; status?: string; category?: string; error?: { message?: string; error_user_title?: string; error_user_msg?: string } } | null = null
   try { json = text ? JSON.parse(text) : null } catch { json = null }
-  if (!res.ok) throw new Error(json?.error?.message || `Graph API ${res.status}`)
+  if (!res.ok) {
+    // Meta's top-level message is usually just "Invalid parameter"; the real
+    // reason is in error_user_title / error_user_msg.
+    const e = json?.error
+    const detail = [e?.error_user_title, e?.error_user_msg].filter(Boolean).join(': ')
+    throw new Error([e?.message, detail].filter(Boolean).join(' — ') || `Graph API ${res.status}`)
+  }
   return { id: json?.id ?? null, status: json?.status ?? 'PENDING', category: json?.category ?? payload.category, name: templateName }
 }
 
@@ -847,14 +890,28 @@ export interface BriefingMovement {
   meetingTime:  string | null   // pick-up / meeting time
   timeFrom:     string | null
   timeTo:       string | null
-  details:      string | null   // the "job" / activity description
   mealPlan:     string | null
   serviceType:  string          // ServiceType enum name
   driverName:   string | null
   driverPhone:  string | null
   vehicleType:  string | null
   vehiclePlate: string | null
+  guideName?:       string | null
+  guidePhone?:      string | null
+  tourVendorName?:  string | null
+  tourVendorPhone?: string | null
   tickets:      BriefingTicket[]
+}
+
+/**
+ * The long date stamped into every daily briefing ("Saturday, 3 October 2026").
+ * Pinned to UTC because trip days are stored as UTC midnights — the dedupe and
+ * the per-booking panel find past sends by searching message bodies for it.
+ */
+export function briefingDayLabel(date: Date | string): string {
+  return new Date(date).toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+  })
 }
 
 const SERVICE_LABEL: Record<string, string> = {
@@ -878,7 +935,12 @@ function paxLine(a: number, c: number, i = 0): string {
  * Format a warm, guest-facing day plan — sent the evening before each trip day
  * (and on-demand per day from the Customer WhatsApp panel). Adapts its tone to
  * arrival / mid-trip / departure days and folds in flights, hotels, per-movement
- * driver + ticket details, activities, and meal plans.
+ * driver + ticket details, activities, and meal plans. The movement's long
+ * description and the on-ground manager line are left out — the guest needs
+ * the when/who, not the sales copy or an internal "Will Advice" placeholder.
+ *
+ * `branded` is true only for Super Partner agents (lib/super-partners.ts);
+ * everyone else gets the same plan without the AppleHolidays header/sign-off.
  */
 export function formatCustomerDailyBriefingMessage(params: {
   bookingRef:     string
@@ -890,7 +952,6 @@ export function formatCustomerDailyBriefingMessage(params: {
   paxAdults:      number
   paxChildren:    number
   paxInfants:     number
-  managerContact: string | null   // driver / operations manager hotline
   stayingAtHotel: string | null
   checkIns:       { hotel: string; city: string }[]
   checkOuts:      { hotel: string; city: string }[]
@@ -904,9 +965,9 @@ export function formatCustomerDailyBriefingMessage(params: {
   }[]
   movements:       BriefingMovement[]
   attachmentCount: number          // ticket/voucher images sent right after this text
+  branded:         boolean
 }): string {
-  const d = new Date(params.date)
-  const dateStr  = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const dateStr  = briefingDayLabel(params.date)
   const name     = params.leadName ?? 'traveller'
   const totalPax = params.paxAdults + params.paxChildren + params.paxInfants
 
@@ -921,7 +982,7 @@ export function formatCustomerDailyBriefingMessage(params: {
   }
 
   const lines: (string | null)[] = [
-    `🌴 *AppleHolidays — Your Day Plan*`,
+    params.branded ? `🌴 *AppleHolidays — Your Day Plan*` : `🌴 *Your Day Plan*`,
     ``,
     opener,
     ``,
@@ -962,11 +1023,16 @@ export function formatCustomerDailyBriefingMessage(params: {
       else if (window)   lines.push(`   ⏰ ${window}`)
       const svc = SERVICE_LABEL[m.serviceType]
       if (svc && m.serviceType !== 'OWN_ARRANGEMENT') lines.push(`   🚐 ${svc}`)
-      if (m.details)  lines.push(`   📝 ${m.details}`)
       if (m.mealPlan) lines.push(`   🍽 Meals: ${m.mealPlan}`)
       if (m.driverName) {
         const vehicle = [m.vehicleType, m.vehiclePlate].filter(Boolean).join(' · ')
         lines.push(`   🚗 Driver: *${m.driverName}*${m.driverPhone ? ` (${m.driverPhone})` : ''}${vehicle ? ` — ${vehicle}` : ''}`)
+      }
+      if (m.guideName) {
+        lines.push(`   🧑‍🏫 Guide: *${m.guideName}*${m.guidePhone ? ` (${m.guidePhone})` : ''}`)
+      }
+      if (m.tourVendorName) {
+        lines.push(`   🏢 Tour vendor: *${m.tourVendorName}*${m.tourVendorPhone ? ` (${m.tourVendorPhone})` : ''}`)
       }
       for (const t of m.tickets) {
         const status = t.confirmed ? '✅ Confirmed' : '🕓 Reserved'
@@ -977,11 +1043,6 @@ export function formatCustomerDailyBriefingMessage(params: {
       }
       lines.push(``)
     })
-  }
-
-  if (params.managerContact) {
-    lines.push(`📞 *On-ground manager:* ${params.managerContact}`)
-    lines.push(``)
   }
 
   if (params.attachmentCount > 0) {
@@ -1007,7 +1068,7 @@ export function formatCustomerDailyBriefingMessage(params: {
 
   lines.push(`📁 *Ref:* ${params.bookingRef}`)
   lines.push(``)
-  lines.push(`Have a wonderful day 💙 — AppleHolidays Team`)
+  lines.push(params.branded ? `Have a wonderful day 💙 — AppleHolidays Team` : `Have a wonderful day 💙`)
 
   return lines.filter(l => l !== null).join('\n')
 }

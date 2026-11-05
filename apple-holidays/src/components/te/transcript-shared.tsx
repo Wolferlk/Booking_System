@@ -11,6 +11,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Phone, ClipboardCheck, Award, Bot, User, Volume2, Loader2, AlertCircle } from 'lucide-react'
 import type { ElementType } from 'react'
+import { FEEDBACK_CLASS_META, type FeedbackAlert, type FeedbackClass } from '@/lib/te/feedback-class'
 
 export type Kind = 'on_tour' | 'reconfirm' | 'post_tour'
 
@@ -35,6 +36,10 @@ export interface TranscriptRecord {
   transcript: TranscriptTurn[] | string | null
   transcript_turns: number
   detail: Record<string, unknown>
+  feedback_class: FeedbackClass
+  feedback_reason: string
+  feedback_source: 'ai' | 'rules'
+  alerts: FeedbackAlert[]
 }
 
 export interface TranscriptStats {
@@ -44,6 +49,19 @@ export interface TranscriptStats {
   bookings: number
   avgRating: number | null
   sentimentBreakdown: Record<string, number>
+  classBreakdown: Record<FeedbackClass, number>
+}
+
+/** Good / Warning / Bad pill; the reason shows on hover. `dark` = AI Call Bot palette. */
+export function FeedbackClassBadge({ rec, dark = false }: { rec: Pick<TranscriptRecord, 'feedback_class' | 'feedback_reason' | 'feedback_source'>; dark?: boolean }) {
+  const m = FEEDBACK_CLASS_META[rec.feedback_class]
+  if (!m) return null
+  const title = `${rec.feedback_reason}${rec.feedback_source === 'ai' ? ' (AI verdict)' : ''}`
+  return (
+    <span title={title} className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${dark ? m.darkChip : m.chip}`}>
+      <span>{m.emoji}</span>{m.label}
+    </span>
+  )
 }
 
 interface TranscriptTurn { role?: string; speaker?: string; text?: string; message?: string; content?: string }

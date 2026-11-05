@@ -43,7 +43,16 @@ import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
+import {
+  useDataGuard, SectionLockButton, LockedStrip, FlightOriginTag, FlightRestoreButton, FlightRestoreModal,
+} from '@/components/bookings/data-guard'
+import { LOCK_SECTION_LABELS, type LockSection } from '@/lib/data-protection'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
+import B2cUpdateActions from '@/components/bookings/b2c-update-actions'
+import B2cAmendmentAttention from '@/components/bookings/b2c-amendment-attention'
+import B2cVersionPanel, { type VersionViewState } from '@/components/bookings/b2c-version-panel'
+import B2cOrderPanel from '@/components/bookings/b2c-order-panel'
+import B2cFlowPanel from '@/components/bookings/b2c-flow-panel'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 import LogoSpinner from '@/components/shared/logo-spinner'
 // Shared with the pre-checking engine, so the badge here and the queue's
@@ -162,6 +171,10 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [booking, setBooking] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  // Aahaas B2C store versions: an older version replaced by a newer booking is
+  // blurred and locked under its banner (peek lifts the blur, never the lock).
+  const [versionState, setVersionState] = useState<VersionViewState>(null)
+  const [versionPeek, setVersionPeek] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [changeModal, setChangeModal] = useState(false)
   const [cancelModal, setCancelModal] = useState(false)
@@ -220,6 +233,11 @@ export default function BookingDetailPage() {
   const [aiPassengerOpen, setAiPassengerOpen] = useState(false)
   const [aiFlightOpen, setAiFlightOpen] = useState(false)
   const [aiAccomOpen, setAiAccomOpen] = useState(false)
+
+  // Data protection — section padlocks, flight origin tags, restore from history.
+  // Re-fetched whenever the booking reloads (lib/data-protection.ts).
+  const guard = useDataGuard(ref, booking)
+  const [flightRestoreOpen, setFlightRestoreOpen] = useState(false)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
@@ -443,7 +461,10 @@ export default function BookingDetailPage() {
       const res = await fetch(`/api/bookings/${ref}/versions/${versionNo}/restore`, { method: 'POST' })
       const json = await res.json()
       if (json.success) {
-        toast.success(`Switched to version V${versionNo}`)
+        const kept: string[] = json.data?.lockedSections ?? []
+        toast.success(`Switched to version V${versionNo}`, kept.length
+          ? { description: `Locked — left as they were: ${kept.map(s => LOCK_SECTION_LABELS[s as LockSection] ?? s).join(', ')}` }
+          : undefined)
         setRestoreTarget(null)
         setVersionMenuOpen(false)
         await load()
@@ -594,6 +615,12 @@ export default function BookingDetailPage() {
   const accommodations: any[] = booking.accommodations ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const itinerary: any[] = booking.itineraryItems ?? []
+  // AppleSystem fields with no column (agent id, sales person, day routes).
+  const asExtras = (booking as any).asExtras as
+    | { agentId: string | null; salesPerson: string | null; dayRoutes: { dayNo: number; date: string; route: string }[] }
+    | null
+    | undefined
+  const routeByDay = new Map<number, string>((asExtras?.dayRoutes ?? []).map(d => [d.dayNo, d.route]))
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const changeRequests: any[] = booking.changeRequests ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1442,15 +1469,38 @@ Wishing you a wonderful trip! ✈️
           shaded and red-marked so nobody mistakes them for live work. */}
       <div className={cn(
         'p-8 space-y-6',
-        isCancelled && 'bg-slate-100/70 [&>*:not(:first-child)]:opacity-75 [&>*:not(:first-child)]:grayscale-[45%]',
+        isCancelled && 'bg-slate-100/70 [&>*:not(:first-child):not([data-cancel-banner])]:opacity-75 [&>*:not(:first-child):not([data-cancel-banner])]:grayscale-[45%]',
+        versionState === 'superseded' && cn(
+          'bg-violet-50/40 [&>*:not([data-version-banner])]:pointer-events-none [&>*:not([data-version-banner])]:select-none [&>*:not([data-version-banner])]:transition-all',
+          versionPeek
+            ? '[&>*:not([data-version-banner])]:opacity-80 [&>*:not([data-version-banner])]:grayscale-[60%]'
+            : '[&>*:not([data-version-banner])]:opacity-50 [&>*:not([data-version-banner])]:blur-[3px] [&>*:not([data-version-banner])]:grayscale',
+        ),
       )}>
+
+        {/* Aahaas B2C store versions: replaced → banner + locked page; active →
+            version timeline and the previous booking's details. Sits first so
+            it is never under the blur. */}
+        {(booking as any)?.isB2c && (
+          <B2cVersionPanel
+            bookingRef={ref}
+            onState={(s) => { setVersionState(s); setVersionPeek(false) }}
+            peeking={versionPeek}
+            onPeek={setVersionPeek}
+            onChange={load}
+          />
+        )}
 
         {/* Shared Test Bookings register: banner when marked, a small
             "Mark as test" control for the roles that may use it. */}
         <TestBookingBanner bookingRef={ref} />
 
+        {/* Aahaas B2C: the store amended this booking (a new store order) and it
+            was applied here — flagged until somebody has checked it. */}
+        {(booking as any)?.isB2c && <B2cAmendmentAttention bookingRef={ref} onChange={load} />}
+
         {isCancelled && (
-          <div className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">
+          <div data-cancel-banner className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">
             <div
               className="pointer-events-none absolute inset-0 opacity-[0.07]"
               style={{ backgroundImage: 'repeating-linear-gradient(45deg,#dc2626 0 12px,transparent 12px 24px)' }}
@@ -1855,8 +1905,16 @@ Wishing you a wonderful trip! ✈️
                   <Edit2 className="w-3.5 h-3.5" /> Edit
                 </button>
               )}
+              {/* Aahaas B2C store order: refresh from the store as a new version */}
+              {!isVnGroundLimited && (booking as any).isB2c && (
+                <B2cUpdateActions
+                  bookingRef={ref}
+                  canUpdate={canEditBooking}
+                  onUpdated={load}
+                />
+              )}
               {/* AppleSystem: re-pull the itinerary, or inspect the raw upstream payload */}
-              {!isVnGroundLimited && (
+              {!isVnGroundLimited && !(booking as any).isB2c && (
               <AppleSystemActions
                 bookingRef={ref}
                 isNumber={booking.isNumber as string | null}
@@ -2104,6 +2162,18 @@ Wishing you a wonderful trip! ✈️
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent Ref. No.</p>
               {booking.agentBookingId
                 ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent ID</p>
+              {asExtras?.agentId
+                ? <p className="text-sm font-mono text-slate-700 break-all">{asExtras.agentId}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Sales Person</p>
+              {asExtras?.salesPerson
+                ? <p className="text-sm text-slate-700">{asExtras.salesPerson}</p>
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
@@ -2391,6 +2461,7 @@ Wishing you a wonderful trip! ✈️
                           : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
                       </button>
                     )}
+                    <SectionLockButton section="passengers" guard={guard} />
                   </div>
                 ) : undefined
               }
@@ -2401,6 +2472,7 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="passengers" guard={guard} />
               {(() => {
                 const MEAL_OPTIONS = [
                   { label: 'Non-Veg',      value: 'Non-Vegetarian', colour: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',   active: 'bg-orange-500 text-white border-orange-500' },
@@ -2595,6 +2667,8 @@ Wishing you a wonderful trip! ✈️
                   <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                     <Edit2 className="w-3 h-3" /> Edit
                   </button>
+                  <FlightRestoreButton guard={guard} onClick={() => setFlightRestoreOpen(true)} />
+                  <SectionLockButton section="flights" guard={guard} />
                 </div>
               ) : undefined}
             >
@@ -2603,13 +2677,17 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="flights" guard={guard} />
               {flights.length === 0 && (
                 <p className="px-4 py-3 text-xs text-slate-400">No flights recorded</p>
               )}
               {flights.map((f) => (
                 <div key={f.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-slate-900 font-mono">{f.flightNo as string}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-sm font-semibold text-slate-900 font-mono">{f.flightNo as string}</span>
+                      <FlightOriginTag flightId={f.id as string} guard={guard} />
+                    </span>
                     <span className="text-xs text-slate-400">{formatDate(f.date as string)}</span>
                   </div>
                   <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
@@ -2647,6 +2725,7 @@ Wishing you a wonderful trip! ✈️
                   }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                     <Edit2 className="w-3 h-3" /> Edit
                   </button>
+                  <SectionLockButton section="accommodations" guard={guard} />
                 </div>
               ) : undefined}
             >
@@ -2655,6 +2734,7 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              <LockedStrip section="accommodations" guard={guard} />
               {accommodations.map((a) => {
                 const own = isOwnArrangement(a)
                 return (
@@ -2978,7 +3058,14 @@ Wishing you a wonderful trip! ✈️
                   — see the Journey Map section above. */}
               <div>
                 <div className="divide-y divide-slate-100">
-                  {itinerary.map((item) => (
+                  {itinerary.map((item, idx) => {
+                    // A day with several activities is several rows; show its
+                    // route once, on the first row, and not when it is the title.
+                    const route = routeByDay.get(item.dayNo as number)
+                    const showRoute = !!route
+                      && (idx === 0 || itinerary[idx - 1].dayNo !== item.dayNo)
+                      && route.trim().toLowerCase() !== String(item.title ?? '').trim().toLowerCase()
+                    return (
                     <div key={item.id as string} className="flex gap-4 px-6 py-4">
                       <div className="flex-shrink-0 text-center">
                         <div className="w-9 h-9 rounded-full bg-brand-50 border-2 border-brand-200 flex items-center justify-center">
@@ -2990,10 +3077,17 @@ Wishing you a wonderful trip! ✈️
                           <p className="text-sm font-semibold text-slate-900">{item.title as string}</p>
                           <span className="text-xs text-slate-400">{formatDate(item.date as string)}</span>
                         </div>
+                        {showRoute && (
+                          <p className="text-xs font-medium text-brand-700 mt-0.5">
+                            <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mr-1">Route</span>
+                            {route}
+                          </p>
+                        )}
                         {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             </CardBody>
@@ -3106,6 +3200,16 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
           </section>
+        )}
+
+        {/* Aahaas B2C: the store's figures in both currencies, channel, guest email, invoice */}
+        {(booking as any).isB2c && !isVnGroundLimited && (
+          <B2cOrderPanel bookingRef={ref} />
+        )}
+
+        {/* Aahaas B2C: AahaasFlow's view — journey, products, documents, P&L */}
+        {(booking as any).isB2c && !isVnGroundLimited && (
+          <B2cFlowPanel bookingRef={ref} />
         )}
 
         {/* P&L Summary (if available + permitted) */}
@@ -4071,6 +4175,13 @@ Wishing you a wonderful trip! ✈️
         </div>
       </Modal>
 
+      <FlightRestoreModal
+        bookingRef={ref}
+        open={flightRestoreOpen}
+        onClose={() => setFlightRestoreOpen(false)}
+        onRestored={() => { load() }}
+      />
+
       {/* ── AI Auto-fill popups (Passengers · Flights · Accommodation) ─── */}
       <AiAutofillModal<ExtractedPassenger>
         open={aiPassengerOpen}
@@ -4432,7 +4543,7 @@ Wishing you a wonderful trip! ✈️
       </Modal>
 
       {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
-      {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+      {['TE_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
       )}
 

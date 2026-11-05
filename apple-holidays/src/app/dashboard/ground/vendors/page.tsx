@@ -163,6 +163,8 @@ export default function VendorsPage() {
   }
 
   async function toggleActive(vendor: Vendor) {
+    const approving = vendor.isRegistered && !vendor.isActive
+    if (approving && !confirm(`Approve ${vendor.name}? They can sign in to the vendor portal and the Aahaas app straight away.`)) return
     setTogglingId(vendor.id)
     try {
       const res = await fetch(`/api/ground/vendors/${vendor.id}`, {
@@ -172,7 +174,7 @@ export default function VendorsPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
-      toast.success(vendor.isActive ? 'Vendor deactivated' : 'Vendor activated')
+      toast.success(vendor.isActive ? 'Vendor deactivated' : approving ? `${vendor.name} approved — they can sign in now` : 'Vendor activated')
       setVendors(prev => prev.map(v => v.id === vendor.id ? { ...v, isActive: !vendor.isActive } : v))
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to update vendor')
@@ -422,6 +424,8 @@ export default function VendorsPage() {
   }
 
   const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length
+  // Self-registered vendors waiting for approval come first; otherwise the server's order.
+  const orderedVendors = [...vendors].sort((a, b) => Number(b.isRegistered && !b.isActive) - Number(a.isRegistered && !a.isActive))
 
   const availableDriversForVehicle = vehicleModal && selectedVendorForVehicle
     ? selectedVendorForVehicle.drivers.filter(driver => !driver.vehicle || driver.vehicle.id === vehicleModal.vehicle?.id)
@@ -459,8 +463,8 @@ export default function VendorsPage() {
         <div className="mx-8 mt-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <Clock className="w-4 h-4 text-amber-600 flex-shrink-0" />
           <p className="text-sm text-amber-800">
-            <span className="font-bold">{pendingCount} vendor{pendingCount > 1 ? 's' : ''}</span> self-registered and pending activation.
-            Click the <Power className="inline w-3.5 h-3.5" /> icon to activate.
+            <span className="font-bold">{pendingCount} vendor{pendingCount > 1 ? 's' : ''}</span> registered (vendor portal or Aahaas app) and {pendingCount > 1 ? 'are' : 'is'} waiting for approval.
+            Click <span className="font-semibold">Approve</span> to let them sign in, or delete the registration to decline it.
           </p>
         </div>
       )}
@@ -474,7 +478,7 @@ export default function VendorsPage() {
             <p className="text-slate-400">No vendors yet</p>
           </Card>
         ) : (
-          vendors.map(vendor => {
+          orderedVendors.map(vendor => {
             const expanded = expandedId === vendor.id
             const isPending = vendor.isRegistered && !vendor.isActive
 
@@ -525,6 +529,16 @@ export default function VendorsPage() {
                     </span>
                     {isAdmin && (
                       <>
+                        {isPending && (
+                          <button
+                            onClick={e => { e.stopPropagation(); toggleActive(vendor) }}
+                            disabled={togglingId === vendor.id}
+                            className="btn btn-sm flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60"
+                          >
+                            {togglingId === vendor.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            Approve
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); toggleActive(vendor) }}
                           disabled={togglingId === vendor.id}

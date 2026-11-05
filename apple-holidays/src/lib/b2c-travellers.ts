@@ -10,12 +10,18 @@
  */
 import type { B2cOrderLineBookingNames, B2cOrderLineTravellers, B2cPassengerDetail } from './b2c-db'
 import { passengerNameKey } from './passenger-note-key'
+import type { ConfirmedLead } from './b2c-confirmed-lead'
 
 export interface OrderTravellers {
   /** Best guess at the lead traveller, or null when no line carries a name. */
   leadName: string | null
   /** Distinct adult traveller names, lead first. */
   adults: string[]
+  /**
+   * Who the order was booked under, as the desk / payment link gave it — best
+   * first (see b2c-confirmed-lead.ts). Outranks `leadName` when present.
+   */
+  confirmedLeads?: ConfirmedLead[]
 }
 
 /**
@@ -180,5 +186,5 @@ export function bookingRowNames(lines: B2cOrderLineBookingNames[]): string[] {
  */
 export function withBookingRowNames(travellers: OrderTravellers | undefined, names: string[]): OrderTravellers | undefined {
   if (travellers?.leadName || names.length === 0) return travellers
-  return { leadName: names[0], adults: names }
+  return { ...travellers, leadName: names[0], adults: names }
 }

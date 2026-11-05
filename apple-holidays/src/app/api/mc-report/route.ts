@@ -10,6 +10,7 @@ import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { loadTicketsControl } from '@/lib/tickets-control'
 import { loadMcDetails, loadBookingContext, type McBookingContext } from '@/lib/mc-details'
 import { loadMcDone } from '@/lib/mc-done'
+import { loadMcSuppliers } from '@/lib/mc-supplier'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -217,6 +218,7 @@ async function hotelOnlyRows(
       vehicleTypeHint: null,
       mcDetails:      null,
       done:           null,
+      supplier:       null,
       ...contextFields(context.get(s.booking.id), s.checkIn.toISOString().slice(0, 10)),
       flights:        [],
       tourFigures:    null,
@@ -338,9 +340,11 @@ export async function GET(req: NextRequest) {
   )
 
   // MC Report desk figures (every country) and the booking-level context.
-  const [mcDetails, doneMarks, context] = await Promise.all([
+  const [mcDetails, doneMarks, suppliers, context] = await Promise.all([
     loadMcDetails(items.map(i => i.id)),
     loadMcDone(items.map(i => i.id)),
+    // The Accounts supplier (Suppliers Manage) each movement is paid to.
+    loadMcSuppliers(items.map(i => i.id)),
     loadBookingContext(Array.from(new Map(items.map(i => [i.agenda.booking.id, i.agenda.booking])).values())),
   ])
 
@@ -400,6 +404,7 @@ export async function GET(req: NextRequest) {
     ticketsControl: ticketsControl[item.id] ?? null,
     mcDetails:      mcDetails[item.id] ?? null,
     done:           doneMarks[item.id] ?? null,
+    supplier:       suppliers[item.id] ?? null,
     // What the Vehicle Type column shows when the movement itself carries none:
     // the assigned driver's registered vehicle, then (Sri Lanka) the booking's
     // allocation-board vehicle. Kept apart from `vehicleType`, which the assign

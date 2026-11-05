@@ -11,6 +11,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { quotationNoFromCntl } from '@/lib/as-booking-extras'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import { sanitizeCancellationFees, totalCancellationFee } from '@/lib/cancellation-fees'
@@ -123,7 +124,7 @@ export function serializeBooking(b: FhBooking) {
     booking_ref: b.bookingRef,
     is_number: b.isNumber,
     cntl_number: b.cntlNumber,
-    quotation_no: b.cntlNumber,
+    quotation_no: quotationNoFromCntl(b.cntlNumber),
     status: b.status,
     version: b.version,
     agent: b.agent,

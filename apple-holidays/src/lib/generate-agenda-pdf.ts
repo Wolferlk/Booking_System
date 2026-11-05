@@ -17,6 +17,7 @@ import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
 } from './ticket-notes'
+import { customerEmailForDisplay } from './booking-source'
 
 // ── Palette (matches generate-booking-pdf.ts) ────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -171,12 +172,24 @@ interface Column {
   bold?: boolean
 }
 
+/** Ticket facts that are money — what we paid, and the payment that paid it. */
+const MONEY_FACTS = new Set(['Rate', 'Total', 'Payment Ref'])
+
 export async function generateAgendaPdf(
   ref: string,
   booking: AgendaPdfBooking,
   items: AgendaPdfItem[],
   showDrivers: boolean,
+  opts: {
+    /**
+     * Leave every price off the ticket cards — rate, total, payment ref, and
+     * the PNL remark that spells out the arithmetic. For a copy that goes to a
+     * driver, who is never shown what anything cost.
+     */
+    hideMoney?: boolean
+  } = {},
 ): Promise<Buffer> {
+  const hideMoney = opts.hideMoney === true
   await ensurePdfkitDataFiles()
   const PDFDocument = await loadPdfDocumentCtor()
   const logo = await loadLogo()
@@ -388,11 +401,12 @@ export async function generateAgendaPdf(
     })
     doc.y = stripY + 42
 
-    // Customer contact
+    // Customer contact — a B2C booking's desk inbox is never shown as the customer's
+    const customerEmail = customerEmailForDisplay(booking.agent, booking.contactEmail)
     const contactBits = [
       booking.contactPhone ? `Phone: ${booking.contactPhone}` : null,
       booking.contactWhatsapp ? `WhatsApp: ${booking.contactWhatsapp}` : null,
-      booking.contactEmail ? `Email: ${booking.contactEmail}` : null,
+      customerEmail ? `Email: ${customerEmail}` : null,
     ].filter(Boolean)
     if (contactBits.length > 0) {
       doc.fillColor(MUTED).font('Helvetica').fontSize(8)
@@ -664,8 +678,9 @@ export async function generateAgendaPdf(
         const clr      = CAT_COLOR[category] ?? MUTED
         const meta     = parseTicketNotes(ticket.notes)
         const facts    = ticketFacts(ticket, meta, d => fmtDate(d))
+          .filter(f => !hideMoney || !MONEY_FACTS.has(f.label))
         const image    = ticketImages.get(ticket.id)
-        const remark   = sanitizeText([meta.remarks, ...meta.details].filter(Boolean).join('  ·  '))
+        const remark   = sanitizeText([hideMoney ? null : meta.remarks, ...meta.details].filter(Boolean).join('  ·  '))
 
         const COLS     = 3
         const colW     = (CONTENT_W - 20) / COLS
@@ -803,6 +818,9 @@ export async function generateAgendaPdf(
     const range = doc.bufferedPageRange()
     for (let i = range.start; i < range.start + range.count; i++) {
       doc.switchToPage(i)
+      // The footer sits inside the bottom margin; with the margin in place
+      // PDFKit treats that text as overflow and appends a blank page per call.
+      doc.page.margins.bottom = 0
       const fy = PAGE_H - 28
       doc.moveTo(MARGIN, fy - 6).lineTo(PAGE_W - MARGIN, fy - 6)
         .strokeColor(LINE).lineWidth(0.5).stroke()

@@ -49,6 +49,7 @@
  */
 import type { RowDataPacket } from 'mysql2/promise'
 import { accountsQuery } from '@/lib/accounts-db'
+import { loadTestBookings } from '@/lib/test-bookings'
 import { dateInTz, type ReportWindow } from './report-window'
 
 /**
@@ -77,6 +78,8 @@ interface DocRow extends RowDataPacket {
   id: number
   invoice_number: string | null
   base_invoice_number: string | null
+  original_invoice_number: string | null
+  tour_ref?: string | null
   ledger_key: string | null
   revision_seq: number | null
   revision_number: number | null
@@ -160,11 +163,49 @@ function looksRevised(row: DocRow): boolean {
   return Boolean(Number(row.is_revision ?? 0)) || /_R\d+/i.test(String(row.invoice_number ?? ''))
 }
 
+/**
+ * `InvoiceReportService::getInvoiceBaseNumber()` — the booking a document is
+ * reported under: the stored original number, else its own number with the
+ * revision / CXL suffix parsed off. Not `?? invoice_number`: a revision filed
+ * with an empty base would then be its own booking — "VN40178_R2" — dated by
+ * itself, and an older confirmation edited today would read as new business.
+ */
+function invoiceBaseNumber(row: DocRow): string {
+  if (row.original_invoice_number) return String(row.original_invoice_number)
+  let base = String(row.invoice_number ?? '').replace(/-CXL$/i, '')
+  base = base.replace(/_R\d+\/R\d+$/, '')
+  base = base.replace(/_R\d+_R\d+$/, '')
+  base = base.replace(/\/R\d+$/, '')
+  base = base.replace(/_R\d+$/, '')
+  return base.replace(/R\d+$/, '')
+}
+
+/** `ledgerHistory()`'s base — the stored column, else the parsed number. */
+function storedOrParsedBase(row: DocRow): string {
+  return String(row.base_invoice_number || invoiceBaseNumber(row))
+}
+
 /** `InvoiceReportService::ledgerKeyOf()` — the chain a document hangs on. */
 function chainKeyOf(row: DocRow): string {
-  const ledger = String(row.ledger_key ?? '').trim()
+  const ledger = String(row.ledger_key ?? '')
   if (ledger) return ledger
-  return 'B:' + String(row.base_invoice_number ?? row.invoice_number ?? '').toUpperCase()
+  return 'B:' + storedOrParsedBase(row).toUpperCase()
+}
+
+/** `TestBookingService::sqlKeyExpression()` — the separators that SQL strips. */
+function squash(value: string | null | undefined): string {
+  return String(value ?? '').toUpperCase().replace(/[ \-_/.#]/g, '')
+}
+
+/** `TestBookingService::matchInvoices()`, row by row. */
+function isTestDocument(row: DocRow, keys: Set<string>): boolean {
+  if (keys.size === 0) return false
+  const num = squash(row.invoice_number)
+  const booking = String(row.base_invoice_number ?? '') === '' ? num : squash(row.base_invoice_number)
+  if (keys.has(booking) || keys.has(squash(row.tour_ref))) return true
+  if (num.endsWith('CXL') && keys.has(num.slice(0, -3))) return true
+  for (const key of Array.from(keys)) if (num.startsWith(key + 'R')) return true
+  return false
 }
 
 function at(value: string | Date): Date {
@@ -195,9 +236,13 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
     const from = utcStamp(window.start)
     const to = utcStamp(window.end)
 
-    // 1. Every document raised inside the window, AHDS only.
+    // 1. Every document raised inside the window, AHDS only, test bookings
+    //    out — `InvoiceReportService::query()` drops the register's bookings
+    //    before the accounts split ever sees them.
+    const tests = new Set(Array.from((await loadTestBookings()).marks.keys()))
     const raised = (await accountsQuery<DocRow>(
-      `SELECT gi.id, gi.invoice_number, gi.base_invoice_number, gi.ledger_key,
+      `SELECT gi.id, gi.invoice_number, gi.base_invoice_number, gi.original_invoice_number,
+              gi.tour_ref, gi.ledger_key,
               gi.revision_seq, gi.revision_number, gi.is_revision, gi.is_cancellation,
               gi.created_at, gi.customer_name, gi.guest_name, gi.currency,
               gi.grand_total, gi.total_amount,
@@ -208,7 +253,7 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
           AND ${NOT_TOUR_REF_SQL}
         ORDER BY gi.id`,
       [from, to],
-    )).filter(r => !Number(r.b2c))
+    )).filter(r => !Number(r.b2c) && !isTestDocument(r, tests))
 
     if (raised.length === 0) {
       return { available: true, today: { ...EMPTY_SIDE }, old: { ...EMPTY_SIDE }, index: {} }
@@ -218,7 +263,7 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
     //    Matched on both columns exactly as `ledgerHistory()` does, because
     //    `ledger_key` is backfilled and older rows carry only the base number.
     const ledgerKeys = Array.from(new Set(raised.map(r => String(r.ledger_key ?? '').trim()).filter(Boolean)))
-    const bases = Array.from(new Set(raised.map(r => String(r.base_invoice_number ?? '').trim()).filter(Boolean)))
+    const bases = Array.from(new Set(raised.map(storedOrParsedBase).filter(Boolean)))
 
     const clauses: string[] = []
     const params: unknown[] = []
@@ -227,8 +272,8 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
 
     const history = clauses.length
       ? await accountsQuery<DocRow>(
-          `SELECT gi.id, gi.invoice_number, gi.base_invoice_number, gi.ledger_key,
-                  gi.revision_seq, gi.revision_number, gi.is_revision, gi.is_cancellation,
+          `SELECT gi.id, gi.invoice_number, gi.base_invoice_number, gi.original_invoice_number,
+                  gi.ledger_key, gi.revision_seq, gi.revision_number, gi.is_revision, gi.is_cancellation,
                   gi.created_at, gi.customer_name, gi.guest_name, gi.currency,
                   gi.grand_total, gi.total_amount
              FROM generated_invoices gi
@@ -239,12 +284,18 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
 
     // The chains, oldest revision first — the first entry opened the booking.
     const chains = new Map<string, DocRow[]>()
-    for (const row of history) {
+    const seen = new Set<number>()
+    const file = (row: DocRow) => {
       const key = chainKeyOf(row)
       const list = chains.get(key)
       if (list) list.push(row)
       else chains.set(key, [row])
+      seen.add(Number(row.id))
     }
+    history.forEach(file)
+    // A document always belongs to its own chain (`ledgerChains()`): one whose
+    // stored columns drifted is keyed onto its booking but never fetched.
+    for (const row of raised) if (!seen.has(Number(row.id))) file(row)
     chains.forEach((list: DocRow[]) => {
       list.sort((a, b) => sequenceOf(a) - sequenceOf(b) || Number(a.id) - Number(b.id))
     })
@@ -272,9 +323,12 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
       const originDay = Number.isFinite(originAt.getTime()) ? dateInTz(originAt, window.timezone) : null
       const raisedDay = dateInTz(raisedAt, window.timezone)
 
+      // `documentRow()`'s booking_ref — what both accounts tables group on.
+      const ref = invoiceBaseNumber(row)
+
       const line: SplitLine = {
-        key: bookingKey(row.base_invoice_number ?? row.invoice_number),
-        ref: String(row.base_invoice_number ?? row.invoice_number ?? '—'),
+        key: bookingKey(ref),
+        ref: ref || '—',
         invoiceNumber: String(row.invoice_number ?? '—'),
         type: updated ? 'Updated' : 'New',
         agent: String(row.customer_name ?? '').trim() || '—',
@@ -294,9 +348,10 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
       // One line per booking, on its latest document in the window — both
       // sides, as `todayBusiness()` and `oldAmendments()` do.
       const bucket = carried ? oldByBooking : todayByBooking
-      const held = bucket.get(line.key || line.ref)
+      const group = ref.toUpperCase()
+      const held = bucket.get(group)
       if (!held || Number(row.id) > Number(held.row.id)) {
-        bucket.set(line.key || line.ref, { row, line })
+        bucket.set(group, { row, line })
       }
     }
 

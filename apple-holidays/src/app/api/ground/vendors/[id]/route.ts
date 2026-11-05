@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { OperationCountry, Prisma } from '@prisma/client'
+import { notifyVendorApproved } from '@/lib/mobile/signup'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,10 +52,18 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (body.country !== undefined) data.country = (body.country || null) as OperationCountry | null
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive
 
+  const before = await prisma.vehicleVendor.findUnique({ where: { id: params.id }, select: { isActive: true, isRegistered: true } })
+  if (!before) return buildApiError('Vendor not found', 404)
+
   const vendor = await prisma.vehicleVendor.update({
     where: { id: params.id },
     data,
   })
+
+  // Switching on a vendor who registered themselves is their approval: tell them (app push + e-mail).
+  if (!before.isActive && vendor.isActive && vendor.isRegistered) {
+    await notifyVendorApproved(vendor.id)
+  }
 
   return buildApiSuccess(vendor, 'Vendor updated')
 }

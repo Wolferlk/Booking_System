@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma'
+import { loadChildGuard } from '@/lib/data-protection-server'
+import { LOCK_SECTIONS } from '@/lib/data-protection'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Booking versioning
@@ -17,7 +19,7 @@ import { prisma } from '@/lib/prisma'
 // are deliberately left untouched.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type VersionSource = 'mail' | 'onedrive' | 'restore' | 'manual'
+export type VersionSource = 'mail' | 'onedrive' | 'restore' | 'manual' | 'b2c'
 
 // Children captured in a snapshot (mirrors the fields written by
 // replaceBookingChildren / upsertAgenda in incoming-mail-automation.ts).
@@ -119,6 +121,37 @@ export async function bumpVersionAndSnapshot(
   return updated.version
 }
 
+/**
+ * Like {@link bumpVersionAndSnapshot}, but the new number is one past the
+ * HIGHEST version on file rather than `booking.version + 1`.
+ *
+ * The two differ once someone has switched back to an older version: with V7
+ * on file and V3 active, `version + 1` is V4 and the upsert in
+ * `snapshotBooking` would silently overwrite V4's history. Appending as V8
+ * keeps every earlier snapshot intact.
+ */
+export async function appendVersionAndSnapshot(
+  bookingId: string,
+  opts: { createdById: string; source: VersionSource; amendmentNote?: string | null },
+): Promise<number> {
+  const [booking, latest] = await Promise.all([
+    prisma.booking.findUnique({ where: { id: bookingId }, select: { version: true } }),
+    prisma.bookingVersion.findFirst({
+      where: { bookingId },
+      orderBy: { versionNo: 'desc' },
+      select: { versionNo: true },
+    }),
+  ])
+  const next = Math.max(booking?.version ?? 1, latest?.versionNo ?? 0) + 1
+  await prisma.booking.update({ where: { id: bookingId }, data: { version: next } })
+  await snapshotBooking(bookingId, next, {
+    createdById:   opts.createdById,
+    source:        opts.source,
+    amendmentNote: opts.amendmentNote ?? null,
+  })
+  return next
+}
+
 /** Write the initial v1 snapshot for a brand-new booking (best-effort). */
 export async function snapshotInitialVersion(
   bookingId: string,
@@ -175,6 +208,14 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       : snap[f]
   }
 
+  // A section somebody locked on the booking page is left as it is — the
+  // switch restores everything else (lib/data-protection.ts).
+  const guard = await loadChildGuard(bookingId)
+  const lockedSections = LOCK_SECTIONS.filter(s => guard.isLocked(s))
+  const keepPassengers = guard.isLocked('passengers')
+  const keepFlights    = guard.isLocked('flights')
+  const keepHotels     = guard.isLocked('accommodations')
+
   await prisma.$transaction(async tx => {
     await tx.booking.update({
       where: { id: bookingId },
@@ -182,13 +223,13 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
     })
 
     // Passengers / flights / accommodations / itinerary / emergency contacts.
-    await tx.passenger.deleteMany({ where: { bookingId } })
-    await tx.flight.deleteMany({ where: { bookingId } })
-    await tx.accommodation.deleteMany({ where: { bookingId } })
+    if (!keepPassengers) await tx.passenger.deleteMany({ where: { bookingId } })
+    if (!keepFlights)    await tx.flight.deleteMany({ where: { bookingId } })
+    if (!keepHotels)     await tx.accommodation.deleteMany({ where: { bookingId } })
     await tx.itineraryItem.deleteMany({ where: { bookingId } })
     await tx.emergencyContact.deleteMany({ where: { bookingId } })
 
-    if (snap.passengers?.length) {
+    if (!keepPassengers && snap.passengers?.length) {
       await tx.passenger.createMany({
         data: snap.passengers.map(p => ({
           bookingId,
@@ -204,7 +245,7 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       })
     }
 
-    if (snap.flights?.length) {
+    if (!keepFlights && snap.flights?.length) {
       await tx.flight.createMany({
         data: snap.flights.map(f => ({
           bookingId,
@@ -220,7 +261,7 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
       })
     }
 
-    if (snap.accommodations?.length) {
+    if (!keepHotels && snap.accommodations?.length) {
       await tx.accommodation.createMany({
         data: snap.accommodations.map(a => ({
           bookingId,
@@ -297,5 +338,5 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
     }
   })
 
-  return versionNo
+  return { versionNo, lockedSections }
 }

@@ -20,6 +20,7 @@
  * change, no migration** — the live DB carries drift and must not be pushed to.
  */
 
+import { bookingSourceWhere } from '@/lib/booking-source'
 import { prisma } from '@/lib/prisma'
 import { syncBookingFromAs, AsSyncError, type AsSyncResult } from '@/lib/as-booking-sync'
 import { getAutomationUserId } from '@/lib/as-booking-import'
@@ -276,6 +277,9 @@ export async function runPreArrivalSync(opts: RunPreSyncOptions): Promise<PreSyn
         arrivalDate: { gte: from, lt: to },
         // A cancelled or already-finished file is a closed record — leave it be.
         status: { notIn: ['CANCELLED', 'COMPLETED'] },
+        // Store orders are not AppleSystem quotations; the sync refuses them
+        // anyway, this just keeps them out of the run's failure count.
+        ...bookingSourceWhere('B2B'),
       },
       select: { bookingRef: true },
       orderBy: { bookingRef: 'asc' },

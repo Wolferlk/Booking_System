@@ -98,6 +98,11 @@ function createdSection(d: ReportData): string {
   // invoice mail adds the day up — the same number the ribbon leads with.
   const sp = d.split
   const newBookings = newBookingsCount(d)
+  // The ledger split is AHDS (B2B) only, so once it is read the B2B tile is
+  // the same 27 new + 11 amended the New bookings tile adds up — not the
+  // narrower set of confirmations AppleSystem raised in the window.
+  const b2b = sp.available ? newBookings : c.channel.b2b
+  const pct = (n: number) => (b2b + c.channel.b2c ? Math.round((n / (b2b + c.channel.b2c)) * 100) : 0)
 
   const kpis = kpiRow([
     {
@@ -106,8 +111,8 @@ function createdSection(d: ReportData): string {
       note: `today new &amp; updated<br>${trend(c.total, c.previousTotal)}`,
       color: C.brand,
     },
-    { label: 'B2B', value: num(c.channel.b2b), note: `${c.total ? Math.round((c.channel.b2b / c.total) * 100) : 0}% of confirmations`, color: C.b2b },
-    { label: 'B2C', value: num(c.channel.b2c), note: `${c.total ? Math.round((c.channel.b2c / c.total) * 100) : 0}% of confirmations`, color: C.b2c },
+    { label: 'B2B', value: num(b2b), note: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : `${pct(b2b)}% of confirmations`, color: C.b2b },
+    { label: 'B2C', value: num(c.channel.b2c), note: `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`, color: C.b2c },
     { label: 'Pax booked', value: num(c.pax) },
   ])
 
@@ -1906,10 +1911,11 @@ export function renderReportCsv(d: ReportData): string {
   }
 
   // One row per issue, matching the mail. `Times raised` and `Raised on` keep
-  // the underlying alert rows recoverable from the export.
+  // the underlying alert rows recoverable from the export. Uncapped: the mail
+  // stops at maxRows, the attachment carries every issue the KPI counts.
   block('Complaints',
     ['First raised at', 'Last raised at', 'Times raised', 'Raised on', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
-    [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [
+    [...(d.complaints.allItems ?? d.complaints.items), ...d.complaints.carriedOpen].map(c => [
       c.createdAt, c.lastRaisedAt, c.occurrences, c.trail.map(t => t.createdAt).join(' | '),
       c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.categories.join(' | '),
       c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '',

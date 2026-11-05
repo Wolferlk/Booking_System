@@ -12,8 +12,11 @@
  *    flight data — see `flights: never[]` in `as-booking-map.ts`. The import
  *    path is idempotent, so a booking whose upstream quotation was amended
  *    after confirmation keeps the old copy forever; this is the only way to
- *    correct it in place. It overwrites data, so it asks first and shows a
- *    before/after diff.
+ *    correct it in place. Nothing is written until the operator has seen it:
+ *    the first call is a dry run that lists every proposed change with its
+ *    before/after, each with a checkbox, and only the ticked ones are applied.
+ *    If AppleSystem moved between preview and apply the server refuses and
+ *    hands back a fresh preview to review instead.
  *
  *    The full sync never writes workflow state — status, tickets, driver
  *    allocation, client confirmation, QC and the operation checklist are all
@@ -35,7 +38,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock, ShieldCheck, AlertTriangle, PenLine } from 'lucide-react'
+import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock, ShieldCheck, AlertTriangle, PenLine, Users } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { readApiResponse, cn } from '@/lib/utils'
@@ -58,22 +61,6 @@ interface AccPreview {
   roomType?: string | null
   mealType?: string | null
   ownArrangement?: boolean
-}
-
-interface ItinRefetchResult {
-  quotationNo: string
-  previousCount: number
-  newCount: number
-  previous: ItinPreview[]
-  itineraryItems: ItinPreview[]
-}
-
-interface AccRefetchResult {
-  quotationNo: string
-  previousCount: number
-  newCount: number
-  previous: AccPreview[]
-  accommodations: AccPreview[]
 }
 
 interface FieldChange {
@@ -116,6 +103,38 @@ interface FullSyncResult {
   conflicts: SyncConflict[]
   unchanged: boolean
   syncedAt: string
+  preview: boolean
+  fingerprint: string
+  declined: string[]
+  itinerary?: { previous: ItinPreview[]; next: ItinPreview[] }
+  accommodations?: { previous: AccPreview[]; next: AccPreview[] }
+  seed?: { passengers: string[]; emergencyContacts: string[] }
+}
+
+/** Ticked changes on the review screen, keyed `f:<field>`, `c:<field>`, `s:<section>`. */
+type Picks = Record<string, boolean>
+
+/** Which proposed changes a picker option shows. */
+function inScope(type: FetchType, key: string): boolean {
+  if (type === 'full') return true
+  return key === (type === 'itinerary' ? 's:itinerary' : 's:accommodations')
+}
+
+/** Every change in a preview this scope can show, keyed as in {@link Picks}. */
+function reviewKeys(type: FetchType, r: FullSyncResult): string[] {
+  return [
+    ...r.fields.map((f) => `f:${f.field}`),
+    ...r.conflicts.map((c) => `c:${c.field}`),
+    ...r.sections.filter((s) => !s.skipped).map((s) => `s:${s.section}`),
+  ].filter((k) => inScope(type, k))
+}
+
+/**
+ * Default ticks: every plain change on, every hand-edited field off — an edit
+ * made here is only overwritten when somebody says so.
+ */
+function defaultPicks(type: FetchType, r: FullSyncResult): Picks {
+  return Object.fromEntries(reviewKeys(type, r).map((k) => [k, !k.startsWith('c:')]))
 }
 
 interface LastSync {
@@ -182,10 +201,13 @@ export default function AppleSystemActions({
 }) {
   const [pickerOpen, setPickerOpen] = useState(false)
 
+  // Review flow: pick a scope → dry-run preview → tick changes → apply.
   const [confirmType, setConfirmType] = useState<FetchType | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<FullSyncResult | null>(null)
+  const [picks, setPicks] = useState<Picks>({})
   const [refetching, setRefetching] = useState(false)
-  const [itinResult, setItinResult] = useState<ItinRefetchResult | null>(null)
-  const [accResult, setAccResult] = useState<AccRefetchResult | null>(null)
   const [fullResult, setFullResult] = useState<FullSyncResult | null>(null)
 
   const [lastSync, setLastSync] = useState<LastSync | null>(null)
@@ -223,56 +245,90 @@ export default function AppleSystemActions({
     if (canRefetch || canViewRaw) void loadLastSync()
   }, [canRefetch, canViewRaw, loadLastSync])
 
-  function pick(type: FetchType) {
-    setPickerOpen(false)
-    setItinResult(null)
-    setAccResult(null)
-    setFullResult(null)
-    setConfirmType(type)
+  const syncUrl = `/api/bookings/${encodeURIComponent(bookingRef)}/as-sync`
+
+  async function loadPreview(type: FetchType) {
+    setPreviewing(true)
+    setPreviewError(null)
+    try {
+      const res = await fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preview: true }),
+      })
+      const json = await readApiResponse<FullSyncResult>(res)
+      if (!json.success || !json.data) throw new Error(json.error || 'Could not load the changes from AppleSystem')
+      setPreview(json.data)
+      setPicks(defaultPicks(type, json.data))
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Could not load the changes from AppleSystem')
+    } finally {
+      setPreviewing(false)
+    }
   }
 
-  async function doRefetch() {
-    if (!confirmType) return
+  function pick(type: FetchType) {
+    setPickerOpen(false)
+    setPreview(null)
+    setFullResult(null)
+    setPicks({})
+    setConfirmType(type)
+    void loadPreview(type)
+  }
+
+  async function applySelected() {
+    if (!confirmType || !preview) return
+    const ticked = (prefix: string) =>
+      Object.entries(picks).filter(([k, on]) => on && k.startsWith(prefix)).map(([k]) => k.slice(2))
+    // Only a full review shows the hand-edited fields, so only there does an
+    // unticked one count as "keep mine"; otherwise it stays waiting.
+    const keptConflicts = confirmType === 'full'
+      ? preview.conflicts.map((c) => c.field).filter((f) => !picks[`c:${f}`])
+      : []
+
     setRefetching(true)
     try {
-      const endpoint =
-        confirmType === 'full' ? 'as-sync'
-        : confirmType === 'itinerary' ? 'as-refetch'
-        : 'as-refetch-accommodations'
-      const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/${endpoint}`, { method: 'POST' })
-      if (confirmType === 'full') {
-        const json = await readApiResponse<FullSyncResult>(res)
-        if (!json.success) throw new Error(json.error || 'Sync failed')
-        setFullResult(json.data ?? null)
-        const raised = json.data?.conflicts ?? []
-        if (raised.length > 0) {
-          setPending({
-            at: json.data?.syncedAt ?? new Date().toISOString(),
-            quotationNo: json.data?.quotationNo ?? null,
-            revision: json.data?.revision ?? null,
-            items: raised,
-          })
-          setDecisions({})
-        }
-        if (json.data?.unchanged) toast.info(json.message || 'Already up to date')
-        else if (raised.length > 0) toast.warning(json.message || `${raised.length} edited field(s) need a decision`)
-        else toast.success(json.message || 'Booking updated from AppleSystem')
-      } else if (confirmType === 'itinerary') {
-        const json = await readApiResponse<ItinRefetchResult>(res)
-        if (!json.success) throw new Error(json.error || 'Refetch failed')
-        setItinResult(json.data ?? null)
-        toast.success(json.message || 'Itinerary refetched')
-      } else {
-        const json = await readApiResponse<AccRefetchResult>(res)
-        if (!json.success) throw new Error(json.error || 'Refetch failed')
-        setAccResult(json.data ?? null)
-        toast.success(json.message || 'Accommodations refetched')
+      const res = await fetch(syncUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selection: {
+            fields: ticked('f:'),
+            conflicts: ticked('c:'),
+            sections: ticked('s:'),
+            keptConflicts,
+            fingerprint: preview.fingerprint,
+          },
+        }),
+      })
+      const json = await readApiResponse<FullSyncResult>(res)
+      if (res.status === 409 && json.data?.preview) {
+        // AppleSystem or the booking moved since the preview — re-review.
+        setPreview(json.data)
+        setPicks(defaultPicks(confirmType, json.data))
+        toast.warning(json.error || 'AppleSystem changed — please review again')
+        return
       }
+      if (!json.success || !json.data) throw new Error(json.error || 'Update failed')
+      setFullResult(json.data)
+      const raised = json.data.conflicts
+      setPending(
+        raised.length > 0
+          ? {
+              at: json.data.syncedAt,
+              quotationNo: json.data.quotationNo,
+              revision: json.data.revision,
+              items: raised,
+            }
+          : null,
+      )
+      setDecisions({})
+      if (json.data.unchanged) toast.info(json.message || 'Nothing was changed')
+      else toast.success(json.message || 'Booking updated from AppleSystem')
       onRefetched?.()
       void loadLastSync()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Refetch failed')
-      setConfirmType(null)
+      toast.error(err instanceof Error ? err.message : 'Update failed')
     } finally {
       setRefetching(false)
     }
@@ -339,18 +395,20 @@ export default function AppleSystemActions({
 
   function closeConfirm() {
     setConfirmType(null)
-    setItinResult(null)
-    setAccResult(null)
+    setPreview(null)
+    setPreviewError(null)
+    setPicks({})
     setFullResult(null)
   }
 
   if (!canRefetch && !canViewRaw) return null
 
-  const result =
-    confirmType === 'full' ? fullResult
-    : confirmType === 'itinerary' ? itinResult
-    : confirmType === 'accommodations' ? accResult
-    : null
+  const scopeLabel =
+    confirmType === 'itinerary' ? 'itinerary'
+    : confirmType === 'accommodations' ? 'hotels'
+    : 'booking'
+  const visibleKeys = confirmType && preview ? reviewKeys(confirmType, preview) : []
+  const pickedCount = visibleKeys.filter((k) => picks[k]).length
 
   return (
     <>
@@ -410,7 +468,7 @@ export default function AppleSystemActions({
         <div className="space-y-2">
           <p className="text-sm text-slate-600 mb-3">
             Choose what to re-pull for <span className="font-mono font-semibold">{isNumber || bookingRef}</span>.
-            This overwrites the selected data with what AppleSystem currently has.
+            You will see every change first and choose which ones to apply.
           </p>
           {FETCH_OPTIONS.map(({ type, label, description, icon: Icon }) => (
             <button
@@ -439,132 +497,64 @@ export default function AppleSystemActions({
         </div>
       </Modal>
 
-      {/* ── Refetch: confirm, then show what changed ───────────────────────── */}
+      {/* ── Review: preview every change, tick which to apply ──────────────── */}
       <Modal
         open={confirmType !== null}
         onClose={closeConfirm}
         title={
-          confirmType === 'full'
-            ? (fullResult ? 'Booking Synced from AppleSystem' : 'Sync the whole booking from AppleSystem?')
-            : result
-              ? `${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} Refetched`
-              : `Refetch ${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} from AppleSystem?`
+          fullResult
+            ? 'Booking Updated from AppleSystem'
+            : `Review ${scopeLabel} changes from AppleSystem`
         }
-        size={result ? '4xl' : 'lg'}
+        size="4xl"
         footer={
-          result ? (
+          fullResult ? (
             <>
-              {confirmType === 'full' && (fullResult?.conflicts.length ?? 0) > 0 && (
+              {fullResult.conflicts.length > 0 && (
                 <Button
                   variant="secondary"
                   onClick={() => { closeConfirm(); openConflicts() }}
                   icon={<AlertTriangle className="w-3.5 h-3.5" />}
                 >
-                  Resolve {fullResult!.conflicts.length} edited field{fullResult!.conflicts.length === 1 ? '' : 's'}
+                  Resolve {fullResult.conflicts.length} edited field{fullResult.conflicts.length === 1 ? '' : 's'}
                 </Button>
               )}
               <Button onClick={closeConfirm}>Done</Button>
             </>
           ) : (
             <>
-              <Button variant="secondary" onClick={closeConfirm} disabled={refetching}>Cancel</Button>
-              <Button loading={refetching} onClick={doRefetch}>
-                {confirmType === 'full' ? 'Fetch & Update' : 'Refetch & Replace'}
+              <Button variant="secondary" onClick={closeConfirm} disabled={refetching}>
+                {visibleKeys.length ? 'Cancel — change nothing' : 'Close'}
               </Button>
+              {visibleKeys.length > 0 && (
+                <Button loading={refetching} disabled={pickedCount === 0 || previewing} onClick={applySelected}>
+                  Accept {pickedCount} of {visibleKeys.length} change{visibleKeys.length === 1 ? '' : 's'}
+                </Button>
+              )}
             </>
           )
         }
       >
-        {!result && confirmType === 'full' ? (
-          <div className="space-y-3 text-sm text-slate-700">
-            <p>
-              This re-pulls <span className="font-mono font-semibold">{isNumber || bookingRef}</span> from
-              AppleSystem and updates <strong>this booking&apos;s details</strong> to match what
-              AppleSystem currently holds.
-            </p>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Updated</p>
-              <ul className="list-disc pl-5 space-y-0.5 text-slate-600">
-                <li>Arrival &amp; departure dates, pax counts</li>
-                <li>Agent, file handler, CNTL / IS number</li>
-                <li>Quoted total &amp; currency</li>
-                <li>Terms, inclusions, exclusions, value-added services</li>
-                <li>Itinerary and hotels (replaced with the current ones)</li>
-                <li>Guest &amp; emergency contact — only if none are recorded yet</li>
-              </ul>
-            </div>
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
-              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                <ShieldCheck className="w-3.5 h-3.5" /> Never touched
-              </p>
-              <ul className="list-disc pl-5 space-y-0.5 text-emerald-900">
-                <li>Booking status and the operation checklist</li>
-                <li>Tickets, driver allocation, agenda and P&amp;L</li>
-                <li>Client verification, QC passes and confirmations</li>
-                <li>Anything AppleSystem sends blank keeps its current value</li>
-              </ul>
-            </div>
-            <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900">
-              Manual edits to the itinerary and hotel rows are overwritten, and the agenda is not
-              regenerated automatically — open the Agenda page afterwards if the dates moved.
-            </p>
-          </div>
-        ) : !result ? (
-          <div className="space-y-3 text-sm text-slate-700">
-            <p>
-              This re-pulls <span className="font-mono font-semibold">{isNumber || bookingRef}</span> from
-              AppleSystem and{' '}
-              <strong>replaces the stored {confirmType === 'itinerary' ? 'itinerary' : 'accommodations'}</strong>{' '}
-              with the current one.
-            </p>
-            <ul className="list-disc pl-5 space-y-1 text-slate-600">
-              {confirmType === 'itinerary' ? (
-                <>
-                  <li>Every existing itinerary day is deleted and rewritten.</li>
-                  <li>Any manual edits to the itinerary will be lost.</li>
-                  <li>Dates, pax, pricing and accommodations are <strong>not</strong> touched.</li>
-                </>
-              ) : (
-                <>
-                  <li>Every existing hotel row is deleted and rewritten.</li>
-                  <li>Any manual edits to accommodations will be lost.</li>
-                  <li>Dates, pax, pricing and itinerary are <strong>not</strong> touched.</li>
-                </>
-              )}
-            </ul>
-            {confirmType === 'itinerary' && (
-              <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900">
-                The existing agenda is not regenerated automatically — open the Agenda page and
-                regenerate it after this finishes.
-              </p>
-            )}
-          </div>
-        ) : confirmType === 'full' && fullResult ? (
+        {fullResult ? (
           <FullSyncSummary result={fullResult} onResolve={() => { closeConfirm(); openConflicts() }} />
-        ) : confirmType === 'itinerary' && itinResult ? (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-700">
-              Quotation <span className="font-mono">{itinResult.quotationNo}</span> —{' '}
-              <strong>{itinResult.previousCount}</strong> item(s) replaced with{' '}
-              <strong>{itinResult.newCount}</strong>. Regenerate the agenda to apply it.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <ItinColumn label={`Before (${itinResult.previousCount})`} items={itinResult.previous} muted />
-              <ItinColumn label={`After (${itinResult.newCount})`} items={itinResult.itineraryItems} />
-            </div>
+        ) : previewing ? (
+          <p className="py-10 text-center text-sm text-slate-500">
+            <RefreshCw className="mr-2 inline w-4 h-4 animate-spin" />
+            Checking <span className="font-mono">{isNumber || bookingRef}</span> against AppleSystem…
+          </p>
+        ) : previewError ? (
+          <div className="space-y-3">
+            <p className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{previewError}</p>
+            <Button variant="secondary" onClick={() => confirmType && loadPreview(confirmType)}>Try again</Button>
           </div>
-        ) : confirmType === 'accommodations' && accResult ? (
-          <div className="space-y-4">
-            <p className="text-sm text-slate-700">
-              Quotation <span className="font-mono">{accResult.quotationNo}</span> —{' '}
-              <strong>{accResult.previousCount}</strong> item(s) replaced with{' '}
-              <strong>{accResult.newCount}</strong>.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              <AccColumn label={`Before (${accResult.previousCount})`} items={accResult.previous} muted />
-              <AccColumn label={`After (${accResult.newCount})`} items={accResult.accommodations} />
-            </div>
-          </div>
+        ) : preview && confirmType ? (
+          <ChangeReview
+            type={confirmType}
+            preview={preview}
+            picks={picks}
+            onToggle={(k) => setPicks((p) => ({ ...p, [k]: !p[k] }))}
+            onAll={(on) => setPicks(Object.fromEntries(visibleKeys.map((k) => [k, on])))}
+          />
         ) : null}
       </Modal>
 
@@ -769,6 +759,9 @@ function FullSyncSummary({ result, onResolve }: { result: FullSyncResult; onReso
         {result.unchanged
           ? 'this booking already matched AppleSystem. Nothing was changed.'
           : `${result.fields.length} field(s) updated.`}
+        {result.declined.length > 0 && (
+          <span className="text-slate-500"> {result.declined.length} change(s) you did not accept were left as they were.</span>
+        )}
       </p>
 
       {result.conflicts.length > 0 && (
@@ -843,6 +836,193 @@ function FullSyncSummary({ result, onResolve }: { result: FullSyncResult; onReso
       <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900">
         Booking status, the operation checklist, tickets, driver allocation, agenda, P&amp;L and all
         confirmations were left untouched by this sync.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * The dry-run preview with a checkbox per change. Plain fields come first as a
+ * table, then hand-edited fields (unticked by default), then the collections
+ * that would be replaced or seeded, each expandable to its before/after rows.
+ */
+function ChangeReview({
+  type,
+  preview,
+  picks,
+  onToggle,
+  onAll,
+}: {
+  type: FetchType
+  preview: FullSyncResult
+  picks: Picks
+  onToggle: (key: string) => void
+  onAll: (on: boolean) => void
+}) {
+  const fields = type === 'full' ? preview.fields : []
+  const conflicts = type === 'full' ? preview.conflicts : []
+  const changing = preview.sections.filter((s) => !s.skipped && inScope(type, `s:${s.section}`))
+  const unchanged = preview.sections.filter((s) => s.skipped && inScope(type, `s:${s.section}`))
+  const total = fields.length + conflicts.length + changing.length
+
+  const box = (key: string) => (
+    <input
+      type="checkbox"
+      checked={!!picks[key]}
+      onChange={() => onToggle(key)}
+      className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+    />
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-slate-700">
+          Quotation <span className="font-mono">{preview.quotationNo || '—'}</span>
+          {preview.revision != null && <span className="text-slate-500"> · rev {preview.revision}</span>}
+          {' — '}
+          {total === 0
+            ? 'this already matches AppleSystem. There is nothing to update.'
+            : <><strong>{total}</strong> change{total === 1 ? '' : 's'} found. <strong>Nothing has been saved yet</strong> — tick the ones to accept.</>}
+        </p>
+        {total > 1 && (
+          <div className="flex gap-1.5 text-[11px]">
+            <button onClick={() => onAll(true)} className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:bg-slate-50">Select all</button>
+            <button onClick={() => onAll(false)} className="rounded border border-slate-200 px-2 py-0.5 text-slate-600 hover:bg-slate-50">Select none</button>
+          </div>
+        )}
+      </div>
+
+      {fields.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="w-8 px-3 py-2" />
+                <th className="px-3 py-2 font-semibold">Field</th>
+                <th className="px-3 py-2 font-semibold">Current</th>
+                <th className="px-3 py-2 font-semibold">AppleSystem</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {fields.map((f) => {
+                const key = `f:${f.field}`
+                const on = !!picks[key]
+                return (
+                  <tr
+                    key={f.field}
+                    onClick={() => onToggle(key)}
+                    className={cn('cursor-pointer align-top', on ? 'bg-emerald-50/40' : 'opacity-60 hover:opacity-100')}
+                  >
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>{box(key)}</td>
+                    <td className="px-3 py-2 font-semibold text-slate-800">{FIELD_LABELS[f.field] ?? f.field}</td>
+                    <td className="max-w-[18rem] px-3 py-2 text-slate-500">
+                      <span className={cn('line-clamp-3 whitespace-pre-wrap', on && 'line-through decoration-red-300')}>
+                        {f.from ?? <em className="text-slate-400">empty</em>}
+                      </span>
+                    </td>
+                    <td className="max-w-[18rem] px-3 py-2 font-medium text-emerald-700">
+                      <span className="line-clamp-3 whitespace-pre-wrap">{f.to ?? <em className="text-slate-400">empty</em>}</span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {conflicts.length > 0 && (
+        <div className="space-y-2">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Edited here by hand — left unticked so your edit is kept unless you choose otherwise
+          </p>
+          {conflicts.map((c) => {
+            const key = `c:${c.field}`
+            return (
+              <label key={c.field} className={cn('flex cursor-pointer gap-3 rounded-lg border px-3 py-2', picks[key] ? 'border-emerald-300 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40')}>
+                {box(key)}
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-center justify-between gap-2 text-xs font-semibold text-slate-800">
+                    Replace {FIELD_LABELS[c.field] ?? c.field} with AppleSystem&apos;s version
+                    <span className="flex items-center gap-1 text-[11px] font-normal text-slate-500">
+                      <PenLine className="w-3 h-3" /> edited by {c.editedBy} · {fmtDateTime(c.editedAt)}
+                    </span>
+                  </p>
+                  <div className="mt-1.5 grid gap-2 md:grid-cols-2">
+                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600">
+                      <span className="block text-[10px] font-semibold uppercase text-slate-400">Current (edited here)</span>
+                      {c.stored ?? <em className="text-slate-400">empty</em>}
+                    </p>
+                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] text-emerald-800">
+                      <span className="block text-[10px] font-semibold uppercase text-slate-400">AppleSystem</span>
+                      {c.incoming}
+                    </p>
+                  </div>
+                </div>
+              </label>
+            )
+          })}
+        </div>
+      )}
+
+      {changing.map((sec) => {
+        const key = `s:${sec.section}`
+        const verb = sec.section === 'itinerary' || sec.section === 'accommodations' ? 'Replace' : 'Add'
+        return (
+          <div key={sec.section} className={cn('rounded-lg border', picks[key] ? 'border-emerald-300' : 'border-slate-200')}>
+            <label className={cn('flex cursor-pointer items-start gap-3 px-3 py-2', picks[key] ? 'bg-emerald-50/60' : 'bg-slate-50')}>
+              {box(key)}
+              <span className="flex-1 text-xs">
+                <span className="flex items-center gap-1.5 font-semibold text-slate-800">
+                  {sec.section === 'itinerary' ? <Map className="w-3.5 h-3.5" />
+                    : sec.section === 'accommodations' ? <Hotel className="w-3.5 h-3.5" />
+                    : <Users className="w-3.5 h-3.5" />}
+                  {verb} {SECTION_LABELS[sec.section].toLowerCase()}
+                  <span className="font-normal text-slate-500">
+                    {verb === 'Replace' ? `${sec.previousCount} → ${sec.newCount} rows` : `${sec.newCount} from AppleSystem`}
+                  </span>
+                </span>
+                {verb === 'Replace' && (
+                  <span className="mt-0.5 block text-[11px] text-slate-500">
+                    Manual edits to these rows are replaced; hotel address/contact and itinerary inclusions are carried across.
+                  </span>
+                )}
+              </span>
+            </label>
+            {sec.section === 'itinerary' && preview.itinerary && (
+              <div className="grid gap-4 border-t border-slate-100 p-3 md:grid-cols-2">
+                <ItinColumn label={`Current (${preview.itinerary.previous.length})`} items={preview.itinerary.previous} muted />
+                <ItinColumn label={`AppleSystem (${preview.itinerary.next.length})`} items={preview.itinerary.next} />
+              </div>
+            )}
+            {sec.section === 'accommodations' && preview.accommodations && (
+              <div className="grid gap-4 border-t border-slate-100 p-3 md:grid-cols-2">
+                <AccColumn label={`Current (${preview.accommodations.previous.length})`} items={preview.accommodations.previous} muted />
+                <AccColumn label={`AppleSystem (${preview.accommodations.next.length})`} items={preview.accommodations.next} />
+              </div>
+            )}
+            {(sec.section === 'passengers' || sec.section === 'emergencyContacts') && preview.seed && (
+              <p className="border-t border-slate-100 px-3 py-2 text-[11px] text-slate-600">
+                {preview.seed[sec.section].join(', ') || '—'}
+              </p>
+            )}
+          </div>
+        )
+      })}
+
+      {unchanged.length > 0 && (
+        <p className="text-[11px] text-slate-500">
+          No change: {unchanged.map((s) => `${SECTION_LABELS[s.section]} (${s.skipped})`).join(' · ')}
+        </p>
+      )}
+
+      <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900">
+        <ShieldCheck className="mr-1 inline w-3.5 h-3.5" />
+        Unticked changes are left exactly as they are. Booking status, the operation checklist, tickets,
+        drivers, agenda, P&amp;L and confirmations are never touched. The agenda is not regenerated —
+        open the Agenda page afterwards if the itinerary or dates changed.
       </p>
     </div>
   )

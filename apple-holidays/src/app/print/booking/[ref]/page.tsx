@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import Image from 'next/image'
 import { formatDate, formatCurrency, computePNLTotals } from '@/lib/utils'
+import { PACKAGE_NOTE_SECTIONS, filledPackageNotes, type PackageNoteKey } from '@/lib/booking-package-notes'
 
 // ── Ticket types & colours (mirrors /print/tickets/[ref]/page.tsx)
 interface PrintTicket {
@@ -37,7 +38,7 @@ type SectionKey =
   | 'header' | 'bookingSummary' | 'agentNames' | 'quotedTotal'
   | 'customerNames' | 'accommodation' | 'itinerary' | 'tourAgenda'
   | 'payments' | 'pnlSummary' | 'profit' | 'drivers'
-  | 'tickets' | 'termsConditions' | 'exclusions'
+  | 'tickets' | PackageNoteKey
 
 const SECTION_DEFS: { key: SectionKey; label: string; desc: string }[] = [
   { key: 'header',         label: 'Header',               desc: 'Logo & booking reference' },
@@ -53,8 +54,7 @@ const SECTION_DEFS: { key: SectionKey; label: string; desc: string }[] = [
   { key: 'pnlSummary',     label: 'P&L Summary',           desc: 'Revenue & cost totals (staff only)' },
   { key: 'profit',         label: 'Profit & Margin',       desc: 'Net profit figures (staff only)' },
   { key: 'tickets',        label: 'Tickets & Vouchers',    desc: 'Each ticket on its own page' },
-  { key: 'termsConditions',label: 'Terms & Conditions',    desc: 'Booking T&Cs (shown at end)' },
-  { key: 'exclusions',     label: 'Exclusions',            desc: 'Not included items (shown at end)' },
+  ...PACKAGE_NOTE_SECTIONS.map(s => ({ key: s.key, label: s.label, desc: 'Package details & notes (shown at end)' })),
 ]
 
 type Sel = Record<SectionKey, boolean>
@@ -485,19 +485,12 @@ export default function PrintBookingPage() {
             </PrintSection>
           )}
 
-          {/* ── TERMS & CONDITIONS (at bottom) ── */}
-          {show('termsConditions') && booking.terms && (
-            <PrintSection title="Terms & Conditions">
-              <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{booking.terms}</p>
+          {/* ── PACKAGE DETAILS & NOTES (at bottom) — Value Added Services … Client Request ── */}
+          {filledPackageNotes(booking).filter(n => show(n.key)).map(n => (
+            <PrintSection key={n.key} title={n.label}>
+              <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{n.text}</p>
             </PrintSection>
-          )}
-
-          {/* ── EXCLUSIONS (at bottom) ── */}
-          {show('exclusions') && booking.exclusions && (
-            <PrintSection title="Exclusions">
-              <p className="text-xs text-slate-600 whitespace-pre-line leading-relaxed">{booking.exclusions}</p>
-            </PrintSection>
-          )}
+          ))}
 
           {/* Footer */}
           <div className="mt-10 pt-4 border-t border-slate-200 flex justify-between text-[10px] text-slate-400">

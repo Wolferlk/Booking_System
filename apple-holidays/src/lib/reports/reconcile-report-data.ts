@@ -54,6 +54,7 @@ import { listByCreateDate, type ASBookingListItem } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { B2C_AGENT_NAME } from '@/lib/booking-source'
 import { fetchOrdersBookedBetween, isB2cConfigured } from '@/lib/b2c-db'
+import { fetchOrderChainFacts } from '@/lib/b2c-order-chain'
 import {
   emptyByOrigin, fetchAccountsCoverage, fetchAccountsOutput, fetchB2cCoverage,
   ORIGIN_LABEL, ORIGINS, type AccountsOutput, type Origin,
@@ -196,6 +197,12 @@ export interface B2cSection {
   notImportable: number[]
   /** Of those, the ones that are pure Aahaas flight sales. */
   flightOnly: number[]
+  /**
+   * Store orders that are a new VERSION of an earlier booking (order versions).
+   * Not a new order of the day: the booking is counted on the day it was sold,
+   * held in OPS under its original order id. Listed, never counted.
+   */
+  amended?: number[]
   withPnl: number
   withInvoice: number
   missingPnl: number[]
@@ -424,34 +431,47 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
   if (!isB2cConfigured()) return blank('the B2C database connection is not configured')
 
   try {
-    const orders = await fetchOrdersBookedBetween({ from: window.fromDate, to: window.toDate })
+    const allOrders = await fetchOrdersBookedBetween({ from: window.fromDate, to: window.toDate })
+
+    // Order versions: an amendment is a new store order on an earlier booking,
+    // not a sale of this day (same rule as the Accounts mails). The booking is
+    // filed in OPS — and its P&L in Accounts — under the ORIGINAL order id.
+    const facts = await fetchOrderChainFacts(allOrders.map(o => Number(o.order_id)))
+    const amended = allOrders.map(o => Number(o.order_id)).filter(id => facts.get(id)?.isAmendment)
+    const orders = allOrders.filter(o => !facts.get(Number(o.order_id))?.isAmendment)
     const ids = orders.map(o => Number(o.order_id)).filter(n => Number.isInteger(n) && n > 0)
+    const chainOf = (id: number) => facts.get(id)?.chainId ?? id
+    const successorOf = (id: number) => facts.get(id)?.supersededBy ?? null
+    const lookIds = Array.from(new Set([...ids, ...ids.map(chainOf), ...ids.map(successorOf).filter((n): n is number => n !== null)]))
 
     // OPS files a B2C order under the bare order id — see b2c-booking-map.
     const [opsRows, opsCreated, coverage] = await Promise.all([
       ids.length
         ? prisma.booking.findMany({
-            where: { agent: B2C_AGENT_NAME, bookingRef: { in: ids.map(String) } },
+            where: { agent: B2C_AGENT_NAME, bookingRef: { in: lookIds.map(String) } },
             select: { bookingRef: true },
           })
         : Promise.resolve([] as { bookingRef: string }[]),
       prisma.booking.count({
         where: { agent: B2C_AGENT_NAME, createdAt: { gte: window.start, lt: window.end } },
       }),
-      fetchB2cCoverage(ids),
+      fetchB2cCoverage(lookIds),
     ])
 
-    const inOps = new Set(opsRows.map(b => Number(b.bookingRef)))
+    const held = new Set(opsRows.map(b => Number(b.bookingRef)))
+    const inOps = new Set(ids.filter(id => held.has(id) || held.has(chainOf(id))))
 
     const lines: B2cOrderReconLine[] = orders.map(o => {
       const id = Number(o.order_id)
-      const hasPnl = coverage.withPnl.has(id)
-      const hasInvoice = coverage.withInvoice.has(id)
-      // The importer selects on `service_date`; an order with none on any line
-      // is invisible to it however the day goes, so its OPS column is "not
-      // applicable" rather than "missing". Aahaas flight sales are the whole of
-      // this population in practice — the storefront stores a flight's travel
-      // date inside the itinerary blob, not in `service_date`.
+      const next = successorOf(id)
+      // The booking's P&L row is keyed on the chain; its latest invoice may be
+      // raised from the version that replaced this order.
+      const hasPnl = coverage.withPnl.has(chainOf(id)) || coverage.withPnl.has(id)
+      const hasInvoice = coverage.withInvoice.has(id) || (next !== null && coverage.withInvoice.has(next))
+      // The importer dates an order from `service_date`, or — for flights, which
+      // the storefront leaves undated — from the flight booking. An order with
+      // neither is invisible to it, so its OPS column is "not applicable"
+      // rather than "missing".
       const datedLines = Number(o.datedLines ?? 0)
       const flightLines = Number(o.flightLines ?? 0)
       const productLines = Number(o.productLines ?? 0)
@@ -463,7 +483,7 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
         hasPnl,
         hasInvoice,
         whole: hasPnl && hasInvoice,
-        importable: datedLines > 0,
+        importable: datedLines > 0 || flightLines > 0,
         flightOnly: flightLines > 0 && flightLines === productLines,
       }
     })
@@ -477,12 +497,13 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
       orders: ids.length,
       opsHeld: inOps.size,
       opsCreated,
-      // Only orders OPS could actually have filed. A flight order with no
-      // service date is listed under `notImportable` instead, where nobody
+      // Only orders OPS could actually have filed. An order with no travel
+      // date anywhere is listed under `notImportable` instead, where nobody
       // reads it as work outstanding.
       missingInOps: lines.filter(l => l.importable && !l.inOps).map(l => l.orderId),
       notImportable: lines.filter(l => !l.importable).map(l => l.orderId),
       flightOnly: lines.filter(l => l.flightOnly).map(l => l.orderId),
+      amended,
       withPnl,
       withInvoice,
       missingPnl: lines.filter(l => !l.hasPnl).map(l => l.orderId),

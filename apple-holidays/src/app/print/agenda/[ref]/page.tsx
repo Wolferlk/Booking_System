@@ -9,6 +9,7 @@ import { TicketStub, type StubTicket } from '@/components/tickets/ticket-stub'
 import { isPurchasedTicket, ticketFileKind } from '@/lib/ticket-notes'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { customerEmailForDisplay } from '@/lib/booking-source'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -342,6 +343,8 @@ export default function PrintAgendaPage() {
 
   const lead      = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
   const totalPax  = booking.paxAdults + booking.paxChildren + (booking.paxInfants ?? 0)
+  // A B2C booking can still hold the desk's own inbox — never print it as the customer's.
+  const customerEmail = customerEmailForDisplay(booking.agent, booking.contactEmail)
 
   // Check if any notes/terms sections have content
   const hasNotes = !!(
@@ -427,7 +430,7 @@ export default function PrintAgendaPage() {
       {/* ══════════════════════════════════════════════════════
           CONTACT INFO
       ══════════════════════════════════════════════════════ */}
-      {(booking.contactPhone || booking.contactWhatsapp || booking.contactEmail) && (
+      {(booking.contactPhone || booking.contactWhatsapp || customerEmail) && (
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
           marginBottom: 14, border: '1px solid #e2e8f0', borderRadius: 6, padding: '8px 10px',
@@ -444,10 +447,10 @@ export default function PrintAgendaPage() {
               <p style={{ fontSize: 9, color: '#0f172a', marginTop: 1 }}>{booking.contactWhatsapp as string}</p>
             </div>
           )}
-          {booking.contactEmail && (
+          {customerEmail && (
             <div>
               <p style={{ fontSize: 7.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Customer Email</p>
-              <p style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>{booking.contactEmail as string}</p>
+              <p style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>{customerEmail}</p>
             </div>
           )}
         </div>

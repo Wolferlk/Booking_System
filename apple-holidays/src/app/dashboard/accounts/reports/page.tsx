@@ -616,6 +616,38 @@ export default function OperationsBoardPage() {
     toast.success(`Exported ${visible.length} tours`)
   }
 
+  const [exporting, setExporting] = useState(false)
+
+  /** The styled multi-tab workbook — Overview, All Files, Action List and the rest. */
+  async function exportExcel() {
+    if (!board || !board.rows.length) { toast.error('Nothing to export'); return }
+    setExporting(true)
+    try {
+      const filters = [
+        SEGMENTS.find(x => x.key === segment)?.label ?? segment,
+        channel !== 'ALL' ? channel : null,
+        checkFilter !== 'ALL' ? `${CHECK_FILTERS.find(x => x.key === checkFilter)?.label ?? checkFilter} check` : null,
+        statusFilter !== 'ALL' ? statusOptions.find(x => x.value === statusFilter)?.label ?? statusFilter : null,
+        countryRowFilter !== 'ALL' ? countryOptions.find(x => x.value === countryRowFilter)?.label ?? countryRowFilter : null,
+        onlyOutstanding ? 'outstanding only' : null,
+        cancelOnly ? 'awaiting cancellation' : null,
+        facets.size ? `${facets.size} reconfirmation chip${facets.size === 1 ? '' : 's'}` : null,
+        search.trim() ? `search “${search.trim()}”` : null,
+      ].filter(Boolean).join(' · ')
+      const { downloadOpsBoardWorkbook } = await import('@/lib/reports/ops-board-workbook')
+      await downloadOpsBoardWorkbook(
+        { board, view: visible, viewLabel: filters, today },
+        `ops-board-${from}${from === to ? '' : `_to_${to}`}.xlsx`,
+      )
+      toast.success(`Exported ${board.rows.length} files to Excel`)
+    } catch (err) {
+      console.error('[ops-board] excel export failed', err)
+      toast.error('Excel export failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const fade = reduce
     ? {}
     : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 } }
@@ -636,9 +668,13 @@ export default function OperationsBoardPage() {
               <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
               <span className="hidden sm:inline">Refresh</span>
             </button>
-            <button onClick={exportCSV} className="btn btn-primary btn-sm">
+            <button onClick={exportCSV} className="btn btn-secondary btn-sm" title="Flat CSV of the rows on screen">
               <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">Export</span>
+              <span className="hidden sm:inline">CSV</span>
+            </button>
+            <button onClick={exportExcel} className="btn btn-primary btn-sm" disabled={exporting || loading} title="Styled workbook: overview, all files, action list, reconfirmation, cancellations, breakdowns">
+              {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              <span className="hidden sm:inline">Excel</span>
             </button>
           </div>
         }

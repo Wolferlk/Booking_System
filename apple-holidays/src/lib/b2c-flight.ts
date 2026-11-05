@@ -6,9 +6,11 @@
  * lives in this table's two JSON blobs:
  *
  *   `requested_data`  what the customer searched and who is travelling
- *                     · searchData.routes[].fromCode / .toCode
+ *                     · searchData.routes[].fromCode / .toCode / .date
  *                     · summary.passengerCounts.{adults,children,infants}
- *                     · passengers.adults[].firstName / .lastName
+ *                     · passengers.adults[].firstName / .lastName (or allPassengers[])
+ *                     · contactInformation.email / .formattedPhoneNumber — where
+ *                       the e-ticket is sent, i.e. the real guest contact
  *   `response_data`   what Sabre confirmed
  *                     · data.fetchPnr.journeys[].firstAirportCode / .lastAirportCode
  *                     · data.fetchPnr.flights[].{fromAirportCode,toAirportCode,departureDate}
@@ -38,6 +40,13 @@ export interface ParsedFlightBooking {
   /** Earliest departure / latest arrival date across confirmed flights ('YYYY-MM-DD'). */
   firstDepartureDate: string | null
   lastArrivalDate: string | null
+  /** Departure date of each searched leg ('YYYY-MM-DD'), from `searchData.routes[].date`. */
+  routeDates: string[]
+  /** Every passenger on the ticket, "Title First Last", in booking order. */
+  passengerNames: string[]
+  /** The contact the e-ticket went to — the guest, even on the shared admin6611 login. */
+  contactEmail: string | null
+  contactPhone: string | null
 }
 
 /** Safe nested read: `pick(obj, 'a', 'b', 0, 'c')`. Returns undefined on any miss. */
@@ -102,14 +111,18 @@ export function parseFlightBooking(row: {
 
   // ── Route ───────────────────────────────────────────────────────────────────
   const route: { from: string; to: string }[] = []
+  const routeDates: string[] = []
   const routes = pick(req, 'searchData', 'routes')
   if (Array.isArray(routes)) {
     for (const r of routes) {
       const from = asIata(pick(r, 'fromCode'))
       const to = asIata(pick(r, 'toCode'))
       if (from && to) route.push({ from, to })
+      const date = asDate(pick(r, 'date')) ?? asDate(pick(r, 'departureDate'))
+      if (date) routeDates.push(date)
     }
   }
+  routeDates.sort()
   // Fall back to the confirmed journeys when the search block is absent.
   if (route.length === 0) {
     const journeys = pick(res, 'data', 'fetchPnr', 'journeys')
@@ -145,13 +158,30 @@ export function parseFlightBooking(row: {
     if (Array.isArray(children)) paxChildren = children.length
   }
 
-  // ── Lead passenger ──────────────────────────────────────────────────────────
-  let leadPassengerName: string | null = null
-  const firstAdult = pick(req, 'passengers', 'adults', 0)
-  const first = typeof pick(firstAdult, 'firstName') === 'string' ? String(pick(firstAdult, 'firstName')) : ''
-  const last = typeof pick(firstAdult, 'lastName') === 'string' ? String(pick(firstAdult, 'lastName')) : ''
-  const joined = `${first} ${last}`.replace(/\s+/g, ' ').trim()
-  if (joined) leadPassengerName = joined
+  // ── Passengers ──────────────────────────────────────────────────────────────
+  const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '')
+  const nameOf = (p: unknown, withTitle: boolean) =>
+    [withTitle ? text(pick(p, 'title')) : '', text(pick(p, 'firstName')), text(pick(p, 'lastName'))]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+
+  const listed = pick(req, 'allPassengers')
+  const people: unknown[] = Array.isArray(listed) && listed.length > 0
+    ? listed
+    : [pick(req, 'passengers', 'adults'), pick(req, 'passengers', 'children'), pick(req, 'passengers', 'infants')]
+        .flatMap((group) => (Array.isArray(group) ? group : []))
+  const passengerNames = people.map((p) => nameOf(p, true)).filter(Boolean)
+
+  // Lead passenger, without the title — it becomes a booking's lead name.
+  const leadPassengerName =
+    nameOf(pick(req, 'passengers', 'adults', 0), false) || (people[0] ? nameOf(people[0], false) : '') || null
+
+  // ── Contact (who the e-ticket was emailed to) ───────────────────────────────
+  const rawEmail = text(pick(req, 'contactInformation', 'email')).toLowerCase()
+  const contactEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail) ? rawEmail : null
+  const formatted = text(pick(req, 'contactInformation', 'formattedPhoneNumber'))
+  const dial = text(pick(req, 'contactInformation', 'dialCode'))
+  const number = text(pick(req, 'contactInformation', 'phoneNumber'))
+  const contactPhone = formatted || (number ? `${dial && !number.startsWith('+') ? `${dial.startsWith('+') ? dial : `+${dial}`} ` : ''}${number}` : '') || null
 
   // ── Dates from the confirmed flights ────────────────────────────────────────
   const depDates: string[] = []
@@ -181,7 +211,30 @@ export function parseFlightBooking(row: {
     leadPassengerName,
     firstDepartureDate: depDates[0] ?? null,
     lastArrivalDate: arrDates[arrDates.length - 1] ?? null,
+    routeDates,
+    passengerNames,
+    contactEmail,
+    contactPhone,
   }
+}
+
+/**
+ * When the flight travels: first departure → last arrival.
+ *
+ * Aahaas leaves `service_date` empty on flight lines, so this is the only travel
+ * date such an order has. The confirmed PNR wins over the search, because a
+ * reissue moves the PNR's dates while the original search stays as it was.
+ * Null when neither carries a date.
+ */
+export function flightDateSpan(parsed: ParsedFlightBooking): { first: string; last: string } | null {
+  if (parsed.firstDepartureDate) {
+    const last = parsed.lastArrivalDate ?? parsed.firstDepartureDate
+    return { first: parsed.firstDepartureDate, last: last < parsed.firstDepartureDate ? parsed.firstDepartureDate : last }
+  }
+  if (parsed.routeDates.length > 0) {
+    return { first: parsed.routeDates[0], last: parsed.routeDates[parsed.routeDates.length - 1] }
+  }
+  return null
 }
 
 /** Human-readable route, e.g. "CMB → NRT → CMB". Null when no route was parsed. */

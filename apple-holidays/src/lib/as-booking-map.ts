@@ -11,10 +11,13 @@
  * Field mapping is defined by the AppleSystem integration spec:
  *   bookingRef        ← pnl.quotation_info.is_number   (spaces stripped, upper-cased;
  *                       falls back to the list row's is_number when the template says "NA")
- *   cntlNumber        ← quotation_no
+ *   cntlNumber        ← reference_numbers.control ("499592CNTL"), else quotation_no + "CNTL"
  *   operationCountry  ← detected from the is_number prefix (VN/IS/SG/MY)
  *   agent             ← pnl.quotation_info.agent_name  (or relevant_parties.agent)
  *   agentBookingId    ← relevant_parties.agent_ref     (the operator's own ref)
+ *   agentId           ← relevant_parties.agent_id      (stored via as-booking-extras)
+ *   salesPerson       ← relevant_parties.sales_person  (stored via as-booking-extras)
+ *   dayRoutes         ← itinerary[].route              (stored via as-booking-extras)
  *   agentEmail        ← relevant_parties.agent_email
  *   fileHandler       ← confirmation_voucher.file_handler_name
  *   arrival/departure ← first / last itinerary date
@@ -192,6 +195,12 @@ export interface MappedBookingInput {
   isNumber: string
   cntlNumber: string | null
   agentBookingId: string | null
+  /** AppleSystem's party id for the agent. No column — see as-booking-extras. */
+  agentId: string | null
+  /** relevant_parties.sales_person. No column — see as-booking-extras. */
+  salesPerson: string | null
+  /** Each day's route line ("Hanoi -> Da Nang( City Center)"). No column — see as-booking-extras. */
+  dayRoutes: { dayNo: number; date: string; route: string }[]
   operationCountry: OperationCountry | null
   agent: string | null
   agentEmail: string | null
@@ -317,13 +326,23 @@ export function mapQuoteToBooking(
   //   agent       → tour operator name           ("Make My Trip")
   //   agent_ref   → the operator's OWN booking reference ("143") → agentBookingId
   //   agent_email → the operator's contact mailbox
-  //   agent_id    → AppleSystem's internal party id, not an agent-facing ref
-  // Only the name was being read before, which is why "Agent Ref. No." stayed
-  // empty on every imported file. `agent_id` is deliberately NOT used as the
-  // agent ref — it is an internal id and mirrors the guest id.
+  //   agent_id    → AppleSystem's party id for the agent → agentId (shown beside
+  //                 the ref, never used AS the ref)
+  //   sales_person → salesPerson
   const agentName = str(info.agent_name).trim() || str(parties.agent).trim()
   const agentRef = str(parties.agent_ref).trim()
   const agentEmail = str(parties.agent_email).trim()
+  const agentId = str(parties.agent_id).trim()
+  const salesPerson = str(parties.sales_person).trim()
+
+  // The CNTL number is AppleSystem's own `control` ("499592CNTL") — the same
+  // shape TC emails carry. Older payloads without it get the suffix added.
+  const quotationNo =
+    str(quote.quotation_no).trim() ||
+    str(get(quote, 'reference_numbers', 'quotation_no')).trim() ||
+    str(get(quote, 'reference_numbers', 'formatted')).trim()
+  const control = str(get(quote, 'reference_numbers', 'control')).trim()
+  const cntlNumber = usable(control) ? control : quotationNo ? `${quotationNo}CNTL` : null
 
   const quotedTotal =
     numOrNull(get(quote, 'pnl', 'cost', 'total')) ??
@@ -332,12 +351,13 @@ export function mapQuoteToBooking(
   return {
     bookingRef,
     isNumber: bookingRef,
-    cntlNumber:
-      str(quote.quotation_no).trim() ||
-      str(get(quote, 'reference_numbers', 'quotation_no')).trim() ||
-      str(get(quote, 'reference_numbers', 'formatted')).trim() ||
-      null,
+    cntlNumber,
     agentBookingId: usable(agentRef) ? agentRef : null,
+    agentId: usable(agentId) ? agentId : null,
+    salesPerson: usable(salesPerson) ? salesPerson : null,
+    dayRoutes: days
+      .filter((d) => d.route)
+      .map((d) => ({ dayNo: d.dayNo, date: d.date, route: d.route.slice(0, 500) })),
     operationCountry: detectCountryFromRef(bookingRef),
     agent: usable(agentName) ? agentName : null,
     agentEmail: usable(agentEmail) ? agentEmail : null,

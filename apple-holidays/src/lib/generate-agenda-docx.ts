@@ -26,6 +26,7 @@ import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
+import { customerEmailForDisplay } from '@/lib/booking-source'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -278,7 +279,8 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
   // ── CONTACT INFO ──────────────────────────────────────────────────────────
   const contactPhone    = (booking as any).contactPhone    as string | null
   const contactWhatsapp = (booking as any).contactWhatsapp as string | null
-  const contactEmail    = (booking as any).contactEmail    as string | null
+  // A B2C booking can still hold the desk's own inbox — never print it as the customer's.
+  const contactEmail    = customerEmailForDisplay((booking as any).agent, (booking as any).contactEmail)
   if (contactPhone || contactWhatsapp || contactEmail) {
     children.push(sectionHeading('📞', 'Contact Information'))
     if (contactPhone)    children.push(kv('Customer Phone', contactPhone))

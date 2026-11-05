@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { OperationCountry } from '@prisma/client'
+import { recordWebDriverSignup } from '@/lib/mobile/signup'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,6 +73,9 @@ export async function POST(req: NextRequest) {
         bankCode: bankCode?.trim() || null,
       },
     })
+
+    // Lists it under "Waiting for approval" on the Drivers page (best effort).
+    await recordWebDriverSignup(driver)
 
     return buildApiSuccess({ id: driver.id }, 'Registration submitted successfully')
   } catch (error) {

@@ -9,8 +9,9 @@
  *
  * `includeBooking` adds the booking sheet — guests, flights, hotels, the agenda
  * and the vouchers — as a second WhatsApp message, because WhatsApp carries one
- * document per message. It is the same PDF the operations email sends and it
- * prints no money, which is why it may go to a driver at all.
+ * document per message. It is the movement chart as `/print/agenda?drivers=true`
+ * prints it, with prices left off the vouchers, which is why it may go to a
+ * driver at all.
  *
  * `pack` is the version on screen, so unsaved corrections go out with the
  * documents rather than a stale saved copy. `phone` overrides the number on the

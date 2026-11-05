@@ -13,6 +13,7 @@ import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
 import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import { cohortBookingRefs } from '@/lib/reports/created-reconcile'
 import { testBookingWhere } from '@/lib/test-bookings'
+import { getVersionLinks, versionListContext } from '@/lib/b2c-version-links'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -159,6 +160,18 @@ export async function GET(req: NextRequest) {
     andClauses.push({ status: { not: 'CANCELLED' } })
   }
 
+  /**
+   * Aahaas B2C store versions (b2c-version-links). A booking replaced by a newer
+   * version is hidden from the list unless it is searched for — and searching
+   * any order of a chain brings back every booking of it, so "15726" shows the
+   * replaced booking AND the active 15833 beside it. `showReplaced=1` lists them all.
+   */
+  const versionCtx = await versionListContext(search || refSearch).catch(() => ({ supersededRefs: [] as string[], chainRefsForSearch: [] as string[] }))
+  const showReplaced = searchParams.get('showReplaced') === '1'
+  if (!search && !refSearch && !showReplaced && versionCtx.supersededRefs.length > 0) {
+    andClauses.push({ bookingRef: { notIn: versionCtx.supersededRefs } })
+  }
+
   if (search) {
     const refMatches = await refsMatchingSpaceInsensitive(search)
     andClauses.push({
@@ -170,6 +183,7 @@ export async function GET(req: NextRequest) {
         { agentBookingId: { contains: search } },
         { passengers: { some: { name: { contains: search } } } },
         ...(refMatches.length ? [{ bookingRef: { in: refMatches } }] : []),
+        ...(versionCtx.chainRefsForSearch.length ? [{ bookingRef: { in: versionCtx.chainRefsForSearch } }] : []),
       ],
     })
   }
@@ -218,6 +232,7 @@ export async function GET(req: NextRequest) {
         { isNumber:       { contains: refSearch } },
         { agentBookingId: { contains: refSearch } },
         ...(refMatches.length ? [{ bookingRef: { in: refMatches } }] : []),
+        ...(versionCtx.chainRefsForSearch.length ? [{ bookingRef: { in: versionCtx.chainRefsForSearch } }] : []),
       ],
     })
   }
@@ -436,13 +451,28 @@ export async function GET(req: NextRequest) {
     ),
   ])
 
-  const decorated = bookings.map(b => ({
+  const versionLinks = await getVersionLinks(bookings.map(b => b.bookingRef)).catch(() => new Map())
+
+  const decorated = bookings.map(b => {
+    const l = versionLinks.get(b.bookingRef)
+    return {
     ...b,
+    /** Aahaas B2C store version: replaced → points at the active booking. */
+    versionLink: l
+      ? {
+          state: l.state,
+          version: l.version,
+          total: l.versions.length,
+          activeRef: l.activeRef,
+          replacedRefs: l.versions.filter((v: { ref: string | null }) => v.ref && v.ref !== l.activeRef).map((v: { ref: string | null }) => v.ref),
+        }
+      : null,
     hasDetailedPnl: pnlAvailable
       ? pnlAvailable.has(normaliseRef(b.isNumber)) || pnlAvailable.has(normaliseRef(b.bookingRef))
       : null,
     invoicePayment: invoiceSummaries?.get(b.bookingRef) ?? null,
-  }))
+  }
+  })
 
   return buildApiSuccess({
     bookings: decorated,

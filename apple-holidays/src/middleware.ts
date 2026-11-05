@@ -33,8 +33,10 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
   '/dashboard/accounts/reports',  // Ops Board
   '/dashboard/mc-report',         // MC Report
+  '/dashboard/trans-reconsultation', // Trans-Reconsultation — the half-month transport sheet built from it
   '/dashboard/checklist-vn',      // Check List VN — costing sheets (also opened per booking)
   '/dashboard/driver-auto',       // Driver-Auto — open trips, driver requests, approvals
+  '/dashboard/agent-digest',      // Agent Daily Digest — daily agent WhatsApp/email with allocations
   '/dashboard/ground/drivers',    // Driver management
   '/dashboard/ground/vendors',    // Vehicle vendor management
   '/dashboard/ground/analytics',  // Partner performance (read-only analytics)
@@ -173,6 +175,7 @@ export const config = {
     //   filehandler — file handler portal uses its own signed cookie, not NextAuth
     //   uploads  — static file serving
     //   pnl-by-isnumber — intentionally public IS-number lookup
-    '/api/((?!auth|public|cron|webhooks|vendor|filehandler|uploads|pnl-by-isnumber|bookings/full).*)',
+    //   mobile   — Aahaas Driver App; its own bearer JWT (lib/mobile/auth.ts), checked per route
+    '/api/((?!auth|public|cron|webhooks|vendor|filehandler|uploads|pnl-by-isnumber|bookings/full|mobile/).*)',
   ],
 }

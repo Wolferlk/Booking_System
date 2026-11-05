@@ -113,6 +113,17 @@ interface Booking {
    * unpaid booking.
    */
   invoicePayment?: InvoicePaymentSummary | null
+  /**
+   * Aahaas B2C store versions (b2c-version-links). `superseded` = an older
+   * version replaced by `activeRef`; it only shows when searched for.
+   */
+  versionLink?: {
+    state: 'active' | 'superseded'
+    version: number
+    total: number
+    activeRef: string | null
+    replacedRefs: string[]
+  } | null
   guestFeedback: { submittedAt: string } | null
   tourAgenda: {
     id: string
@@ -1394,11 +1405,19 @@ function BookingsPageInner() {
                     // Cancelled bookings stay in this list only — shaded, struck through
                     // and red-marked so they read as dead at a glance.
                     const isCancelled = b.status === 'CANCELLED'
+                    // An older store version replaced by a newer booking: blurred
+                    // until hovered, and a click goes to the active booking.
+                    const replacedBy = b.versionLink?.state === 'superseded' ? b.versionLink.activeRef : null
+                    const isActiveVersion = b.versionLink?.state === 'active'
                     return (
                       <tr
                         key={b.id}
-                        className={`cursor-pointer transition-colors ${
-                          isCancelled
+                        className={`group/version cursor-pointer transition-all ${
+                          replacedBy
+                            ? 'bg-violet-50/40 text-slate-400 border-l-4 border-l-violet-400 [&>td]:opacity-60 [&>td]:blur-[1.5px] [&>td]:grayscale [&>td]:transition-all hover:[&>td]:opacity-90 hover:[&>td]:blur-0'
+                            : isActiveVersion
+                              ? 'border-l-4 border-l-emerald-500 bg-emerald-50/30 hover:bg-emerald-50/60'
+                              : isCancelled
                             ? 'bg-slate-100/80 text-slate-400 opacity-80 grayscale hover:grayscale-0 hover:bg-red-50/70 border-l-4 border-l-red-500'
                             : isSelected
                               ? 'bg-red-50/60 hover:bg-slate-50'
@@ -1410,6 +1429,7 @@ function BookingsPageInner() {
                                 : 'hover:bg-slate-50'
                         }`}
                         onClick={() => router.push(`/dashboard/bookings/${b.bookingRef}`)}
+                        title={replacedBy ? `Old version — replaced by updated booking ${replacedBy}` : undefined}
                       >
                         {/* Per-row checkbox */}
                         {canDelete && (
@@ -1434,6 +1454,23 @@ function BookingsPageInner() {
                             {b.bookingRef}
                           </Link>
                           <div className="flex flex-wrap gap-1 mt-1">
+                            {replacedBy && (
+                              <Link
+                                href={`/dashboard/bookings/${replacedBy}`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-violet-600 text-white hover:bg-violet-700"
+                                title={`Version ${b.versionLink!.version} — disabled. Open the active booking ${replacedBy}`}
+                              >
+                                V{b.versionLink!.version} · Replaced → {replacedBy}
+                              </Link>
+                            )}
+                            {isActiveVersion && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-emerald-600 text-white"
+                                title={b.versionLink!.replacedRefs.length ? `Updated booking — replaces ${b.versionLink!.replacedRefs.join(', ')}` : 'Updated booking'}
+                              >
+                                V{b.versionLink!.version} · Active{b.versionLink!.replacedRefs.length ? ` · was ${b.versionLink!.replacedRefs.join(', ')}` : ''}
+                              </span>
+                            )}
                             {isCancelled && (
                               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
                                 Cancelled

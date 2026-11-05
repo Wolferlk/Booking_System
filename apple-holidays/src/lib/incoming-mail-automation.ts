@@ -10,6 +10,7 @@ import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import { statusAfterAmendment } from '@/lib/state-machine'
+import { loadChildGuard, resyncFlights } from '@/lib/data-protection-server'
 import fs from 'fs'
 import path from 'path'
 
@@ -455,14 +456,23 @@ async function getAutomationUserId(): Promise<string> {
   throw new Error('No automation user found')
 }
 
-async function replaceBookingChildren(bookingId: string, extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>) {
-  await prisma.passenger.deleteMany({ where: { bookingId } })
-  await prisma.flight.deleteMany({ where: { bookingId } })
-  await prisma.accommodation.deleteMany({ where: { bookingId } })
+// Flights, and any section a person has locked, go through data protection
+// (lib/data-protection.ts) instead of being wiped — same as the OneDrive path.
+async function replaceBookingChildren(
+  bookingId: string,
+  extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
+  opts: { actorId?: string; bookingRef?: string } = {},
+) {
+  const guard = await loadChildGuard(bookingId)
+  const keepPassengers = guard.isLocked('passengers')
+  const keepHotels     = guard.isLocked('accommodations')
+
+  if (!keepPassengers) await prisma.passenger.deleteMany({ where: { bookingId } })
+  if (!keepHotels)     await prisma.accommodation.deleteMany({ where: { bookingId } })
   await prisma.itineraryItem.deleteMany({ where: { bookingId } })
   await prisma.emergencyContact.deleteMany({ where: { bookingId } })
 
-  if (extracted.passengers.length > 0) {
+  if (!keepPassengers && extracted.passengers.length > 0) {
     await prisma.passenger.createMany({
       data: extracted.passengers.map(p => ({
         bookingId,
@@ -478,22 +488,22 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
     })
   }
 
-  if (extracted.flights.length > 0) {
-    await prisma.flight.createMany({
-      data: extracted.flights.map(f => ({
-        bookingId,
-        flightNo: f.flightNo,
-        date: new Date(f.date),
-        fromApt: f.fromApt,
-        depTime: f.depTime ?? '',
-        toApt: f.toApt,
-        arrTime: f.arrTime ?? '',
-        airline: f.airline ?? null,
-      })),
-    })
-  }
+  await resyncFlights(
+    bookingId,
+    extracted.flights.map(f => ({
+      flightNo: f.flightNo,
+      date: new Date(f.date),
+      fromApt: f.fromApt,
+      depTime: f.depTime ?? '',
+      toApt: f.toApt,
+      arrTime: f.arrTime ?? '',
+      airline: f.airline ?? null,
+      notes: null,
+    })),
+    { guard, source: 'mail', ...opts },
+  )
 
-  if (extracted.accommodations.length > 0) {
+  if (!keepHotels && extracted.accommodations.length > 0) {
     await prisma.accommodation.createMany({
       data: extracted.accommodations.map(a => ({
         bookingId,
@@ -779,7 +789,7 @@ async function syncTourConfirmation(
       },
     })
 
-  await replaceBookingChildren(booking.id, extracted)
+  await replaceBookingChildren(booking.id, extracted, { actorId: createdById, bookingRef })
 
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted)
 
@@ -926,7 +936,7 @@ async function syncPnL(
       },
     })
 
-    await replaceBookingChildren(created.id, extracted)
+    await replaceBookingChildren(created.id, extracted, { actorId: createdById, bookingRef })
     await logActivity({
       userId: createdById,
       action: ACTION.BOOKING_CREATED,

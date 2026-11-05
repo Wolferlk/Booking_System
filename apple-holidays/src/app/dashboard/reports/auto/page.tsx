@@ -23,7 +23,7 @@ import ScheduleEditor from './schedule-editor'
 import PreviewDrawer, { previewRequestFor, type PreviewRequest } from './preview-drawer'
 import SendDialog, { type SendRequest } from './send-dialog'
 import {
-  COUNTRY_OPTIONS, REPORT_TYPE_OPTIONS, sectionOptionsFor,
+  COUNTRY_OPTIONS, REPORT_TYPE_OPTIONS, SALES_TEAM_OPTIONS, sectionOptionsFor,
   type AutoReportPayload, type ReportType, type RunLog, type Schedule,
 } from './types'
 
@@ -63,9 +63,10 @@ const STATUS_META: Record<string, { cls: string; icon: typeof CheckCircle2; labe
 }
 
 /** What the shared run-log figures mean, per report type. */
-const FIGURE_LABELS: Record<'OPS' | 'RECONCILIATION', { created: string; onGround: string; complaints: string }> = {
+const FIGURE_LABELS: Record<ReportType, { created: string; onGround: string; complaints: string }> = {
   OPS: { created: 'created', onGround: 'on ground', complaints: 'complaints' },
   RECONCILIATION: { created: 'confirmed', onGround: 'B2C orders', complaints: 'findings' },
+  SALES: { created: 'bookings', onGround: 'quotes', complaints: 'calls' },
 }
 
 const PERIOD_TINT: Record<string, string> = {
@@ -159,6 +160,11 @@ function ScheduleCard({
                   Reconciliation
                 </span>
               )}
+              {s.reportType === 'SALES' && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border bg-indigo-50 text-indigo-700 border-indigo-200">
+                  Sales
+                </span>
+              )}
               {!s.enabled && <Chip>Paused</Chip>}
             </div>
             <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
@@ -227,8 +233,14 @@ function ScheduleCard({
           {s.reportType === 'RECONCILIATION'
             ? <Chip><Globe2 className="w-3 h-3" />All channels</Chip>
             : <Chip><Globe2 className="w-3 h-3" />{countryLabel}</Chip>}
+          {s.reportType === 'SALES' && (
+            <Chip tone="bg-indigo-50 text-indigo-700 border-indigo-200">
+              <Users className="w-3 h-3" />
+              {SALES_TEAM_OPTIONS.find(t => t.value === (s.salesTeam ?? ''))?.label ?? 'Whole company'}
+            </Chip>
+          )}
           {s.attachCsv && (
-            <Chip><FileSpreadsheet className="w-3 h-3" />{s.period === 'DAILY' ? 'CSV' : 'Excel workbook'}</Chip>
+            <Chip><FileSpreadsheet className="w-3 h-3" />{s.reportType === 'SALES' || s.period !== 'DAILY' ? 'Excel workbook' : 'CSV'}</Chip>
           )}
           {s.aiSummary && <Chip tone="bg-cyan-50 text-cyan-700 border-cyan-200"><Bot className="w-3 h-3" />AI summary</Chip>}
         </div>
@@ -571,7 +583,7 @@ export default function AutoReportsPage() {
                     // and count different things in each, so each cell says what
                     // it is rather than relying on a header that can only be
                     // right for one of them.
-                    const figures = FIGURE_LABELS[r.reportType === 'RECONCILIATION' ? 'RECONCILIATION' : 'OPS']
+                    const figures = FIGURE_LABELS[r.reportType] ?? FIGURE_LABELS.OPS
                     return (
                       <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                         <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{timeAgo(r.finishedAt)}</td>
@@ -579,6 +591,9 @@ export default function AutoReportsPage() {
                           {r.scheduleName}
                           {r.reportType === 'RECONCILIATION' && (
                             <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-600">recon</span>
+                          )}
+                          {r.reportType === 'SALES' && (
+                            <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-indigo-600">sales</span>
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-slate-500 capitalize">{r.trigger}</td>

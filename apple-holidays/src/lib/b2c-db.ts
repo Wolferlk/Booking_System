@@ -16,6 +16,7 @@
  * credentials are reused with the schema name overridden.
  */
 import mysql from 'mysql2/promise'
+import { flightDateSpan, parseFlightBooking } from './b2c-flight'
 
 /** Hard ceiling so a stalled SSL negotiation can never hang a request forever. */
 const CONN_TIMEOUT_MS = 15_000
@@ -25,9 +26,55 @@ const CONN_TIMEOUT_MS = 15_000
 export const TRAVEL_CATEGORY_IDS = [3, 4, 5, 6] as const
 
 /** Flights. Sold worldwide, and — unlike every other category — routinely stored
- *  with no `service_date` at all, which is what puts such an order beyond the
- *  importer's reach (see {@link fetchOrderHeaders}). */
+ *  with no `service_date` at all. Such orders take their travel dates from the
+ *  flight booking instead (see {@link fetchUndatedFlightHeaders}). */
 export const FLIGHT_CATEGORY_ID = 6
+
+/** How far back the full sweep looks, by booked date, for flight orders with no
+ *  `service_date`. Airlines sell about 11 months ahead, so a year covers every
+ *  ticket that can still be in the future. */
+const UNDATED_FLIGHT_LOOKBACK_DAYS = 370
+
+/**
+ * SAME-ORDER VERSIONS (`DevelopmemtsCludeMds/order-versions-same-order.md`): an
+ * amendment keeps the order id, and a line it took off stays in `tbl_checkouts`
+ * (`removed_in_version` set) and in `checkouts_more_data`. Read naively, a rebooked
+ * product counts twice and the old date stays in the trip's date range.
+ *
+ * Only the booking API's same-order lane sets that column, so filtering on it
+ * changes nothing for any other order, and a store without the column reads
+ * exactly as before.
+ */
+let lineVersionColumn: { at: number; present: boolean } | null = null
+
+async function hasLineVersionColumn(): Promise<boolean> {
+  const ttl = lineVersionColumn?.present ? 30 * 60_000 : 5 * 60_000
+  if (lineVersionColumn && Date.now() - lineVersionColumn.at < ttl) return lineVersionColumn.present
+  try {
+    const rows = await b2cQuery<mysql.RowDataPacket & { n: number }>(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tbl_checkouts' AND COLUMN_NAME = 'removed_in_version'`,
+    )
+    lineVersionColumn = { at: Date.now(), present: Number(rows[0]?.n ?? 0) > 0 }
+    return lineVersionColumn.present
+  } catch {
+    return false   // not cached: the query this guards will report the real failure
+  }
+}
+
+/** Keeps `checkouts_more_data` rows of lines still on the order. `alias` is a constant at every call. */
+async function liveLineClause(alias: string): Promise<string> {
+  if (!(await hasLineVersionColumn())) return ''
+  return `AND NOT EXISTS (SELECT 1 FROM tbl_checkouts rv WHERE rv.id = ${alias}.checkout_id AND rv.removed_in_version IS NOT NULL)`
+}
+
+/** Keeps flight bookings whose order line was not taken off by a version. */
+async function liveFlightClause(alias: string): Promise<string> {
+  if (!(await hasLineVersionColumn())) return ''
+  return `AND NOT EXISTS (SELECT 1 FROM tbl_checkouts rv
+                           WHERE rv.checkout_id = ${alias}.order_id AND rv.flight_id = ${alias}.id
+                             AND rv.removed_in_version IS NOT NULL)`
+}
 
 /** Statements this client is willing to send. Anything else is a bug, not a query. */
 const READ_ONLY_RE = /^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i
@@ -244,6 +291,10 @@ const CATEGORY_LIST = TRAVEL_CATEGORY_IDS.join(',')
  * `HAVING MIN(service_date) >= ?` is the "upcoming travels only" gate — an order
  * whose travel has already started is not something ops can still prepare for.
  *
+ * Flight orders usually have no `service_date` at all, so the dated query alone
+ * never sees them. They come from {@link fetchUndatedFlightHeaders}, which dates
+ * them from the flight booking, and pass through the same upcoming gate.
+ *
  * Pass `bookedFrom` to restrict to recently-placed orders (the nightly run); omit
  * it to sweep every upcoming order (backfill). It is a floor rather than an exact
  * day deliberately: the nightly job fires just after midnight and passes
@@ -259,23 +310,156 @@ export async function fetchOrderHeaders(opts: {
   const { upcomingFrom, bookedFrom = null, limit = 500 } = opts
   // LIMIT is inlined (not bound) because this server rejects `LIMIT ?`.
   const lim = Math.max(1, Math.min(Number(limit) || 500, 5000))
-  return b2cQuery<B2cOrderHeader>(
+  const liveLines = await liveLineClause('m')
+  const [dated, undated] = await Promise.all([
+    b2cQuery<B2cOrderHeader>(
+      `SELECT m.order_id                AS order_id,
+              MIN(m.service_date)       AS arrival,
+              MAX(m.service_date)       AS departure,
+              COUNT(*)                  AS productLines,
+              MIN(m.booked_date)        AS bookedDate
+         FROM checkouts_more_data m
+        WHERE m.order_id IS NOT NULL
+          AND m.service_date IS NOT NULL
+          AND m.category_id IN (${CATEGORY_LIST})
+          ${liveLines}
+          ${bookedFrom ? 'AND m.booked_date >= ?' : ''}
+        GROUP BY m.order_id
+       HAVING MIN(m.service_date) >= ?
+        ORDER BY arrival ASC
+        LIMIT ${lim}`,
+      bookedFrom ? [bookedFrom, upcomingFrom] : [upcomingFrom],
+    ),
+    fetchUndatedFlightHeaders({ bookedFrom: bookedFrom ?? shiftDate(upcomingFrom, -UNDATED_FLIGHT_LOOKBACK_DAYS) }),
+  ])
+
+  // An undated-flight header covers every line of its order, so it replaces the
+  // dated-only row for the same order.
+  const byOrder = new Map(dated.map((h) => [Number(h.order_id), h]))
+  for (const h of undated) {
+    if (h.arrival >= upcomingFrom) byOrder.set(Number(h.order_id), h)
+  }
+  return Array.from(byOrder.values())
+    .sort((a, b) => (a.arrival < b.arrival ? -1 : a.arrival > b.arrival ? 1 : Number(a.order_id) - Number(b.order_id)))
+    .slice(0, lim)
+}
+
+/**
+ * Headers for orders that hold a flight line with no `service_date`, dated from
+ * the flight itself.
+ *
+ * Aahaas keeps a flight's travel date in `aahaas_flight_bookingsv2` (confirmed
+ * PNR flights, else the search's `routes[].date`), and the storefront often
+ * repeats it in the line's name, e.g. "CMB -> IXM (2026-11-10)". Either source
+ * is used, together with any dated lines on the same order. An order that has
+ * no date anywhere is left out, as before.
+ *
+ * Pass `orderId` for one order (any travel date), or `bookedFrom` to sweep by
+ * booked date. No date floor here: callers apply their own.
+ */
+async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: number }): Promise<B2cOrderHeader[]> {
+  const scope = opts.orderId != null ? `AND order_id = ${sanitizeIds([opts.orderId])}` : 'AND booked_date >= ?'
+  const liveLines = await liveLineClause('m')
+  const liveUndated = await liveLineClause('u0')
+  const rows = await b2cQuery<B2cOrderHeader & { undatedNames: string | null }>(
+    `SELECT m.order_id                AS order_id,
+            MIN(m.service_date)       AS arrival,
+            MAX(m.service_date)       AS departure,
+            COUNT(*)                  AS productLines,
+            MIN(m.booked_date)        AS bookedDate,
+            GROUP_CONCAT(CASE WHEN m.service_date IS NULL THEN m.product_name END SEPARATOR ' | ') AS undatedNames
+       FROM checkouts_more_data m
+       JOIN (SELECT DISTINCT order_id
+               FROM checkouts_more_data u0
+              WHERE order_id IS NOT NULL
+                AND category_id = ${FLIGHT_CATEGORY_ID}
+                AND service_date IS NULL
+                ${liveUndated}
+                ${scope}) u ON u.order_id = m.order_id
+      WHERE m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
+      GROUP BY m.order_id`,
+    opts.orderId != null ? [] : [opts.bookedFrom],
+  )
+  if (rows.length === 0) return []
+
+  // Latest booking row per order: a re-priced or reissued flight leaves the
+  // earlier attempts behind with their old dates.
+  // Date fragments only — the full request/response blobs for a year of flight
+  // orders were heavy enough to take down the overview/preview Lambda. If the
+  // slim query fails for any reason, fall back to the dates in the line names.
+  const spanByOrder = new Map<number, { first: string; last: string }>()
+  try {
+    const flightRows = await fetchFlightDateRows(rows.map((r) => Number(r.order_id)))
+    for (const fr of flightRows) {
+      const span = flightDateSpan(parseFlightBooking(fr))
+      if (span) spanByOrder.set(Number(fr.order_id), span)
+    }
+  } catch (err) {
+    console.error('[b2c-db] flight date lookup failed; using line names', err)
+  }
+
+  const headers: B2cOrderHeader[] = []
+  for (const r of rows) {
+    const { undatedNames, ...row } = r
+    const dates = [row.arrival, row.departure].filter((d): d is string => Boolean(d))
+    const span = spanByOrder.get(Number(row.order_id))
+    if (span) dates.push(span.first, span.last)
+    else dates.push(...datesInText(undatedNames))
+    if (dates.length === 0) continue
+    dates.sort()
+    headers.push({ ...row, arrival: dates[0], departure: dates[dates.length - 1] } as B2cOrderHeader)
+  }
+  return headers
+}
+
+/** 'YYYY-MM-DD' dates written into free text, e.g. a flight line named "CMB -> IXM (2026-11-10)". */
+function datesInText(text: string | null): string[] {
+  if (!text) return []
+  const out: string[] = []
+  const re = /\b(20\d{2})-(\d{2})-(\d{2})\b/g
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    const d = new Date(`${m[0]}T00:00:00Z`)
+    if (!Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === m[0]) out.push(m[0])
+  }
+  return out
+}
+
+/** Calendar-day arithmetic on 'YYYY-MM-DD'. */
+function shiftDate(ymd: string, days: number): string {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * The header for ONE order, whatever its travel date.
+ *
+ * {@link fetchOrderHeaders} floors on upcoming travel, which is right for the
+ * importer but wrong for "Update booking": an order whose first service has
+ * already started must still be refreshable. Same shape, same travel-category
+ * filter, no date gate. Returns null when the order has no dated travel line.
+ * A flight with no `service_date` is dated from the flight booking.
+ */
+export async function fetchOrderHeaderById(orderId: number): Promise<B2cOrderHeader | null> {
+  const id = sanitizeIds([orderId])
+  const [flightDated] = await fetchUndatedFlightHeaders({ orderId })
+  if (flightDated) return flightDated
+  const liveLines = await liveLineClause('m')
+  const rows = await b2cQuery<B2cOrderHeader>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
             MAX(m.service_date)       AS departure,
             COUNT(*)                  AS productLines,
             MIN(m.booked_date)        AS bookedDate
        FROM checkouts_more_data m
-      WHERE m.order_id IS NOT NULL
+      WHERE m.order_id = ${id}
         AND m.service_date IS NOT NULL
         AND m.category_id IN (${CATEGORY_LIST})
-        ${bookedFrom ? 'AND m.booked_date >= ?' : ''}
-      GROUP BY m.order_id
-     HAVING MIN(m.service_date) >= ?
-      ORDER BY arrival ASC
-      LIMIT ${lim}`,
-    bookedFrom ? [bookedFrom, upcomingFrom] : [upcomingFrom],
+        ${liveLines}
+      GROUP BY m.order_id`,
   )
+  return rows[0] ?? null
 }
 
 /**
@@ -296,6 +480,7 @@ export async function fetchOrdersBookedBetween(opts: {
   limit?: number
 }): Promise<B2cBookedOrder[]> {
   const lim = Math.max(1, Math.min(Number(opts.limit) || 2000, 10000))
+  const liveLines = await liveLineClause('m')
   return b2cQuery<B2cBookedOrder>(
     `SELECT m.order_id          AS order_id,
             MIN(m.booked_date)  AS bookedDate,
@@ -307,6 +492,7 @@ export async function fetchOrdersBookedBetween(opts: {
       WHERE m.order_id IS NOT NULL
         AND m.booked_date IS NOT NULL
         AND m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
         AND m.booked_date >= ? AND m.booked_date <= ?
       GROUP BY m.order_id
       ORDER BY m.order_id ASC
@@ -325,6 +511,7 @@ export async function fetchOrdersBookedBetween(opts: {
 export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderProduct[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const liveLines = await liveLineClause('m')
   return b2cQuery<B2cOrderProduct>(
     `SELECT m.id, m.order_id, m.checkout_id, m.category_id, mc.maincat_type,
             m.product_id, m.product_name, m.vendor_name,
@@ -341,6 +528,7 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
        LEFT JOIN tbl_maincategory mc ON mc.id          = m.category_id
       WHERE m.order_id IN (${ids})
         AND m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }
@@ -384,12 +572,53 @@ export async function fetchOrderCustomers(orderIds: number[]): Promise<B2cOrderC
 export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlightBooking[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const liveFlights = await liveFlightClause('f')
   return b2cQuery<B2cFlightBooking>(
     `SELECT f.order_id, f.pnr, f.flight_provider, f.requested_data, f.response_data
        FROM aahaas_flight_bookingsv2 f
       WHERE f.order_id IN (${ids})
+        ${liveFlights}
       ORDER BY f.order_id, f.id`,
   )
+}
+
+/**
+ * Like {@link fetchFlightBookings}, but carries only what {@link flightDateSpan}
+ * reads: `searchData.routes` and `data.fetchPnr.flights`, extracted server-side
+ * and rewrapped in the original shape so {@link parseFlightBooking} is unchanged.
+ * `JSON_VALID` guards keep a malformed blob from failing the whole query.
+ */
+async function fetchFlightDateRows(orderIds: number[]): Promise<B2cFlightBooking[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const liveFlights = await liveFlightClause('f')
+  const rows = await b2cQuery<mysql.RowDataPacket & {
+    order_id: number
+    pnr: string | null
+    flight_provider: string | null
+    routes: unknown
+    flights: unknown
+  }>(
+    `SELECT f.order_id, f.pnr, f.flight_provider,
+            CASE WHEN JSON_VALID(f.requested_data) THEN JSON_EXTRACT(f.requested_data, '$.searchData.routes') END AS routes,
+            CASE WHEN JSON_VALID(f.response_data)  THEN JSON_EXTRACT(f.response_data,  '$.data.fetchPnr.flights') END AS flights
+       FROM aahaas_flight_bookingsv2 f
+      WHERE f.order_id IN (${ids})
+        ${liveFlights}
+      ORDER BY f.order_id, f.id`,
+  )
+  // MariaDB returns the fragment as text, MySQL's JSON type as a parsed value.
+  const asValue = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v ?? null
+    try { return JSON.parse(v) } catch { return null }
+  }
+  return rows.map((r) => ({
+    order_id: r.order_id,
+    pnr: r.pnr,
+    flight_provider: r.flight_provider,
+    requested_data: JSON.stringify({ searchData: { routes: asValue(r.routes) } }),
+    response_data: JSON.stringify({ data: { fetchPnr: { flights: asValue(r.flights) } } }),
+  })) as B2cFlightBooking[]
 }
 
 /**
@@ -439,6 +668,7 @@ export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cO
   const columns = await travellerColumns()
   const usable = PREBOOKING_TABLES.filter((t) => columns.get(t.table)?.adult)
   if (usable.length === 0) return []
+  const liveLines = await liveLineClause('m')
 
   const pick = (col: 'adult' | 'child') => {
     const parts = usable
@@ -460,6 +690,7 @@ export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cO
        JOIN tbl_checkouts c ON c.id = m.checkout_id
        ${joins}
       WHERE m.order_id IN (${ids})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }
@@ -494,6 +725,7 @@ export async function fetchOrderLineBookingNames(orderIds: number[]): Promise<B2
   const ids = sanitizeIds(orderIds)
   const cols = await bookingNameColumns()
   const has = (c: string) => cols.has(c)
+  const liveLines = await liveLineClause('m')
 
   const lsAdults   = has('tbl_lifestyle_bookings.lifestyle_adult_details')    ? 'ls.lifestyle_adult_details'    : 'NULL'
   const lsChildren = has('tbl_lifestyle_bookings.lifestyle_children_details') ? 'ls.lifestyle_children_details' : 'NULL'
@@ -512,6 +744,7 @@ export async function fetchOrderLineBookingNames(orderIds: number[]): Promise<B2
        LEFT JOIN hotel_prebooking       hp ON c.main_category_id = 4 AND hp.prebooking_id        = c.related_order_id
        LEFT JOIN edu_tbl_booking        ed ON c.main_category_id = 5 AND ed.booking_id           = c.related_order_id
       WHERE m.order_id IN (${ids})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }
@@ -524,6 +757,98 @@ export async function fetchPassengerDetails(passengerIds: number[]): Promise<B2c
        FROM aahaas_passenger_details
       WHERE id IN (${ids})`,
   )
+}
+
+/**
+ * One place the store recorded who an order is *for*, as opposed to the
+ * account that placed it. `lead_passenger` is the raw JSON object when the
+ * source keeps one; `name` / `email` / `phone` are plain cells.
+ */
+export interface B2cLeadSourceRow extends mysql.RowDataPacket {
+  order_id: number
+  source: 'confirmation' | 'payment-link' | 'flow-booking'
+  lead_passenger: string | null
+  name: string | null
+  email: string | null
+  phone: string | null
+}
+
+/** Column sets the lead sources need; probed once, since the tables belong to other apps. */
+const LEAD_SOURCE_TABLES = {
+  travel_ai_checkout_sessions: ['order_id', 'meta'],
+  booking_payment_links: ['order_id', 'meta', 'customer_name', 'recipient'],
+  ai_flow_booking: ['order_id', 'customer_name', 'customer_email', 'customer_phone'],
+} as const
+
+let leadSourceTables: { at: number; usable: Set<string> } | null = null
+
+async function usableLeadSourceTables(): Promise<Set<string>> {
+  if (leadSourceTables && Date.now() - leadSourceTables.at < 30 * 60_000) return leadSourceTables.usable
+  const names = Object.keys(LEAD_SOURCE_TABLES)
+  const rows = await b2cQuery<mysql.RowDataPacket & { t: string; c: string }>(
+    `SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (?)`,
+    [names],
+  )
+  const usable = new Set<string>()
+  for (const [table, needed] of Object.entries(LEAD_SOURCE_TABLES)) {
+    const have = new Set(rows.filter((r) => r.t === table).map((r) => String(r.c).toLowerCase()))
+    if (needed.every((c) => have.has(c))) usable.add(table)
+  }
+  leadSourceTables = { at: Date.now(), usable }
+  return usable
+}
+
+/**
+ * Who each order was booked under, from the same three places AahaasFlow reads
+ * (n8n-project `flow.lead.js`), newest row first within each source:
+ *
+ *   1. `travel_ai_checkout_sessions.meta.lead_passenger` — the console's Confirm panel
+ *   2. `booking_payment_links` — `meta.lead_passenger`, else its `customer_name`
+ *      (WhatsApp / social orders placed on the shared `admin6611` login)
+ *   3. `ai_flow_booking` — AahaasFlow's own intake row
+ *
+ * Only the `lead_passenger` JSON path is lifted out — the blobs are never read
+ * whole. A table that is missing (or lacks a column) is skipped, and one source
+ * failing never hides the others. Which row wins is decided in
+ * `b2c-confirmed-lead.ts`, not here.
+ */
+export async function fetchOrderLeadSources(orderIds: number[]): Promise<B2cLeadSourceRow[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const usable = await usableLeadSourceTables()
+  const lp = (col: string) => `CASE WHEN JSON_VALID(${col}) THEN JSON_EXTRACT(${col}, '$.lead_passenger') END`
+
+  const queries: Array<Promise<B2cLeadSourceRow[]>> = []
+  if (usable.has('travel_ai_checkout_sessions')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'confirmation' AS source, ${lp('meta')} AS lead_passenger,
+              NULL AS name, NULL AS email, NULL AS phone
+         FROM travel_ai_checkout_sessions WHERE order_id IN (${ids}) ORDER BY id DESC`,
+    ))
+  }
+  if (usable.has('booking_payment_links')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'payment-link' AS source, ${lp('meta')} AS lead_passenger,
+              customer_name AS name, NULL AS email, recipient AS phone
+         FROM booking_payment_links WHERE order_id IN (${ids}) ORDER BY id DESC`,
+    ))
+  }
+  if (usable.has('ai_flow_booking')) {
+    queries.push(b2cQuery<B2cLeadSourceRow>(
+      `SELECT order_id, 'flow-booking' AS source, NULL AS lead_passenger,
+              customer_name AS name, customer_email AS email, customer_phone AS phone
+         FROM ai_flow_booking WHERE order_id IN (${ids})`,
+    ))
+  }
+
+  const settled = await Promise.allSettled(queries)
+  const rows: B2cLeadSourceRow[] = []
+  for (const s of settled) {
+    if (s.status === 'fulfilled') rows.push(...s.value)
+    else console.error('[b2c-db] a lead-passenger source could not be read (non-fatal):', s.reason)
+  }
+  return rows
 }
 
 /**

@@ -23,7 +23,7 @@
 import { prisma } from '@/lib/prisma'
 import type { BookingSource } from '@/lib/booking-source'
 import {
-  BOOKING_SELECT, DEAD_STATUSES, UNASSIGNED, channelSplit, countryWhere, daysBetween,
+  BOOKING_SELECT, DEAD_STATUSES, UNASSIGNED, channelSplit, daysBetween,
   inSelectedCountries, isCancelledStatus, isoDate, labelFor, resolveCountry, rollUpByCountry, sumByCurrency, toLine,
   type BookingLine, type ChannelSplit, type CountryRow, type MoneyByCurrency,
 } from './booking-lines'
@@ -37,7 +37,7 @@ import { listByCreateDate } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
 import { collectCountCheck, type CountCheckSection } from './count-check'
-import { collectActivitySplit, bookingKey, type ActivitySplit } from './activity-split'
+import { collectActivitySplit, bookingKey, type ActivitySplit, type SplitLine } from './activity-split'
 import { resolveBookingOriginChannels, type OriginChannel } from '@/lib/booking-origin'
 import { collectAppleCohort, cohortKey, type AppleCohort } from './apple-cohort'
 import { groupByAgent } from './agent-names'
@@ -49,20 +49,10 @@ import {
 import { collectPeriodInsights, finaliseInsights, type PeriodInsights } from './period-insights'
 import { collectOpsBoardDigest, type OpsBoardDigest } from './ops-board-digest'
 import type { Prisma } from '@prisma/client'
-import { testBookingWhere } from '@/lib/test-bookings'
-
-/**
- * The country scope every section reads bookings through, plus the shared
- * test-booking register: a booking marked as a test is not in any figure this
- * report prints. Fail-open — an unreadable register hides nothing.
- */
-async function reportScope(countries: string[]): Promise<Prisma.BookingWhereInput | null> {
-  const country = countryWhere(countries)
-  const { clause } = await testBookingWhere('exclude')
-  if (!clause) return country
-  if (!country) return clause as Prisma.BookingWhereInput
-  return { AND: [country, clause as Prisma.BookingWhereInput] }
-}
+import { loadTestBookings, testBookingKey, testBookingReference, testBookingRefs } from '@/lib/test-bookings'
+import { reportScope } from './report-scope'
+import { collectGuestVoice, EMPTY_GUEST_VOICE, type GuestVoiceSection } from './guest-voice'
+import { collectBookingHistory, type HistoryPoint, type PeriodAdvice } from './period-outlook'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -191,6 +181,20 @@ export interface ActivityOriginRow {
   bookings: number
 }
 
+/**
+ * One booking behind **Today new & updated**, as the accounts ledger lists it,
+ * with this system's own file beside it when there is one. The workbook's New
+ * Bookings tab is these rows, so its row count is the tile's number.
+ */
+export interface SplitFile extends SplitLine {
+  /** 'New' — this period's own business; 'Amended' — an earlier confirmation edited. */
+  pass: 'New' | 'Amended'
+  /** The booking as filed here; null when this system holds no file for it. */
+  booking: BookingLine | null
+  /** How that file reached this system; 'Not filed here' when there is none. */
+  intake: string
+}
+
 export interface ActivitySplitSection {
   available: boolean
   error?: string
@@ -210,6 +214,8 @@ export interface ActivitySplitSection {
   held: number
   /** Booking key → which table it belongs to, for marking the detail rows. */
   index: Record<string, 'today' | 'old'>
+  /** Every booking behind `todayCount + oldCount`, new first. Sums to the tile. */
+  files: SplitFile[]
 }
 
 /**
@@ -256,7 +262,13 @@ export interface ComplaintsSection {
   byCategory: { category: string; total: number; open: number }[]
   bySeverity: { severity: string; total: number; open: number }[]
   byCountry: CountryRow[]
+  /** The mail's list, cut to `maxRows`. */
   items: ComplaintLine[]
+  /**
+   * Every issue in the window, same order as `items`, uncapped — what the CSV
+   * and workbook export, so the sheet's row count matches `total`.
+   */
+  allItems: ComplaintLine[]
   /** Complaints raised before the window that are still open — carried debt. */
   carriedOpen: ComplaintLine[]
 }
@@ -555,6 +567,47 @@ export interface ParitySection {
   note: string | null
 }
 
+/** One booking the test register marks as a test, touched by this period. */
+export interface TestBookingLine {
+  /** The reference as people read it — "VN 41054", "AHS14999". */
+  ref: string
+  /** Where the period met it: an AppleSystem confirmation, or a file in OPS. */
+  seenAs: 'AppleSystem confirmation' | 'Filed in OPS' | 'Both'
+  /** False when the confirmation never reached OPS — no booking details known. */
+  inOps: boolean
+  agent: string | null
+  source: BookingSource
+  countryLabel: string
+  status: string
+  arrivalDate: string
+  pax: number
+  currency: string
+  quotedTotal: number | null
+  createdAt: string
+  markedBy: string | null
+  markedAt: string | null
+  reason: string | null
+}
+
+/**
+ * The period's test bookings, printed on their own and in no other figure.
+ *
+ * A test is filtered out of the counts the moment somebody marks it, which is
+ * right — but a filter nobody can see reads as a number that does not add up.
+ * So the weekly and monthly reviews name every test they left out, with who
+ * marked it and why. Empty on the daily mail, which has its own count-check line.
+ */
+export interface TestBookingsSection {
+  /** False when the test register could not be read — nothing was hidden. */
+  available: boolean
+  total: number
+  pax: number
+  b2b: number
+  b2c: number
+  byCurrency: MoneyByCurrency[]
+  lines: TestBookingLine[]
+}
+
 export interface ReportData {
   window: ReportWindow
   generatedAt: string
@@ -583,6 +636,18 @@ export interface ReportData {
    * See `ops-board-digest.ts`.
    */
   opsBoard?: OpsBoardDigest | null
+  /** Test bookings the weekly / monthly review left out, listed. See TestBookingsSection. */
+  testBookings: TestBookingsSection
+  /** AI-call results, guest feedback forms and desk feedback. Weekly / monthly only. */
+  guestVoice: GuestVoiceSection
+  /** B2B confirmations per month, oldest first, ending with this one. Monthly only. */
+  history: HistoryPoint[]
+  /**
+   * The AI outlook — forecast, complaint fixes, growth ideas. Written by the
+   * runner after collection (it is the part that calls OpenAI); null until then
+   * or when it could not be made.
+   */
+  advice?: PeriodAdvice | null
   /**
    * Period analytics — trends, movers, delivery, attrition and the derived
    * action list the weekly and monthly mails are built from.
@@ -631,7 +696,7 @@ const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 
-async function collectCreated(
+export async function collectCreated(
   w: ReportWindow,
   countries: string[],
   maxRows: number,
@@ -674,7 +739,7 @@ async function collectCreated(
   // The previous window on the same basis as this one, or the arrow compares a
   // confirmation count against an intake count and invents a trend.
   const previousTotal = cohort.available
-    ? await previousCohortTotal(prev, countries)
+    ? await previousCohortTotal(prev, countries, w.period !== 'DAILY')
     : prevRows.filter(r =>
         inSelectedCountries(resolveCountry(r.operationCountry, r.bookingRef, r.tourDestination), countries)).length
 
@@ -753,9 +818,126 @@ function spacedRef(key: string): string {
 async function previousCohortTotal(
   prev: { fromDate: string; toDate: string },
   _countries: string[],
+  excludeTests: boolean,
 ): Promise<number> {
-  const cohort = await collectAppleCohort(prev)
+  const cohort = await collectAppleCohort(prev, { excludeTests })
   return cohort.available ? cohort.total : 0
+}
+
+const NO_TESTS: TestBookingsSection = { available: true, total: 0, pax: 0, b2b: 0, b2c: 0, byCurrency: [], lines: [] }
+
+/**
+ * Every test booking the period touched: AppleSystem confirmations in the window
+ * that the register marks as tests, and test files created in OPS inside it.
+ * One line per booking however it was met. Never throws.
+ */
+async function collectTestBookings(
+  w: ReportWindow,
+  countries: string[],
+  cohort: AppleCohort,
+): Promise<TestBookingsSection> {
+  try {
+    const set = await loadTestBookings()
+    if (!set.marks.size) return { ...NO_TESTS, available: set.checked }
+
+    const { refs } = await testBookingRefs(set)
+    const cohortRefs = cohort.tests.map(t => t.key)
+
+    const rows = await prisma.booking.findMany({
+      where: {
+        OR: [
+          ...(refs.length ? [{ bookingRef: { in: refs }, createdAt: { gte: w.start, lt: w.end } }] : []),
+          ...(cohortRefs.length
+            ? [{ bookingRef: { in: cohortRefs } }, { bookingRef: { in: cohortRefs.map(spacedRef) } }]
+            : []),
+        ],
+      },
+      select: { ...BOOKING_SELECT, isNumber: true },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const markFor = (...references: (string | null | undefined)[]) => {
+      for (const r of references) {
+        const m = set.marks.get(testBookingKey(r))
+        if (m) return m
+      }
+      return null
+    }
+
+    const byKey = new Map<string, TestBookingLine>()
+    const cohortKeys = new Set(cohortRefs)
+
+    for (const b of rows) {
+      const mark = markFor(b.bookingRef, b.isNumber, testBookingReference(b))
+      // A neighbouring booking matched on spelling alone is not a test.
+      if (!mark) continue
+      const line = toLine(b)
+      if (!inSelectedCountries(line.country, countries)) continue
+      const key = testBookingKey(testBookingReference(b)) || cohortKey(b.bookingRef)
+      if (byKey.has(key)) continue
+      const confirmed = cohortKeys.has(cohortKey(b.bookingRef))
+      const filedInWindow = line.createdAt >= w.start.toISOString() && line.createdAt < w.end.toISOString()
+      byKey.set(key, {
+        ref: line.bookingRef,
+        seenAs: confirmed && filedInWindow ? 'Both' : confirmed ? 'AppleSystem confirmation' : 'Filed in OPS',
+        inOps: true,
+        agent: line.agent,
+        source: line.source,
+        countryLabel: line.countryLabel,
+        status: line.status,
+        arrivalDate: line.arrivalDate,
+        pax: line.pax,
+        currency: line.currency,
+        quotedTotal: line.quotedTotal,
+        createdAt: line.createdAt,
+        markedBy: mark.markedBy,
+        markedAt: mark.markedAt,
+        reason: mark.reason,
+      })
+    }
+
+    // Confirmed upstream as a test and never filed here: still a test the
+    // period left out, so it is named — there are just no details to print.
+    // Not country-scoped: with no file there is no country to scope it by.
+    const held = new Set(Array.from(byKey.values()).map(l => cohortKey(l.ref)))
+    for (const t of cohort.tests) {
+      if (held.has(t.key)) continue
+      const mark = markFor(t.ref, t.key)
+      byKey.set(testBookingKey(t.ref) || t.key, {
+        ref: t.ref,
+        seenAs: 'AppleSystem confirmation',
+        inOps: false,
+        agent: null,
+        source: 'B2B',
+        countryLabel: '—',
+        status: t.cancelled ? 'CANCELLED' : 'NOT FILED',
+        arrivalDate: '',
+        pax: 0,
+        currency: '',
+        quotedTotal: null,
+        createdAt: '',
+        markedBy: mark?.markedBy ?? null,
+        markedAt: mark?.markedAt ?? null,
+        reason: mark?.reason ?? null,
+      })
+    }
+
+    const lines = Array.from(byKey.values())
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.ref.localeCompare(b.ref)))
+
+    return {
+      available: set.checked,
+      total: lines.length,
+      pax: lines.reduce((n, l) => n + l.pax, 0),
+      b2b: lines.filter(l => l.source === 'B2B').length,
+      b2c: lines.filter(l => l.source === 'B2C').length,
+      byCurrency: sumByCurrency(lines.filter(l => l.currency)),
+      lines,
+    }
+  } catch (err) {
+    console.warn('[Reports] test bookings unavailable:', err instanceof Error ? err.message : err)
+    return { ...NO_TESTS, available: false }
+  }
 }
 
 /**
@@ -1199,12 +1381,12 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
  * `tbl_te_important_alerts` has no country column, so country is resolved by
  * joining `booking_ref` back to Booking in one batched lookup rather than N+1.
  */
-async function collectComplaints(w: ReportWindow, countries: string[], maxRows: number): Promise<ComplaintsSection> {
+async function collectComplaints(w: Pick<ReportWindow, 'start' | 'end'>, countries: string[], maxRows: number): Promise<ComplaintsSection> {
   const empty: ComplaintsSection = {
     available: false, total: 0, rawTotal: 0, duplicatesMerged: 0, resolved: 0, open: 0,
     highSeverityOpen: 0, recurringOpen: 0,
     avgResolutionHours: null, byCategory: [], bySeverity: [], byCountry: [],
-    items: [], carriedOpen: [],
+    items: [], allItems: [], carriedOpen: [],
   }
 
   let raw: Awaited<ReturnType<typeof prisma.tbl_te_important_alerts.findMany>>
@@ -1308,6 +1490,17 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
 
   const rawInWindow = raw.map(map).filter(inScope).length
 
+  // The action list, in the order someone should work it: unresolved first,
+  // then most severe, then whatever has been raised most times — an issue the
+  // guest brought up on three calls outranks a one-off of equal severity —
+  // and finally the most recently active.
+  const ranked = items.slice()
+    .sort((a, b) =>
+      Number(a.status === 'resolved') - Number(b.status === 'resolved') ||
+      (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) ||
+      b.occurrences - a.occurrences ||
+      b.lastRaisedAt.localeCompare(a.lastRaisedAt))
+
   return {
     available: true,
     total: items.length,
@@ -1328,17 +1521,8 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
       .map(([severity, v]) => ({ severity, ...v }))
       .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)),
     byCountry: rollUpByCountry(items.map(c => ({ country: c.country, pax: 0, source: 'B2B' as BookingSource }))),
-    // The action list, in the order someone should work it: unresolved first,
-    // then most severe, then whatever has been raised most times — an issue the
-    // guest brought up on three calls outranks a one-off of equal severity —
-    // and finally the most recently active.
-    items: items.slice()
-      .sort((a, b) =>
-        Number(a.status === 'resolved') - Number(b.status === 'resolved') ||
-        (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) ||
-        b.occurrences - a.occurrences ||
-        b.lastRaisedAt.localeCompare(a.lastRaisedAt))
-      .slice(0, maxRows),
+    items: ranked.slice(0, maxRows),
+    allItems: ranked,
     // Oldest-first: carried debt is ranked by how long it has been ignored.
     carriedOpen: carriedOpen.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   }
@@ -1557,6 +1741,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
 /** The labels the mail prints for each intake channel. */
 const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {
   APPLESYSTEM: 'Apple System',
+  B2C: 'Aahaas B2C',
   ONEDRIVE: 'OneDrive',
   EMAIL: 'Confirmation mail',
   OPS_AI: 'OPS AI',
@@ -1568,7 +1753,7 @@ const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {
 
 /** The order they are printed in — biggest intake paths first. */
 const ORIGIN_ORDER: (OriginChannel | 'MISSING')[] =
-  ['APPLESYSTEM', 'ONEDRIVE', 'EMAIL', 'API', 'OPS_AI', 'MANUAL', 'UNKNOWN', 'MISSING']
+  ['APPLESYSTEM', 'ONEDRIVE', 'EMAIL', 'B2C', 'API', 'OPS_AI', 'MANUAL', 'UNKNOWN', 'MISSING']
 
 /**
  * The split, plus where this system's own new business came in from.
@@ -1587,7 +1772,7 @@ async function collectActivitySplitSection(
 ): Promise<ActivitySplitSection> {
   const empty: ActivitySplitSection = {
     available: false, todayCount: 0, oldCount: 0, oldBookings: 0, oldest: null,
-    appleCount, origins: [], held: 0, index: {},
+    appleCount, origins: [], held: 0, index: {}, files: [],
   }
 
   let split: ActivitySplit
@@ -1610,17 +1795,28 @@ async function collectActivitySplitSection(
     origins: [],
     held: 0,
     index: split.index,
+    files: [],
   }
 
+  // The files list stands even when the OPS lookup below fails — the ledger
+  // decides the population, this system only annotates it.
+  const fileOf = (line: SplitLine, pass: SplitFile['pass']): SplitFile =>
+    ({ ...line, pass, booking: null, intake: ORIGIN_LABELS.MISSING })
+  base.files = [
+    ...split.today.lines.map(l => fileOf(l, 'New')),
+    ...split.old.lines.map(l => fileOf(l, 'Amended')),
+  ]
+
   const keys = split.today.keys
-  if (keys.length === 0) return base
+  const allKeys = Array.from(new Set([...keys, ...split.old.keys]))
+  if (allKeys.length === 0) return base
 
   try {
     // Matched on the ledger's own key rule rather than on the reference as
     // either system happens to spell it: "VN 40499" here is "VN40499" there.
     // The lookup itself cannot use that rule — it is a SQL `IN` on a stored
     // column — so it asks for both spellings and the filter below decides.
-    const spellings = Array.from(new Set(keys.flatMap(k => {
+    const spellings = Array.from(new Set(allKeys.flatMap(k => {
       const parts = /^([A-Z]+)(\d+)$/.exec(k)
       return parts ? [k, `${parts[1]} ${parts[2]}`] : [k]
     })))
@@ -1633,25 +1829,37 @@ async function collectActivitySplitSection(
           { isNumber: { in: spellings } },
         ],
       },
-      select: { id: true, bookingRef: true, isNumber: true, sourceDocUrl: true },
+      select: { ...BOOKING_SELECT, id: true, isNumber: true, sourceDocUrl: true },
     })
 
-    const wanted = new Set(keys)
+    const wanted = new Set(allKeys)
     // One booking per key: a reference filed twice is one booking to the
     // accounts ledger, and counting both here would push the parts past the
     // headline they are supposed to add up to.
     const seen = new Set<string>()
-    const held = candidates.filter(b => {
+    const byKey = new Map<string, (typeof candidates)[number]>()
+    for (const b of candidates) {
       const key = wanted.has(bookingKey(b.bookingRef))
         ? bookingKey(b.bookingRef)
         : wanted.has(bookingKey(b.isNumber)) ? bookingKey(b.isNumber) : ''
 
-      if (!key || seen.has(key)) return false
+      if (!key || seen.has(key)) continue
       seen.add(key)
-      return true
-    })
+      byKey.set(key, b)
+    }
 
-    const channels = await resolveBookingOriginChannels(held)
+    const channels = await resolveBookingOriginChannels(Array.from(byKey.values()))
+
+    for (const f of base.files) {
+      const b = byKey.get(f.key)
+      if (!b) continue
+      f.booking = toLine(b)
+      f.intake = ORIGIN_LABELS[channels.get(b.id) ?? 'UNKNOWN']
+    }
+
+    // The origin split is about this period's own business only.
+    const todayKeys = new Set(keys)
+    const held = Array.from(byKey.entries()).filter(([k]) => todayKeys.has(k)).map(([, b]) => b)
 
     const counts = new Map<OriginChannel | 'MISSING', number>()
     for (const booking of held) {
@@ -1679,7 +1887,11 @@ async function collectActivitySplitSection(
   // Read first, because the "bookings created" section is now a cut of it: the
   // report counts the confirmations AppleSystem raised in the window, not this
   // system's own intake. See apple-cohort.ts.
-  const cohort = await collectAppleCohort(window)
+  //
+  // The weekly and monthly reviews leave test bookings out of the cohort — and
+  // so out of every figure built on it — and list them on their own instead.
+  const periodic = window.period !== 'DAILY'
+  const cohort = await collectAppleCohort(window, { excludeTests: periodic })
 
   const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard] = await Promise.all([
     // The two figures this mail now leads with, read from the accounts ledger
@@ -1708,7 +1920,19 @@ async function collectActivitySplitSection(
   // Only the periodic mails carry analytics, and only they pay for the extra
   // reads. Never allowed to sink a report: an insight is a nice-to-have, the
   // sections above are the deliverable.
-  const insights = window.period === 'DAILY'
+  const [testBookings, previousComplaints, guestVoice] = periodic
+    ? await Promise.all([
+        collectTestBookings(window, countries, cohort),
+        // Last period's complaints, de-duplicated exactly as this period's are:
+        // a raw alert count against a merged one reads as a rise that is not one.
+        collectComplaints(previousWindow(window), countries, 0)
+          .then(c => (c.available ? c.total : null))
+          .catch(() => null),
+        collectGuestVoice(window, countries),
+      ])
+    : [NO_TESTS, null, EMPTY_GUEST_VOICE]
+
+  const insights = !periodic
     ? null
     : await collectPeriodInsights({
         window,
@@ -1716,6 +1940,7 @@ async function collectActivitySplitSection(
         counted: created.allBookings,
         basis: created.basis,
         complaints,
+        previousComplaints,
       })
         // The figures parity, the count check, readiness and D-10 already hold
         // are handed over rather than re-queried, and the action list is derived
@@ -1741,6 +1966,13 @@ async function collectActivitySplitSection(
     upcoming,
     opsBoard,
     insights,
+    testBookings,
+    guestVoice,
+    // The forecast's raw material. Monthly only — a week-by-week history is
+    // noise at this volume — and only when the month itself was counted.
+    history: window.period === 'MONTHLY' && insights
+      ? await collectBookingHistory(window, countries, insights.totals.bookings).catch(() => [])
+      : [],
   }
 }
 

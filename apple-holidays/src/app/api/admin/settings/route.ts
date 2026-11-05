@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { SETTING_DAILY_BRIEFING_TIME, normaliseBriefingTime } from '@/lib/customer-whatsapp-automation'
+import { SETTING_SUPER_PARTNERS, parseSuperPartners } from '@/lib/super-partners'
 
 export const dynamic = 'force-dynamic'
 const PROTECTED_KEYS = new Set([
@@ -34,7 +36,8 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session || !['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  const { key, value, password } = await req.json() as { key: string; value: string; password?: string }
+  const { key, password, ...rest } = await req.json() as { key: string; value: string; password?: string }
+  let { value } = rest
   if (!key) return buildApiError('Key is required')
 
   if (PROTECTED_KEYS.has(key)) {
@@ -47,6 +50,18 @@ export async function POST(req: NextRequest) {
     if (!password || password !== criticalPassword) {
       return buildApiError('Incorrect critical services password', 403)
     }
+  }
+
+  // A malformed time would silently fall back to the env default, so refuse it here.
+  if (key === SETTING_DAILY_BRIEFING_TIME) {
+    const time = normaliseBriefingTime(value)
+    if (!time) return buildApiError('Time must be HH:MM (24-hour)')
+    value = time
+  }
+
+  // Always stored as a clean JSON array, so the reader never has to guess the format.
+  if (key === SETTING_SUPER_PARTNERS) {
+    value = JSON.stringify(parseSuperPartners(String(value ?? '[]')))
   }
 
   await prisma.systemSetting.upsert({

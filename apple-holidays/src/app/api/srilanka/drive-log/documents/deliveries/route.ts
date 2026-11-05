@@ -22,6 +22,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
+import { syncDeliveryReceipts } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -45,6 +46,19 @@ export async function GET(req: NextRequest) {
   if (!ref && !refs.length) return buildApiError('A booking reference is required.', 400)
 
   try {
+    // Receipts n8n filed for these sends since the last look (see
+    // whatsapp-shared-inbox-sync) — applied before reading so the badges are current.
+    const open = await prisma.driverDocSend.findMany({
+      where:  {
+        bookingRef:  ref ? ref : { in: refs },
+        waMessageId: { not: null },
+        status:      { notIn: ['read', 'failed'] },
+      },
+      select: { waMessageId: true },
+      take:   500,
+    })
+    await syncDeliveryReceipts(open.map(r => r.waMessageId!))
+
     if (ref) {
       const [rows, receipts] = await Promise.all([
         prisma.driverDocSend.findMany({

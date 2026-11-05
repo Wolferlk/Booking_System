@@ -12,13 +12,18 @@ import { withAsDeadline } from '@/lib/applesystem'
 import { collectReportData, todayNewAndUpdated, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
 import { renderPeriodEmail, renderPeriodSubject } from './period-html'
-import { renderReportWorkbook, reportWorkbookSheets } from './report-workbook'
+import { renderReportWorkbook } from './report-workbook'
+import { baselineForecast, mergeAiForecast, type ComplaintFix, type GrowthIdea, type PeriodAdvice } from './period-outlook'
 import { renderDailyWorkbook } from './daily-workbook'
 import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
 import {
   renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
 } from './reconcile-report-html'
+import { collectSalesReportData, isEmptySalesReport, type SalesReportData } from './sales-report-data'
+import { renderSalesCsv, renderSalesEmail, renderSalesSubject } from './sales-report-html'
+import { renderSalesWorkbook } from './sales-workbook'
 import { sendReportMail } from './report-mailer'
+import { archiveSentReport, archivedEmailHtml, type ArchiveFile } from './report-archive'
 import {
   appendRun, claimRunSlot, isAutoReportEnabled, listSchedules, recordScheduleRun,
   releaseRunSlot, type ReportRunLog, type ReportSchedule,
@@ -72,6 +77,7 @@ const SEND_AS_LIMITS = {
 const DASHBOARD_URL = (process.env.NEXTAUTH_URL || '').replace(/\/$/, '')
   ? `${(process.env.NEXTAUTH_URL || '').replace(/\/$/, '')}/dashboard/reports`
   : null
+const SALES_DASHBOARD_URL = DASHBOARD_URL ? `${DASHBOARD_URL}/sales` : null
 
 export type RunTrigger = ReportRunLog['trigger']
 
@@ -268,16 +274,38 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
   if (!process.env.OPENAI_API_KEY || !i) return null
 
   const periodWord = d.window.period === 'MONTHLY' ? 'month' : 'week'
+
+  // What actually moved the total, by bookings rather than by percentage: a
+  // market going 4 → 1 is "−75%" and three bookings, and a paragraph that blamed
+  // a 60-booking fall on it was quoting the percentage and missing the cause.
+  const net = i.totals.bookings - i.totals.previousBookings
+  const drivers = (rows: typeof i.countryMovers, name: 'market' | 'partner') => rows
+    .filter(m => m.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 4)
+    .map(m => ({
+      [name]: m.label,
+      before: m.previous,
+      now: m.current,
+      changeInBookings: m.delta,
+      shareOfNetChangePct: net !== 0 && Math.sign(m.delta) === Math.sign(net) ? Math.round((m.delta / net) * 100) : null,
+    }))
+
   const facts = {
     period: PERIOD_LABEL[d.window.period],
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     comparedWith: i.comparable ? i.previousLabel : 'not comparable — no baseline on the same basis',
     intake: {
-      confirmed: i.totals.bookings,
-      previousConfirmed: i.comparable ? i.totals.previousBookings : null,
-      guests: i.totals.pax,
-      b2b: i.totals.channel.b2b,
-      b2c: i.totals.channel.b2c,
+      b2bConfirmedInAppleSystem: i.totals.bookings,
+      previousB2bConfirmed: i.comparable ? i.totals.previousBookings : null,
+      netChangeInBookings: i.comparable ? net : null,
+      guestsBooked: i.totals.pax,
+      b2cStoreOrders: i.storeMix.available ? i.storeMix.b2c : null,
+      previousB2cStoreOrders: i.storeMix.available ? i.storeMix.previousB2c : null,
+      storeOrdersByBoard: i.storeMix.available
+        ? { b2bPackages: i.storeMix.b2bPackages, b2bFlights: i.storeMix.b2bFlights, b2c: i.storeMix.b2c, all: i.storeMix.all }
+        : null,
+      testBookingsExcluded: d.testBookings.total,
       bookingsPerDay: i.runRate.current,
       previousBookingsPerDay: i.runRate.previous,
       busiest: i.busiest ? { when: i.busiest.label, bookings: i.busiest.bookings } : null,
@@ -287,9 +315,12 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
       avgPartySize: i.totals.avgPartySize,
       valueByCurrency: i.totals.byCurrency,
     },
-    markets: i.countryMovers.slice(0, 6).map(m => ({ market: m.label, now: m.current, before: m.previous, changePct: m.pct })),
+    markets: i.countryMovers.slice(0, 6).map(m => ({ market: m.label, now: m.current, before: m.previous })),
+    whatMovedTheTotal: i.comparable
+      ? { markets: drivers(i.countryMovers, 'market'), partners: drivers(i.agentMovers, 'partner') }
+      : null,
     partners: {
-      top: i.agentMovers.filter(a => a.current > 0).slice(0, 5).map(a => ({ partner: a.label, now: a.current, before: a.previous, changePct: a.pct })),
+      top: i.agentMovers.filter(a => a.current > 0).slice(0, 5).map(a => ({ partner: a.label, now: a.current, before: a.previous })),
       newThisPeriod: i.newAgents,
       wentQuiet: i.lapsedAgents,
       topThreeSharePct: i.agentConcentrationPct,
@@ -321,11 +352,21 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
       reconfirmCompliancePct: i.quality.reconfirmCompliancePct,
       unexplainedBreaches: i.quality.unexplainedBreaches,
     },
-    integrity: {
-      appleSystemConfirmationsMissing: i.integrity.parityMissing,
-      countCheckShortfall: i.integrity.countCheckShort,
-      accountsLedgerNeverSwept: i.integrity.unswept,
-    },
+    integrity: d.window.period === 'MONTHLY'
+      ? undefined
+      : {
+          appleSystemConfirmationsMissing: i.integrity.parityMissing,
+          countCheckShortfall: i.integrity.countCheckShort,
+          accountsLedgerNeverSwept: i.integrity.unswept,
+        },
+    guestFeedback: d.guestVoice.calls.available
+      ? {
+          aiCallsGood: d.guestVoice.calls.verdicts.good,
+          aiCallsWarning: d.guestVoice.calls.verdicts.warning,
+          aiCallsBad: d.guestVoice.calls.verdicts.bad,
+          postTourRatingOutOf10: d.guestVoice.calls.postTour.avgRating,
+        }
+      : null,
     forwardBook: { total: d.upcoming.total, next7: d.upcoming.next7, next30: d.upcoming.next30 },
     actionsAlreadyListedInTheReport: i.actions.map(a => a.title),
   }
@@ -340,13 +381,15 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
           role: 'system',
           content: `You write the opening paragraph of a ${periodWord}ly business review for the senior management of a `
             + 'travel operator. Four to five sentences, plain English, no markdown, no bullet points, no greeting, no sign-off. '
-            + `Sentence 1: what the ${periodWord} did on intake and which way it moved against the comparison period — always give both numbers. `
-            + `Sentence 2: where that movement came from — name the market or the partner that drove it, up or down. `
-            + `Sentence 3: what operations actually delivered, and how service quality and attrition read against the volume. `
+            + `Sentence 1: what the ${periodWord} did on B2B intake (AppleSystem confirmations) and which way it moved against the comparison period — always give both numbers; mention B2C store orders separately if there are any. `
+            + `Sentence 2: where that movement came from, using whatMovedTheTotal only — name the one or two markets or partners with the largest changeInBookings in the same direction as the total, and quote them in bookings (for example "Make My Trip fell by 34 bookings"). `
+            + 'Never describe a market or partner by a percentage, and never call something the main driver when its shareOfNetChangePct is under 25 or null. '
+            + `Sentence 3: what operations actually delivered (toursOperated and guestsCarried — these are different from guestsBooked, do not mix them), and how service quality and attrition read against the volume. `
             + `Sentence 4: the single most important thing to fix, taken from the actions already listed in the report — restate it in your own words, never invent a new one. `
             + 'Optionally one more sentence on the forward book. '
             + 'Only use the numbers given. Never invent a figure, a partner, a market or a cause. '
             + 'If a comparison is marked not comparable, say the period cannot be compared rather than describing a trend. '
+            + 'Test bookings are already excluded from every figure; do not mention them. '
             + 'Write for someone deciding where to spend attention, not for someone auditing a spreadsheet.',
         },
         { role: 'user', content: JSON.stringify(facts) },
@@ -361,6 +404,155 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
   }
 }
 
+/** The model the monthly outlook is written with — once a month, so the better one. */
+const ADVICE_MODEL = 'gpt-4o'
+
+/**
+ * The monthly outlook: a two-month booking forecast, fixes for what guests
+ * complained about, and ways to grow — the closing section of the monthly mail.
+ *
+ * The numbers are not the model's. The forecast baseline and its range come
+ * from `baselineForecast()`; the model may place its estimate inside that range
+ * and say why, and anything outside it is dropped. Complaint themes are picked
+ * from a list whose counts were made here, and the count printed is ours. Growth
+ * ideas must each cite a figure from the report. What the model adds is the
+ * reasoning — which is the part a spreadsheet cannot do.
+ *
+ * No guest names, phone numbers or emails are sent: complaint text goes as the
+ * category, title and a trimmed description only.
+ */
+async function buildPeriodAdvice(d: ReportData, opts: { ai: boolean }): Promise<PeriodAdvice | null> {
+  const i = d.insights
+  if (d.window.period !== 'MONTHLY' || !i) return null
+
+  const { forecast, method } = baselineForecast(d.history)
+  const base: PeriodAdvice = {
+    history: d.history, forecast, method, complaintFixes: [], growth: [], model: null, aiNote: null,
+  }
+  if (!opts.ai) return { ...base, aiNote: 'AI summaries are switched off on this schedule, so only the statistical forecast is shown.' }
+  if (!process.env.OPENAI_API_KEY) return { ...base, aiNote: 'OpenAI is not configured on this server, so only the statistical forecast is shown.' }
+
+  const gv = d.guestVoice
+  const trim = (t: string | null | undefined, n: number) => (t ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
+
+  // Every theme the model may name, with the count it will be printed with.
+  const themes = new Map<string, number>()
+  for (const c of d.complaints.byCategory) themes.set(`Complaint: ${c.category}`, c.total)
+  for (const a of gv.calls.areaProblems) if (a.bad) themes.set(`On-tour call: ${a.area.toLowerCase()} rated bad`, a.bad)
+  for (const a of gv.forms.areas) if (a.poor + a.average) themes.set(`Feedback form: ${a.area.toLowerCase()} average or poor`, a.poor + a.average)
+  const mm = gv.calls.reconfirmMismatches
+  const mismatch = mm.dates + mm.flight + mm.pax + mm.contact
+  if (mismatch) themes.set('Pre-tour call: booking details did not match', mismatch)
+
+  const facts = {
+    month: d.window.fromDate.slice(0, 7),
+    bookingHistory: d.history.map(h => ({ month: h.month, b2bConfirmed: h.bookings })),
+    statisticalForecast: forecast.map(f => ({ month: f.month, baseline: f.baseline, low: f.low, high: f.high })),
+    forwardBookArrivalsByMonth: d.upcoming.byMonth.map(m => ({ month: m.month, tours: m.bookings, guests: m.pax })),
+    thisMonth: {
+      b2bConfirmed: i.totals.bookings,
+      previous: i.comparable ? i.totals.previousBookings : null,
+      b2cStoreOrders: i.storeMix.available ? i.storeMix.b2c : null,
+      previousB2cStoreOrders: i.storeMix.available ? i.storeMix.previousB2c : null,
+      storeOrdersByBoard: i.storeMix.available
+        ? { b2bPackages: i.storeMix.b2bPackages, b2bFlights: i.storeMix.b2bFlights, b2c: i.storeMix.b2c, all: i.storeMix.all }
+        : null,
+      avgLeadTimeDays: i.leadTime.avgDays,
+      bookedWithin7Days: i.leadTime.within7,
+      avgPartySize: i.totals.avgPartySize,
+      topThreePartnerSharePct: i.agentConcentrationPct,
+      cancellations: i.cancellations.total,
+      cancellationRatePct: i.cancellations.ratePct,
+      topCancellationReasons: i.cancellations.topReasons.slice(0, 4),
+      toursOperated: i.delivery.toursOperated,
+    },
+    markets: i.countryMovers.slice(0, 8).map(m => ({ market: m.label, now: m.current, before: m.previous })),
+    partners: i.agentMovers.slice(0, 10).map(a => ({ partner: a.label, now: a.current, before: a.previous })),
+    partnersWentQuiet: i.lapsedAgents,
+    newPartners: i.newAgents,
+    guestVoice: {
+      aiCalls: gv.calls.available
+        ? {
+            connected: gv.calls.verdicts.calls, good: gv.calls.verdicts.good, warning: gv.calls.verdicts.warning, bad: gv.calls.verdicts.bad,
+            postTourAvgRatingOutOf10: gv.calls.postTour.avgRating, nps: gv.calls.postTour.nps,
+            completionRatePct: gv.calls.completionRate,
+          }
+        : null,
+      feedbackForms: gv.forms.available ? gv.forms.areas.filter(a => a.rated).map(a => ({ area: a.area, rated: a.rated, score: a.score })) : null,
+    },
+    themes: Array.from(themes.entries()).map(([theme, count]) => ({ theme, count })),
+    complaintSamples: d.complaints.allItems.slice(0, 30).map(c => ({
+      category: c.category, severity: c.severity, timesRaised: c.occurrences, title: trim(c.title, 120), details: trim(c.details, 220),
+    })),
+    callIssueSamples: gv.calls.issues.slice(0, 20).map(x => ({ level: x.level, reason: trim(x.reason, 160), detail: trim(x.detail, 200) })),
+    guestRemarks: gv.forms.remarks.slice(0, 15).map(r => ({ overall: r.overall, remarks: trim(r.remarks, 220) })),
+  }
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: ADVICE_MODEL,
+      temperature: 0.3,
+      max_tokens: 1600,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: 'You are the commercial and operations analyst for a destination management company (inbound tours in Sri Lanka, '
+            + 'Vietnam, Singapore and Malaysia, sold mostly through B2B travel partners plus a direct B2C store). You write the closing '
+            + '"outlook" of the monthly business review for senior management. Answer with one JSON object and nothing else:\n'
+            + '{"forecast":[{"month":"yyyy-mm","expected":number,"reason":string}],'
+            + '"complaintFixes":[{"theme":string,"rootCause":string,"fix":string,"owner":string}],'
+            + '"growth":[{"title":string,"detail":string,"evidence":string}]}\n'
+            + 'Rules:\n'
+            + '- forecast: one entry per month in statisticalForecast. "expected" MUST be between that month\'s low and high. Move away '
+            + 'from the baseline only for a reason visible in the data (forward-book arrivals, a partner gained or lost, last year\'s season, '
+            + 'lead time) and state it in "reason" in one sentence with the numbers.\n'
+            + '- complaintFixes: 3 to 5 entries, biggest first. "theme" must be copied exactly from the themes list. rootCause: the most '
+            + 'likely cause given the samples. fix: concrete steps the team can start this month (who does what, a check, a supplier '
+            + 'conversation, a script change) — not generic advice. owner: one of Ground Team, Booking Team, Travel Experience, '
+            + 'Reservations, Accounts, Management.\n'
+            + '- growth: 4 to 6 practical ideas to grow bookings or margin next quarter. Each must rest on a figure given here and quote it '
+            + 'in "evidence" (for example "Top 3 partners hold 61% of bookings"). Prefer actions on named partners and markets.\n'
+            + '- Never invent a number, partner, market or complaint. Plain English, short sentences, no markdown.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    }, { timeout: 45_000, maxRetries: 0 })
+
+    await logAiUsage({ callType: 'report_period_advice', model: ADVICE_MODEL, usage: res.usage, source: 'report' })
+
+    const parsed = JSON.parse(res.choices[0]?.message?.content || '{}') as {
+      forecast?: { month?: unknown; expected?: unknown; reason?: unknown }[]
+      complaintFixes?: Partial<Record<keyof ComplaintFix, unknown>>[]
+      growth?: Partial<Record<keyof GrowthIdea, unknown>>[]
+    }
+    const str = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
+
+    const complaintFixes: ComplaintFix[] = (parsed.complaintFixes ?? [])
+      .map(f => ({ theme: str(f.theme, 120), rootCause: str(f.rootCause, 400), fix: str(f.fix, 600), owner: str(f.owner, 40) || 'Management' }))
+      // A theme not on the list has no count behind it — dropped, not printed.
+      .filter(f => themes.has(f.theme) && f.fix)
+      .map(f => ({ ...f, count: themes.get(f.theme) ?? 0 }))
+      .slice(0, 5)
+
+    const growth: GrowthIdea[] = (parsed.growth ?? [])
+      .map(g => ({ title: str(g.title, 120), detail: str(g.detail, 500), evidence: str(g.evidence, 200) }))
+      .filter(g => g.title && g.detail && g.evidence)
+      .slice(0, 6)
+
+    return {
+      ...base,
+      forecast: mergeAiForecast(forecast, parsed.forecast),
+      complaintFixes,
+      growth,
+      model: ADVICE_MODEL,
+    }
+  } catch (err) {
+    console.warn('[Reports] period advice failed:', err instanceof Error ? err.message : err)
+    return { ...base, aiNote: 'The AI outlook could not be written for this send, so only the statistical forecast is shown.' }
+  }
+}
+
 /**
  * The workbook, or null.
  *
@@ -369,9 +561,9 @@ async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
  * the footer chip that advertises it — `renderPeriodEmail` is told it is not
  * there and says so, rather than promising a file nobody received.
  */
-function buildWorkbook(data: ReportData): { buffer: Buffer; sheets: string[] } | null {
+async function buildWorkbook(data: ReportData): Promise<{ buffer: Buffer; sheets: string[] } | null> {
   try {
-    return { buffer: renderReportWorkbook(data), sheets: reportWorkbookSheets(data) }
+    return await renderReportWorkbook(data)
   } catch (err) {
     console.warn('[Reports] workbook build failed:', err instanceof Error ? err.message : err)
     return null
@@ -475,6 +667,57 @@ async function buildReconcileNarrative(d: ReconcileReportData): Promise<string |
   }
 }
 
+/**
+ * Three sentences above the sales figures. Given only the counts the mail
+ * prints and the highlights `deriveHighlights()` already chose — the model
+ * explains the day, it never picks the priority.
+ */
+async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) return null
+  const c = d.pipeline.counts
+  const pv = d.pipeline.previous
+  const facts = {
+    range: `${d.window.fromDate} to ${d.window.toDate}`,
+    comparedWith: `${d.window.previous.fromDate} to ${d.window.previous.toDate}`,
+    team: d.pipeline.team?.label ?? 'every office team',
+    b2cStore: d.store.available ? { orders: d.store.orders, before: d.store.previousOrders, valueByCurrency: d.store.value, topCategories: d.store.byCategory.slice(0, 3).map(c => ({ category: c.category, orders: c.orders })) } : null,
+    b2cBookingsFiled: { now: d.bookings.total, before: d.bookings.previousTotal, guests: d.bookings.pax, topMarkets: d.bookings.markets.slice(0, 3).map(m => ({ market: m.label, bookings: m.bookings })) },
+    quotations: d.pipeline.available ? {
+      newQuotes: c.newQuotes, before: pv?.newQuotes ?? null, amendments: c.amendments,
+      confirmed: c.confirmations, confirmedBefore: pv?.confirmations ?? null,
+      conversionPct: c.conversion === null ? null : Math.round(c.conversion * 100),
+      calls: c.calls.total, answered: c.calls.connected, newAgencies: c.signups.agencies,
+      agenciesUsingAi: c.adoption.activeAgencies,
+    } : null,
+    highlightsAlreadyInTheReport: d.highlights.map(h => h.title),
+  }
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      max_tokens: 240,
+      messages: [
+        {
+          role: 'system',
+          content: 'You write the opening summary of a travel sales report for the directors. '
+            + 'Exactly three sentences, plain English, no markdown, no bullet points, no greeting. '
+            + 'This report is B2C only: never mention B2B, partners or invoices. '
+            + 'Sentence 1: what the Aahaas B2C store sold (orders and value) and how it compares with the previous period — give both numbers. '
+            + 'Sentence 2: the quotation pipeline — quotes, confirmations and calls — and which category or market drove the day. '
+            + 'Sentence 3: the single most important thing to act on, restated from the highlights already in the report — never invent a new one. '
+            + 'Only use the numbers given. Never invent a figure, a partner or a cause. Money is never added across currencies.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    }, AI_REQUEST_OPTS)
+    await logAiUsage({ callType: 'sales_report_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
+    return res.choices[0]?.message?.content?.trim() || null
+  } catch (err) {
+    console.warn('[Reports] sales narrative failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 // ─── Building ─────────────────────────────────────────────────────────────────
 
 /**
@@ -487,7 +730,7 @@ async function buildReconcileNarrative(d: ReconcileReportData): Promise<string |
  * one send path serve two entirely different report shapes.
  */
 export interface BuiltReport {
-  data: ReportData | ReconcileReportData
+  data: ReportData | ReconcileReportData | SalesReportData
   subject: string
   html: string
   csv: string
@@ -514,21 +757,80 @@ export interface BuiltReport {
 type BuildShape = Pick<
   ReportSchedule,
   'name' | 'reportType' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'
-> & Partial<Pick<ReportSchedule, 'attachCsv' | 'dayOfWeek'>>
+> & Partial<Pick<ReportSchedule, 'attachCsv' | 'dayOfWeek' | 'salesTeam'>>
 
-export async function buildReport(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null } = {},
-): Promise<BuiltReport> {
+export interface BuildOptions {
+  now?: Date
+  testSend?: boolean
+  anchorDate?: string | null
+  /**
+   * SALES only: a free date range (`yyyy-mm-dd`, inclusive) instead of the
+   * schedule's period. The other report types ignore it.
+   */
+  range?: { fromDate?: string | null; toDate?: string | null } | null
+}
+
+export async function buildReport(s: BuildShape, opts: BuildOptions = {}): Promise<BuiltReport> {
+  if (s.reportType === 'SALES') return buildSalesReport(s, opts)
   return s.reportType === 'RECONCILIATION'
     ? buildReconciliation(s, opts)
     : buildOpsReport(s, opts)
 }
 
-async function buildOpsReport(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
-): Promise<BuiltReport> {
+async function buildSalesReport(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
+  const data = await collectSalesReportData({
+    period: s.period,
+    timezone: s.timezone,
+    countries: s.countries,
+    now: opts.now,
+    anchorDate: opts.anchorDate,
+    sendDay: s.dayOfWeek,
+    range: opts.range,
+    maxRows: s.maxRows,
+    team: s.salesTeam ?? null,
+  })
+  const narrative = s.aiSummary ? await buildSalesNarrative(data) : null
+
+  // Same contract as the ops workbooks: a file that cannot be written costs the
+  // attachment (the CSV goes instead), never the send.
+  let workbook: BuiltReport['workbook'] = null
+  try {
+    workbook = await renderSalesWorkbook(data)
+  } catch (err) {
+    console.warn('[Reports] sales workbook build failed:', err instanceof Error ? err.message : err)
+  }
+
+  const c = data.pipeline.counts
+  return {
+    data,
+    subject: renderSalesSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend }),
+    html: renderSalesEmail(data, {
+      sections: s.sections,
+      narrative,
+      dashboardUrl: SALES_DASHBOARD_URL,
+      scheduleName: s.name,
+      testSend: opts.testSend,
+      maxRows: s.maxRows,
+      workbookAttached: !!workbook && s.attachCsv !== false,
+      workbookSheets: workbook?.sheets ?? [],
+    }),
+    csv: renderSalesCsv(data),
+    workbook,
+    window: { fromDate: data.window.fromDate, toDate: data.window.toDate },
+    // Mapped onto the shared run-log shape: bookings, quotations, calls and
+    // confirmations — the four numbers the history list shows for a sales run.
+    counts: {
+      created: data.bookings.total,
+      onGround: c.newQuotes,
+      complaints: c.calls.total,
+      upcoming: c.confirmations,
+    },
+    isEmpty: isEmptySalesReport(data),
+    csvName: data.pipeline.team ? `sales-report-${data.pipeline.team.key}` : 'sales-report',
+  }
+}
+
+async function buildOpsReport(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
   const data = await collectReportData({
     period: s.period,
     timezone: s.timezone,
@@ -550,9 +852,15 @@ async function buildOpsReport(
     ? periodic ? await buildPeriodNarrative(data) : await buildNarrative(data)
     : null
 
+  // The monthly outlook rides on the same switch as the narrative: a schedule
+  // that turned AI off gets the statistical forecast only.
+  if (periodic && data.window.period === 'MONTHLY') {
+    data.advice = await buildPeriodAdvice(data, { ai: !!s.aiSummary })
+  }
+
   // Built once, here: the mail lists the sheet names it is promising, so a
   // workbook that could not be written must not be advertised in the footer.
-  const workbook = periodic ? buildWorkbook(data) : await buildDailyWorkbook(data)
+  const workbook = periodic ? await buildWorkbook(data) : await buildDailyWorkbook(data)
 
   return {
     data,
@@ -592,10 +900,7 @@ async function buildOpsReport(
   }
 }
 
-async function buildReconciliation(
-  s: BuildShape,
-  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
-): Promise<BuiltReport> {
+async function buildReconciliation(s: BuildShape, opts: BuildOptions): Promise<BuiltReport> {
   const data = await collectReconcileData({
     period: s.period,
     timezone: s.timezone,
@@ -682,6 +987,8 @@ export interface RunScheduleOptions {
    * once-per-slot marker, so it cannot swallow the next real send.
    */
   anchorDate?: string | null
+  /** SALES only: send a chosen date range instead of the schedule's period. */
+  range?: { fromDate?: string | null; toDate?: string | null } | null
 }
 
 export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): Promise<RunOutcome> {
@@ -742,7 +1049,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
   try {
     const built = await withAsDeadline(
       opts.trigger === 'schedule' || opts.trigger === 'cron-http' ? SEND_AS_LIMITS.schedule : SEND_AS_LIMITS.interactive,
-      () => buildReport(s, { now, testSend: opts.testSend, anchorDate: opts.anchorDate }),
+      () => buildReport(s, { now, testSend: opts.testSend, anchorDate: opts.anchorDate, range: opts.range }),
     )
     covered = { from: built.window.fromDate, to: built.window.toDate }
 
@@ -785,7 +1092,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
     })
 
     await recordScheduleRun(s.id, {
-      lastRunKey: opts.force && (opts.testSend || opts.anchorDate) ? s.lastRunKey : runKey,
+      lastRunKey: opts.force && (opts.testSend || opts.anchorDate || opts.range) ? s.lastRunKey : runKey,
       lastRunAt: new Date().toISOString(),
       lastStatus: 'ok',
       lastError: null,
@@ -793,6 +1100,34 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
     })
 
     console.log(`[Reports] "${s.name}" (${s.reportType} ${s.period}) sent to ${sent.recipients} recipient(s) — ${JSON.stringify(counts)}`)
+
+    // File it in the SharePoint report archive beside the Accounts reports:
+    // the workbook plus the email as sent. Only a real send to the schedule's
+    // own recipients — not a test, not a "send to me". Never throws, time-boxed.
+    if (!opts.testSend && !opts.overrideTo?.length) {
+      const sentAt = new Date()
+      const files: ArchiveFile[] = []
+      if (built.workbook) {
+        files.push({ ext: 'xlsx', contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', content: built.workbook.buffer })
+      } else if (s.attachCsv && built.csv) {
+        files.push({ ext: 'csv', contentType: 'text/csv', content: built.csv })
+      }
+      files.push({
+        ext: 'html', suffix: ' - email', contentType: 'text/html; charset=utf-8',
+        content: archivedEmailHtml(built.html, { subject: built.subject, to: s.to, cc: s.cc, sentAt }),
+      })
+      await archiveSentReport({
+        category: s.reportType === 'RECONCILIATION'
+          ? 'OPS Reconciliation'
+          : s.reportType === 'SALES'
+            ? `${PERIOD_LABEL[s.period] ?? 'Daily'} Sales Report`
+            : `OPS ${PERIOD_LABEL[s.period] ?? 'Daily'} Report`,
+        periodFrom: built.window.fromDate,
+        periodTo: built.window.toDate,
+        sentAt,
+        files,
+      })
+    }
     return finish('ok', { recipients: sent.recipients, subject: built.subject, counts })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

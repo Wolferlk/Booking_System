@@ -6,7 +6,9 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
+import { saveAsExtras } from '@/lib/as-booking-extras'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
+import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
 import { logActivity, ACTION } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
@@ -47,6 +49,7 @@ export async function POST(
       id: true,
       bookingRef: true,
       isNumber: true,
+      agent: true,
       operationCountry: true,
       itineraryItems: {
         orderBy: [{ dayNo: 'asc' }, { date: 'asc' }],
@@ -55,6 +58,10 @@ export async function POST(
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
+  // Store orders are refreshed from the store — see b2c-booking-sync.ts.
+  if (await isB2cOriginBooking(booking.id, booking.agent)) {
+    return buildApiError('This is an Aahaas B2C booking — use Update Booking, not AppleSystem.', 409)
+  }
 
   const sessionCountry = session.user.country as OperationCountry | undefined
   if (
@@ -123,6 +130,9 @@ export async function POST(
       })),
     }),
   ])
+
+  // Day routes ride alongside the itinerary (no column — see as-booking-extras).
+  await saveAsExtras(booking.bookingRef, mapped)
 
   // 4. Audit trail. This goes to the activity log, not `StatusEvent` — the
   //    status timeline is the append-only record of workflow *transitions*, and

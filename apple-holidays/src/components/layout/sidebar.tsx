@@ -12,9 +12,9 @@ import {
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
-  ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
+  ChevronDown, Zap, BellRing, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
-  Database, ListChecks,
+  Database, ListChecks, Smartphone,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -41,7 +41,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
-  Database, ListChecks, Zap,
+  Database, ListChecks, Zap, Smartphone, BellRing,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -87,9 +87,12 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',    href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments',       icon: 'MapPin' },
     { label: 'Driver-Auto',    href: '/dashboard/driver-auto',              icon: 'Zap' },
+    { label: 'Agent Digest',   href: '/dashboard/agent-digest',             icon: 'BellRing' },
+    { label: 'Driver App',      href: '/dashboard/driver-app',               icon: 'Smartphone' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
     { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation', icon: 'Banknote' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
@@ -114,11 +117,13 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
     { label: 'MC Report',         href: '/dashboard/mc-report',        icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation', icon: 'Banknote' },
     { label: 'Activity Check',    href: '/dashboard/activity-check',   icon: 'Compass' },
     { label: 'Check List VN',  href: '/dashboard/checklist-vn',            icon: 'ListChecks' },
     { label: 'Checklist VN 2.1', href: '/dashboard/checklist-vn/sheet',      icon: 'FileSpreadsheet' },
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
     { label: 'Driver-Auto',       href: '/dashboard/driver-auto',      icon: 'Zap' },
+    { label: 'Agent Digest',   href: '/dashboard/agent-digest',             icon: 'BellRing' },
     { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Truck' },
     { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
@@ -140,6 +145,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation', icon: 'Banknote' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Check List VN',  href: '/dashboard/checklist-vn',            icon: 'ListChecks' },
@@ -169,6 +175,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',       href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation', icon: 'Banknote' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
@@ -222,6 +229,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Agent Digest',   href: '/dashboard/agent-digest',             icon: 'BellRing' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
@@ -229,6 +238,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Ground Review',      href: '/dashboard/ground/review',               icon: 'ClipboardCheck' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation',  icon: 'Banknote' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Check List VN',  href: '/dashboard/checklist-vn',            icon: 'ListChecks' },
@@ -255,6 +265,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
     { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
+    { label: 'Sales Report',       href: '/dashboard/reports/sales',               icon: 'TrendingUp' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
     { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
@@ -274,6 +285,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Agent Digest',   href: '/dashboard/agent-digest',             icon: 'BellRing' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
@@ -281,6 +294,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Review Queue',       href: '/dashboard/te/review',                   icon: 'ClipboardCheck' },
     { label: 'My Assignments',     href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation',  icon: 'Banknote' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
@@ -315,11 +329,14 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Driver-Auto',        href: '/dashboard/driver-auto',                 icon: 'Zap' },
+    { label: 'Agent Digest',   href: '/dashboard/agent-digest',             icon: 'BellRing' },
+    { label: 'Driver App',          href: '/dashboard/driver-app',                  icon: 'Smartphone' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'SL Settlements',   href: '/dashboard/srilanka/driver-settlements', icon: 'Banknote' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Trans-Reconsultation', href: '/dashboard/trans-reconsultation',  icon: 'Banknote' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Check List VN',  href: '/dashboard/checklist-vn',            icon: 'ListChecks' },
@@ -350,6 +367,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
     { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
+    { label: 'Sales Report',       href: '/dashboard/reports/sales',               icon: 'TrendingUp' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
     { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
@@ -433,6 +451,7 @@ function classifyNavItem(item: NavItem): NavGroupId {
   if (h.startsWith('/dashboard/ground')) return 'ops'
   if (h.startsWith('/dashboard/srilanka')) return 'ops'
   if (h.startsWith('/dashboard/driver-auto')) return 'ops'
+  if (h.startsWith('/dashboard/driver-app')) return 'ops'
   if (h.startsWith('/dashboard/driver-log')) return 'ops'
   if (h.startsWith('/dashboard/te')) return 'te'
   if (h.startsWith('/dashboard/accounts')) return 'finance'

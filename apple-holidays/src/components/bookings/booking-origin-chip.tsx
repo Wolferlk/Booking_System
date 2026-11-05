@@ -19,13 +19,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Loader2, ChevronDown, Mail, Cloud, Plug, Bot, Keyboard, HelpCircle, Globe,
+  Loader2, ChevronDown, Mail, Cloud, Plug, Bot, Keyboard, HelpCircle, Globe, Store,
 } from 'lucide-react'
 import { readApiResponse } from '@/lib/utils'
 import type { BookingOrigin, OriginChannel } from '@/lib/booking-origin'
 
 const CHANNEL_ICON: Record<OriginChannel, typeof Mail> = {
-  EMAIL: Mail, ONEDRIVE: Cloud, APPLESYSTEM: Plug, OPS_AI: Bot,
+  EMAIL: Mail, ONEDRIVE: Cloud, APPLESYSTEM: Plug, B2C: Store, OPS_AI: Bot,
   API: Keyboard, MANUAL: Keyboard, UNKNOWN: HelpCircle,
 }
 
@@ -33,6 +33,7 @@ const CHANNEL_TONE: Record<OriginChannel, string> = {
   EMAIL:       'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',
   ONEDRIVE:    'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100',
   APPLESYSTEM: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100',
+  B2C:         'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100',
   OPS_AI:      'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
   API:         'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200',
   MANUAL:      'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200',

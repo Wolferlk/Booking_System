@@ -9,7 +9,7 @@ import {
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
   PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
-  Columns3, Check, CheckCircle2, Circle, Undo2,
+  Columns3, Check, CheckCircle2, Circle, Undo2, Building2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -33,8 +33,15 @@ import {
 import AdvancedFilterPanel, { FlowBadge } from '@/components/mc-report/advanced-filters'
 import {
   EMPTY_FILTERS, activeFilterCount, applyAdvancedFilters, facetCounts, filtersFromParams, filtersToParams,
-  movementFlow, type AdvancedFilters,
+  movementFlow, driverState, tripStages, type AdvancedFilters,
 } from '@/lib/mc-report-filters'
+import type { McSheetRow } from '@/lib/mc-report-workbook'
+import ReportStudio, { downloadMcPdf, type SavedTemplate } from '@/components/mc-report/report-studio'
+import { SupplierPicker, type PickedSupplier } from '@/components/suppliers/supplier-picker'
+import {
+  DEFAULT_CONFIG, describeFilters,
+  type McDateMode, type McPdfRow, type McReportTemplate, type McTemplateConfig, type McTemplateFilters,
+} from '@/lib/mc-report-pdf'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -108,6 +115,8 @@ type MCRow = {
   tourFigures?: { packageCost: number | null; budgetKm: number | null; actualKm: number | null } | null
   /** Sri Lanka: the desk ticked this movement off — the row reads green. */
   done?:          { at: string; by: string | null } | null
+  /** The Accounts supplier (Suppliers Manage) this movement is paid to — src/lib/mc-supplier.ts. */
+  supplier?:      (PickedSupplier & { by: string | null; at: string }) | null
   /** Lead passenger's name — the file's lead, else its first passenger. */
   leadGuest:      string | null
   agent:          string | null
@@ -246,6 +255,22 @@ function endOfMonth() {
   return d.toISOString().slice(0, 10)
 }
 
+/** The range a template's date mode stands for; null = keep what is on screen. */
+function rangeForDateMode(mode: McDateMode): { from: string; to: string; label: string | null } | null {
+  switch (mode) {
+    case 'today':     return { from: todayISO(), to: todayISO(), label: 'Today' }
+    case 'tomorrow':  return { from: offsetISO(1), to: offsetISO(1), label: 'Tomorrow' }
+    case 'next7':     return { from: todayISO(), to: offsetISO(6), label: null }
+    case 'thisWeek':  return { from: startOfWeek(), to: endOfWeek(), label: 'This Week' }
+    case 'nextWeek': {
+      const shift = (iso: string) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 7); return d.toISOString().slice(0, 10) }
+      return { from: shift(startOfWeek()), to: shift(endOfWeek()), label: null }
+    }
+    case 'thisMonth': return { from: startOfMonth(), to: endOfMonth(), label: 'This Month' }
+    default:          return null
+  }
+}
+
 const QUICK_RANGES = [
   { label: 'Today',      from: () => todayISO(),     to: () => todayISO()     },
   { label: 'Tomorrow',   from: () => offsetISO(1),   to: () => offsetISO(1)   },
@@ -298,6 +323,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Meet Time', value: to12h(row.meetingTime) },
     { label: 'Vendor',    value: row.vendor },
     { label: 'Driver',    value: row.driverName },
+    { label: 'Supplier',  value: row.supplier?.name },
     { label: 'Guide',       value: row.guideName },
     { label: 'Tour Vendor', value: row.tourVendorName },
     { label: 'Vehicle',   value: row.vehicleType },
@@ -509,6 +535,7 @@ const OPTIONAL_COLS = [
   { key: 'budgetTransfer', label: 'Budget Transfer', scope: 'Singapore / Malaysia' },
   { key: 'mealPref',       label: 'Meal Preference', scope: 'All destinations' },
   { key: 'specialRequest', label: 'Special Request', scope: 'All destinations' },
+  { key: 'supplier',       label: 'Supplier',        scope: 'All destinations' },
 ] as const
 type OptionalCol = typeof OPTIONAL_COLS[number]['key']
 const HIDDEN_COLS_KEY = 'mc-report.hidden-cols'
@@ -526,6 +553,46 @@ function mcNumber(row: MCRow, field: McFieldKey): number | null {
 function kmVariance(row: MCRow): number | null {
   const b = mcNumber(row, 'budgetKm'), a = mcNumber(row, 'actualKm')
   return a != null && b != null ? Math.round((a - b) * 10) / 10 : null
+}
+
+/**
+ * A chart row as the PDF prints it. Built here, from the row the desk is
+ * looking at, so every on-screen rule (cancelled, no driver needed, the
+ * vehicle hint) carries over. The driver rate is deliberately not copied.
+ */
+function toPdfRow(r: MCRow): McPdfRow {
+  const flow = movementFlow(r)
+  const sl = isSriLanka(r.operationCountry), sgmy = isSgMy(r.operationCountry)
+  const transfer = sgmy ? mcNumber(r, 'budgetTransfer') : null
+  const specialReq = [
+    r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
+    bookingRequestsText(r.bookingRequests),
+  ].filter(Boolean).join(' | ')
+  return {
+    id: r.id, date: r.date.slice(0, 10), time: flow.time ?? r.meetingTime,
+    vnCode: r.vnCode, isNumber: r.isNumber, agentRef: r.agentBookingId,
+    leadGuest: r.leadGuest, agent: r.agent, location: r.location, country: r.operationCountry,
+    adults: r.paxAdults, children: r.paxChildren,
+    from: r.fromPoint, to: r.toPoint, details: r.details, mealPlan: r.mealPlan,
+    service: SERVICE_LABELS[r.serviceType] ?? r.serviceType,
+    flow: flow.arrival && flow.departure ? 'both' : flow.arrival ? 'arrival' : flow.departure ? 'departure' : null,
+    airport: flow.airport,
+    flights: (r.flights ?? []).filter(f => !flow.flight || f.date === r.date.slice(0, 10) || f === flow.flight)
+      .map(f => `${f.flightNo} · ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`.trim()),
+    leisure: r.isLeisure, hotelOnly: r.isHotelOnly || r.isHotelOnlyBooking,
+    noDriver: r.isLeisure || r.isHotelOnly || r.isHotelOnlyBooking,
+    vendor: r.vendor, driver: r.driverName, driverPhone: r.driverPhone,
+    vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? null, plate: r.vehiclePlate,
+    guide: r.guideName, guidePhone: r.guidePhone, tourVendor: r.tourVendorName, tourVendorPhone: r.tourVendorPhone,
+    mealPrefs: mealPrefsText(r.mealPrefs), specialReq,
+    ticketsControl: r.ticketsControl ?? null,
+    status: r.bookingStatus?.replace(/_/g, ' ') ?? '',
+    cancelled: isCancelledRow(r), cancelPending: isCancelPendingRow(r), done: !!r.done,
+    budgetKm: sl ? mcNumber(r, 'budgetKm') : null, actualKm: sl ? mcNumber(r, 'actualKm') : null,
+    packageCost: sl ? mcNumber(r, 'packageCost') : null,
+    budgetTransfer: transfer != null
+      ? `${r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)} ${fmtNum(transfer)}` : null,
+  }
 }
 
 function flightTime(f: McFlight) {
@@ -771,6 +838,69 @@ function SpecialRequestCell({
   )
 }
 
+/**
+ * Supplier — the Accounts supplier the movement is paid to, beside the driver
+ * who drives it. Unset, it offers the supplier this driver was last paid
+ * through on the chart (one click), else a picker.
+ */
+function SupplierCell({
+  row, canEdit, suggestion, busy, onOpen, onQuick, query,
+}: {
+  row: MCRow
+  canEdit: boolean
+  suggestion: PickedSupplier | null
+  busy: boolean
+  onOpen: () => void
+  onQuick: (s: PickedSupplier) => void
+  query: string
+}) {
+  if (!isAssignable(row)) return <span className="text-slate-300 text-[10px]">—</span>
+  const s = row.supplier
+  if (s) {
+    const q = query.trim().toLowerCase()
+    return (
+      <button
+        onClick={e => { e.stopPropagation(); if (canEdit) onOpen() }}
+        className={cn('flex items-center gap-1.5 max-w-full rounded-full pl-1 pr-2 py-0.5 -ml-1 text-left transition-colors',
+          canEdit && 'hover:bg-indigo-50 hover:ring-1 hover:ring-indigo-200')}
+        title={`${s.name}${s.country ? ` · ${s.country}` : ''} — Accounts supplier${s.by ? `, set by ${s.by}` : ''}`}
+      >
+        <span className={cn('w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0',
+          s.source === 'driver' ? 'bg-sky-100 text-sky-700' : 'bg-indigo-100 text-indigo-700')}>
+          <Building2 className="w-3 h-3" />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-slate-700">
+            {q && s.name.toLowerCase().includes(q) ? <Highlight text={s.name} query={query} /> : s.name}
+          </span>
+          <span className="block text-[9px] text-slate-400">{s.source === 'driver' ? 'driver payee' : 'supplier'}{s.country ? ` · ${s.country}` : ''}</span>
+        </span>
+      </button>
+    )
+  }
+  if (!canEdit) return <span className="text-slate-300 text-[10px]">—</span>
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <button
+        onClick={e => { e.stopPropagation(); onOpen() }}
+        className="inline-flex items-center gap-1 rounded border border-dashed border-indigo-200 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 transition-colors"
+      >
+        <Building2 className="w-3 h-3" /> Select
+      </button>
+      {suggestion && (
+        <button
+          disabled={busy}
+          onClick={e => { e.stopPropagation(); onQuick(suggestion) }}
+          title={`${row.vendor} is paid through ${suggestion.name} on other movements — use it here too`}
+          className="inline-flex max-w-[150px] items-center gap-1 rounded px-1 text-[9px] font-semibold text-violet-600 hover:bg-violet-50 disabled:opacity-50"
+        >
+          <Sparkles className="w-2.5 h-2.5 flex-shrink-0" /><span className="truncate">{suggestion.name}?</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
 function PartnerCell({
   kind, name, phone, enabled, canAssign, onAssign, query,
 }: {
@@ -886,9 +1016,17 @@ export default function MCReportPage() {
   const advReady = useRef(false)
   const [savingDone, setSavingDone] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  // Report Studio — PDF builder + saved templates.
+  const [showStudio, setShowStudio] = useState(false)
+  const [templates, setTemplates] = useState<SavedTemplate[]>([])
+  const [exportingPdf, setExportingPdf] = useState(false)
+  const studioConfig = useRef<McTemplateConfig>(DEFAULT_CONFIG)
+  const [studioTemplateId, setStudioTemplateId] = useState<string | null>(null)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
   const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
   const [assignRow, setAssignRow] = useState<MCRow | null>(null)
+  const [supplierRow, setSupplierRow] = useState<MCRow | null>(null)
+  const [savingSupplier, setSavingSupplier] = useState(false)
   // Which partner kinds each country operates with (Settings-driven), so the
   // guide / tour-vendor columns only appear where they are actually used.
   const [partnerCountries, setPartnerCountries] = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
@@ -913,6 +1051,15 @@ export default function MCReportPage() {
       return next
     })
   }
+
+  const reloadTemplates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/mc-report/templates')
+      const json = await res.json()
+      if (json.success) setTemplates(json.data)
+    } catch { /* starters still work without the saved list */ }
+  }, [])
+  useEffect(() => { reloadTemplates() }, [reloadTemplates])
 
   useEffect(() => {
     fetch('/api/public/partner-settings')
@@ -1044,6 +1191,51 @@ export default function MCReportPage() {
   const advActive     = activeFilterCount(adv)
   const isFiltered    = displayedRows.length !== rows.length
 
+  // ── Report Studio wiring ─────────────────────────────────────────────────────
+  const pdfRows = useMemo(() => displayedRows.map(toPdfRow), [displayedRows])
+  const effectiveCountryForView = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
+  const currentFilters = useMemo<McTemplateFilters>(() => ({
+    adv, search, deepSearch, serviceType: svcFilter, country: localCountry, cancelOnly, doneFilter,
+  }), [adv, search, deepSearch, svcFilter, localCountry, cancelOnly, doneFilter])
+  const serviceLabel = useCallback((v: string) => SERVICE_LABELS[v] ?? v, [])
+  const onStudioConfig = useCallback((c: McTemplateConfig) => { studioConfig.current = c }, [])
+
+  /** Put a template's filters (and dates) on the chart. */
+  const applyTemplate = useCallback((t: McReportTemplate) => {
+    const f = t.config.filters
+    if (t.builtIn) {
+      // A starter says what *kind* of movement to print, not whose — keep the
+      // driver / agent / city / text filters already on the chart.
+      setAdv(cur => ({ ...f.adv, drivers: cur.drivers, agents: cur.agents, locations: cur.locations, airports: cur.airports }))
+    } else {
+      setAdv(f.adv)
+      setSearch(f.search); setDeepSearch(f.deepSearch); setSvcFilter(f.serviceType)
+      setLocalCountry(f.country); setCancelOnly(f.cancelOnly); setDoneFilter(f.doneFilter)
+    }
+    const range = rangeForDateMode(t.config.dateMode)
+    if (range) { setDateFrom(range.from); setDateTo(range.to); setActiveRange(range.label) }
+    // Search / country only reach the server on a reload.
+    setResetNonce(n => n + 1)
+  }, [])
+
+  async function quickPdf() {
+    setShowExportMenu(false)
+    setExportingPdf(true)
+    try {
+      await downloadMcPdf(pdfRows, { ...studioConfig.current, filters: currentFilters }, {
+        dateFrom, dateTo, generatedBy: session?.user?.name ?? null,
+        filterChips: [
+          ...describeFilters(currentFilters, serviceLabel),
+          ...(effectiveCountryForView && !localCountry ? [`Country: ${effectiveCountryForView.replace(/_/g, ' ')}`] : []),
+        ],
+      })
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'PDF failed')
+    } finally {
+      setExportingPdf(false)
+    }
+  }
+
   // ── Done ticks (Sri Lanka) ───────────────────────────────────────────────────
 
   // Counted over the loaded chart, not the filtered view, so switching to
@@ -1145,11 +1337,59 @@ export default function MCReportPage() {
   const showBudgetTransferCol = hasSgMyRows && colOn('budgetTransfer')
   const showMealPrefCol    = colOn('mealPref')
   const showSpecialReqCol  = colOn('specialRequest')
+  const showSupplierCol    = colOn('supplier')
   const showDoneCol = hasSlRows || doneFilter !== 'all'
   const columnCount = 14
     + [showDoneCol, showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
        showBudgetKmCol, showActualKmCol, showPackageCostCol, showBudgetTransferCol,
-       showMealPrefCol, showSpecialReqCol].filter(Boolean).length
+       showMealPrefCol, showSpecialReqCol, showSupplierCol].filter(Boolean).length
+
+  // ── Supplier ─────────────────────────────────────────────────────────────────
+
+  const vendorKey = (r: Pick<MCRow, 'vendor'>) => (r.vendor ?? '').trim().toLowerCase()
+
+  /** The supplier each driver / vendor was most recently set to on the rows loaded. */
+  const supplierByVendor = useMemo(() => {
+    const m = new Map<string, NonNullable<MCRow['supplier']>>()
+    for (const r of rows) {
+      const k = vendorKey(r)
+      if (!k || !r.supplier) continue
+      const had = m.get(k)
+      if (!had || r.supplier.at > had.at) m.set(k, r.supplier)
+    }
+    return m
+  }, [rows])
+
+  /** Same driver / vendor, still without a supplier — offered as "also set on". */
+  const supplierSiblings = (row: MCRow) => {
+    const k = vendorKey(row)
+    if (!k) return []
+    return displayedRows
+      .filter(r => r.id !== row.id && !r.supplier && isAssignable(r) && !isCancelledRow(r) && vendorKey(r) === k)
+      .slice(0, 60)
+  }
+
+  async function saveSupplier(ids: string[], supplier: PickedSupplier | null) {
+    setSavingSupplier(true)
+    try {
+      const res = await fetch('/api/mc-report/supplier', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agendaItemIds: ids, supplier: supplier ? { source: supplier.source, id: supplier.id } : null }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.success) { toast.error(json?.error || 'Could not save the supplier'); return false }
+      const saved = json.data.suppliers as Record<string, MCRow['supplier']>
+      setRows(rs => rs.map(r => (r.id in saved ? { ...r, supplier: saved[r.id] ?? null } : r)))
+      const lines = Number(json.data.sheetLines) || 0
+      toast.success(`${json.message ?? 'Saved'}${lines ? ` · ${lines} Trans-Recon line${lines === 1 ? '' : 's'} updated` : ''}`)
+      return true
+    } catch {
+      toast.error('Could not save the supplier')
+      return false
+    } finally {
+      setSavingSupplier(false)
+    }
+  }
 
   function applyMcDetails(rowId: string, details: McDetails) {
     setRows(rs => rs.map(r => r.id === rowId ? { ...r, mcDetails: Object.keys(details).length ? details : null } : r))
@@ -1315,6 +1555,7 @@ export default function MCReportPage() {
     'Budget KM', 'Actual KM', 'KM Variance', 'Package Cost (LKR)',
     'Budget Transfer', 'Budget Transfer Currency',
     'Special Request (movement)', 'Special Requests (booking)', 'Meal Preference',
+    'Supplier (Accounts)',
   ]
   function mcExportCells(r: MCRow): (string | number)[] {
     const flight = (dir: 'ARR' | 'DEP') => (r.flights ?? []).filter(f => f.direction === dir)
@@ -1331,6 +1572,7 @@ export default function MCReportPage() {
       r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
       bookingRequestsText(r.bookingRequests),
       mealPrefsText(r.mealPrefs),
+      r.supplier?.name ?? '',
     ]
   }
 
@@ -1399,133 +1641,64 @@ export default function MCReportPage() {
     setDownloadingXlsx(true)
     setShowExportMenu(false)
     try {
-      const XLSX = await import('xlsx')
-
-      const wb = XLSX.utils.book_new()
-
-      // Sheet 1: Main movements
-      const headers = [
-        'Date', 'Tour Ref', 'IS Number', 'Agent Booking ID', 'Location',
-        'Adults', 'Children', 'From', 'To', 'Details',
-        'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day', 'Hotel Only',
-        'Hotel Only Booking', 'Nights', 'Check Out',
-        'Vendor', 'Driver', 'Vehicle Type', 'Plate No',
-        'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone',
-        'Lead Guest', 'Agent', 'Booking Status',
-        'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
-        'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
-        'Tickets Control',
-        ...MC_EXPORT_HEADERS,
-      ]
-
-      const dataRows = displayedRows.map(r => [
-        r.date, r.vnCode, r.isNumber ?? '', r.agentBookingId ?? '',
-        r.location, r.paxAdults, r.paxChildren,
-        r.fromPoint ?? '', r.toPoint ?? '', r.details ?? '',
-        r.mealPlan ?? '', r.meetingTime ?? '',
-        SERVICE_LABELS[r.serviceType] ?? r.serviceType,
-        r.isLeisure ? 'Yes' : '',
-        r.isHotelOnly ? 'Yes' : '',
-        r.isHotelOnlyBooking ? 'Yes' : '',
-        r.nights ?? '', r.checkOut ?? '',
-        r.vendor ?? '', r.driverName ?? '',
-        r.vehicleType ?? '', r.vehiclePlate ?? '',
-        r.guideName ?? '', r.guidePhone ?? '',
-        r.tourVendorName ?? '', r.tourVendorPhone ?? '',
-        r.leadGuest ?? '', r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
-        isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
-        r.cancelRequestedAt?.slice(0, 10) ?? '',
-        r.cancelRequestedBy ?? '',
-        isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
-        r.cancelReason ?? '',
-        r.cancelFeeTotal ?? '',
-        r.ticketsControl ?? '',
-        ...mcExportCells(r),
-      ])
-
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
-      ws['!cols'] = [
-        { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 20 },
-        { wch: 7  }, { wch: 8  }, { wch: 22 }, { wch: 22 }, { wch: 40 },
-        { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-        { wch: 18 }, { wch: 8  }, { wch: 12 },
-        { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 },
-        { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
-        { wch: 18 }, { wch: 16 },
-        { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 40 }, { wch: 14 },
-        { wch: 24 },
-        { wch: 34 }, { wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 11 }, { wch: 16 },
-        { wch: 14 }, { wch: 10 }, { wch: 30 }, { wch: 50 }, { wch: 28 },
-      ]
-      XLSX.utils.book_append_sheet(wb, ws, 'Movements')
-
-      // Sheet 2: Stats summary
-      const statsData = [
-        ['MC Report Summary'],
-        ['Generated', new Date().toLocaleString('en-GB')],
-        ['Date Range', `${dateFrom || '—'} → ${dateTo || '—'}`],
-        deepSearch ? ['Deep Search Filter', deepSearch] : [],
-        [''],
-        ['Total Movements', displayedRows.length],
-        ['Total Adults',    totalAdults],
-        ['Total Children',  totalChildren],
-        ['Private Transfers', pvtCount],
-        ['SIC Transfers',    sicCount],
-        ['Own Arrangements', ownCount],
-        ['Leisure Days',     leisureCount],
-        ['Hotel Only',       hotelOnlyCount],
-        ['Hotel Only Bookings', hotelOnlyBookingCount],
-        ['Hotel Only Stays',    hotelOnlyStayCount],
-        ['Cancelled Bookings',  cancelledBookingCount],
-        ['Cancelled Movements', cancelledRowCount],
-        ['Cancellations Awaiting Accounts Approval', cancelQueue.length],
-        ['Movements On Files Awaiting Approval',     cancelQueueMovements],
-        [''],
-        ['Sri Lanka Arrivals / Departures', `${mcStats.arrivals} / ${mcStats.departures}`],
-        ['Sri Lanka Budget KM',  mcStats.budgetKm],
-        ['Sri Lanka Actual KM',  mcStats.actualKm],
-        ['Sri Lanka Package Cost (LKR)', mcStats.packageCost],
-        ['SG / MY Budget Transfer', transferText || 0],
-        ['Bookings With Special Requests', mcStats.requestFiles],
-        ['Movements With Their Own Special Request', mcStats.requestMoves],
-        ['Bookings With Meal Preferences', mcStats.mealFiles],
-      ].filter(r => r.length > 0)
-
-      const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
-      wsSummary['!cols'] = [{ wch: 24 }, { wch: 30 }]
-      XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary')
-
-      const buf      = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
-      const blob     = new Blob([new Uint8Array(buf)], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      const flight = (r: MCRow, dir: 'ARR' | 'DEP') => (r.flights ?? []).filter(f => f.direction === dir)
+        .map(f => `${f.flightNo} ${f.date} ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`).join('; ')
+      const rows: McSheetRow[] = displayedRows.map(r => {
+        const sl = isSriLanka(r.operationCountry), sgmy = isSgMy(r.operationCountry)
+        const flow = movementFlow(r)
+        const ds = driverState(r)
+        const stages = tripStages(r)
+        const pending = isCancelPendingRow(r)
+        return {
+          date: r.date, ref: r.vnCode, isNumber: r.isNumber ?? '', agentBookingId: r.agentBookingId ?? '',
+          country: r.operationCountry?.replace(/_/g, ' ') ?? '',
+          location: r.location, adults: r.paxAdults, children: r.paxChildren,
+          from: r.fromPoint ?? '', to: r.toPoint ?? '', details: r.details ?? '',
+          mealPlan: r.mealPlan ?? '', meetingTime: r.meetingTime ?? '', time: flow.time ?? '',
+          service: SERVICE_LABELS[r.serviceType] ?? r.serviceType,
+          serviceGroup: isPrivateTransferType(r.serviceType) ? 'Private' : isSicType(r.serviceType) ? 'SIC'
+            : r.serviceType === 'OWN_ARRANGEMENT' ? 'Own arrangement' : r.serviceType === 'ACCOMMODATION' ? 'Accommodation' : 'Other',
+          leisure: r.isLeisure, hotelOnly: r.isHotelOnly, hotelOnlyBooking: r.isHotelOnlyBooking,
+          nights: r.nights, checkOut: r.checkOut ?? '',
+          vendor: r.vendor ?? '', driver: r.driverName ?? '',
+          vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? '', plate: r.vehiclePlate ?? '',
+          guide: r.guideName ?? '', guidePhone: r.guidePhone ?? '',
+          tourVendor: r.tourVendorName ?? '', tourVendorPhone: r.tourVendorPhone ?? '',
+          leadGuest: r.leadGuest ?? '', agent: r.agent ?? '',
+          status: r.bookingStatus?.replace(/_/g, ' ') ?? '',
+          cancelled: isCancelledRow(r), cancelPending: pending,
+          cancelRequestedAt: r.cancelRequestedAt, cancelRequestedBy: r.cancelRequestedBy ?? '',
+          waitingDays: pending ? waitingDays(r.cancelRequestedAt) : null,
+          cancelReason: r.cancelReason ?? '', cancelFee: r.cancelFeeTotal, currency: r.currency ?? '',
+          allocation: ds === 'needs' ? 'Needs allocation' : ds === 'assigned' ? 'Allocated' : 'N/A',
+          flow: flow.arrival && flow.departure ? 'Arrival + departure' : flow.arrival ? 'Arrival' : flow.departure ? 'Departure' : '',
+          airport: flow.airport ?? '', flight: flow.flight?.flightNo ?? '',
+          tripStage: stages.map(x => (x === 'first' ? 'First day' : x === 'last' ? 'Last day' : 'Mid-tour')).join(' + '),
+          done: !!r.done, doneBy: r.done?.by ?? '', ticketsControl: r.ticketsControl ?? '',
+          arrFlights: sl ? flight(r, 'ARR') : '', depFlights: sl ? flight(r, 'DEP') : '',
+          budgetKm: sl ? mcNumber(r, 'budgetKm') : null, actualKm: sl ? mcNumber(r, 'actualKm') : null,
+          kmVariance: sl ? kmVariance(r) : null, packageCost: sl ? mcNumber(r, 'packageCost') : null,
+          budgetTransfer: sgmy ? mcNumber(r, 'budgetTransfer') : null,
+          transferCurrency: sgmy && mcNumber(r, 'budgetTransfer') != null ? (r.mcDetails?.currency ?? mcCurrencyFor(r.operationCountry, r.vnCode)) : '',
+          specialRequest: r.mcDetails?.specialRequest != null ? String(r.mcDetails.specialRequest) : '',
+          bookingRequests: bookingRequestsText(r.bookingRequests),
+          mealPrefs: mealPrefsText(r.mealPrefs),
+        }
       })
-      const url      = URL.createObjectURL(blob)
-      const a        = document.createElement('a')
-      a.href         = url
-      a.download     = `mc-report-${dateFrom || 'all'}.xlsx`
-      a.click()
-      URL.revokeObjectURL(url)
+      const filterLabel = [
+        deepSearch ? `deep search “${deepSearch}”` : null,
+        search ? `search “${search}”` : null,
+        advActive ? `${advActive} advanced filter${advActive === 1 ? '' : 's'}` : null,
+      ].filter(Boolean).join(' · ')
+      const { downloadMcWorkbook } = await import('@/lib/mc-report-workbook')
+      await downloadMcWorkbook({ rows, dateFrom, dateTo, filterLabel }, `mc-report-${dateFrom || 'all'}${dateTo && dateTo !== dateFrom ? `_to_${dateTo}` : ''}.xlsx`)
       toast.success(`Exported ${displayedRows.length} rows as Excel`)
-    } catch {
+    } catch (err) {
+      console.error('[mc-report] excel export failed', err)
       toast.error('Excel export failed')
     } finally {
       setDownloadingXlsx(false)
     }
-  }
-
-  // ── PDF Export ────────────────────────────────────────────────────────────────
-
-  function openPrintPage() {
-    const params = new URLSearchParams()
-    if (dateFrom)    params.set('dateFrom', dateFrom)
-    if (dateTo)      params.set('dateTo',   dateTo)
-    if (search)      params.set('search',   search)
-    if (deepSearch)  params.set('deepSearch', deepSearch)
-    if (svcFilter)   params.set('serviceType', svcFilter)
-    const effectiveCountry = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
-    if (effectiveCountry) params.set('country', effectiveCountry)
-    window.open(`/print/mc-report?${params}`, '_blank')
-    setShowExportMenu(false)
   }
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1544,6 +1717,13 @@ export default function MCReportPage() {
               Refresh
             </button>
 
+            <button onClick={() => setShowStudio(true)} className="btn btn-secondary btn-sm"
+              title="Build a PDF from this view and save it as a template">
+              <Sparkles className="w-4 h-4 text-brand-500" />
+              Report Studio
+              {templates.length > 0 && <span className="text-[10px] font-bold bg-brand-100 text-brand-700 rounded-full px-1.5">{templates.length}</span>}
+            </button>
+
             {/* Export dropdown */}
             <div className="relative" ref={exportMenuRef}>
               <button
@@ -1557,7 +1737,7 @@ export default function MCReportPage() {
               {showExportMenu && (
                 <div className="absolute right-0 top-10 z-30 w-56 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
                   <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">
-                    {displayedRows.length} row{displayedRows.length !== 1 ? 's' : ''}{deepSearch ? ' · filtered' : ''}
+                    {displayedRows.length} row{displayedRows.length !== 1 ? 's' : ''}{isFiltered ? ' · filtered' : ''}
                   </p>
                   <div className="border-t border-slate-100 divide-y divide-slate-100">
                     <button onClick={downloadCSV}
@@ -1578,12 +1758,22 @@ export default function MCReportPage() {
                         <p className="text-xs text-emerald-600">2 sheets: movements + summary</p>
                       </div>
                     </button>
-                    <button onClick={openPrintPage}
-                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-50 text-sm text-blue-800 text-left transition-colors">
-                      <Printer className="w-4 h-4 text-blue-500" />
+                    <button onClick={quickPdf} disabled={exportingPdf}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-50 text-sm text-blue-800 text-left transition-colors disabled:opacity-60">
+                      {exportingPdf
+                        ? <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                        : <Printer className="w-4 h-4 text-blue-500" />}
                       <div>
-                        <p className="font-semibold">PDF (Print)</p>
-                        <p className="text-xs text-blue-500">Opens print-ready view</p>
+                        <p className="font-semibold">{exportingPdf ? 'Generating…' : 'PDF — this view'}</p>
+                        <p className="text-xs text-blue-500">Exactly the filtered rows{studioTemplateId ? ' · last Studio layout' : ''}</p>
+                      </div>
+                    </button>
+                    <button onClick={() => { setShowExportMenu(false); setShowStudio(true) }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-amber-50 text-sm text-amber-900 text-left transition-colors">
+                      <Sparkles className="w-4 h-4 text-amber-500" />
+                      <div>
+                        <p className="font-semibold">Report Studio…</p>
+                        <p className="text-xs text-amber-600">Pick columns, layout & save templates</p>
                       </div>
                     </button>
                   </div>
@@ -2150,6 +2340,10 @@ export default function MCReportPage() {
                         </th>
                       )}
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
+                      {showSupplierCol && (
+                        <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap"
+                          title="The Accounts supplier (Suppliers Manage) this movement is paid to">Supplier</th>
+                      )}
                       {showVehicleCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Vehicle Type</th>}
                       {showBudgetKmCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Budget KM</th>}
                       {showActualKmCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Actual KM</th>}
@@ -2542,6 +2736,21 @@ export default function MCReportPage() {
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
 
+                            {/* Supplier — from Accounts → Suppliers Manage */}
+                            {showSupplierCol && (
+                              <td className="px-3 py-2.5 text-slate-600 max-w-[170px]">
+                                <SupplierCell
+                                  row={row}
+                                  canEdit={canEditTicketsControl}
+                                  suggestion={!row.supplier && !isCancelledRow(row) ? supplierByVendor.get(vendorKey(row)) ?? null : null}
+                                  busy={savingSupplier}
+                                  onOpen={() => setSupplierRow(row)}
+                                  onQuick={s => saveSupplier([row.id], s)}
+                                  query={deepSearch}
+                                />
+                              </td>
+                            )}
+
                             {/* Vehicle Type — Sri Lanka */}
                             {showVehicleCol && (
                               <td className="px-3 py-2.5 text-slate-600">
@@ -2816,6 +3025,28 @@ export default function MCReportPage() {
       {/* Assigning from the chart itself — the same dialog the booking's
           movement chart uses, so the save, the allocation-board sync and the
           driver's WhatsApp all behave identically. */}
+      {supplierRow && (
+        <SupplierPicker
+          context={<>
+            <b className="font-mono text-slate-700">{supplierRow.vnCode}</b> · {formatDate(supplierRow.date)}
+            {supplierRow.meetingTime ? ` ${to12h(supplierRow.meetingTime) ?? supplierRow.meetingTime}` : ''} · {supplierRow.fromPoint ?? '—'} → {supplierRow.toPoint ?? '—'}
+            {supplierRow.vendor && <> · driver <b className="text-slate-700">{supplierRow.vendor}</b></>}
+          </>}
+          country={supplierRow.operationCountry}
+          hint={supplierRow.vendor}
+          current={supplierRow.supplier ?? null}
+          siblings={supplierSiblings(supplierRow).map(r => ({
+            id: r.id,
+            label: `${formatDate(r.date)} · ${r.vnCode}`,
+            sub: `${r.fromPoint ?? '—'} → ${r.toPoint ?? '—'}`,
+          }))}
+          siblingsLabel={supplierRow.vendor ? `Also set on ${supplierRow.vendor}'s other movements with no supplier` : undefined}
+          saving={savingSupplier}
+          onPick={async (s, also) => { if (await saveSupplier([supplierRow.id, ...also], s)) setSupplierRow(null) }}
+          onClose={() => setSupplierRow(null)}
+        />
+      )}
+
       {assignRow && (
         <AssignMovementModal
           open
@@ -2891,6 +3122,26 @@ export default function MCReportPage() {
           </div>
         )
       })()}
+
+      <ReportStudio
+        open={showStudio}
+        onClose={() => setShowStudio(false)}
+        rows={pdfRows}
+        totalRows={rows.length}
+        loading={loading}
+        filters={currentFilters}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        userName={session?.user?.name ?? null}
+        serviceLabel={serviceLabel}
+        onApplyTemplate={applyTemplate}
+        onConfigChange={onStudioConfig}
+        initialConfig={studioConfig.current}
+        initialTemplateId={studioTemplateId}
+        onTemplateIdChange={setStudioTemplateId}
+        templates={templates}
+        reloadTemplates={reloadTemplates}
+      />
     </div>
   )
 }

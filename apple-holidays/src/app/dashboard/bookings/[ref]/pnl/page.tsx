@@ -87,7 +87,8 @@ export default function PNLPage() {
       const res  = await fetch('/api/onedrive/sync', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ bookingRef: ref }),
+        // PNL only — never re-import the TC from here (see data-protection.ts).
+        body:    JSON.stringify({ bookingRef: ref, purpose: 'pnl' }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Sync failed')

@@ -9,6 +9,13 @@ const TE_BASE = (
 
 const TE_SECRET = process.env.TE_WEBHOOK_SECRET ?? ''
 
+export const maxDuration = 60
+/**
+ * Give up on the call server before the hosting platform does, so the browser
+ * gets a JSON error it can show instead of a gateway HTML page.
+ */
+const UPSTREAM_TIMEOUT_MS = 25_000
+
 async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -33,7 +40,7 @@ async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
   }
 
   try {
-    const res = await fetch(url, init)
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS) })
     let data: unknown
     const ct = res.headers.get('content-type') ?? ''
     if (ct.includes('application/json')) {
@@ -44,7 +51,14 @@ async function proxy(req: NextRequest, method: string): Promise<NextResponse> {
     }
     return NextResponse.json(data, { status: res.status })
   } catch (err) {
-    return NextResponse.json({ error: String(err) }, { status: 502 })
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return NextResponse.json({
+        success: false,
+        error: `The call server did not answer within ${UPSTREAM_TIMEOUT_MS / 1000}s. ` +
+          'A call may still go through — check the call history before trying again.',
+      }, { status: 504 })
+    }
+    return NextResponse.json({ success: false, error: `Could not reach the call server: ${String(err)}` }, { status: 502 })
   }
 }
 

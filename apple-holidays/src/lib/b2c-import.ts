@@ -29,6 +29,11 @@ import { getAutomationUserId } from './as-booking-import'
 import type { B2cSkipReason, MappedB2cBooking } from './b2c-booking-map'
 import { loadOrderTravellers, repairB2cLeadName } from './b2c-lead-name'
 import type { LeadNameRepair } from './b2c-lead-name'
+import { repairB2cGuestContact } from './b2c-guest-contact'
+import { engageB2cGuests } from './b2c-guest-engage'
+import { fetchOrderChainFacts, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
+import { handleAmendment, sweepRecentAmendments, type AmendmentOutcome } from './b2c-amendment-sweep'
+import { syncRecentVersionLinks } from './b2c-version-links'
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -82,7 +87,7 @@ export async function saveB2cImportSettings(s: B2cImportSettings): Promise<void>
 
 export interface B2cImportSummary {
   /** Who/what started the run — shown in the activity feed. */
-  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  trigger?: 'scheduler' | 'cron-http' | 'manual' | 'watch'
   triggeredBy?: string | null
   /** True for a preview: everything is computed, nothing is written. */
   dryRun?: boolean
@@ -102,6 +107,20 @@ export interface B2cImportSummary {
    * the renames that *would* happen.
    */
   leadNamesFixed?: { bookingRef: string; from: string; to: string }[]
+  /**
+   * Already-imported bookings that held the desk's inbox (or no phone) and now
+   * carry the guest's own contact. In a preview, the ones that *would* change.
+   */
+  guestContactsFixed?: { bookingRef: string; changes: string[] }[]
+  /** Bookings put on AI calls + sent the call-permission request this run. */
+  guestsEngaged?: { bookingRef: string; status: string; approval?: string }[]
+  /**
+   * Store orders that are a NEW VERSION of a booking (b2c-order-chain). Never a
+   * second booking: filed as a notice on the original, applied by Update Booking.
+   * `imported` = the original was never in ops, so the booking was created
+   * under the original's ref from this version.
+   */
+  amendments?: { orderId: number; bookingRef: string; version: number; isOld: boolean; action: 'noticed' | 'imported' | 'duplicate' | 'applied' | 'failed'; newVersion?: number | null }[]
   /** Non-fatal problems, e.g. the traveller lookup was unavailable. */
   warnings?: string[]
   startedAt: string
@@ -118,8 +137,15 @@ export interface RunB2cImportOptions {
    * staff can see exactly what an import would create before committing to it.
    */
   dryRun?: boolean
-  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  trigger?: 'scheduler' | 'cron-http' | 'manual' | 'watch'
   triggeredBy?: string | null
+  /**
+   * Drop orders whose ref already exists in ops before any per-order work, with
+   * one bulk lookup. Used by the live watch so a quiet tick costs two queries
+   * instead of one per upcoming order. Skips the lead-name repair for existing
+   * bookings, which the nightly run still does.
+   */
+  onlyNew?: boolean
   /** Persist the summary to the run log. Off for previews. */
   log?: boolean
   /**
@@ -151,7 +177,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     mode, bookedFrom, upcomingFrom,
     candidates: 0, created: [], alreadyImported: [],
     conflicts: [], skipped: [], failed: [],
-    leadNamesFixed: [], warnings: [],
+    leadNamesFixed: [], guestContactsFixed: [], guestsEngaged: [], amendments: [], warnings: [],
     startedAt, finishedAt: startedAt,
   }
 
@@ -160,9 +186,101 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     return finish(summary, opts)
   }
 
-  const headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
+  let headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
+
+  // ── Order versions: one booking per chain, filed under the ORIGINAL id ─────
+  // A superseded order is never imported fresh; an amendment never becomes a
+  // second booking — it is noticed on the original (or, when the original was
+  // never imported, imported under the original's ref from this version).
+  const chainFacts = await fetchOrderChainFacts(headers.map((h) => Number(h.order_id)))
+  const chainRefFor = new Map<number, string>()
+  const handled = new Set<number>()
+  let automationUser: string | null = null
+  const automation = async () => (automationUser ??= await getAutomationUserId())
+  const noteOutcome = (r: AmendmentOutcome) => {
+    if (!r.bookingRef || r.action === 'no-booking' || r.action === 'not-b2c' || r.action === 'already-applied' || r.action === 'gave-up') return
+    const action = r.action === 'applied' || r.action === 'nothing-to-apply' ? 'applied' : r.action === 'failed' ? 'failed' : r.action
+    summary.amendments!.push({ orderId: r.orderId, bookingRef: r.bookingRef, version: r.version, isOld: r.isOld, action, newVersion: r.newVersion ?? null })
+    if (r.action === 'failed') summary.warnings!.push(`Order ${r.orderId} amends booking ${r.bookingRef} but could not be applied automatically: ${r.error}`)
+  }
+  if (headers.length > 0) {
+    const amendments = headers
+      .map((h) => chainFacts.get(Number(h.order_id)))
+      .filter((f): f is B2cOrderFact => !!f && f.isAmendment && f.supersededBy === null)
+    const originFacts = await fetchOrderChainFacts(amendments.map((f) => f.chainId))
+    const keep: typeof headers = []
+    for (const h of headers) {
+      const f = chainFacts.get(Number(h.order_id))
+      if (f?.supersededBy) {
+        const present = await prisma.booking.findUnique({ where: { bookingRef: String(h.order_id) }, select: { id: true } })
+        // Already in ops: it is the booking, and Update Booking follows its chain.
+        if (present) keep.push(h)
+        else summary.skipped.push({ orderId: f.id, reason: 'superseded', detail: `Amended into order ${f.supersededBy} — that version is the booking.` })
+        continue
+      }
+      if (!f?.isAmendment) { keep.push(h); continue }
+
+      const chainRef = String(f.chainId)
+      const refs = Array.from(new Set([chainRef, f.previousOrderId ? String(f.previousOrderId) : null].filter((r): r is string => !!r)))
+      const [original, duplicate] = await Promise.all([
+        prisma.booking.findFirst({ where: { bookingRef: { in: refs } }, select: { bookingRef: true }, orderBy: { createdAt: 'asc' } }),
+        prisma.booking.findUnique({ where: { bookingRef: String(f.id) }, select: { bookingRef: true } }),
+      ])
+      const isOld = isLaterDay(originFacts.get(f.chainId)?.checkoutDate ?? null, f.checkoutDate)
+
+      if (original) {
+        // File the notice and apply the new version to the original booking.
+        handled.add(f.id)
+        try {
+          noteOutcome(await handleAmendment(f, { originAt: originFacts.get(f.chainId)?.checkoutDate ?? null, dryRun, automationUserId: await automation() }))
+        } catch (err) {
+          summary.warnings!.push(`${f.id}: amendment not handled: ${err instanceof Error ? err.message : String(err)}`)
+        }
+        if (duplicate) {
+          summary.warnings!.push(`Order ${f.id} amends booking ${original.bookingRef} and has its own booking ${duplicate.bookingRef} — ${duplicate.bookingRef} is the active version; ${original.bookingRef} is shown as replaced.`)
+        }
+        continue
+      }
+      if (duplicate) {
+        // Imported on its own before versions were understood, original absent: leave it be.
+        summary.amendments!.push({ orderId: f.id, bookingRef: duplicate.bookingRef, version: f.version, isOld, action: 'duplicate' })
+        continue
+      }
+      chainRefFor.set(f.id, chainRef)
+      summary.amendments!.push({ orderId: f.id, bookingRef: chainRef, version: f.version, isOld, action: 'imported' })
+      keep.push(h)
+    }
+    headers = keep
+  }
+
+  if (opts.onlyNew && headers.length > 0) {
+    const present = await prisma.booking.findMany({
+      where: { bookingRef: { in: headers.map((h) => String(h.order_id)) } },
+      select: { bookingRef: true },
+    })
+    const presentRefs = new Set(present.map((p) => p.bookingRef))
+    headers = headers.filter((h) => !presentRefs.has(String(h.order_id)) && !presentRefs.has(chainRefFor.get(Number(h.order_id)) ?? ''))
+  }
   summary.candidates = headers.length
-  if (headers.length === 0) return finish(summary, opts)
+  // Amendments of trips already under way — the header read above only sees
+  // upcoming travel. Filed and applied the same way; never costs an import.
+  // Runs on every check, including the usual "nothing new to import" one.
+  async function sweepAmendments() {
+    try {
+      const recent = await sweepRecentAmendments({ days: 3, dryRun, automationUserId: await automation(), skip: handled })
+      recent.forEach(noteOutcome)
+    } catch (err) {
+      summary.warnings!.push(`Recent-amendment sweep skipped: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // Link bookings of the same store chain (old version → active booking).
+    // Throttled inside; never throws.
+    if (!dryRun) await syncRecentVersionLinks(30)
+  }
+
+  if (headers.length === 0) {
+    await sweepAmendments()
+    return finish(summary, opts)
+  }
 
   const orderIds = headers.map((h) => Number(h.order_id))
 
@@ -185,6 +303,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   )
 
   const automationUserId = await getAutomationUserId()
+  const engageCandidates: { bookingRef: string; guestPhone: string | null; storeStatus: string | null }[] = []
 
   for (const header of headers) {
     const orderId = Number(header.order_id)
@@ -202,6 +321,15 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         continue
       }
 
+      // A booking whose original never reached ops: filed under the original's
+      // ref, so ops, Accounts (AHS-{original}) and the customer's thread agree.
+      const chainRef = chainRefFor.get(orderId)
+      if (chainRef) {
+        result.booking.bookingRef = chainRef
+        result.booking.isNumber = chainRef
+        result.booking.source = { ...result.booking.source, storeOrderId: orderId, chainId: Number(chainRef) }
+      }
+
       // Preview mode: report what *would* happen without writing anything.
       if (dryRun) {
         const existing = await prisma.booking.findUnique({
@@ -212,6 +340,8 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         else if (isB2cBooking(existing.agent)) {
           summary.alreadyImported.push(result.booking.bookingRef)
           noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, false, automationUserId))
+          await repairContact(summary, result.booking, false, automationUserId)
+          engageCandidates.push(engageCandidate(result.booking))
         }
         else summary.conflicts.push({
           bookingRef: result.booking.bookingRef,
@@ -225,6 +355,10 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       else if (outcome === 'exists') {
         summary.alreadyImported.push(result.booking.bookingRef)
         noteRepair(summary, await repairLead(result.booking, customerByOrder.get(orderId)?.customer_name, true, automationUserId))
+        await repairContact(summary, result.booking, true, automationUserId)
+      }
+      if (outcome === 'created' || outcome === 'exists') {
+        engageCandidates.push(engageCandidate(result.booking))
       }
       else {
         summary.conflicts.push({
@@ -237,7 +371,59 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     }
   }
 
+  await sweepAmendments()
+
+  // After every order is in place, so a failure here can never cost an import.
+  try {
+    const engaged = await engageB2cGuests(engageCandidates, { apply: !dryRun, actor: 'auto (B2C import)' })
+    for (const r of engaged) {
+      if (r.status !== 'skipped') summary.guestsEngaged!.push({ bookingRef: r.bookingRef, status: r.status, approval: r.approval })
+      else if (r.reason?.startsWith('failed')) summary.warnings!.push(`${r.bookingRef}: AI call registration ${r.reason}`)
+    }
+  } catch (err) {
+    summary.warnings!.push(`AI call registration skipped: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
   return finish(summary, opts)
+}
+
+function engageCandidate(mapped: MappedB2cBooking) {
+  const status = mapped.source.checkoutStatus
+  return {
+    bookingRef: mapped.bookingRef,
+    guestPhone: mapped.guestContact.phone,
+    storeStatus: typeof status === 'string' ? status : null,
+  }
+}
+
+/**
+ * Give an already-imported booking the guest's own contact where it still holds
+ * the desk's inbox or nothing. Like the lead-name repair, a failure is a warning.
+ */
+async function repairContact(
+  summary: B2cImportSummary,
+  mapped: MappedB2cBooking,
+  apply: boolean,
+  actorId: string,
+): Promise<void> {
+  try {
+    const r = await repairB2cGuestContact({
+      bookingRef: mapped.bookingRef,
+      email: mapped.guestContact.email,
+      phone: mapped.guestContact.phone,
+      source: 'b2c-import',
+      apply,
+      actorId,
+    })
+    if (r.status !== 'unchanged') {
+      summary.guestContactsFixed!.push({
+        bookingRef: r.bookingRef,
+        changes: r.changes.map((c) => `${c.field}: ${c.from ?? '—'} → ${c.to}`),
+      })
+    }
+  } catch (err) {
+    summary.warnings!.push(`${mapped.bookingRef}: guest contact repair failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 /**
@@ -288,19 +474,22 @@ async function finish(
 ): Promise<B2cImportSummary> {
   summary.finishedAt = new Date().toISOString()
   const shouldLog = opts.log ?? opts.dryRun !== true
-  if (shouldLog) {
-    try {
-      const runs = await getRunLog()
-      await prisma.systemSetting.upsert({
-        where: { key: SETTING_RUN_LOG },
-        update: { value: JSON.stringify([summary, ...runs].slice(0, MAX_RUNS)) },
-        create: { key: SETTING_RUN_LOG, value: JSON.stringify([summary]) },
-      })
-    } catch {
-      /* activity feed is a convenience, never a correctness requirement */
-    }
-  }
+  if (shouldLog) await appendRunLog(summary)
   return summary
+}
+
+/** Prepend a run to the activity feed. Best-effort: never throws. */
+export async function appendRunLog(summary: B2cImportSummary): Promise<void> {
+  try {
+    const runs = await getRunLog()
+    await prisma.systemSetting.upsert({
+      where: { key: SETTING_RUN_LOG },
+      update: { value: JSON.stringify([summary, ...runs].slice(0, MAX_RUNS)) },
+      create: { key: SETTING_RUN_LOG, value: JSON.stringify([summary]) },
+    })
+  } catch {
+    /* activity feed is a convenience, never a correctness requirement */
+  }
 }
 
 /** Recent import runs, newest first. Never throws — a bad row reads as empty. */
@@ -341,6 +530,31 @@ async function persistB2cBooking(
   const arrival = new Date(`${mapped.arrivalDate}T00:00:00Z`)
   const departure = new Date(`${mapped.departureDate}T00:00:00Z`)
 
+  try {
+    await createB2cBooking(mapped, createdById, arrival, departure)
+  } catch (err) {
+    // Two runs (watch + nightly, or two server instances) raced on the same
+    // order: the unique bookingRef rejected the second insert, so nothing was
+    // duplicated. Report it as present rather than as a failure.
+    if ((err as { code?: string })?.code === 'P2002') {
+      const now = await prisma.booking.findUnique({
+        where: { bookingRef: mapped.bookingRef },
+        select: { agent: true },
+      })
+      if (now) return isB2cBooking(now.agent) ? 'exists' : 'conflict'
+    }
+    throw err
+  }
+
+  return 'created'
+}
+
+async function createB2cBooking(
+  mapped: MappedB2cBooking,
+  createdById: string,
+  arrival: Date,
+  departure: Date,
+): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.create({
       data: {
@@ -414,8 +628,6 @@ async function persistB2cBooking(
       },
     })
   })
-
-  return 'created'
 }
 
 // ─── Dedup guard shared by the scheduler and the HTTP route ───────────────────

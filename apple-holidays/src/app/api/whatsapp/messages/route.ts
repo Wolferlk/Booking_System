@@ -10,8 +10,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
-import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
+import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
+import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -25,16 +25,28 @@ export async function GET(req: NextRequest) {
 
   const phone = normalisePhone(req.nextUrl.searchParams.get('phone') ?? '')
   if (!phone) return buildApiError('phone is required')
+  if (!(await canAccessWhatsAppPhone(session.user.role, phone))) {
+    return buildApiError('This chat is outside your country scope', 403)
+  }
 
   // Pull any replies n8n's webhook stored that we haven't imported yet — this
   // is what makes customer replies appear in the thread (n8n owns the Meta
-  // webhook; we read its shared table directly).
-  await syncInboundForPhone(phone)
+  // webhook; we read its shared table directly). Delivery receipts for what we
+  // sent come back the same way — that is what moves the ✓ / ✓✓ / blue ✓✓.
+  await Promise.all([syncInboundForPhone(phone), syncDeliveryReceiptsForPhone(phone)])
 
-  const messages = await prisma.whatsAppMessage.findMany({
+  const rows = await prisma.whatsAppMessage.findMany({
     where:   { phone },
     orderBy: { createdAt: 'asc' },
   })
+
+  // A red "!" alone says nothing — attach Meta's reason to every failed send.
+  const reasons = await failureReasonsFor(
+    rows.filter(m => m.status === 'failed' && m.waMessageId).map(m => m.waMessageId!),
+  )
+  const messages = rows.map(m => m.status === 'failed'
+    ? { ...m, failureReason: (m.waMessageId && reasons.get(m.waMessageId)) || null }
+    : m)
 
   await prisma.whatsAppMessage.updateMany({
     where: { phone, direction: 'inbound', read: false },
@@ -100,6 +112,7 @@ export async function GET(req: NextRequest) {
     })
     booking = {
       bookingRef:       bookingRow.bookingRef,
+      isNumber:         bookingRow.isNumber,
       leadName:         lead?.name ?? null,
       status:           bookingRow.status,
       operationCountry: bookingRow.operationCountry,

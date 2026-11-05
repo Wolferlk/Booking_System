@@ -13,6 +13,7 @@ import {
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { CallRecordingPlayer } from '@/components/te/transcript-shared'
+import { OnDemandStrip, IntakeWhen, isOnDemand, PLAN_SLOT, type WhenDraft, type SpecialKind } from '@/components/bookings/special-call-planner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,10 @@ interface TEConfig {
   retry_gap_min: number
   retry_until_answered: boolean
   retry_window_days: number
+  tz_offset_min?: number
+  // Set once the TE API serves POST services/:ref/special-calls. Until then the
+  // panel keeps the original plan-only controls.
+  on_demand_special_calls?: boolean
 }
 
 interface TEService {
@@ -163,7 +168,19 @@ function teProxy(path: string, method = 'GET', body?: unknown, extra?: Record<st
     method,
     headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
     body: hasBody ? JSON.stringify(body) : undefined,
-  }).then(r => r.json())
+  }).then(async r => {
+    // A gateway timeout or crash page is HTML, not JSON — turn it into a
+    // readable error instead of a bare parse failure.
+    const text = await r.text()
+    try { return JSON.parse(text) } catch {
+      return {
+        success: false,
+        error: r.status === 504 || r.status === 503
+          ? `The call server did not answer in time (HTTP ${r.status}). The call may still go through — check the call history before trying again.`
+          : `The call server returned an unexpected response (HTTP ${r.status}).`,
+      }
+    }
+  })
 }
 
 // ─── Customer number discovery ────────────────────────────────────────────────
@@ -201,6 +218,8 @@ const STATUS_STYLES: Record<string, string> = {
   cancelled: 'bg-red-100 text-red-600 border-red-200',
   scheduled: 'bg-blue-100 text-blue-700 border-blue-200',
   paused:    'bg-amber-100 text-amber-700 border-amber-200',
+  calling:   'bg-violet-100 text-violet-700 border-violet-200',
+  no_answer: 'bg-orange-50 text-orange-600 border-orange-200',
   answered:  'bg-emerald-100 text-emerald-700 border-emerald-200',
   done:      'bg-emerald-100 text-emerald-700 border-emerald-200',
   missed:    'bg-red-100 text-red-500 border-red-200',
@@ -224,6 +243,43 @@ function fmtDateTime(iso: string) {
     return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
   } catch { return iso }
 }
+/** "3h ago" / "2d ago" — how long since an approval request went out. */
+function ago(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return fmtDateTime(iso)
+  const m = Math.round(ms / 60_000)
+  if (m < 60) return `${Math.max(1, m)}m ago`
+  const h = Math.round(m / 60)
+  return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
+}
+
+// ─── WhatsApp call permission ─────────────────────────────────────────────────
+// Meta's verdict for the number in play (from /api/te/approval), plus what ops
+// knows around it: the approval ledger, a country-code fix for a locally-written
+// number, and the booking's other numbers.
+
+interface PermNumber { phone: string; allowed: boolean | null; status: string | null }
+
+interface PermState {
+  checked: boolean
+  allowed: boolean | null
+  /** permanent | temporary | no_permission */
+  status?: string | null
+  /** Unix seconds — when a temporary permission lapses. */
+  expiration_time?: number | null
+  message?: string
+  can_request?: boolean
+  ledger?: { requestedAt: string | null; requestedBy: string | null; approvedAt: string | null } | null
+  fix?: PermNumber | null
+  alternates?: (PermNumber & { fix?: PermNumber | null })[]
+}
+
+function fmtExpiry(unixSeconds: number): { label: string; soon: boolean } {
+  const at = new Date(unixSeconds * 1000)
+  const soon = at.getTime() - Date.now() < 24 * 3_600_000
+  return { label: at.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }), soon }
+}
+
 function fmtTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) }
   catch { return '' }
@@ -397,7 +453,7 @@ function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) =>
 }
 
 // ─── Reconfirmation result card ────────────────────────────────────────────────
-function ReconfirmCard({ row, onRetry, retryBusy }: { row: TEReconfirmation; onRetry?: () => void; retryBusy?: boolean }) {
+function ReconfirmCard({ row, onRetry, retryBusy, source }: { row: TEReconfirmation; onRetry?: () => void; retryBusy?: boolean; source?: string | null }) {
   const [open, setOpen] = useState(false)
   const hasChange = !!(row.requested_change && row.requested_change.trim())
   return (
@@ -405,6 +461,7 @@ function ReconfirmCard({ row, onRetry, retryBusy }: { row: TEReconfirmation; onR
       <div className="px-3 py-2.5 bg-gradient-to-r from-sky-50 to-blue-50 border-b border-sky-100 flex items-center gap-2 flex-wrap">
         <span className="w-6 h-6 rounded-lg bg-sky-500 flex items-center justify-center flex-shrink-0"><ClipboardCheck className="w-3 h-3 text-white" /></span>
         <span className="text-[10px] font-bold text-sky-700 uppercase tracking-wide">Reconfirmation</span>
+        {source && <span className="text-[9px] font-semibold text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded-full">{source}</span>}
         {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
         {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
         <span className="ml-auto flex items-center gap-2">
@@ -452,7 +509,7 @@ function ReconfirmCard({ row, onRetry, retryBusy }: { row: TEReconfirmation; onR
 }
 
 // ─── Post-tour result card ─────────────────────────────────────────────────────
-function PostTourCard({ row, onRetry, retryBusy }: { row: TEPostTour; onRetry?: () => void; retryBusy?: boolean }) {
+function PostTourCard({ row, onRetry, retryBusy, source }: { row: TEPostTour; onRetry?: () => void; retryBusy?: boolean; source?: string | null }) {
   const [open, setOpen] = useState(false)
   const stars = toStars(row.rating, row.stars)
   return (
@@ -460,6 +517,7 @@ function PostTourCard({ row, onRetry, retryBusy }: { row: TEPostTour; onRetry?: 
       <div className="px-3 py-2.5 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100 flex items-center gap-2 flex-wrap">
         <span className="w-6 h-6 rounded-lg bg-amber-500 flex items-center justify-center flex-shrink-0"><Award className="w-3 h-3 text-white" /></span>
         <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Post-tour</span>
+        {source && <span className="text-[9px] font-semibold text-slate-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded-full">{source}</span>}
         {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
         {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
         <span className="ml-auto flex items-center gap-2">
@@ -558,6 +616,7 @@ function ScheduleRow({ item, busy, onCallNow, onSkip, onDelete, onEdit }: {
           <span className={`text-xs font-mono font-semibold ${isToday ? 'text-violet-700' : 'text-slate-700'}`}>{fmtDate(item.call_date)}</span>
           {isReconfirm && <span className="text-[9px] font-bold bg-sky-100 text-sky-700 border border-sky-200 px-1.5 py-0.5 rounded-full">RECONFIRM</span>}
           {isPostTour && <span className="text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">POST-TOUR</span>}
+          {isOnDemand(item) && <span className="text-[9px] font-bold bg-white text-slate-600 border border-slate-300 px-1.5 py-0.5 rounded-full" title="Placed or pinned by staff, outside the automatic plan">ON-DEMAND</span>}
           {item.phase && !isReconfirm && !isPostTour && <span className="text-xs">{phaseIcons[item.phase] ?? ''}</span>}
           {isToday && <span className="text-[9px] font-bold bg-violet-600 text-white px-1.5 py-0.5 rounded-full">TODAY</span>}
           <span className={statusBadge(item.status, true)}>{statusIcon}<span className="ml-0.5">{item.status.toUpperCase()}</span></span>
@@ -612,6 +671,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [reconfirmPlan, setReconfirmPlan] = useState({ enabled: true, days_before: '5', call_time: '' })
   const [postTourPlan, setPostTourPlan]   = useState({ enabled: true, days_after: '3', call_time: '' })
   const [planBusy, setPlanBusy]           = useState<'reconfirm' | 'post_tour' | null>(null)
+  // HOW each special call is placed at registration: the automatic days-before/
+  // after slot, an exact time, or right away (last-minute bookings).
+  const [reconfirmWhen, setReconfirmWhen] = useState<WhenDraft>({ mode: 'auto', at: '', note: '' })
+  const [postTourWhen, setPostTourWhen]   = useState<WhenDraft>({ mode: 'auto', at: '', note: '' })
   // Inline timing editor for a REGISTERED service's special calls (which day /
   // what time). Open one card's editor at a time; the form holds its draft.
   const [planEdit, setPlanEdit]           = useState<'reconfirm' | 'post_tour' | null>(null)
@@ -632,7 +695,9 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [addDayLoading, setAddDayLoading] = useState(false)
 
   // ── Quick Call ────────────────────────────────────────────────────────────
-  const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, reason: '' })
+  // playbook: a general/purpose call, or the reconfirmation / post-tour script —
+  // the latter two save their answers to the booking like a scheduled call.
+  const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, reason: '', playbook: 'general' as 'general' | SpecialKind })
   const [quickLoading, setQuickLoading] = useState(false)
   const [quickResult, setQuickResult]   = useState<{ ok: boolean; message?: string; note?: string; channel_id?: string; booking_ref?: string; references_itinerary?: boolean } | null>(null)
 
@@ -671,25 +736,40 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   }, [bookingRef])
 
   useEffect(() => { loadService() }, [loadService])
+  const onDemandReady = config?.on_demand_special_calls === true
 
   // ── Live call-permission state — the source of truth for "can we call?" ────
   // Read from Meta via the TE API so the panel SHOWS whether the customer has
   // allowed WhatsApp calls, instead of every dial guessing and failing.
-  const [perm, setPerm] = useState<{ checked: boolean; allowed: boolean | null; message?: string; can_request?: boolean } | null>(null)
+  const [perm, setPerm] = useState<PermState | null>(null)
   const [permLoading, setPermLoading] = useState(false)
   // A cancelled service has had its number removed — the intake field is then
   // the only number in play, so the permission chip must follow that instead.
   const cancelled   = service?.status === 'cancelled'
   const needsIntake = !service || cancelled
   const permPhone = ((needsIntake ? intakeForm.phone : service?.call_phone) || '').replace(/\D/g, '')
+  // The booking's other numbers ride along, so the panel can say when one of
+  // THOSE is the number that allowed calls.
+  const altPhones = useMemo(() => phoneOptions.map(c => c.value).join(','), [phoneOptions])
   const loadPermission = useCallback(async (phone: string) => {
     if (!phone) { setPerm(null); return }
     setPermLoading(true)
     try {
-      const res = await teProxy('approval', 'GET', undefined, { to: phone })
-      setPerm({ checked: Boolean(res.checked), allowed: res.allowed ?? null, message: res.message, can_request: res.can_request })
+      const url = new URL('/api/te/approval', location.origin)
+      url.searchParams.set('to', phone)
+      url.searchParams.set('bookingRef', bookingRef)
+      if (altPhones) url.searchParams.set('alts', altPhones)
+      const json = await fetch(url.toString()).then(r => r.json()).catch(() => null)
+      const res = json?.success !== false ? (json?.data ?? null) as (PermState & { checked?: boolean }) | null : null
+      if (res) {
+        setPerm({ ...res, checked: Boolean(res.checked), allowed: res.allowed ?? null })
+        return
+      }
+      // Fallback: the plain upstream check the chip always used.
+      const raw = await teProxy('approval', 'GET', undefined, { to: phone })
+      setPerm({ checked: Boolean(raw.checked), allowed: raw.allowed ?? null, status: raw.status, expiration_time: raw.expiration_time, message: raw.message, can_request: raw.can_request })
     } catch { setPerm(null) } finally { setPermLoading(false) }
-  }, [])
+  }, [bookingRef, altPhones])
   // Debounced — the intake field feeds this, so typing must not fire a Meta
   // permission lookup per keystroke.
   useEffect(() => {
@@ -698,9 +778,40 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     return () => clearTimeout(t)
   }, [permPhone, loadPermission])
 
+  // Switch the call number to one Meta says allows calls. Before registration it
+  // just fills the field; on a registered service it opens Edit with the number
+  // prefilled, so the change is still an explicit Save.
+  function adoptNumber(phone: string) {
+    setQuickForm(f => (digitsOnly(f.to) === permPhone ? { ...f, to: phone } : f))
+    if (needsIntake) {
+      phoneTouched.current = true
+      setIntakeForm(f => ({ ...f, phone }))
+      return
+    }
+    openEdit()
+    setEditForm(f => ({ ...f, phone }))
+    toast.info('Number filled in — press Save Changes to switch the call number')
+  }
+
   // ── Register ──────────────────────────────────────────────────────────────
   async function registerBooking() {
     if (!intakeForm.phone) { toast.error('Phone number is required'); return }
+    // On-demand placement (exact time / right away) only exists once the TE API
+    // supports it; otherwise every plan registers on its automatic slot.
+    const whenOf = (kind: SpecialKind): WhenDraft['mode'] => {
+      if (!onDemandReady) return 'auto'
+      const enabled = kind === 'reconfirm' ? reconfirmPlan.enabled : postTourPlan.enabled
+      return enabled ? (kind === 'reconfirm' ? reconfirmWhen : postTourWhen).mode : 'auto'
+    }
+    for (const kind of ['reconfirm', 'post_tour'] as const) {
+      const draft = kind === 'reconfirm' ? reconfirmWhen : postTourWhen
+      if (whenOf(kind) !== 'exact') continue
+      const d = draft.at ? new Date(draft.at) : null
+      if (!d || Number.isNaN(d.getTime()) || d.getTime() < Date.now() - 60_000) {
+        toast.error(`Pick a future time for the ${kind === 'reconfirm' ? 'reconfirmation' : 'post-tour'} call`)
+        return
+      }
+    }
     setIntakeLoading(true)
     try {
       const scheduleBody: Record<string, unknown> = {
@@ -709,10 +820,12 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         retry_gap_min: Number(intakeForm.retry_gap_min) || 15,
         ...(intakeForm.mode === 'interval' && { interval_count: Number(intakeForm.interval_count) || 10, interval_unit: intakeForm.interval_unit, start_at: 'now' }),
       }
-      scheduleBody.reconfirm = reconfirmPlan.enabled
+      // A plan placed on demand registers with its automatic slot OFF, so the
+      // customer is called exactly once.
+      scheduleBody.reconfirm = reconfirmPlan.enabled && whenOf('reconfirm') === 'auto'
         ? { enabled: true, days_before: Number(reconfirmPlan.days_before) || 5, ...(reconfirmPlan.call_time && { call_time: reconfirmPlan.call_time }) }
         : { enabled: false }
-      scheduleBody.post_tour = postTourPlan.enabled
+      scheduleBody.post_tour = postTourPlan.enabled && whenOf('post_tour') === 'auto'
         ? { enabled: true, days_after: Number(postTourPlan.days_after) || 3, ...(postTourPlan.call_time && { call_time: postTourPlan.call_time }) }
         : { enabled: false }
       const phone = intakeForm.phone.replace(/\D/g, '')
@@ -723,11 +836,30 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       // active — intake alone leaves the old cancelled status in place.
       if (cancelled) await teProxy(`services/${bookingRef}/status`, 'PATCH', { status: 'active' }).catch(() => {})
       toast.success(`Registered — ${res.schedule_inserted ?? 0} day${res.schedule_inserted !== 1 ? 's' : ''} scheduled`)
+      // Now place the on-demand ones. A "right away" dial runs the WhatsApp
+      // permission check itself (and sends the request when needed).
+      let dialled = false
+      for (const kind of ['reconfirm', 'post_tour'] as const) {
+        const mode = whenOf(kind)
+        if (mode === 'auto') continue
+        const draft = kind === 'reconfirm' ? reconfirmWhen : postTourWhen
+        const r = await teProxy(`services/${bookingRef}/special-calls`, 'POST', {
+          kind,
+          at: mode === 'now' ? 'now' : new Date(draft.at).toISOString(),
+          ...(draft.note.trim() && { note: draft.note.trim() }),
+        }).catch((e: unknown) => ({ success: false, error: e instanceof Error ? e.message : 'failed' }))
+        const msg = r.message ?? r.error
+        if (r.success === false) toast.error(`${kind === 'reconfirm' ? 'Reconfirmation' : 'Post-tour'} call: ${msg ?? 'failed'}`)
+        else if (r.approval_pending || r.ok === false) toast.info(msg ?? 'Call queued')
+        else toast.success(msg ?? 'Call placed')
+        if (mode === 'now' && r.success !== false) dialled = true
+      }
       await loadService()
       // Nothing can actually be dialled until the customer taps Allow in
       // WhatsApp, so send that request as part of registering rather than
-      // leaving it to whoever remembers the button.
-      if (perm?.allowed !== true) await sendApproval(phone)
+      // leaving it to whoever remembers the button. A right-away dial already
+      // did, so don't message the customer twice.
+      if (perm?.allowed !== true && !dialled) await sendApproval(phone)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to register') }
     finally { setIntakeLoading(false) }
   }
@@ -830,8 +962,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         body: JSON.stringify({ to: phone, name: leadName || 'Valued Customer', bookingRef }),
       }).then(r => r.json())
       if (json.success === false) throw new Error(json.error ?? 'Approval failed')
-      const res = (json.data ?? json) as { already_allowed?: boolean; message?: string }
+      const res = (json.data ?? json) as { already_allowed?: boolean; rate_limited?: boolean; message?: string }
       if (res.already_allowed) toast.success('Customer already allowed WhatsApp calls ✓')
+      // Nothing was sent — Meta caps requests at 1 a day / 2 a week per number.
+      else if (res.rate_limited) toast.warning(res.message ?? 'Meta is limiting new requests — the customer must tap Allow on the earlier message')
       else toast.success(res.message ?? 'Approval request sent — awaiting customer confirmation')
       await loadPermission(phone)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to send approval request') }
@@ -846,17 +980,85 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-500 border-slate-200"><Loader2 className="w-3 h-3 animate-spin" /> Checking call permission…</span>
     }
     if (perm?.allowed === true) {
-      return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200"><CheckCircle2 className="w-3 h-3" /> Customer allows calls</span>
+      const exp = perm.status === 'temporary' && perm.expiration_time ? fmtExpiry(perm.expiration_time) : null
+      return (
+        <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${exp?.soon ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}
+          title={perm.status === 'permanent'
+            ? 'They chose "Always allow" — no need to ask again.'
+            : 'Temporary permission — once it lapses they must tap Allow again.'}>
+          <CheckCircle2 className="w-3 h-3" /> Customer allows calls
+          {perm.status === 'permanent' && <span className="font-semibold opacity-80">· always</span>}
+          {exp && <span className="font-semibold opacity-80">· until {exp.label}{exp.soon ? ' (expires soon)' : ''}</span>}
+        </span>
+      )
     }
     if (perm?.allowed === false) {
+      const ledger = perm.ledger
+      const why = ledger?.approvedAt
+        ? `allowed earlier (${fmtDate(ledger.approvedAt)}), permission has lapsed`
+        : perm.can_request === false
+          ? 'Meta request limit reached · awaiting their Allow tap'
+          : ledger?.requestedAt
+            ? `request sent ${ago(ledger.requestedAt)} · awaiting their Allow tap`
+            : 'send the approval request'
       return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200" title={perm?.message}>
-          <AlertCircle className="w-3 h-3" /> Not allowed yet — {perm?.can_request === false ? 'awaiting their Allow tap' : 'send the approval request'}
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200"
+          title={[perm.message, ledger?.requestedBy && `Last request by ${ledger.requestedBy}`].filter(Boolean).join(' · ')}>
+          <AlertCircle className="w-3 h-3" /> Not allowed — {why}
         </span>
       )
     }
     return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-400 border-slate-200" title={perm?.message}>Permission state unknown</span>
   }
+
+  // What the chip alone can't say: the right number is a different one. Either
+  // this number lacks its country code, or another number on the booking is the
+  // one that allowed calls — each with a one-tap switch.
+  function permHints() {
+    if (!perm || perm.allowed === true || permLoading) return null
+    const labelOf = (phone: string) => phoneOptions.find(c => c.value === phone)?.label ?? 'Another number'
+    const fix = perm.fix
+    const allowedAlt = perm.alternates?.find(a => a.allowed === true || a.fix?.allowed === true)
+    const altPhone = allowedAlt ? (allowedAlt.allowed === true ? allowedAlt.phone : allowedAlt.fix!.phone) : null
+    if (!fix && !altPhone) return null
+    const switchBtn = (phone: string) => (
+      <button type="button" onClick={() => adoptNumber(phone)}
+        className="ml-auto flex-shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold hover:bg-emerald-700 transition-colors">
+        Use {phone}
+      </button>
+    )
+    return (
+      <div className="w-full space-y-1.5 mt-1.5">
+        {fix?.allowed === true && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>This number is missing its country code — <b className="font-mono">{fix.phone}</b> has allowed calls{fix.status === 'permanent' ? ' (always)' : ''}.</span>
+            {switchBtn(fix.phone)}
+          </div>
+        )}
+        {fix && fix.allowed !== true && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-sky-200 bg-sky-50 text-[11px] text-sky-800">
+            <Info className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>No country code — WhatsApp needs the full number, probably <b className="font-mono">{fix.phone}</b>. Calls and approval requests to the short form won&apos;t reach them.</span>
+            {switchBtn(fix.phone)}
+          </div>
+        )}
+        {altPhone && altPhone !== fix?.phone && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] text-emerald-800">
+            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>{labelOf(allowedAlt!.phone)} on this booking (<b className="font-mono">{altPhone}</b>) has allowed calls.</span>
+            {switchBtn(altPhone)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Numbers on the booking Meta reports as callable — marked on the quick-pick chips.
+  const callableNumbers = new Set<string>([
+    ...(perm?.allowed === true && permPhone ? [permPhone] : []),
+    ...(perm?.alternates ?? []).filter(a => a.allowed === true).map(a => a.phone),
+  ])
 
   // ── Schedule actions ──────────────────────────────────────────────────────
   async function callNow(id: number) {
@@ -947,6 +1149,31 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     const phone = quickForm.to.replace(/\D/g, '')
     if (!phone) { toast.error('Phone number is required'); return }
 
+    // Reconfirmation / post-tour on a registered booking: place it as a real
+    // on-demand call on the service, so status, retries and the captured
+    // answers belong to the booking exactly like a scheduled one.
+    const pb = quickForm.playbook
+    if (pb !== 'general' && onDemandReady && service?.status === 'active') {
+      setQuickLoading(true)
+      setQuickResult(null)
+      try {
+        const res = await teProxy(`services/${bookingRef}/special-calls`, 'POST', {
+          kind: pb, at: 'now', to: phone, ...(quickForm.reason.trim() && { note: quickForm.reason.trim() }),
+        })
+        const msg = res.message ?? res.error
+        if (res.success === false) throw new Error(msg ?? 'Call failed')
+        setQuickResult({
+          ok: !!res.ok, message: msg, channel_id: res.channel_id, booking_ref: bookingRef, references_itinerary: true,
+          note: `Saved to ${bookingRef} as a real ${pb === 'reconfirm' ? 'reconfirmation' : 'post-tour feedback'} call — the answers appear under “Captured on calls” in Setup & Results.`,
+        })
+        if (res.approval_pending || res.ok === false) toast.info(msg ?? 'Call queued')
+        else toast.success(msg ?? 'Call placed')
+        await loadService(true)
+      } catch (err) { toast.error(err instanceof Error ? err.message : 'Call failed') }
+      finally { setQuickLoading(false) }
+      return
+    }
+
     // bookingRef is ALWAYS sent — it is the VN/IS number of the current booking page.
     // This gives the AI agent the full trip itinerary, hotels, flights, passengers.
     const body: Record<string, unknown> = {
@@ -956,12 +1183,19 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       booking_ref: bookingRef,           // alias also accepted by the API
     }
     if (quickForm.reason.trim()) body.reason = quickForm.reason.trim()
+    // Unregistered booking: the playbook still runs, and its answers are stored
+    // against the booking ref (no service yet to show them on this panel).
+    if (pb !== 'general') body.mode = pb
 
     setQuickLoading(true)
     setQuickResult(null)
     try {
       const res = await teProxy('quick-call', 'POST', body)
-      if (res.approval_pending) {
+      if (res.success === false || (res.error && res.ok === undefined)) {
+        const msg = res.error ?? res.message ?? 'Call could not be placed'
+        setQuickResult({ ok: false, message: msg })
+        toast.error(msg)
+      } else if (res.approval_pending) {
         setQuickResult({ ok: false, message: res.message ?? 'WhatsApp approval pending — customer must tap Allow first', note: res.note })
         toast.info('Approval sent — customer must tap Allow first')
       } else if (res.ok === false) {
@@ -971,7 +1205,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id, booking_ref: res.booking_ref, references_itinerary: res.references_itinerary })
         toast.success(res.references_itinerary ? `Quick call placed — agent has ${bookingRef} itinerary` : 'Quick call placed')
       }
-    } catch { toast.error('Quick call failed') } finally { setQuickLoading(false) }
+    } catch (err) {
+      const msg = err instanceof Error ? `Quick call failed: ${err.message}` : 'Quick call failed'
+      setQuickResult({ ok: false, message: msg })
+      toast.error(msg)
+    } finally { setQuickLoading(false) }
   }
 
   // Place (or re-place) the booking's reconfirmation / post-tour call right now,
@@ -979,7 +1217,23 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // schedule row and dials it with force.
   const [specialBusy, setSpecialBusy] = useState<'reconfirm' | 'post_tour' | null>(null)
   async function retrySpecial(phase: 'reconfirm' | 'post_tour') {
-    const rows = (service?.schedule ?? []).filter(s => s.phase === phase)
+    // With on-demand calls available, a retry is a fresh call with its OWN row,
+    // so the new conversation gets its own captured result rather than merging
+    // into the previous call's.
+    if (onDemandReady) {
+      setSpecialBusy(phase)
+      try {
+        const res = await teProxy(`services/${bookingRef}/special-calls`, 'POST', { kind: phase, at: 'now' })
+        const msg = res.message ?? res.error
+        if (res.success === false) throw new Error(msg ?? 'Call failed')
+        if (res.approval_pending || res.ok === false) toast.info(msg ?? 'Call queued')
+        else toast.success(msg ?? 'Call placed')
+        await loadService(true)
+      } catch (err) { toast.error(err instanceof Error ? err.message : 'Call failed') }
+      finally { setSpecialBusy(null) }
+      return
+    }
+    const rows = (service?.schedule ?? []).filter(s => s.phase === phase && !isOnDemand(s))
     const row = rows[rows.length - 1]
     if (!row) {
       toast.error(`No ${phase === 'reconfirm' ? 'reconfirmation' : 'post-tour'} call is scheduled — enable it in the plan settings first.`)
@@ -997,6 +1251,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const completedCalls = schedule.filter(s => s.status === 'answered' || s.status === 'done').length
   const missedCalls    = schedule.filter(s => s.status === 'missed' || s.status === 'failed').length
   const todayCall      = schedule.find(s => s.call_date === new Date().toISOString().slice(0, 10))
+  // Which call produced a captured result: the plan's own, an on-demand one, or
+  // a quick call (no schedule row).
+  function callSource(scheduleId?: number | null): string | null {
+    if (scheduleId == null) return 'Quick call'
+    const row = schedule.find(s => s.id === scheduleId)
+    if (!row) return null
+    if (isOnDemand(row)) return 'On-demand call'
+    return row.day_no === PLAN_SLOT.reconfirm || row.day_no === PLAN_SLOT.post_tour ? 'Planned call' : null
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -1121,6 +1384,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                               onClick={() => setIntakeForm(f => ({ ...f, phone: c.value }))}
                               className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
                               {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                              {callableNumbers.has(c.value) && <span title="WhatsApp calls allowed" className={`ml-0.5 inline-flex items-center gap-0.5 ${active ? 'text-emerald-200' : 'text-emerald-600'}`}><PhoneCall className="w-2.5 h-2.5" />calls OK</span>}
                             </button>
                           )
                         })}
@@ -1176,7 +1440,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                       </div>
                       <ToggleSwitch on={reconfirmPlan.enabled} onChange={v => setReconfirmPlan(p => ({ ...p, enabled: v }))} />
                     </div>
-                    {reconfirmPlan.enabled && (
+                    {reconfirmPlan.enabled && onDemandReady && (
+                      <IntakeWhen kind="reconfirm" draft={reconfirmWhen} onChange={setReconfirmWhen} cfg={config}
+                        arrival={booking.arrivalDate} departure={booking.departureDate} daysOffset={Number(reconfirmPlan.days_before) || 5} />
+                    )}
+                    {reconfirmPlan.enabled && (!onDemandReady || reconfirmWhen.mode === 'auto') && (
                       <div className="grid grid-cols-2 gap-2 mt-2.5">
                         {booking.arrivalDate && (
                           <div className="col-span-2">
@@ -1200,7 +1468,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                       </div>
                       <ToggleSwitch on={postTourPlan.enabled} onChange={v => setPostTourPlan(p => ({ ...p, enabled: v }))} />
                     </div>
-                    {postTourPlan.enabled && (
+                    {postTourPlan.enabled && onDemandReady && (
+                      <IntakeWhen kind="post_tour" draft={postTourWhen} onChange={setPostTourWhen} cfg={config}
+                        arrival={booking.arrivalDate} departure={booking.departureDate} daysOffset={Number(postTourPlan.days_after) || 3} />
+                    )}
+                    {postTourPlan.enabled && (!onDemandReady || postTourWhen.mode === 'auto') && (
                       <div className="grid grid-cols-2 gap-2 mt-2.5">
                         {booking.departureDate && (
                           <div className="col-span-2">
@@ -1219,6 +1491,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
                 <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
                   {permChip()}
+                  {permHints()}
                   <button onClick={registerBooking} disabled={intakeLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
                     {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> {cancelled ? 'Register with this number' : 'Register for AI Calls'}</>}
@@ -1282,6 +1555,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     <div className="col-span-2"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Interval</p><p className="text-sm font-bold text-slate-800">Every {service!.interval_count} {service!.interval_unit}</p></div>
                   )}
                 </div>
+                {permHints()}
 
                 {config && (
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400 py-2 border-y border-slate-50">
@@ -1321,7 +1595,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           <button type="button" onClick={() => openPlanEdit('reconfirm')} title="Edit when this call is placed"
                             className="p-1 rounded-lg text-sky-500 hover:bg-sky-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
                         )}
-                        {service!.reconfirm_enabled && schedule.some(s => s.phase === 'reconfirm') && (
+                        {!onDemandReady && service!.reconfirm_enabled && schedule.some(s => s.phase === 'reconfirm') && (
                           <button type="button" disabled={specialBusy === 'reconfirm'} onClick={() => retrySpecial('reconfirm')} title="Place the reconfirmation call now"
                             className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 transition-colors">
                             {specialBusy === 'reconfirm' ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Call now
@@ -1353,6 +1627,13 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                         </div>
                       </div>
                     )}
+                    {onDemandReady && (
+                      <OnDemandStrip kind="reconfirm" bookingRef={bookingRef} schedule={schedule} cfg={config} api={teProxy}
+                        planEnabled={!!service!.reconfirm_enabled} daysOffset={service!.reconfirm_days_before ?? 5}
+                        arrival={booking.arrivalDate} departure={booking.departureDate}
+                        captured={(service!.reconfirmations?.length ?? 0) > 0} phone={service!.call_phone}
+                        onChanged={() => loadService(true)} />
+                    )}
                   </div>
                   <div className={`rounded-xl border p-3 ${service!.post_tour_enabled ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'}`}>
                     <div className="flex items-center gap-2">
@@ -1366,7 +1647,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           <button type="button" onClick={() => openPlanEdit('post_tour')} title="Edit when this call is placed"
                             className="p-1 rounded-lg text-amber-500 hover:bg-amber-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
                         )}
-                        {service!.post_tour_enabled && schedule.some(s => s.phase === 'post_tour') && (
+                        {!onDemandReady && service!.post_tour_enabled && schedule.some(s => s.phase === 'post_tour') && (
                           <button type="button" disabled={specialBusy === 'post_tour'} onClick={() => retrySpecial('post_tour')} title="Place the post-tour feedback call now"
                             className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
                             {specialBusy === 'post_tour' ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Call now
@@ -1398,6 +1679,13 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                         </div>
                       </div>
                     )}
+                    {onDemandReady && (
+                      <OnDemandStrip kind="post_tour" bookingRef={bookingRef} schedule={schedule} cfg={config} api={teProxy}
+                        planEnabled={!!service!.post_tour_enabled} daysOffset={service!.post_tour_days_after ?? 3}
+                        arrival={booking.arrivalDate} departure={booking.departureDate}
+                        captured={(service!.post_tour?.length ?? 0) > 0} phone={service!.call_phone}
+                        onChanged={() => loadService(true)} />
+                    )}
                   </div>
                 </div>
 
@@ -1406,10 +1694,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   <div className="space-y-2.5 pt-1">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1"><Star className="w-3 h-3 text-amber-400" /> Captured on calls</p>
                     {(service!.reconfirmations ?? []).map(r => (
-                      <ReconfirmCard key={`rc-${r.id}`} row={r} retryBusy={specialBusy === 'reconfirm'} onRetry={() => retrySpecial('reconfirm')} />
+                      <ReconfirmCard key={`rc-${r.id}`} row={r} source={callSource(r.schedule_id)} retryBusy={specialBusy === 'reconfirm'} onRetry={() => retrySpecial('reconfirm')} />
                     ))}
                     {(service!.post_tour ?? []).map(p => (
-                      <PostTourCard key={`pt-${p.id}`} row={p} retryBusy={specialBusy === 'post_tour'} onRetry={() => retrySpecial('post_tour')} />
+                      <PostTourCard key={`pt-${p.id}`} row={p} source={callSource(p.schedule_id)} retryBusy={specialBusy === 'post_tour'} onRetry={() => retrySpecial('post_tour')} />
                     ))}
                   </div>
                 )}
@@ -1501,7 +1789,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
             <div className="rounded-xl border border-violet-200 bg-violet-50 overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-2.5 border-b border-violet-100 bg-violet-100/60">
                 <BookOpen className="w-3.5 h-3.5 text-violet-600" />
-                <p className="text-xs font-bold text-violet-800">Parameters sent to TE API — <code className="font-mono text-violet-700">POST /quick-call</code></p>
+                <p className="text-xs font-bold text-violet-800">Parameters sent to TE API — <code className="font-mono text-violet-700">{quickForm.playbook !== 'general' && onDemandReady && service?.status === 'active' ? `POST /services/${bookingRef}/special-calls` : 'POST /quick-call'}</code></p>
               </div>
               <div className="px-4 py-3 space-y-1.5 text-[11px] font-mono">
                 <div className="flex items-center gap-2">
@@ -1523,6 +1811,12 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   <span className="text-slate-400 w-28">reason</span>
                   <span className="text-slate-700 truncate max-w-xs">{quickForm.reason.trim() || '— (general check-in)'}</span>
                 </div>
+                {quickForm.playbook !== 'general' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-400 w-28">mode</span>
+                    <span className="font-bold text-slate-700">{quickForm.playbook}</span>
+                  </div>
+                )}
               </div>
               <div className="px-4 py-2 border-t border-violet-100 bg-violet-100/40">
                 <p className="text-[10px] text-violet-600 leading-relaxed">
@@ -1533,6 +1827,35 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
             {/* ── Form fields ── */}
             <div className="space-y-4">
+              <div>
+                <label className="form-label">Call type</label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {([
+                    { key: 'general',   title: 'General',          desc: 'Check-in, or the reason below', icon: PhoneCall,      on: 'border-violet-400 bg-violet-50 text-violet-700' },
+                    { key: 'reconfirm', title: 'Reconfirmation',   desc: 'Dates, flights, travellers, changes', icon: ClipboardCheck, on: 'border-sky-400 bg-sky-50 text-sky-700' },
+                    { key: 'post_tour', title: 'Post-tour feedback', desc: 'Home safe, 0–10 rating, feedback', icon: Award,          on: 'border-amber-400 bg-amber-50 text-amber-700' },
+                  ] as const).map(o => {
+                    const Icon = o.icon
+                    const active = quickForm.playbook === o.key
+                    return (
+                      <button key={o.key} type="button" onClick={() => setQuickForm(f => ({ ...f, playbook: o.key }))}
+                        className={`p-2.5 rounded-xl border-2 text-left transition-all ${active ? o.on : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'}`}>
+                        <p className="text-xs font-bold flex items-center gap-1.5"><Icon className="w-3.5 h-3.5" /> {o.title}</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">{o.desc}</p>
+                      </button>
+                    )
+                  })}
+                </div>
+                {quickForm.playbook !== 'general' && (
+                  <p className="text-[10px] mt-1.5 flex items-center gap-1 text-slate-500">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                    {onDemandReady && service?.status === 'active'
+                      ? <>Placed as a real {quickForm.playbook === 'reconfirm' ? 'reconfirmation' : 'post-tour'} call on {bookingRef} — tracked in the schedule, retried if unanswered, answers saved to the booking.</>
+                      : <>Runs the {quickForm.playbook === 'reconfirm' ? 'reconfirmation' : 'post-tour'} script; answers are stored against {bookingRef}. Register the booking to see them on this panel.</>}
+                  </p>
+                )}
+              </div>
+
               <div>
                 <label className="form-label">Phone to Dial *</label>
                 <input
@@ -1551,13 +1874,14 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           onClick={() => setQuickForm(f => ({ ...f, to: c.value }))}
                           className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
                           {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                              {callableNumbers.has(c.value) && <span title="WhatsApp calls allowed" className={`ml-0.5 inline-flex items-center gap-0.5 ${active ? 'text-emerald-200' : 'text-emerald-600'}`}><PhoneCall className="w-2.5 h-2.5" />calls OK</span>}
                         </button>
                       )
                     })}
                   </div>
                 )}
                 <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
-                {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}</div>}
+                {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}{permHints()}</div>}
               </div>
 
               <div>
