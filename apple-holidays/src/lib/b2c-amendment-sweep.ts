@@ -1,10 +1,11 @@
 /**
  * Aahaas B2C store amendments — found, filed and APPLIED automatically.
  *
- * The store raises an amendment as a new order on the same booking (see
- * b2c-order-chain). For each one whose booking is already in ops this:
+ * The store writes an amendment as a version of the same order (b2c-same-order)
+ * or, on a chain from before that mode, as a new order (b2c-order-chain). For
+ * each one whose booking is already in ops this:
  *
- *   1. files the notice on the ORIGINAL booking (b2c-amendments);
+ *   1. files the notice on the booking (b2c-amendments);
  *   2. runs Update Booking by itself — preview, then apply exactly the changes
  *      a person would find pre-ticked. Everything Update Booking protects stays
  *      protected: status, drivers, tickets, agenda, payments, P&L lines Accounts
@@ -21,11 +22,19 @@ import { prisma } from './prisma'
 import { isB2cBooking } from './booking-source'
 import { syncB2cBooking, type B2cChangeKey } from './b2c-booking-sync'
 import { fetchOrderChainFacts, fetchRecentAmendmentIds, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
+import { fetchRecentStoreVersions } from './b2c-same-order'
 import { getAmendmentNotice, recordAmendmentNotice, updateAmendmentNotice } from './b2c-amendments'
 
 export const SETTING_AUTO_APPLY = 'auto_b2c_amendment_apply'
 const MAX_ATTEMPTS = 3
 const ACTOR_NAME = 'Auto · store amendment'
+
+/** Why a same-order version is waiting, as the notice shows it. */
+const READINESS_NOTE: Record<string, string> = {
+  costing: 'Waiting for the store to finish this version\'s costs — applied automatically once it has.',
+  stale: 'The store has not finished this version\'s costs. Check it in the store, then use Update Booking.',
+  blocked: 'The store did not finish writing this version — somebody must check it in the store first.',
+}
 
 /** On unless switched off. */
 export async function amendmentAutoApplyOn(): Promise<boolean> {
@@ -57,16 +66,22 @@ export interface AmendmentOutcome {
  */
 export async function handleAmendment(
   f: B2cOrderFact,
-  opts: { originAt: string | null; dryRun?: boolean; automationUserId: string },
+  opts: { originAt: string | null; dryRun?: boolean; automationUserId: string; reason?: string | null },
 ): Promise<AmendmentOutcome> {
   const isOld = isLaterDay(opts.originAt, f.checkoutDate)
   const base = { orderId: f.id, version: f.version, isOld }
+  const sameOrderVersion = f.sameOrder ? f.version : null
   const refs = Array.from(new Set([String(f.chainId), f.previousOrderId ? String(f.previousOrderId) : null].filter((r): r is string => !!r)))
 
-  const [original, duplicate] = await Promise.all([
+  // A same-order version has no booking "of its own" to find: the booking of
+  // that order IS the booking, and reading it as a duplicate would settle the
+  // notice without applying anything.
+  const [own, chainBooking, duplicate] = await Promise.all([
+    f.sameOrder ? prisma.booking.findUnique({ where: { bookingRef: String(f.id) }, select: { bookingRef: true, agent: true } }) : null,
     prisma.booking.findFirst({ where: { bookingRef: { in: refs } }, select: { bookingRef: true, agent: true }, orderBy: { createdAt: 'asc' } }),
-    prisma.booking.findUnique({ where: { bookingRef: String(f.id) }, select: { bookingRef: true } }),
+    f.sameOrder ? null : prisma.booking.findUnique({ where: { bookingRef: String(f.id) }, select: { bookingRef: true } }),
   ])
+  const original = own ?? chainBooking
   if (!original) return { ...base, bookingRef: null, action: 'no-booking' }
   // A numeric ref shared with an agent booking is never touched from the store.
   if (!isB2cBooking(original.agent)) return { ...base, bookingRef: original.bookingRef, action: 'not-b2c' }
@@ -78,9 +93,10 @@ export async function handleAmendment(
     bookingRef: original.bookingRef, orderId: f.id, previousOrderId: f.previousOrderId, version: f.version,
     amendedAt: f.checkoutDate, originAt: opts.originAt, isOld,
     duplicateRef: duplicate?.bookingRef ?? null, detectedAt: new Date().toISOString(),
+    ...(f.sameOrder && { sameOrder: true, reason: opts.reason ?? null }),
   })
 
-  const notice = await getAmendmentNotice(f.id)
+  const notice = await getAmendmentNotice(f.id, sameOrderVersion)
   if (notice?.appliedAt) return { ...out, action: 'already-applied' }
 
   // The new version already has a booking of its own (imported before versions
@@ -106,6 +122,19 @@ export async function handleAmendment(
       await updateAmendmentNotice(f.id, { lastError: `The store has a newer version (order ${preview.orderId}); that one is applied instead.` })
       return { ...out, action: 'noticed' }
     }
+    if (f.sameOrder) {
+      const seen = preview.amendment?.storeVersion ?? null
+      if (seen !== f.version) {
+        await updateAmendmentNotice(f.id, { lastError: `The store has a newer version (version ${seen ?? '?'}); that one is applied instead.` }, sameOrderVersion)
+        return { ...out, action: 'noticed' }
+      }
+      // Never automatic until the store has finished: not an attempt, so the next check simply tries again.
+      const readiness = preview.amendment?.readiness ?? 'ready'
+      if (readiness !== 'ready') {
+        await updateAmendmentNotice(f.id, { lastError: READINESS_NOTE[readiness] ?? null }, sameOrderVersion)
+        return { ...out, action: 'noticed' }
+      }
+    }
 
     const keys = preview.changes.filter((c) => c.recommended).map((c) => c.key) as B2cChangeKey[]
     const leftForReview = preview.changes.filter((c) => !c.recommended).map((c) => c.label)
@@ -114,7 +143,7 @@ export async function handleAmendment(
       await updateAmendmentNotice(f.id, {
         appliedAt: new Date().toISOString(), appliedVersion: preview.version, autoApplied: true, appliedBy: ACTOR_NAME,
         appliedChanges: [], leftForReview, lastError: null,
-      })
+      }, sameOrderVersion)
       return { ...out, action: 'nothing-to-apply', newVersion: preview.version }
     }
 
@@ -126,11 +155,11 @@ export async function handleAmendment(
     await updateAmendmentNotice(f.id, {
       appliedAt: new Date().toISOString(), appliedVersion: result.newVersion ?? result.version,
       autoApplied: true, appliedBy: ACTOR_NAME, appliedChanges: applied, leftForReview, lastError: null,
-    })
+    }, sameOrderVersion)
     return { ...out, action: 'applied', newVersion: result.newVersion }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
-    await updateAmendmentNotice(f.id, { autoAttempts: (notice?.autoAttempts ?? 0) + 1, lastError: error }).catch(() => null)
+    await updateAmendmentNotice(f.id, { autoAttempts: (notice?.autoAttempts ?? 0) + 1, lastError: error }, sameOrderVersion).catch(() => null)
     return { ...out, action: 'failed', error }
   }
 }
@@ -147,19 +176,35 @@ export async function sweepRecentAmendments(opts: {
   skip?: Set<number>
 }): Promise<AmendmentOutcome[]> {
   const since = new Date(Date.now() - (opts.days ?? 3) * 86_400_000).toISOString().slice(0, 10)
-  const ids = (await fetchRecentAmendmentIds(since)).filter((id) => !opts.skip?.has(id))
-  if (ids.length === 0) return []
+  const [chainIds, sameOrder] = await Promise.all([fetchRecentAmendmentIds(since), fetchRecentStoreVersions(since)])
+  const ids = chainIds.filter((id) => !opts.skip?.has(id))
+  if (ids.length === 0 && sameOrder.length === 0) return []
 
-  const facts = await fetchOrderChainFacts(ids)
+  const facts = await fetchOrderChainFacts([...ids, ...sameOrder.map((v) => v.orderId)])
   const live = ids.map((id) => facts.get(id)).filter((f): f is B2cOrderFact => !!f && f.isAmendment && f.supersededBy === null)
+
+  // A same-order version keeps its order id, so the version row is what says it
+  // happened and when. `checkoutDate` carries that moment for the old-day test.
+  const reasons = new Map<number, string | null>()
+  for (const v of sameOrder) {
+    const f = facts.get(v.orderId)
+    if (!f || f.supersededBy !== null) continue
+    reasons.set(v.orderId, v.reason)
+    live.push({ ...f, version: v.version, checkoutDate: v.createdAt, sameOrder: true })
+  }
   const origins = await fetchOrderChainFacts(live.map((f) => f.chainId))
 
   const out: AmendmentOutcome[] = []
   for (const f of live) {
     // Skip cheaply when the notice is already settled.
-    const n = await getAmendmentNotice(f.id)
+    const n = await getAmendmentNotice(f.id, f.sameOrder ? f.version : null)
     if (n?.appliedAt || (n && (n.autoAttempts ?? 0) >= MAX_ATTEMPTS)) continue
-    out.push(await handleAmendment(f, { originAt: origins.get(f.chainId)?.checkoutDate ?? null, dryRun: opts.dryRun, automationUserId: opts.automationUserId }))
+    out.push(await handleAmendment(f, {
+      originAt: origins.get(f.chainId)?.checkoutDate ?? null,
+      dryRun: opts.dryRun,
+      automationUserId: opts.automationUserId,
+      reason: f.sameOrder ? reasons.get(f.id) ?? null : null,
+    }))
   }
   return out
 }

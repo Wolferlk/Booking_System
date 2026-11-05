@@ -33,6 +33,8 @@ export interface B2cOrderFact {
   isAmendment: boolean
   checkoutStatus: string | null
   checkoutDate: string | null
+  /** A version of THIS order (b2c-same-order), not a new order: `version` is that version. */
+  sameOrder?: boolean
 }
 
 interface ChainRow extends mysql.RowDataPacket {
@@ -179,6 +181,14 @@ export function isLaterDay(originAt: string | null, amendedAt: string | null): b
 
 export const B2C_AMENDMENT_PREFIX = 'b2c_amendment:'
 
+/**
+ * One notice per amendment. A chain amendment has an order id of its own; every
+ * same-order version shares one id, so its version is part of the key.
+ */
+export function amendmentNoticeKey(orderId: number, sameOrderVersion?: number | null): string {
+  return B2C_AMENDMENT_PREFIX + orderId + (sameOrderVersion ? `:v${sameOrderVersion}` : '')
+}
+
 export interface B2cAmendmentNotice {
   bookingRef: string          // the booking (chain id)
   orderId: number             // the amendment order
@@ -191,6 +201,10 @@ export interface B2cAmendmentNotice {
   /** The amendment was imported as a booking of its own before versions were understood. */
   duplicateRef: string | null
   detectedAt: string
+  /** Version `version` of order `orderId` itself: the order number did not change. */
+  sameOrder?: boolean
+  /** The store's own summary of the version, e.g. "margin 16,207.45 → 4,051.86 LKR". */
+  reason?: string | null
   appliedAt?: string | null
   appliedVersion?: number | null
   /** Applied by the automation (store amendment auto-apply), not a person. */

@@ -16,6 +16,7 @@ interface Notice {
   bookingRef: string
   orderId: number
   previousOrderId: number | null
+  sameOrder?: boolean
   version: number
   amendedAt: string | null
   originAt: string | null
@@ -33,7 +34,7 @@ export default function B2cAmendmentsPanel() {
   const [notices, setNotices] = useState<Notice[]>([])
   const [all, setAll] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
   const [autoApply, setAutoApply] = useState<boolean | null>(null)
   const { data: session } = useSession()
   const isSuper = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(String(session?.user?.role ?? ''))
@@ -54,13 +55,15 @@ export default function B2cAmendmentsPanel() {
 
   useEffect(() => { load() }, [load])
 
-  async function ack(orderId: number) {
-    setBusy(orderId)
+  const idOf = (n: Notice) => `${n.orderId}:${n.sameOrder ? n.version : ''}`
+
+  async function ack(n: Notice) {
+    setBusy(idOf(n))
     try {
       const res = await fetch('/api/b2c/amendments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId }),
+        body: JSON.stringify({ orderId: n.orderId, ...(n.sameOrder && { sameOrderVersion: n.version }) }),
       })
       const json = await readApiResponse<{ notice: Notice }>(res)
       if (json.success) await load()
@@ -117,13 +120,13 @@ export default function B2cAmendmentsPanel() {
           </thead>
           <tbody>
             {notices.map((n) => (
-              <tr key={n.orderId} className="border-t border-amber-100">
+              <tr key={idOf(n)} className="border-t border-amber-100">
                 <td className="py-1.5 font-mono">
                   <Link href={`/dashboard/bookings/${encodeURIComponent(n.bookingRef)}`} className="text-blue-700 hover:underline">{n.bookingRef}</Link>
                   <span className="ml-1 rounded bg-violet-100 px-1.5 text-[10px] font-semibold text-violet-700">v{n.version}</span>
                 </td>
                 <td className="font-mono">{n.orderId}</td>
-                <td className="font-mono">{n.previousOrderId ?? '—'}</td>
+                <td className="font-mono">{n.sameOrder ? 'same order' : n.previousOrderId ?? '—'}</td>
                 <td>{n.originAt?.slice(0, 10) ?? '—'}</td>
                 <td>
                   {n.amendedAt?.slice(0, 16) ?? '—'}{' '}
@@ -144,9 +147,9 @@ export default function B2cAmendmentsPanel() {
                   {n.acknowledgedAt ? (
                     <span className="inline-flex items-center gap-1 text-slate-500" title={n.acknowledgedAt}><CheckCircle2 className="w-3 h-3 text-emerald-600" /> {n.acknowledgedBy}</span>
                   ) : n.isOld ? (
-                    <button type="button" disabled={busy === n.orderId} onClick={() => ack(n.orderId)}
+                    <button type="button" disabled={busy === idOf(n)} onClick={() => ack(n)}
                       className="rounded border border-emerald-300 bg-white px-2 py-0.5 text-emerald-800 hover:bg-emerald-50 disabled:opacity-50">
-                      {busy === n.orderId ? '…' : 'Acknowledge'}
+                      {busy === idOf(n) ? '…' : 'Acknowledge'}
                     </button>
                   ) : null}
                 </td>

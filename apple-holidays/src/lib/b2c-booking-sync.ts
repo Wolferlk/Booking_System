@@ -35,11 +35,21 @@
  * version with source `b2c` and a note listing what changed.
  *
  * ── Order versions (store amendments) ───────────────────────────────────────
- * The store raises an amendment as a NEW order on the same booking (see
- * b2c-order-chain). The booking stays filed under its original order id; this
- * update reads the chain's LIVE version instead, and P&L lines the store
- * carried into the new order (same product, new line id) are re-linked rather
- * than added twice and flagged "removed".
+ * An amendment is a new VERSION of this booking, never a new booking. The store
+ * writes it one of two ways, and both land here on the same booking:
+ *
+ *   Same order (b2c-same-order, the way from now on): the order id stays,
+ *   `tbl_checkout_versions` records the version, taken-off lines keep their row
+ *   and are filtered out by b2c-db. A rebooked line (new date, new pax) has a
+ *   new line id: the store's own change log says which line it replaced, so its
+ *   P&L line, with the tickets and proofs hanging off it, is re-linked exactly.
+ *
+ *   New order (b2c-order-chain, chains amended before that mode): the booking
+ *   stays filed under its original order id, this update reads the chain's LIVE
+ *   version, and carried lines (same product, new line id) are re-linked.
+ *
+ * A same-order version is not applied until the store finished it: see
+ * `versionReadiness`. Refused, nothing is written.
  */
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
@@ -59,6 +69,15 @@ import { appendVersionAndSnapshot, recordAmendmentVersion } from '@/lib/booking-
 import { logActivity, ACTION } from '@/lib/activity'
 import { isLaterDay, fetchOrderChainFacts, resolveLiveOrderId } from '@/lib/b2c-order-chain'
 import { markAmendmentApplied } from '@/lib/b2c-amendments'
+import {
+  fetchLineChanges,
+  fetchStoreVersions,
+  findAncestorLine,
+  pendingCostRefreshes,
+  rebookPairs,
+  versionReadiness,
+  type VersionReadiness,
+} from '@/lib/b2c-same-order'
 
 // ── Origin ───────────────────────────────────────────────────────────────────
 
@@ -194,6 +213,12 @@ export interface B2cSyncResult {
     previousOrderId: number | null
     amendedAt: string | null
     isOld: boolean
+    /** A version of the same order: `liveOrderId` did not change. */
+    sameOrder: boolean
+    /** Whether the store has finished this version. Chain amendments are always ready. */
+    readiness: VersionReadiness
+    /** The store's own summary of the version. */
+    reason: string | null
   } | null
   /** Set on apply when a new version was written. */
   newVersion: number | null
@@ -273,6 +298,12 @@ function storeLineId(notes: string | null | undefined): number | null {
   return m ? Number(m[1]) : null
 }
 
+/** `B2C line #123 (checkout 456) · …` → 456, the store's `tbl_checkouts.id`. */
+function storeCheckoutLineId(notes: string | null | undefined): number | null {
+  const m = (notes ?? '').match(/B2C line #\d+ \(checkout (\d+)\)/)
+  return m ? Number(m[1]) : null
+}
+
 /** `… · cost 12.00 / sell 15.00 USD · …` → the figures the line was written from. */
 function noteFigures(notes: string | null | undefined): { cost: number; sell: number } | null {
   const m = (notes ?? '').match(/cost (-?[\d.]+) \/ sell (-?[\d.]+)/)
@@ -348,7 +379,45 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
       previousOrderId: live.fact.previousOrderId,
       amendedAt: live.fact.checkoutDate,
       isOld: isLaterDay(origin?.checkoutDate ?? null, live.fact.checkoutDate),
+      sameOrder: false,
+      readiness: 'ready',
+      reason: null,
     }
+  }
+
+  // Versions of the live order itself: the id stays, so only these tables say so.
+  const storeVersions = (await fetchStoreVersions([orderId])).get(orderId) ?? []
+  const newestVersion = storeVersions[storeVersions.length - 1]
+  if (newestVersion && newestVersion.version > 1) {
+    const [origin, refreshes] = await Promise.all([
+      fetchOrderChainFacts([live.chainId]).then((f) => f.get(live.chainId)),
+      pendingCostRefreshes(orderId),
+    ])
+    amendment = {
+      baseOrderId,
+      liveOrderId: orderId,
+      chainId: live.chainId,
+      storeVersion: newestVersion.version,
+      previousOrderId: amendment?.previousOrderId ?? null,
+      amendedAt: newestVersion.createdAt,
+      isOld: isLaterDay(origin?.checkoutDate ?? null, newestVersion.createdAt),
+      sameOrder: true,
+      readiness: versionReadiness(newestVersion, refreshes),
+      reason: newestVersion.reason,
+    }
+  }
+
+  if (opts.mode === 'apply' && amendment?.readiness === 'blocked') {
+    throw new B2cSyncError(
+      `The store did not finish version ${amendment.storeVersion} of order ${orderId}, so somebody must check it in the store first. Nothing was changed.`,
+      409,
+    )
+  }
+  if (opts.mode === 'apply' && amendment?.readiness === 'costing') {
+    throw new B2cSyncError(
+      `The store is still working out the costs of version ${amendment.storeVersion} of order ${orderId}. Nothing was changed — try again in a minute.`,
+      409,
+    )
   }
 
   // ── Read the store (read-only) ─────────────────────────────────────────────
@@ -389,7 +458,19 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
   }
 
   const warnings: string[] = []
-  if (amendment) {
+  if (amendment?.sameOrder) {
+    warnings.push(
+      `Amended in the store: order ${orderId} is now version ${amendment.storeVersion}, same order number` +
+      `${amendment.amendedAt ? `, on ${amendment.amendedAt.slice(0, 10)}` : ''}${amendment.reason ? ` (${amendment.reason})` : ''}.`,
+    )
+    if (amendment.readiness === 'blocked') {
+      warnings.push(`The store did not finish version ${amendment.storeVersion}. This preview may not match the booking, and it cannot be applied until somebody checks it in the store.`)
+    } else if (amendment.readiness === 'costing') {
+      warnings.push(`The store is still working out this version's costs, so new lines may be missing below. Wait a minute and open Update Booking again.`)
+    } else if (amendment.readiness === 'stale') {
+      warnings.push(`The store has not finished this version's costs after ${newestVersion?.ageMinutes ?? 0} minutes, so some lines may be missing or at old prices. Check the order in the store before applying.`)
+    }
+  } else if (amendment) {
     warnings.push(
       `Amended in the store: order ${orderId} (version ${amendment.storeVersion}) replaces order ${amendment.previousOrderId ?? baseOrderId}` +
       `${amendment.amendedAt ? ` on ${amendment.amendedAt.slice(0, 10)}` : ''}. This update reads the new version; the booking keeps ref ${booking.bookingRef}.`,
@@ -588,6 +669,27 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     const upstreamIds = new Set<number>()
     let nextSort = Math.max(-1, ...booking.pnl.lineItems.map((l) => l.sortOrder)) + 1
 
+    // Same-order versions: the store says which line a rebooked line replaced, so
+    // the P&L line follows it exactly. Found first, so the name match below can
+    // never hand that line to a different service of the same name.
+    const exact = new Map<number, number>()   // new store line id → existing store line id
+    if (amendment?.sameOrder) {
+      const pairs = rebookPairs(await fetchLineChanges(orderId))
+      const byCheckoutLine = new Map<number, number>()
+      existingById.forEach((li, id) => {
+        const line = storeCheckoutLineId(li.notes)
+        if (line !== null) byCheckoutLine.set(line, id)
+      })
+      for (const raw of mapped.pnlLines) {
+        const id = storeLineId(raw.notes)
+        const line = storeCheckoutLineId(raw.notes)
+        if (id === null || line === null || existingById.has(id)) continue
+        const found = findAncestorLine(line, pairs, (c) => byCheckoutLine.has(c))
+        if (found !== null) exact.set(id, byCheckoutLine.get(found)!)
+      }
+    }
+    const taken = new Set(exact.values())
+
     // A store amendment clones the carried lines into the new order under new
     // line ids. Those are the same services: match them to the line already
     // here by category + activity, so they are re-linked, not added twice.
@@ -595,7 +697,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     const orphans = new Map<string, number[]>()
     if (amendment) {
       existingById.forEach((li, oldId) => {
-        if (newIds.has(oldId)) return
+        if (newIds.has(oldId) || taken.has(oldId)) return
         const sig = `${norm(li.category)}|${norm(li.activity.replace(/^\[Removed from store order\] /, ''))}`
         orphans.set(sig, [...(orphans.get(sig) ?? []), oldId])
       })
@@ -609,7 +711,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
       let relinked = false
       if (!cur && amendment) {
         const pool = orphans.get(`${norm(l.category)}|${norm(l.activity)}`)
-        const oldId = pool?.shift()
+        const oldId = (id !== null ? exact.get(id) : undefined) ?? pool?.shift()
         if (oldId !== undefined) {
           cur = existingById.get(oldId)
           upstreamIds.add(oldId)   // carried, not removed
@@ -826,13 +928,17 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     newVersion = await appendVersionAndSnapshot(booking.id, {
       createdById: opts.actorId,
       source: 'b2c',
-      amendmentNote: (amendment ? `[Store amendment v${amendment.storeVersion}: order ${orderId} replaces ${amendment.previousOrderId ?? baseOrderId}] ` : '') + note.slice(0, 3900),
+      amendmentNote: (amendment
+        ? (amendment.sameOrder
+          ? `[Store amendment v${amendment.storeVersion} of order ${orderId}] `
+          : `[Store amendment v${amendment.storeVersion}: order ${orderId} replaces ${amendment.previousOrderId ?? baseOrderId}] `)
+        : '') + note.slice(0, 3900),
     })
   }
 
   // The notice for this store version is answered by the update.
   if (amendment && newVersion) {
-    await markAmendmentApplied(booking.bookingRef, orderId, newVersion)
+    await markAmendmentApplied(booking.bookingRef, orderId, newVersion, amendment.sameOrder ? amendment.storeVersion : null)
       .catch((err) => console.error('[b2c-sync] amendment notice not marked applied:', err instanceof Error ? err.message : err))
   }
 

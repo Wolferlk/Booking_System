@@ -1,12 +1,19 @@
 /**
  * Aahaas B2C order versions, as OPS bookings see them.
  *
- * The store raises an amendment as a NEW order (see b2c-order-chain):
+ * A booking's versions come two ways, and a booking can hold both:
  *
- *   15726  version 1  ← replaced
- *   15833  version 2  ← live
+ *   SAME ORDER (b2c-same-order, the way from now on): one order id, versions in
+ *   `tbl_checkout_versions`. One booking, nothing ever replaced.
  *
- * Before the importer understood versions, the new order was imported as a
+ *   NEW ORDER (b2c-order-chain, amended before that mode):
+ *     15726  version 1  ← replaced
+ *     15833  version 2  ← live
+ *
+ * A version with no booking of its own is CARRIED by the active booking:
+ * Update Booking reads it onto that booking (`heldBy`).
+ *
+ * Before the importer understood versions, a new order was imported as a
  * booking of its own, so ops can hold BOTH 15726 and 15833 for one customer
  * booking. This module links them:
  *
@@ -28,6 +35,7 @@ import { prisma } from './prisma'
 import { b2cQuery } from './b2c-db'
 import { isB2cBooking } from './booking-source'
 import { fetchRecentAmendmentIds, liveFromRows } from './b2c-order-chain'
+import { WRITTEN_STATUSES, fetchRecentStoreVersions, fetchStoreVersions, type B2cStoreVersion } from './b2c-same-order'
 
 export const B2C_VERSION_LINK_PREFIX = 'b2c_version_link:'
 
@@ -40,6 +48,12 @@ export interface B2cVersionEntry {
   live: boolean
   storeStatus: string | null
   placedAt: string | null
+  /** The booking this version is on: its own, else the active booking that carries it. */
+  heldBy?: string | null
+  /** A version of the same order, not an order of its own. */
+  sameOrder?: boolean
+  /** The store's own summary of the version. */
+  reason?: string | null
 }
 
 export type B2cVersionState = 'active' | 'superseded'
@@ -48,7 +62,7 @@ export interface B2cVersionLink {
   ref: string
   chainId: number
   state: B2cVersionState
-  /** Store version this booking was imported from (its own order's version). */
+  /** The newest store version this booking holds or carries. */
   version: number
   /** The booking to work on. Equal to `ref` when this one is active. */
   activeRef: string | null
@@ -88,7 +102,12 @@ function chainIdOf(r: Partial<ChainRow>): number {
  * Pure: the links for every OPS booking of every chain among `rows`.
  * `opsRefs` = B2C booking refs that exist in ops. Chains of one order are skipped.
  */
-export function linksFromRows(rows: Partial<ChainRow>[], opsRefs: Set<string>, now = new Date()): B2cVersionLink[] {
+export function linksFromRows(
+  rows: Partial<ChainRow>[],
+  opsRefs: Set<string>,
+  now = new Date(),
+  storeVersions: Map<number, B2cStoreVersion[]> = new Map(),
+): B2cVersionLink[] {
   const chains = new Map<number, Partial<ChainRow>[]>()
   for (const r of rows) {
     const c = chainIdOf(r)
@@ -99,20 +118,36 @@ export function linksFromRows(rows: Partial<ChainRow>[], opsRefs: Set<string>, n
 
   const out: B2cVersionLink[] = []
   chains.forEach((list, chainId) => {
-    if (list.length < 2) return
+    // Only versions the store finished: a 'writing' or 'failed' row changed nothing here.
+    const writtenOf = (id: number) => (storeVersions.get(id) ?? []).filter((v) => WRITTEN_STATUSES.includes(v.status))
+    if (list.length < 2 && !list.some((r) => writtenOf(Number(r.id)).length > 1)) return
     const liveOrderId = liveFromRows(list, chainId)
     const versions: B2cVersionEntry[] = list
-      .map((r) => {
+      .flatMap((r): B2cVersionEntry[] => {
         const id = Number(r.id)
         const v = Number(r.order_version ?? 0)
-        return {
+        const ref = opsRefs.has(String(id)) ? String(id) : null
+        const written = writtenOf(id)
+        if (written.length > 0) {
+          return written.map((sv, i) => ({
+            orderId: id,
+            version: sv.version,
+            ref,
+            live: id === liveOrderId && i === written.length - 1,
+            storeStatus: r.checkout_status ?? null,
+            placedAt: sv.createdAt,
+            sameOrder: true,
+            reason: sv.reason,
+          }))
+        }
+        return [{
           orderId: id,
           version: Math.max(1, v || (id === chainId ? 1 : 2)),
-          ref: opsRefs.has(String(id)) ? String(id) : null,
+          ref,
           live: id === liveOrderId,
           storeStatus: r.checkout_status ?? null,
           placedAt: stamp(r.checkout_date),
-        }
+        }]
       })
       .sort((a, b) => a.version - b.version || a.orderId - b.orderId)
 
@@ -125,12 +160,14 @@ export function linksFromRows(rows: Partial<ChainRow>[], opsRefs: Set<string>, n
       (opsRefs.has(String(chainId)) ? String(chainId) : null) ??
       withBooking[withBooking.length - 1].ref
 
-    for (const v of withBooking) {
+    for (const v of versions) v.heldBy = v.ref ?? activeRef
+
+    for (const ref of Array.from(new Set(withBooking.map((v) => v.ref!)))) {
       out.push({
-        ref: v.ref!,
+        ref,
         chainId,
-        state: v.ref === activeRef ? 'active' : 'superseded',
-        version: v.version,
+        state: ref === activeRef ? 'active' : 'superseded',
+        version: Math.max(...versions.filter((v) => v.heldBy === ref).map((v) => v.version)),
         activeRef,
         liveOrderId,
         versions,
@@ -176,7 +213,7 @@ export async function refreshVersionLinks(orderIds: (number | string)[]): Promis
   })
   // A numeric ref shared with an agent booking is never linked from the store.
   const opsRefs = new Set(bookings.filter((b) => isB2cBooking(b.agent)).map((b) => b.bookingRef))
-  const links = linksFromRows(rows, opsRefs)
+  const links = linksFromRows(rows, opsRefs, new Date(), await fetchStoreVersions(allIds))
 
   for (const l of links) {
     const key = B2C_VERSION_LINK_PREFIX + l.ref
@@ -252,7 +289,8 @@ export async function syncRecentVersionLinks(days = 30, force = false): Promise<
     const at = new Date().toISOString()
     await prisma.systemSetting.upsert({ where: { key: SYNCED_AT_KEY }, update: { value: at }, create: { key: SYNCED_AT_KEY, value: at } })
     const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-    const ids = await fetchRecentAmendmentIds(since, 1000)
+    const [chainIds, sameOrder] = await Promise.all([fetchRecentAmendmentIds(since, 1000), fetchRecentStoreVersions(since, 1000)])
+    const ids = cleanIds([...chainIds, ...sameOrder.map((v) => v.orderId)])
     if (ids.length === 0) return 0
     const links = await refreshVersionLinks(ids)
     return links.size

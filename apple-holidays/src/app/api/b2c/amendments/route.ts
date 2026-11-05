@@ -42,12 +42,13 @@ export async function POST(req: NextRequest) {
   if (!session?.user) return buildApiError('Unauthorized', 401)
   if (session.user.role === 'CLIENT') return buildApiError('Forbidden', 403)
 
-  const body = (await req.json().catch(() => ({}))) as { orderId?: unknown }
+  const body = (await req.json().catch(() => ({}))) as { orderId?: unknown; sameOrderVersion?: unknown }
   const orderId = Number(body.orderId)
   if (!Number.isInteger(orderId) || orderId <= 0) return buildApiError('orderId is required', 400)
 
   const by = session.user.name || session.user.email || 'staff'
-  const notice = await acknowledgeAmendmentNotice(orderId, by)
+  const sameOrderVersion = Number.isInteger(body.sameOrderVersion) ? (body.sameOrderVersion as number) : null
+  const notice = await acknowledgeAmendmentNotice(orderId, by, sameOrderVersion)
   if (!notice) return buildApiError(`No amendment notice for order ${orderId}`, 404)
   return buildApiSuccess({ notice }, `Acknowledged by ${by}`)
 }

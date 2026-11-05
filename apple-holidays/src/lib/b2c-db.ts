@@ -35,6 +35,47 @@ export const FLIGHT_CATEGORY_ID = 6
  *  ticket that can still be in the future. */
 const UNDATED_FLIGHT_LOOKBACK_DAYS = 370
 
+/**
+ * SAME-ORDER VERSIONS (`DevelopmemtsCludeMds/order-versions-same-order.md`): an
+ * amendment keeps the order id, and a line it took off stays in `tbl_checkouts`
+ * (`removed_in_version` set) and in `checkouts_more_data`. Read naively, a rebooked
+ * product counts twice and the old date stays in the trip's date range.
+ *
+ * Only the booking API's same-order lane sets that column, so filtering on it
+ * changes nothing for any other order, and a store without the column reads
+ * exactly as before.
+ */
+let lineVersionColumn: { at: number; present: boolean } | null = null
+
+async function hasLineVersionColumn(): Promise<boolean> {
+  const ttl = lineVersionColumn?.present ? 30 * 60_000 : 5 * 60_000
+  if (lineVersionColumn && Date.now() - lineVersionColumn.at < ttl) return lineVersionColumn.present
+  try {
+    const rows = await b2cQuery<mysql.RowDataPacket & { n: number }>(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tbl_checkouts' AND COLUMN_NAME = 'removed_in_version'`,
+    )
+    lineVersionColumn = { at: Date.now(), present: Number(rows[0]?.n ?? 0) > 0 }
+    return lineVersionColumn.present
+  } catch {
+    return false   // not cached: the query this guards will report the real failure
+  }
+}
+
+/** Keeps `checkouts_more_data` rows of lines still on the order. `alias` is a constant at every call. */
+async function liveLineClause(alias: string): Promise<string> {
+  if (!(await hasLineVersionColumn())) return ''
+  return `AND NOT EXISTS (SELECT 1 FROM tbl_checkouts rv WHERE rv.id = ${alias}.checkout_id AND rv.removed_in_version IS NOT NULL)`
+}
+
+/** Keeps flight bookings whose order line was not taken off by a version. */
+async function liveFlightClause(alias: string): Promise<string> {
+  if (!(await hasLineVersionColumn())) return ''
+  return `AND NOT EXISTS (SELECT 1 FROM tbl_checkouts rv
+                           WHERE rv.checkout_id = ${alias}.order_id AND rv.flight_id = ${alias}.id
+                             AND rv.removed_in_version IS NOT NULL)`
+}
+
 /** Statements this client is willing to send. Anything else is a bug, not a query. */
 const READ_ONLY_RE = /^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i
 
@@ -269,6 +310,7 @@ export async function fetchOrderHeaders(opts: {
   const { upcomingFrom, bookedFrom = null, limit = 500 } = opts
   // LIMIT is inlined (not bound) because this server rejects `LIMIT ?`.
   const lim = Math.max(1, Math.min(Number(limit) || 500, 5000))
+  const liveLines = await liveLineClause('m')
   const [dated, undated] = await Promise.all([
     b2cQuery<B2cOrderHeader>(
       `SELECT m.order_id                AS order_id,
@@ -280,6 +322,7 @@ export async function fetchOrderHeaders(opts: {
         WHERE m.order_id IS NOT NULL
           AND m.service_date IS NOT NULL
           AND m.category_id IN (${CATEGORY_LIST})
+          ${liveLines}
           ${bookedFrom ? 'AND m.booked_date >= ?' : ''}
         GROUP BY m.order_id
        HAVING MIN(m.service_date) >= ?
@@ -316,6 +359,8 @@ export async function fetchOrderHeaders(opts: {
  */
 async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: number }): Promise<B2cOrderHeader[]> {
   const scope = opts.orderId != null ? `AND order_id = ${sanitizeIds([opts.orderId])}` : 'AND booked_date >= ?'
+  const liveLines = await liveLineClause('m')
+  const liveUndated = await liveLineClause('u0')
   const rows = await b2cQuery<B2cOrderHeader & { undatedNames: string | null }>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
@@ -325,12 +370,14 @@ async function fetchUndatedFlightHeaders(opts: { bookedFrom?: string; orderId?: 
             GROUP_CONCAT(CASE WHEN m.service_date IS NULL THEN m.product_name END SEPARATOR ' | ') AS undatedNames
        FROM checkouts_more_data m
        JOIN (SELECT DISTINCT order_id
-               FROM checkouts_more_data
+               FROM checkouts_more_data u0
               WHERE order_id IS NOT NULL
                 AND category_id = ${FLIGHT_CATEGORY_ID}
                 AND service_date IS NULL
+                ${liveUndated}
                 ${scope}) u ON u.order_id = m.order_id
       WHERE m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
       GROUP BY m.order_id`,
     opts.orderId != null ? [] : [opts.bookedFrom],
   )
@@ -398,6 +445,7 @@ export async function fetchOrderHeaderById(orderId: number): Promise<B2cOrderHea
   const id = sanitizeIds([orderId])
   const [flightDated] = await fetchUndatedFlightHeaders({ orderId })
   if (flightDated) return flightDated
+  const liveLines = await liveLineClause('m')
   const rows = await b2cQuery<B2cOrderHeader>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
@@ -408,6 +456,7 @@ export async function fetchOrderHeaderById(orderId: number): Promise<B2cOrderHea
       WHERE m.order_id = ${id}
         AND m.service_date IS NOT NULL
         AND m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
       GROUP BY m.order_id`,
   )
   return rows[0] ?? null
@@ -431,6 +480,7 @@ export async function fetchOrdersBookedBetween(opts: {
   limit?: number
 }): Promise<B2cBookedOrder[]> {
   const lim = Math.max(1, Math.min(Number(opts.limit) || 2000, 10000))
+  const liveLines = await liveLineClause('m')
   return b2cQuery<B2cBookedOrder>(
     `SELECT m.order_id          AS order_id,
             MIN(m.booked_date)  AS bookedDate,
@@ -442,6 +492,7 @@ export async function fetchOrdersBookedBetween(opts: {
       WHERE m.order_id IS NOT NULL
         AND m.booked_date IS NOT NULL
         AND m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
         AND m.booked_date >= ? AND m.booked_date <= ?
       GROUP BY m.order_id
       ORDER BY m.order_id ASC
@@ -460,6 +511,7 @@ export async function fetchOrdersBookedBetween(opts: {
 export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderProduct[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const liveLines = await liveLineClause('m')
   return b2cQuery<B2cOrderProduct>(
     `SELECT m.id, m.order_id, m.checkout_id, m.category_id, mc.maincat_type,
             m.product_id, m.product_name, m.vendor_name,
@@ -476,6 +528,7 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
        LEFT JOIN tbl_maincategory mc ON mc.id          = m.category_id
       WHERE m.order_id IN (${ids})
         AND m.category_id IN (${CATEGORY_LIST})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }
@@ -519,10 +572,12 @@ export async function fetchOrderCustomers(orderIds: number[]): Promise<B2cOrderC
 export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlightBooking[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const liveFlights = await liveFlightClause('f')
   return b2cQuery<B2cFlightBooking>(
     `SELECT f.order_id, f.pnr, f.flight_provider, f.requested_data, f.response_data
        FROM aahaas_flight_bookingsv2 f
       WHERE f.order_id IN (${ids})
+        ${liveFlights}
       ORDER BY f.order_id, f.id`,
   )
 }
@@ -536,6 +591,7 @@ export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlight
 async function fetchFlightDateRows(orderIds: number[]): Promise<B2cFlightBooking[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
+  const liveFlights = await liveFlightClause('f')
   const rows = await b2cQuery<mysql.RowDataPacket & {
     order_id: number
     pnr: string | null
@@ -548,6 +604,7 @@ async function fetchFlightDateRows(orderIds: number[]): Promise<B2cFlightBooking
             CASE WHEN JSON_VALID(f.response_data)  THEN JSON_EXTRACT(f.response_data,  '$.data.fetchPnr.flights') END AS flights
        FROM aahaas_flight_bookingsv2 f
       WHERE f.order_id IN (${ids})
+        ${liveFlights}
       ORDER BY f.order_id, f.id`,
   )
   // MariaDB returns the fragment as text, MySQL's JSON type as a parsed value.
@@ -611,6 +668,7 @@ export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cO
   const columns = await travellerColumns()
   const usable = PREBOOKING_TABLES.filter((t) => columns.get(t.table)?.adult)
   if (usable.length === 0) return []
+  const liveLines = await liveLineClause('m')
 
   const pick = (col: 'adult' | 'child') => {
     const parts = usable
@@ -632,6 +690,7 @@ export async function fetchOrderLineTravellers(orderIds: number[]): Promise<B2cO
        JOIN tbl_checkouts c ON c.id = m.checkout_id
        ${joins}
       WHERE m.order_id IN (${ids})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }
@@ -666,6 +725,7 @@ export async function fetchOrderLineBookingNames(orderIds: number[]): Promise<B2
   const ids = sanitizeIds(orderIds)
   const cols = await bookingNameColumns()
   const has = (c: string) => cols.has(c)
+  const liveLines = await liveLineClause('m')
 
   const lsAdults   = has('tbl_lifestyle_bookings.lifestyle_adult_details')    ? 'ls.lifestyle_adult_details'    : 'NULL'
   const lsChildren = has('tbl_lifestyle_bookings.lifestyle_children_details') ? 'ls.lifestyle_children_details' : 'NULL'
@@ -684,6 +744,7 @@ export async function fetchOrderLineBookingNames(orderIds: number[]): Promise<B2
        LEFT JOIN hotel_prebooking       hp ON c.main_category_id = 4 AND hp.prebooking_id        = c.related_order_id
        LEFT JOIN edu_tbl_booking        ed ON c.main_category_id = 5 AND ed.booking_id           = c.related_order_id
       WHERE m.order_id IN (${ids})
+        ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
 }

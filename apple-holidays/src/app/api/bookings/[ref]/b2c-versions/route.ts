@@ -1,11 +1,13 @@
 /**
  * Aahaas B2C store versions of this booking (see `b2c-version-links.ts`).
  *
- *   GET → { link, snapshots }
+ *   GET → { link, snapshots, liveStatus, changes }
  *     link       — this booking's place in its store chain (null = one version only)
  *     snapshots  — the ops details of every version that has a booking here,
  *                  so the active booking can show "what the previous booking was"
  *                  and a replaced one can show what replaced it.
+ *     liveStatus — has the store's current version reached this booking yet?
+ *     changes    — what each same-order version did to the order's lines.
  *
  * The chain is re-read from the store on every open (budgeted); when the store
  * cannot be reached the cached link is answered instead.
@@ -18,6 +20,8 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { isB2cBooking } from '@/lib/booking-source'
 import { getVersionLinks, refreshVersionLinks, type B2cVersionLink } from '@/lib/b2c-version-links'
+import { listAmendmentNotices } from '@/lib/b2c-amendments'
+import { fetchLineChanges } from '@/lib/b2c-same-order'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -91,5 +95,20 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     tickets: b._count.tickets,
   }))
 
-  return buildApiSuccess({ link, snapshots, fresh })
+  // Null when no notice names it: the booking was imported from it, or it predates notices.
+  const liveEntry = link.versions.find((v) => v.live)
+  const notices = liveEntry ? await listAmendmentNotices({ bookingRef: booking.bookingRef }).catch(() => []) : []
+  const notice = liveEntry
+    ? notices.find((n) => n.orderId === liveEntry.orderId && (!liveEntry.sameOrder || n.version === liveEntry.version))
+    : undefined
+  const liveStatus = notice
+    ? { applied: !!notice.appliedAt, lastError: notice.lastError ?? null, leftForReview: notice.leftForReview ?? [] }
+    : null
+
+  const sameOrderIds = Array.from(new Set(link.versions.filter((v) => v.sameOrder).map((v) => v.orderId)))
+  const changes = fresh && sameOrderIds.length > 0
+    ? (await within(Promise.all(sameOrderIds.map(fetchLineChanges)), STORE_BUDGET_MS).catch(() => [])).flat()
+    : []
+
+  return buildApiSuccess({ link, snapshots, fresh, liveStatus, changes })
 }

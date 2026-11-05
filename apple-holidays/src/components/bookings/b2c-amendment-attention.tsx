@@ -18,6 +18,8 @@ import { readApiResponse } from '@/lib/utils'
 interface Notice {
   orderId: number
   previousOrderId: number | null
+  sameOrder?: boolean
+  reason?: string | null
   version: number
   amendedAt: string | null
   originAt: string | null
@@ -55,7 +57,7 @@ export default function B2cAmendmentAttention({ bookingRef, onChange }: { bookin
         await fetch('/api/b2c/amendments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ orderId: n.orderId }),
+          body: JSON.stringify({ orderId: n.orderId, ...(n.sameOrder && { sameOrderVersion: n.version }) }),
         })
       }
       await load()
@@ -82,8 +84,12 @@ export default function B2cAmendmentAttention({ bookingRef, onChange }: { bookin
             </span>
           </div>
           <p className="text-sm text-amber-950">
-            The customer&apos;s booking was <b>amended in the Aahaas store</b>: order <b>{n.orderId}</b> replaces order{' '}
-            <b>{n.previousOrderId ?? '—'}</b>{n.amendedAt ? <> on <b>{n.amendedAt.slice(0, 16)}</b></> : null}
+            The customer&apos;s booking was <b>amended in the Aahaas store</b>:{' '}
+            {n.sameOrder
+              ? <>order <b>{n.orderId}</b> is now <b>version {n.version}</b>, same order number</>
+              : <>order <b>{n.orderId}</b> replaces order <b>{n.previousOrderId ?? '—'}</b></>}
+            {n.amendedAt ? <> on <b>{n.amendedAt.slice(0, 16)}</b></> : null}
+            {n.reason ? <> ({n.reason})</> : null}
             {n.originAt ? <> (first booked {n.originAt.slice(0, 10)})</> : null}.{' '}
             {n.autoApplied ? 'It was applied here automatically' : 'It was applied here'}
             {n.appliedVersion ? <> as <b>V{n.appliedVersion}</b></> : null}. Check drivers, tickets, hotels and suppliers against the new version.

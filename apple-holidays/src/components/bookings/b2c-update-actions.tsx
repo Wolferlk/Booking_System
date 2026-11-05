@@ -77,6 +77,7 @@ interface PendingAmendment {
   isOld: boolean
   duplicateRef: string | null
   appliedAt?: string | null
+  sameOrder?: boolean
 }
 
 interface LastUpdate {
@@ -218,14 +219,19 @@ export default function B2cUpdateActions({
           className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-semibold ${
             newest.isOld ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-violet-200 bg-violet-50 text-violet-700'
           }`}
-          title={`The Aahaas store amended this booking: order ${newest.orderId} (version ${newest.version}) replaces order ${newest.previousOrderId ?? '—'}${
+          title={`The Aahaas store amended this booking: ${
+            newest.sameOrder
+              ? `order ${newest.orderId} is now version ${newest.version}, same order number`
+              : `order ${newest.orderId} (version ${newest.version}) replaces order ${newest.previousOrderId ?? '—'}`
+          }${
             newest.amendedAt ? ` on ${newest.amendedAt.slice(0, 16)}` : ''
           }.${newest.isOld ? ' The booking was sold on an earlier day — check drivers, tickets and suppliers.' : ''}${
             newest.duplicateRef ? ` It was also imported as booking ${newest.duplicateRef} — cancel that duplicate.` : ''
           } Press Update Booking to apply it here as a new version.`}
         >
           <AlertTriangle className="w-3 h-3" />
-          Amended in store → order {newest.orderId} (v{newest.version}){newest.isOld ? ' · old booking' : ''} — not applied
+          {newest.sameOrder ? <>Amended in store → version {newest.version}</> : <>Amended in store → order {newest.orderId} (v{newest.version})</>}
+          {newest.isOld ? ' · old booking' : ''} — not applied
         </button>
       )}
 
