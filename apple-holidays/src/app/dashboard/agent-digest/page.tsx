@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Archive, BellRing, CalendarClock, CalendarDays, Check, CheckCircle2,
@@ -99,6 +100,11 @@ function countdown(iso: string | null): string {
   const h = Math.floor(ms / 3_600_000)
   const m = Math.floor((ms % 3_600_000) / 60_000)
   return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : h ? `in ${h}h ${m}m` : `in ${m}m`
+}
+
+/** Renders a popup on <body>, as ui/modal does, so nothing in the page can offset or clip it. Client-only: popups open on a click. */
+function BodyPortal({ children }: { children: React.ReactNode }) {
+  return createPortal(children, document.body)
 }
 
 /** Stops the page behind a popup scrolling, without the layout jumping when the scrollbar goes. */
@@ -310,7 +316,7 @@ export default function AgentDigestPage() {
         {tab === 'history' && <HistoryTab rules={rules} />}
       </div>
 
-      {showGallery && <PresetGallery onPick={startFromPreset} onClose={() => setShowGallery(false)} />}
+      {showGallery && <BodyPortal><PresetGallery onPick={startFromPreset} onClose={() => setShowGallery(false)} /></BodyPortal>}
     </div>
   )
 }
@@ -505,7 +511,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
         <LivePreview draft={draft} />
       </div>
 
-      {showTest && <TestDialog draft={draft} me={me} onClose={() => setShowTest(false)} onResult={setLastResult} />}
+      {showTest && <BodyPortal><TestDialog draft={draft} me={me} onClose={() => setShowTest(false)} onResult={setLastResult} /></BodyPortal>}
       <Modal
         open={confirmSend} onClose={() => setConfirmSend(false)} title="Send today’s digest now?"
         footer={<>
@@ -1187,7 +1193,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
         </table>
       </div>
 
-      {detail && <RunDrawer detail={detail} onClose={() => setDetail(null)} />}
+      {detail && <BodyPortal><RunDrawer detail={detail} onClose={() => setDetail(null)} /></BodyPortal>}
     </div>
   )
 }
