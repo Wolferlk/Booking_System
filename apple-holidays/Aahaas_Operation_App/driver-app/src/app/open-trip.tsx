@@ -57,7 +57,7 @@ export default function OpenTripScreen() {
       <Screen>
         <IconButton icon="chevron-back" onPress={() => router.back()} />
         {loading ? <Loading /> : error ? <ErrorBox message={error} onRetry={reload} /> : (
-          <Card tone="gold"><Text style={{ color: C.text }}>This trip is no longer open — another driver may have taken it.</Text></Card>
+          <Card tone="gold"><Text style={{ color: C.text }}>This trip is no longer on your list. It may have been taken, or your picks have changed.</Text></Card>
         )}
       </Screen>
     );
@@ -79,12 +79,11 @@ export default function OpenTripScreen() {
         <Row gap={S.lg} style={{ flexWrap: 'wrap' }}>
           <Row gap={4}><Ionicons name="people" size={16} color={C.sub} /><Text style={{ color: C.text }}>{trip.paxAdults} adults{trip.paxChildren ? ` · ${trip.paxChildren} children` : ''}</Text></Row>
           {trip.vehicleType && <Row gap={4}><Ionicons name="car" size={16} color={C.sub} /><Text style={{ color: C.text }}>{trip.vehicleType}</Text></Row>}
+          {trip.matchSeats ? <Row gap={4}><Ionicons name="checkmark-circle" size={16} color={C.green} /><Text style={{ color: C.text }}>Fits your {trip.matchSeats}-seater</Text></Row> : null}
         </Row>
         {trip.cities.length > 0 && <Text style={{ color: C.sub }}>{trip.cities.join(' → ')}</Text>}
       </View>
 
-      {trip.busy && <Card tone="gold"><Text style={{ color: C.text }}>⚠ You already have a trip on some of these dates.</Text></Card>}
-      {trip.fits === false && <Card tone="gold"><Text style={{ color: C.text }}>⚠ More guests than your vehicle seats.</Text></Card>}
       {trip.noAgenda && <Card tone="blue"><Text style={{ color: C.text }}>The day plan is not on the chart yet — operations will add it. Dates and hotels are below.</Text></Card>}
 
       <Label>Day by day</Label>

@@ -16,7 +16,7 @@ The app uses the existing ops backend at `/api/mobile/*` (code in `apple-holiday
 | **Start day** | Asks for location and starts GPS. Kilometres are counted on the server with GPS jitter and jumps filtered out. Points wait in a queue on the phone while there's no signal. |
 | **Finish trip** | Shows the guest the **feedback QR** and checks every 5 seconds. The finish swipe only unlocks once the guest has sent the form, or ops has waived it ("Guest will not rate?"). |
 | **My trips** | Upcoming and finished trips, with each day's plan and km per day. |
-| **Get trips** | The Driver-Auto open-trip board. Request a trip, or withdraw a request (same rules as the WhatsApp board). |
+| **Get trips** | Today's picks from the Driver-Auto board: trips that suit the vehicle seats, up to 5 for a driver and 10 for a vendor, new each day. Request a trip, or withdraw a request (same rules as the WhatsApp board). |
 | **Score** | Score ring and grade, star rating, km, tours, praise and complaints, guest comments, km per month, and badges. These are the same numbers as Drivers & Vehicles → Performance. Rates and agent names are never shown. |
 | **Me** | Vehicle, details, language and requests. Changing the phone, e-mail, licence, photo or bank details sends a request to ops, and nothing changes until a person approves it. |
 | **Vehicle photos** | Due every **60 days**: front, back and inside are required; sides and odometer are optional. An AI first look (gpt-4o-mini) flags blurry or wrong photos, visible damage and plate mismatches. Ops approve or ask for a retake. |

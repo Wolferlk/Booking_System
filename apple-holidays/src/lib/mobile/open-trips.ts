@@ -2,7 +2,9 @@
  * The Driver-Auto open-trip board as the Aahaas app shows it, for a signed-in
  * freelance driver or a vehicle vendor. All rules (approval, clashes, seats,
  * max pending) are the Driver-Auto ones in lib/driver-auto/claims.ts — nothing
- * is re-implemented here.
+ * is re-implemented here. The party sees only today's picks (trip-picks.ts): the
+ * trips that suit their vehicles, dealt fresh each day and capped. Staff and the
+ * /driver-board link still see every open trip.
  *
  * A vendor's own drivers never get this board: their trips come from the vendor.
  */
@@ -13,15 +15,16 @@ import { DaError, partyCommitments, requestTrip, toClaimView, withdrawClaim } fr
 import { addDays, isDaTableMissing, localToday, readSettings, tabsForPartner, type ResolvedParty } from '@/lib/driver-auto/server'
 import { DA_COUNTRY_META } from '@/lib/driver-auto/shared'
 import { MobileError } from './http'
+import { DAILY_TRIP_LIMIT, dailyPicks, nextLocalMidnight, seatFit } from './trip-picks'
 
 /** What the party can field: a driver's own vehicle, or a vendor's whole active fleet. */
 async function fleetOf(p: ResolvedParty) {
-  if (p.type === 'DRIVER') return { drivers: 1, maxSeats: p.capacity }
-  const [drivers, top] = await Promise.all([
+  if (p.type === 'DRIVER') return { drivers: 1, seats: p.capacity ? [p.capacity] : [] }
+  const [drivers, vehicles] = await Promise.all([
     prisma.driver.count({ where: { vendorId: p.id, isActive: true } }),
-    prisma.vehicle.findFirst({ where: { vendorId: p.id, isActive: true }, orderBy: { capacity: 'desc' }, select: { capacity: true } }),
+    prisma.vehicle.findMany({ where: { vendorId: p.id, isActive: true }, select: { capacity: true } }),
   ])
-  return { drivers, maxSeats: top?.capacity ?? null }
+  return { drivers, seats: vehicles.map(v => v.capacity) }
 }
 
 export async function openTripBoard(p: ResolvedParty) {
@@ -60,20 +63,31 @@ export async function openTripBoard(p: ResolvedParty) {
     perDay.get(c.date)!.add(c.bookingRef)
   }
   const freeOn = (d: string) => Math.max(fleet.drivers, 1) - (perDay.get(d)?.size ?? 0)
-  const trips = (await Promise.all(tabs.map(async c => (await listOpenTrips(c, settings.horizonDays)).map(t => {
+  const open = (await Promise.all(tabs.map(async c => (await listOpenTrips(c, settings.horizonDays)).flatMap(t => {
     const dates = t.legs.filter(l => l.driven).map(l => l.date)
     const days = dates.length ? dates : [t.startDate]
     const free = Math.min(...days.map(freeOn))
-    return {
+    const fit = seatFit(t.pax, fleet.seats)
+    if (!fit || free <= 0) return []
+    return [{
       ...publicTrip(t),
       countryLabel: DA_COUNTRY_META[c].label,
       requireApproval: settings.countries[c].requireApproval,
       myRequestId: pending.get(t.key) ?? null,
-      busy: free <= 0,
-      freeDrivers: p.type === 'VENDOR' ? Math.max(free, 0) : null,
-      fits: fleet.maxSeats ? t.pax <= fleet.maxSeats : null,
-    }
-  })))).flat().sort((a, b) => a.startDate.localeCompare(b.startDate))
+      freeDrivers: p.type === 'VENDOR' ? free : null,
+      match: fit.match,
+      matchSeats: fit.seats,
+    }]
+  })))).flat()
+
+  const limit = DAILY_TRIP_LIMIT[p.type]
+  const trips = dailyPicks(open, `${p.key}|${today}`, limit)
+  const picks = {
+    limit,
+    seats: Array.from(new Set(fleet.seats.filter(s => s > 0))).sort((a, b) => a - b),
+    nextAt: nextLocalMidnight(tabs[0] ? DA_COUNTRY_META[tabs[0]].tz : 'UTC').toISOString(),
+    moreWaiting: open.length > trips.length,
+  }
 
   // Day-by-day detail for the trip screen: what each movement involves and where
   // the guests sleep. Still no agent, guest name or contact — the party does not
@@ -104,7 +118,7 @@ export async function openTripBoard(p: ResolvedParty) {
       .map(s => ({ hotel: s.hotel, city: s.city, checkIn: ymd(s.checkIn), checkOut: ymd(s.checkOut) })),
   }))
 
-  return buildApiSuccess({ enabled: true, today, fleet: p.type === 'VENDOR' ? fleet : null, trips: detailed, claims })
+  return buildApiSuccess({ enabled: true, today, picks, trips: detailed, claims })
 }
 
 export async function openTripAction(p: ResolvedParty, body: { action?: string; tripKey?: string; claimId?: string; note?: string }) {
