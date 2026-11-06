@@ -1,6 +1,6 @@
 /**
  * Open trips — the Driver-Auto board in the app, as today's picks: the server
- * deals each driver or vendor a short list that suits their vehicle seats and
+ * deals each driver or vendor a short list that suits their vehicles and
  * changes at midnight. Request with one tap; ops approves. Shown to freelance
  * drivers (Get trips) and to vehicle vendors (Get trips for the fleet); a
  * vendor's own drivers never see it.
@@ -62,15 +62,13 @@ function useNextPicks(nextAt: string | undefined, onArrive: () => void) {
 }
 
 /** What the party drives, in a few words. */
-function seatLabel(seats: number[], fleet: boolean) {
-  if (!seats.length) return null;
-  if (seats.length === 1) return `${seats[0]}-seat ${fleet ? 'fleet' : 'vehicle'}`;
-  return `${seats[0]}–${seats[seats.length - 1]} seat fleet`;
+function vehicleLabel(vehicles: string[]) {
+  return vehicles.length ? vehicles.join(' · ') : null;
 }
 
 /** Inside the header: one pip per place on today's list, the vehicle, the next deal. */
-function PicksStrip({ picks, count, next, fleet }: { picks: TripPicks; count: number; next: string | null; fleet: boolean }) {
-  const seats = seatLabel(picks.seats, fleet);
+function PicksStrip({ picks, count, next }: { picks: TripPicks; count: number; next: string | null }) {
+  const vehicles = vehicleLabel(picks.vehicles);
   return (
     <View style={{ gap: 10 }}>
       <View style={styles.pips}>
@@ -79,7 +77,7 @@ function PicksStrip({ picks, count, next, fleet }: { picks: TripPicks; count: nu
         ))}
       </View>
       <View style={styles.stripRow}>
-        {seats ? <View style={styles.stripChip}><Ionicons name="car-sport" size={13} color="#fff" /><Text style={styles.stripText}>{seats}</Text></View> : null}
+        {vehicles ? <View style={styles.stripChip}><Ionicons name="car-sport" size={13} color="#fff" /><Text style={styles.stripText}>{vehicles}</Text></View> : null}
         {next ? <View style={styles.stripChip}><Ionicons name="shuffle" size={13} color="#fff" /><Text style={styles.stripText}>New picks in {next}</Text></View> : null}
       </View>
     </View>
@@ -90,21 +88,19 @@ function PicksStrip({ picks, count, next, fleet }: { picks: TripPicks; count: nu
 function SeatMeter({ trip }: { trip: OpenTrip }) {
   const seats = trip.matchSeats;
   if (!seats || trip.pax <= 0) return null;
-  const perfect = trip.match === 'PERFECT';
-  const tone = perfect ? C.green : C.blue;
   const slots = Math.min(seats, 15);
   const filled = Math.max(1, Math.round((trip.pax / seats) * slots));
   return (
-    <View style={[styles.seatBox, { backgroundColor: perfect ? C.greenSoft : C.blueSoft }]}>
+    <View style={styles.seatBox}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Ionicons name={perfect ? 'sparkles' : 'checkmark-circle'} size={14} color={tone} />
-        <Text style={[styles.seatFit, { color: tone }]}>{perfect ? 'Perfect fit' : 'Good fit'}</Text>
+        <Ionicons name="sparkles" size={14} color={C.green} />
+        <Text style={styles.seatFit}>Perfect fit</Text>
         <View style={{ flex: 1 }} />
-        <Text style={styles.seatCount}>{trip.pax} guest{trip.pax === 1 ? '' : 's'} · {seats}-seater</Text>
+        <Text style={styles.seatCount}>{trip.pax} guest{trip.pax === 1 ? '' : 's'} · {trip.matchVehicle}</Text>
       </View>
       <View style={styles.seatBar}>
         {Array.from({ length: slots }, (_, k) => (
-          <View key={k} style={[styles.seat, { backgroundColor: k < filled ? tone : '#fff' }]} />
+          <View key={k} style={[styles.seat, { backgroundColor: k < filled ? C.green : '#fff' }]} />
         ))}
       </View>
     </View>
@@ -243,13 +239,13 @@ export function OpenTripsBoard() {
   const count = data?.trips.length ?? 0;
   const picks = data?.picks;
   const next = useNextPicks(picks?.nextAt, silent);
-  const seats = picks ? seatLabel(picks.seats, fleet) : null;
+  const onlyVehicle = picks?.vehicles.length === 1 ? picks.vehicles[0].toLowerCase() : null;
 
   return (
     <Screen refreshing={refreshing} onRefresh={reload}>
       <PageHeader title={fleet ? 'Get trips' : t('getTrips')} icon="add-circle" colors={['#7F1D1D', '#C81E2E', '#FF4D5E']}
         sub={data ? (count ? `${count} trip${count === 1 ? '' : 's'} picked for ${fleet ? 'your fleet' : 'you'} today` : 'No picks right now') : "Dealing today's trips…"}>
-        {picks && data?.enabled ? <PicksStrip picks={picks} count={count} next={next} fleet={fleet} /> : null}
+        {picks && data?.enabled ? <PicksStrip picks={picks} count={count} next={next} /> : null}
       </PageHeader>
 
       {loading && !data && <Loading />}
@@ -261,10 +257,10 @@ export function OpenTripsBoard() {
         <View style={styles.info}><Ionicons name="information-circle" size={20} color={C.amber} /><Text style={{ color: C.text, flex: 1 }}>Trip requests are not switched on yet.</Text></View>
       )}
 
-      {picks && picks.seats.length === 0 && (
+      {picks && picks.vehicles.length === 0 && (
         <Pressable onPress={fleet ? () => router.push('/fleet') : undefined} style={styles.info}>
           <Ionicons name="car-sport" size={20} color={C.amber} />
-          <Text style={{ color: C.text, flex: 1 }}>{fleet ? 'Add your vehicles to get trips matched to their seats.' : 'No vehicle on your profile yet. Ask operations to add it to get trips matched to its seats.'}</Text>
+          <Text style={{ color: C.text, flex: 1 }}>{fleet ? 'Add your vehicles to get trips matched to them.' : 'No vehicle on your profile yet. Ask operations to add it to get trips matched to it.'}</Text>
         </Pressable>
       )}
 
@@ -288,7 +284,7 @@ export function OpenTripsBoard() {
       {data?.enabled && count === 0 && (
         <Animated.View entering={FadeInDown.springify()} style={styles.empty}>
           <Image source={require('@/assets/images/illustrations/no-alerts.png')} alt="" style={{ width: 170, height: 130 }} contentFit="contain" />
-          <Text style={{ color: C.text, fontSize: 19, fontWeight: '900', textAlign: 'center' }}>{seats ? `No trips for your ${seats} today` : 'No trips for you today'}</Text>
+          <Text style={{ color: C.text, fontSize: 19, fontWeight: '900', textAlign: 'center' }}>{onlyVehicle ? `No trips for your ${onlyVehicle} today` : fleet ? 'No trips for your fleet today' : 'No trips for you today'}</Text>
           <Text style={{ color: C.sub, textAlign: 'center' }}>{next ? `Your new picks arrive in ${next}.` : 'Your new picks arrive at midnight.'}</Text>
         </Animated.View>
       )}
@@ -322,8 +318,8 @@ const styles = StyleSheet.create({
   stripRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   stripChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },
   stripText: { color: '#fff', fontWeight: '800', fontSize: 12 },
-  seatBox: { borderRadius: 14, padding: 10, gap: 7 },
-  seatFit: { fontWeight: '900', fontSize: 13 },
+  seatBox: { backgroundColor: C.greenSoft, borderRadius: 14, padding: 10, gap: 7 },
+  seatFit: { color: C.green, fontWeight: '900', fontSize: 13 },
   seatCount: { color: C.sub, fontWeight: '800', fontSize: 12 },
   seatBar: { flexDirection: 'row', gap: 3 },
   seat: { flex: 1, height: 8, borderRadius: 3 },

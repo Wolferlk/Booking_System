@@ -79,7 +79,7 @@ export default function OpenTripScreen() {
         <Row gap={S.lg} style={{ flexWrap: 'wrap' }}>
           <Row gap={4}><Ionicons name="people" size={16} color={C.sub} /><Text style={{ color: C.text }}>{trip.paxAdults} adults{trip.paxChildren ? ` · ${trip.paxChildren} children` : ''}</Text></Row>
           {trip.vehicleType && <Row gap={4}><Ionicons name="car" size={16} color={C.sub} /><Text style={{ color: C.text }}>{trip.vehicleType}</Text></Row>}
-          {trip.matchSeats ? <Row gap={4}><Ionicons name="checkmark-circle" size={16} color={C.green} /><Text style={{ color: C.text }}>Fits your {trip.matchSeats}-seater</Text></Row> : null}
+          {trip.matchVehicle ? <Row gap={4}><Ionicons name="checkmark-circle" size={16} color={C.green} /><Text style={{ color: C.text }}>Fits your {trip.matchVehicle.toLowerCase()}</Text></Row> : null}
         </Row>
         {trip.cities.length > 0 && <Text style={{ color: C.sub }}>{trip.cities.join(' → ')}</Text>}
       </View>

@@ -13,9 +13,9 @@ export interface OpenTrip {
   title: string; route: string; cities: string[]; pax: number; paxAdults: number; paxChildren: number
   vehicleType: string | null; noAgenda: boolean
   requireApproval: boolean; myRequestId: string | null
-  /** how well the group suits the party's vehicle; null when no vehicle is on file */
-  match?: 'PERFECT' | 'GOOD' | null
-  /** the smallest of the party's vehicles that suits this group */
+  /** the party's vehicle class that suits this group, e.g. "Flat Roof"; null when none is on file */
+  matchVehicle?: string | null
+  /** seats of that vehicle */
   matchSeats?: number | null
   /** vendors only: active drivers not yet out on the trip's days */
   freeDrivers?: number | null
@@ -26,8 +26,8 @@ export interface OpenTrip {
 /** Today's list: the server picks it per party and deals a new one at local midnight. */
 export interface TripPicks {
   limit: number
-  /** the party's vehicle sizes, smallest first */
-  seats: number[]
+  /** the party's vehicle classes, smallest first */
+  vehicles: string[]
   nextAt: string
   /** more trips suit this party than today's list holds */
   moreWaiting: boolean

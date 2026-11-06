@@ -15,16 +15,16 @@ import { DaError, partyCommitments, requestTrip, toClaimView, withdrawClaim } fr
 import { addDays, isDaTableMissing, localToday, readSettings, tabsForPartner, type ResolvedParty } from '@/lib/driver-auto/server'
 import { DA_COUNTRY_META } from '@/lib/driver-auto/shared'
 import { MobileError } from './http'
-import { DAILY_TRIP_LIMIT, dailyPicks, nextLocalMidnight, seatFit } from './trip-picks'
+import { DAILY_TRIP_LIMIT, dailyPicks, nextLocalMidnight, vehicleFit, vehicleName } from './trip-picks'
 
 /** What the party can field: a driver's own vehicle, or a vendor's whole active fleet. */
 async function fleetOf(p: ResolvedParty) {
-  if (p.type === 'DRIVER') return { drivers: 1, seats: p.capacity ? [p.capacity] : [] }
+  if (p.type === 'DRIVER') return { drivers: 1, vehicles: p.capacity ? [{ type: p.vehicleType, seats: p.capacity }] : [] }
   const [drivers, vehicles] = await Promise.all([
     prisma.driver.count({ where: { vendorId: p.id, isActive: true } }),
-    prisma.vehicle.findMany({ where: { vendorId: p.id, isActive: true }, select: { capacity: true } }),
+    prisma.vehicle.findMany({ where: { vendorId: p.id, isActive: true }, select: { type: true, capacity: true } }),
   ])
-  return { drivers, seats: vehicles.map(v => v.capacity) }
+  return { drivers, vehicles: vehicles.map(v => ({ type: v.type, seats: v.capacity })) }
 }
 
 export async function openTripBoard(p: ResolvedParty) {
@@ -67,7 +67,7 @@ export async function openTripBoard(p: ResolvedParty) {
     const dates = t.legs.filter(l => l.driven).map(l => l.date)
     const days = dates.length ? dates : [t.startDate]
     const free = Math.min(...days.map(freeOn))
-    const fit = seatFit(t.pax, fleet.seats)
+    const fit = vehicleFit(t.pax, fleet.vehicles)
     if (!fit || free <= 0) return []
     return [{
       ...publicTrip(t),
@@ -75,7 +75,7 @@ export async function openTripBoard(p: ResolvedParty) {
       requireApproval: settings.countries[c].requireApproval,
       myRequestId: pending.get(t.key) ?? null,
       freeDrivers: p.type === 'VENDOR' ? free : null,
-      match: fit.match,
+      matchVehicle: fit.vehicle,
       matchSeats: fit.seats,
     }]
   })))).flat()
@@ -84,7 +84,7 @@ export async function openTripBoard(p: ResolvedParty) {
   const trips = dailyPicks(open, `${p.key}|${today}`, limit)
   const picks = {
     limit,
-    seats: Array.from(new Set(fleet.seats.filter(s => s > 0))).sort((a, b) => a - b),
+    vehicles: Array.from(new Set(fleet.vehicles.filter(v => v.seats > 0).sort((a, b) => a.seats - b.seats).map(vehicleName))),
     nextAt: nextLocalMidnight(tabs[0] ? DA_COUNTRY_META[tabs[0]].tz : 'UTC').toISOString(),
     moreWaiting: open.length > trips.length,
   }

@@ -1,35 +1,54 @@
 /**
- * The app's daily trip list: seat matching, the 5/10 cap, daily rotation.
+ * The app's daily trip list: vehicle matching, the 5/10 cap, daily rotation.
  * Pure — touches no database and no network.
  *
  *   npx tsx scripts/trip-picks-check.mts
  */
 import assert from 'node:assert/strict'
-import { DAILY_TRIP_LIMIT, dailyPicks, nextLocalMidnight, seatFit, type SeatMatch } from '../src/lib/mobile/trip-picks'
+import { DAILY_TRIP_LIMIT, dailyPicks, nextLocalMidnight, vehicleFit } from '../src/lib/mobile/trip-picks'
 
-// Seats: too many guests never fits, nor does a near-empty big vehicle.
-assert.equal(seatFit(4, [3]), null, 'four guests do not fit a car')
-assert.equal(seatFit(2, [40]), null, 'a couple is not a coach job')
-assert.equal(seatFit(2, [9]), null, 'a couple is not a high-roof van job')
-assert.deepEqual(seatFit(2, [3]), { match: 'PERFECT', seats: 3 })
-assert.deepEqual(seatFit(1, [3]), { match: 'GOOD', seats: 3 })
-assert.deepEqual(seatFit(2, [6]), { match: 'GOOD', seats: 6 })
-assert.deepEqual(seatFit(5, [9]), { match: 'PERFECT', seats: 9 })
-assert.deepEqual(seatFit(13, [40]), { match: 'GOOD', seats: 40 })
-assert.deepEqual(seatFit(1, [1]), { match: 'PERFECT', seats: 1 })
+const car = { type: 'car', seats: 3 }
+const flat = { type: 'flatroof-van', seats: 6 }
+const high = { type: 'highroof-van', seats: 9 }
+const fits = (pax: number, ...fleet: { type: string | null; seats: number }[]) => vehicleFit(pax, fleet)?.vehicle ?? null
 
-// A fleet: any vehicle will do, and the smallest suitable one is named.
-assert.deepEqual(seatFit(5, [40, 9, 6]), { match: 'PERFECT', seats: 6 })
-assert.deepEqual(seatFit(20, [40, 25, 3]), { match: 'PERFECT', seats: 25 })
-assert.equal(seatFit(16, [3, 15]), null)
+// The ground desk's table: 1–3 car, 4–5 flat roof, 6–8 high roof.
+for (const pax of [1, 2, 3]) { assert.equal(fits(pax, car), 'Car'); assert.equal(fits(pax, flat), null); assert.equal(fits(pax, high), null) }
+for (const pax of [4, 5]) { assert.equal(fits(pax, flat), 'Flat Roof'); assert.equal(fits(pax, car), null); assert.equal(fits(pax, high), null) }
+for (const pax of [6, 7, 8]) { assert.equal(fits(pax, high), 'High Roof'); assert.equal(fits(pax, flat), null); assert.equal(fits(pax, car), null) }
+assert.equal(fits(9, high), null, 'nine guests are past a high roof')
+
+// Every spelling the system stores for a class.
+assert.equal(fits(5, { type: 'flat_roof', seats: 6 }), 'Flat Roof')
+assert.equal(fits(7, { type: 'High Roof', seats: 9 }), 'High Roof')
+assert.equal(fits(2, { type: 'Toyota Axio', seats: 3 }), 'Car')
+
+// The table never overrides the seats actually on file.
+assert.equal(fits(8, { type: 'highroof-van', seats: 7 }), null)
+assert.equal(fits(3, { type: 'car', seats: 2 }), null)
+
+// Generic vans, big vehicles, and types that say nothing.
+assert.equal(fits(5, { type: 'van', seats: 8 }), 'Van')
+assert.equal(fits(2, { type: 'van', seats: 8 }), null)
+assert.equal(fits(12, { type: 'minibus', seats: 15 }), 'Mini Bus')
+assert.equal(fits(6, { type: 'minibus', seats: 15 }), null, 'a high roof group')
+assert.equal(fits(20, { type: 'bus-medium', seats: 25 }), 'Bus')
+assert.equal(fits(10, { type: 'bus-high', seats: 40 }), null, 'too few for a big coach')
+assert.equal(fits(2, { type: 'other', seats: 4 }), null)
+assert.equal(fits(4, { type: 'other', seats: 4 }), '4-seater', 'other goes by its seats')
+
+// A fleet: any vehicle will do, and the one that suits is named.
+assert.deepEqual(vehicleFit(5, [high, flat, car]), { vehicle: 'Flat Roof', seats: 6 })
+assert.deepEqual(vehicleFit(2, [high, car]), { vehicle: 'Car', seats: 3 })
+assert.equal(vehicleFit(5, [car, high]), null)
 
 // Unknowns are not held back.
-assert.deepEqual(seatFit(5, []), { match: null, seats: null }, 'no vehicle on file')
-assert.deepEqual(seatFit(5, [0]), { match: null, seats: null }, 'vehicle with no seat count')
-assert.deepEqual(seatFit(0, [9]), { match: 'GOOD', seats: 9 }, 'pax not recorded')
+assert.deepEqual(vehicleFit(5, []), { vehicle: null, seats: null }, 'no vehicle on file')
+assert.deepEqual(vehicleFit(5, [{ type: 'car', seats: 0 }]), { vehicle: null, seats: null }, 'no seat count')
+assert.deepEqual(vehicleFit(0, [high]), { vehicle: 'High Roof', seats: 9 }, 'pax not recorded')
 
 // Daily picks.
-const pool = Array.from({ length: 60 }, (_, i) => ({ key: `B:trip${i}`, daysAway: i % 10, match: (i % 2 ? 'PERFECT' : 'GOOD') as SeatMatch }))
+const pool = Array.from({ length: 60 }, (_, i) => ({ key: `B:trip${i}`, daysAway: i % 10 }))
 const keys = (seed: string, list = pool, n = 5) => dailyPicks(list, seed, n).map(t => t.key)
 
 assert.equal(keys('D:1|2026-11-06').length, DAILY_TRIP_LIMIT.DRIVER)
