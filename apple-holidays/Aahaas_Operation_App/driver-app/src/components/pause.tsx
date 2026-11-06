@@ -9,7 +9,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { Easing, FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
-import { OPS_PHONE } from '@/lib/config';
+import { EMERGENCY_PHONE } from '@/lib/config';
 import { routeOf } from '@/lib/format';
 import { getMotion, getPause, onMotion, onPauseChange, pauseNow, REASONS, reasonOf, suggestedReason, type ActivePause, type Motion, type PauseReason } from '@/lib/pause';
 import { C, S } from '@/lib/theme';
@@ -164,7 +164,7 @@ export function PauseSheet({ open, onClose, onConfirm, busy }: {
         <Animated.View entering={FadeIn} style={styles.alertBox}>
           <Ionicons name="alert-circle" size={20} color={C.red} />
           <Text style={{ color: C.text, flex: 1, fontSize: 13 }}>Ops get an alert straight away. If the guest is stuck, call them too.</Text>
-          <Pressable onPress={() => Linking.openURL(`tel:${OPS_PHONE}`)} style={styles.callBtn}>
+          <Pressable onPress={() => Linking.openURL(`tel:${EMERGENCY_PHONE}`)} style={styles.callBtn}>
             <Ionicons name="call" size={14} color="#fff" /><Text style={{ color: '#fff', fontWeight: '800', fontSize: 12 }}>Call</Text>
           </Pressable>
         </Animated.View>

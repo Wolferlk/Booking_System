@@ -192,7 +192,8 @@ export default function TripDetail() {
         })}
       </View>
 
-      {progress.session?.status === 'ACTIVE' && (
+      {/* Also before the trip starts: a driver who took it may not be able to do it. */}
+      {(!progress.session || progress.session.status === 'ACTIVE') && (
         <Button title={t('cantContinue')} kind="ghost" icon="swap-horizontal" onPress={requestHandover} />
       )}
 
