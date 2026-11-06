@@ -11,7 +11,8 @@
  *   3. Cap     — 5 for a driver, 10 for a vendor.
  */
 import { createHash } from 'node:crypto'
-import { VEHICLE_LABEL, vehicleKind, type VehicleKind } from '@/lib/ops-geo'
+import { VEHICLE_LABEL, vehicleKind } from '@/lib/ops-geo'
+import { guestRange } from '@/lib/vehicle-details'
 
 export const DAILY_TRIP_LIMIT = { DRIVER: 5, VENDOR: 10 } as const
 
@@ -24,21 +25,13 @@ export interface VehicleFit {
   seats: number | null
 }
 
-const GROUP_BY_KIND: Partial<Record<VehicleKind, [number, number]>> = {
-  car: [1, 3], suv: [1, 3], flat_roof: [4, 5], high_roof: [6, 8],
-  // Stored without saying which roof, so either van group may suit it.
-  van: [4, 8],
-}
-
 /** The smallest and largest group a vehicle is offered. */
 function groupFor(v: PartyVehicle): [number, number] {
-  const kind = vehicleKind(v.type)
-  const known = GROUP_BY_KIND[kind]
-  if (known) return known
-  const large = kind === 'minibus' || kind === 'bus' || kind === 'coach'
-  if (!large && v.seats <= 3) return [1, 3]
-  if (!large && v.seats <= 5) return [4, 5]
-  if (!large && v.seats <= 8) return [6, 8]
+  const range = guestRange(v.type)
+  if (range && range[0] < 9) return range
+  if (!range && v.seats <= 3) return [1, 3]
+  if (!range && v.seats <= 5) return [4, 5]
+  if (!range && v.seats <= 8) return [6, 8]
   // A third full at least, so a coach is not sent for a group a minibus can carry.
   return [Math.max(9, Math.floor(v.seats / 3)), v.seats]
 }

@@ -61,6 +61,17 @@ export const VEHICLE_ICON: Record<string, IconName> = {
   car: 'car-sport', 'flatroof-van': 'bus', 'highroof-van': 'bus', van: 'bus', minibus: 'bus',
   'bus-medium': 'bus', 'bus-high': 'bus', motorbike: 'bicycle', other: 'car',
 };
+/**
+ * Guests each vehicle type takes. Get trips matches on these, so a vehicle needs
+ * the right pax count to be offered trips. Same as the server's
+ * src/lib/vehicle-details.ts, which has the final say.
+ */
+const GUEST_RANGE: Record<string, [number, number]> = {
+  car: [1, 3], 'flatroof-van': [4, 5], 'highroof-van': [6, 8], van: [4, 8], minibus: [9, 80],
+  'bus-medium': [9, 80], 'bus-high': [9, 80], motorbike: [1, 1], other: [1, 80],
+};
+export const guestRange = (t: string): [number, number] => GUEST_RANGE[t] ?? [1, 80];
+export const paxFits = (t: string, pax: number | null) => pax != null && pax >= guestRange(t)[0] && pax <= guestRange(t)[1];
 export const vehicleLabel = (t: string | null | undefined) => (t ? VEHICLE_LABEL[t] ?? t : 'Vehicle');
 
 export const APP_STATUS: Record<AppStatus, { label: string; color: string; bg: string; icon: IconName }> = {

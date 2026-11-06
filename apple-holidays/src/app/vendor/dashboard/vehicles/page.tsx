@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { MAX_PAX, VEHICLE_TYPES, guestRange, guestRangeLabel, vehicleProblem } from '@/lib/vehicle-details'
 import { Plus, Loader2, Car, User2, Edit2, Trash2, XCircle, Upload } from 'lucide-react'
 
 interface Driver { id: string; name: string; phone: string; photoUrl: string | null }
@@ -11,7 +12,6 @@ interface Vehicle {
   driver: Driver | null
 }
 
-const VEHICLE_TYPES = ['car','flatroof-van','highroof-van','van','minibus','bus-medium','bus-high','motorbike','other']
 const TYPE_ICON: Record<string, string> = {
   car: '🚗', van: '🚐', 'flatroof-van': '🚐', 'highroof-van': '🚌', minibus: '🚌',
   'bus-medium': '🚍', 'bus-high': '🚍', motorbike: '🏍️', other: '🚙',
@@ -21,7 +21,7 @@ const TYPE_LABEL: Record<string, string> = {
   minibus: 'Minibus', 'bus-medium': 'Bus (Medium)', 'bus-high': 'Bus (High)', motorbike: 'Motorbike', other: 'Other',
 }
 
-const emptyForm = () => ({ type: 'car', plateNo: '', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '', driverId: '' })
+const emptyForm = () => ({ type: 'car', plateNo: '', brand: '', model: '', capacity: '', photoOutside: '', photoInside: '', driverId: '' })
 type Form = ReturnType<typeof emptyForm>
 
 export default function VendorVehiclesPage() {
@@ -75,6 +75,8 @@ export default function VendorVehiclesPage() {
 
   async function save() {
     if (!form.plateNo.trim()) { toast.error('Plate number required'); return }
+    const problem = vehicleProblem(form, modal === 'new' ? null : (modal as Vehicle))
+    if (problem) { toast.error(problem); return }
     setSaving(true)
     try {
       const isNew = modal === 'new'
@@ -251,18 +253,18 @@ export default function VendorVehiclesPage() {
                     className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white font-mono placeholder:text-slate-500 focus:outline-none disabled:opacity-50" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Brand</label>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Brand *</label>
                   <input value={form.brand} onChange={set('brand')} placeholder="Toyota"
                     className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Model</label>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Model *</label>
                   <input value={form.model} onChange={set('model')} placeholder="Hiace"
                     className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none" />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Seats</label>
-                  <input type="number" min="1" max="60" value={form.capacity} onChange={set('capacity')}
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Pax count * <span className="normal-case tracking-normal font-normal text-slate-500">· guests this vehicle takes ({guestRangeLabel(form.type)})</span></label>
+                  <input type="number" min={guestRange(form.type)?.[0] ?? 1} max={guestRange(form.type)?.[1] ?? MAX_PAX} value={form.capacity} onChange={set('capacity')}
                     className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white focus:outline-none" />
                 </div>
               </div>

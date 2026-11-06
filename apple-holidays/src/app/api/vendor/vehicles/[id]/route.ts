@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getVendorSession } from '@/lib/vendor-auth'
+import { vehicleProblem } from '@/lib/vehicle-details'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,6 +15,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     if (!vehicle) return buildApiError('Not found', 404)
 
     const { type, brand, model, capacity, photoOutside, photoInside, isActive, driverId } = await req.json()
+    const problem = vehicleProblem({ type, brand, model, capacity }, vehicle)
+    if (problem) return buildApiError(problem)
 
     if (driverId !== undefined) {
       await prisma.driver.updateMany({ where: { vehicleId: params.id }, data: { vehicleId: null } })

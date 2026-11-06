@@ -3,14 +3,14 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
-import { ActionSheetIOS, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActionSheetIOS, Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { useEffect } from 'react';
 import { Ionicons } from '@/components/ui';
 import { fmtDay, fmtRange, routeOf } from '@/lib/format';
 import { C } from '@/lib/theme';
 import { imgUrl } from '@/lib/web';
-import { initials, JOB_STATE, vehicleLabel, type VendorJob } from '@/lib/vendor';
+import { guestRange, initials, JOB_STATE, paxFits, vehicleLabel, type VendorJob } from '@/lib/vendor';
 
 export function Avatar({ name, photoUrl, size = 44, ring }: { name: string; photoUrl?: string | null; size?: number; ring?: string }) {
   const uri = imgUrl(photoUrl);
@@ -116,6 +116,32 @@ export function VehicleThumb({ uri, type, size = 56 }: { uri: string | null; typ
       </View>
     );
 }
+
+/** Pax count for a vehicle: starts empty so it is always a real answer, never a default. */
+export function PaxPicker({ type, value, onChange }: { type: string; value: number | null; onChange: (pax: number | null) => void }) {
+  const [min, max] = guestRange(type);
+  const off = value != null && !paxFits(type, value);
+  const stepTo = (n: number) => onChange(Math.min(max, Math.max(min, n)));
+  return (
+    <View style={{ gap: 6 }}>
+      <View style={paxStyles.stepper}>
+        <Pressable accessibilityLabel="One guest fewer" onPress={() => stepTo(value == null ? min : value - 1)} style={paxStyles.step}><Ionicons name="remove" size={22} color={C.text} /></Pressable>
+        <TextInput accessibilityLabel="Pax count" value={value == null ? '' : String(value)} placeholder="—" placeholderTextColor={C.dim} keyboardType="number-pad" maxLength={2}
+          onChangeText={t => { const d = t.replace(/\D/g, ''); onChange(d ? Number(d) : null); }} style={paxStyles.pax} />
+        <Pressable accessibilityLabel="One guest more" onPress={() => stepTo(value == null ? min : value + 1)} style={paxStyles.step}><Ionicons name="add" size={22} color={C.text} /></Pressable>
+      </View>
+      <Text style={{ color: off ? C.amber : C.sub, fontSize: 13, textAlign: 'center' }}>
+        {vehicleLabel(type)} takes {min === max ? min : `${min}–${max}`} guests. Trips are matched to this number.
+      </Text>
+    </View>
+  );
+}
+
+const paxStyles = StyleSheet.create({
+  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.line, padding: 8 },
+  step: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.cardHi, alignItems: 'center', justifyContent: 'center' },
+  pax: { color: C.text, fontSize: 32, fontWeight: '900', minWidth: 72, textAlign: 'center', fontVariant: ['tabular-nums'], padding: 0 },
+});
 
 /** Ask camera or library (iOS sheet / Android alert). */
 export function pickSource(title: string): Promise<'camera' | 'library' | null> {

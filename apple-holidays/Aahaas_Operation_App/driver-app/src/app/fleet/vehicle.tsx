@@ -1,5 +1,5 @@
 /**
- * Add or edit a vehicle of the vendor's fleet — type, plate, seats, outside and
+ * Add or edit a vehicle of the vendor's fleet — type, plate, pax count, outside and
  * inside photos, and the driver who drives it (one vehicle, one driver).
  */
 import * as Haptics from 'expo-haptics';
@@ -9,15 +9,13 @@ import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, ErrorBox, IconButton, Input, Ionicons, Label, Loading, Row } from '@/components/ui';
-import { Avatar, Chip, pickSource } from '@/components/vendor-ui';
+import { Avatar, Chip, PaxPicker, pickSource } from '@/components/vendor-ui';
 import { useLoad } from '@/hooks/use-load';
 import { api, ApiError } from '@/lib/api';
 import { C, S } from '@/lib/theme';
 import { takeAndUpload } from '@/lib/upload';
 import { imgUrl } from '@/lib/web';
-import { VEHICLE_ICON, VEHICLE_LABEL, type VendorDriver, type VendorVehicle } from '@/lib/vendor';
-
-const DEFAULT_SEATS: Record<string, number> = { car: 3, 'flatroof-van': 6, 'highroof-van': 9, van: 8, minibus: 15, 'bus-medium': 25, 'bus-high': 40, motorbike: 1, other: 4 };
+import { VEHICLE_ICON, VEHICLE_LABEL, paxFits, type VendorDriver, type VendorVehicle } from '@/lib/vendor';
 
 function PhotoBox({ label, url, busy, onPress }: { label: string; url: string | null; busy: boolean; onPress: () => void }) {
   const uri = imgUrl(url);
@@ -43,7 +41,7 @@ export default function VehicleForm() {
   const [plateNo, setPlateNo] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [capacity, setCapacity] = useState(DEFAULT_SEATS.car);
+  const [capacity, setCapacity] = useState<number | null>(null);
   const [photoOutside, setPhotoOutside] = useState<string | null>(null);
   const [photoInside, setPhotoInside] = useState<string | null>(null);
   const [driverId, setDriverId] = useState<string | null>(null);
@@ -51,13 +49,12 @@ export default function VehicleForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filled, setFilled] = useState(false);
-  const [touchedSeats, setTouchedSeats] = useState(false);
 
   useEffect(() => {
     if (!existing || filled) return;
     setType(existing.type); setPlateNo(existing.plateNo); setBrand(existing.brand ?? ''); setModel(existing.model ?? '');
     setCapacity(existing.capacity); setPhotoOutside(existing.photoOutside); setPhotoInside(existing.photoInside);
-    setDriverId(existing.driver?.id ?? null); setFilled(true); setTouchedSeats(true);
+    setDriverId(existing.driver?.id ?? null); setFilled(true);
   }, [existing, filled]);
 
   async function photo(which: 'out' | 'in') {
@@ -101,6 +98,9 @@ export default function VehicleForm() {
   const types = vehicles.data?.types ?? Object.keys(VEHICLE_LABEL);
   const activeDrivers = (drivers.data ?? []).filter(d => d.isActive);
   const picked = activeDrivers.find(d => d.id === driverId);
+  // A vehicle saved before the pax ranges keeps its number until someone changes it.
+  const paxReady = paxFits(type, capacity) || (!!existing && existing.type === type && existing.capacity === capacity);
+  const detailsReady = plateNo.trim().length >= 3 && !!brand.trim() && !!model.trim() && paxReady;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top', 'bottom']}>
@@ -120,23 +120,19 @@ export default function VehicleForm() {
           <Label>Type</Label>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
             {types.map(t => (
-              <Chip key={t} on={type === t} onPress={() => { setType(t); if (!touchedSeats) setCapacity(DEFAULT_SEATS[t] ?? 4); }}>
+              <Chip key={t} on={type === t} onPress={() => { setType(t); if (!paxFits(t, capacity)) setCapacity(null); }}>
                 <Ionicons name={VEHICLE_ICON[t] ?? 'car'} size={16} color={type === t ? C.red : C.sub} />
                 <Text style={{ color: C.text, fontWeight: '800', fontSize: 13 }}>{VEHICLE_LABEL[t] ?? t}</Text>
               </Chip>
             ))}
           </View>
 
-          <Label>Guest seats</Label>
-          <View style={styles.stepper}>
-            <Pressable onPress={() => { setTouchedSeats(true); setCapacity(c => Math.max(1, c - 1)); }} style={styles.step}><Ionicons name="remove" size={22} color={C.text} /></Pressable>
-            <Text style={styles.seats}>{capacity}</Text>
-            <Pressable onPress={() => { setTouchedSeats(true); setCapacity(c => Math.min(80, c + 1)); }} style={styles.step}><Ionicons name="add" size={22} color={C.text} /></Pressable>
-          </View>
+          <Label>Pax count *</Label>
+          <PaxPicker type={type} value={capacity} onChange={setCapacity} />
 
           <Row gap={S.md}>
-            <View style={{ flex: 1 }}><Input placeholder="Brand (Toyota)" value={brand} onChangeText={setBrand} /></View>
-            <View style={{ flex: 1 }}><Input placeholder="Model (KDH)" value={model} onChangeText={setModel} /></View>
+            <View style={{ flex: 1 }}><Input placeholder="Brand * (Toyota)" value={brand} onChangeText={setBrand} /></View>
+            <View style={{ flex: 1 }}><Input placeholder="Model * (KDH)" value={model} onChangeText={setModel} /></View>
           </Row>
 
           <Label>Photos</Label>
@@ -161,7 +157,7 @@ export default function VehicleForm() {
 
           {error && <ErrorBox message={error} />}
           <Button title={editing ? 'Save' : 'Add vehicle'} icon={editing ? 'checkmark' : 'car-sport'} onPress={save} loading={busy}
-            disabled={plateNo.trim().length < 3 || !!uploading} />
+            disabled={!detailsReady || !!uploading} />
 
           {existing && (
             <Pressable onPress={toggleActive} style={{ alignSelf: 'center', padding: 6 }}>
@@ -177,9 +173,6 @@ export default function VehicleForm() {
 const styles = StyleSheet.create({
   plate: { alignSelf: 'center', backgroundColor: '#FFD43B', borderRadius: 14, borderWidth: 3, borderColor: '#0E1525', paddingHorizontal: 18, paddingVertical: 6, minWidth: 240 },
   plateInput: { color: '#0E1525', fontSize: 30, fontWeight: '900', letterSpacing: 3, textAlign: 'center', paddingVertical: 6 },
-  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, backgroundColor: C.card, borderRadius: 18, borderWidth: 1, borderColor: C.line, padding: 8 },
-  step: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.cardHi, alignItems: 'center', justifyContent: 'center' },
-  seats: { color: C.text, fontSize: 32, fontWeight: '900', minWidth: 60, textAlign: 'center', fontVariant: ['tabular-nums'] },
   photo: { flex: 1, height: 120, borderRadius: 18, backgroundColor: C.blueSoft, borderWidth: 1, borderColor: '#BFD3FF', overflow: 'hidden', alignItems: 'center', justifyContent: 'flex-end' },
   photoTag: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5, marginBottom: 10 },
 });

@@ -18,6 +18,7 @@
     "sldocs:render": "tsx scripts/settlement-docs-render-check.mts",
     "report:cohort": "tsx scripts/cohort-report-check.mts",
     "trips:picks": "tsx scripts/trip-picks-check.mts",
+    "vehicles:details": "tsx scripts/vehicle-details-check.mts",
     "rs:preflight": "tsx scripts/rs-preflight.mts",
     "rs:verify": "tsx scripts/rs-verify.mts",
     "rs:role": "tsx scripts/rs-apply-role.mts",

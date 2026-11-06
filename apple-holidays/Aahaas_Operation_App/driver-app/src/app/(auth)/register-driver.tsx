@@ -14,11 +14,11 @@ import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Switch, Text, Vi
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CountryChips, PasswordFields, SignupHero } from '@/components/signup-ui';
 import { Button, Card, ErrorBox, IconButton, Input, Ionicons, Label, P, Row } from '@/components/ui';
-import { Chip } from '@/components/vendor-ui';
+import { Chip, PaxPicker } from '@/components/vendor-ui';
 import { api, ApiError } from '@/lib/api';
 import { SIGNUP_COUNTRIES, passwordProblem, setPendingSignup, type SignupKind } from '@/lib/signup';
 import { C, S } from '@/lib/theme';
-import { VEHICLE_LABEL } from '@/lib/vendor';
+import { VEHICLE_LABEL, paxFits } from '@/lib/vendor';
 
 export default function RegisterDriver() {
   const [name, setName] = useState('');
@@ -26,12 +26,12 @@ export default function RegisterDriver() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [licenseNo, setLicenseNo] = useState('');
-  const [hasVehicle, setHasVehicle] = useState(false);
+  const [hasVehicle, setHasVehicle] = useState(true);
   const [vType, setVType] = useState('car');
   const [plateNo, setPlateNo] = useState('');
   const [brand, setBrand] = useState('');
   const [model, setModel] = useState('');
-  const [seats, setSeats] = useState('4');
+  const [pax, setPax] = useState<number | null>(null);
   const [password, setPassword] = useState('');
   const [again, setAgain] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,11 +39,10 @@ export default function RegisterDriver() {
 
   const dial = SIGNUP_COUNTRIES.find(c => c.value === country)?.dial ?? '+94';
   const ready = name.trim().length >= 2 && !!country && phone.replace(/\D/g, '').length >= 9 && password.length > 0 && again.length > 0
-    && (!hasVehicle || plateNo.trim().length >= 3);
+    && (!hasVehicle || (plateNo.trim().length >= 3 && !!brand.trim() && !!model.trim() && paxFits(vType, pax)));
 
   async function submit() {
     const problem = passwordProblem(password, again)
-      ?? (hasVehicle && !(Number(seats) >= 1 && Number(seats) <= 80) ? 'Seats must be between 1 and 80.' : null)
       ?? (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ? 'That e-mail address does not look right.' : null);
     if (problem) { setError(problem); return; }
     setBusy(true); setError(null);
@@ -52,7 +51,7 @@ export default function RegisterDriver() {
         auth: false,
         body: {
           as: 'DRIVER', name: name.trim(), country, phone: phone.trim(), email: email.trim(), licenseNo: licenseNo.trim(), password,
-          vehicle: hasVehicle ? { type: vType, plateNo: plateNo.trim(), brand: brand.trim(), model: model.trim(), capacity: seats } : null,
+          vehicle: hasVehicle ? { type: vType, plateNo: plateNo.trim(), brand: brand.trim(), model: model.trim(), capacity: pax } : null,
         },
       });
       await setPendingSignup({ kind: 'DRIVER', token: r.pendingToken, name: r.name, identifier: r.identifier, submittedAt: new Date().toISOString() });
@@ -103,17 +102,18 @@ export default function RegisterDriver() {
               <Label>Vehicle type</Label>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
                 {Object.entries(VEHICLE_LABEL).map(([value, label]) => (
-                  <Chip key={value} on={vType === value} onPress={() => setVType(value)}>
+                  <Chip key={value} on={vType === value} onPress={() => { setVType(value); if (!paxFits(value, pax)) setPax(null); }}>
                     <Text style={{ color: C.text, fontWeight: '800' }}>{label}</Text>
                   </Chip>
                 ))}
               </ScrollView>
               <Input icon="pricetag-outline" placeholder="Number plate *" value={plateNo} onChangeText={setPlateNo} autoCapitalize="characters" autoCorrect={false} />
               <Row gap={S.sm}>
-                <View style={{ flex: 1 }}><Input placeholder="Brand" value={brand} onChangeText={setBrand} autoCapitalize="words" /></View>
-                <View style={{ flex: 1 }}><Input placeholder="Model" value={model} onChangeText={setModel} autoCapitalize="words" /></View>
+                <View style={{ flex: 1 }}><Input placeholder="Brand *" value={brand} onChangeText={setBrand} autoCapitalize="words" /></View>
+                <View style={{ flex: 1 }}><Input placeholder="Model *" value={model} onChangeText={setModel} autoCapitalize="words" /></View>
               </Row>
-              <Input icon="people-outline" placeholder="Seats" value={seats} onChangeText={t => setSeats(t.replace(/\D/g, '').slice(0, 2))} keyboardType="number-pad" />
+              <Label>Pax count *</Label>
+              <PaxPicker type={vType} value={pax} onChange={setPax} />
             </>
           )}
 

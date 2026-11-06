@@ -4,6 +4,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { OperationCountry } from '@prisma/client'
 import { recordWebDriverSignup } from '@/lib/mobile/signup'
+import { vehicleProblem } from '@/lib/vehicle-details'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,23 +37,24 @@ export async function POST(req: NextRequest) {
   let vehicleId: string | null = null
 
   if (vehiclePlateNo?.trim()) {
-    try {
-      const vehicle = await prisma.vehicle.create({
-        data: {
-          type: vehicleType || 'car',
-          plateNo: vehiclePlateNo.trim().toUpperCase(),
-          brand: vehicleBrand?.trim() || null,
-          model: vehicleModel?.trim() || null,
-          capacity: vehicleCapacity ? parseInt(vehicleCapacity, 10) : 4,
-          photoOutside: vehiclePhotoOutside?.trim() || null,
-          photoInside: vehiclePhotoInside?.trim() || null,
-        },
-      })
-      vehicleId = vehicle.id
-    } catch (err) {
-      // If vehicle plate already exists, skip linking
-      console.error('[driver-register] vehicle create error:', err)
+    const plateNo = vehiclePlateNo.trim().toUpperCase()
+    const problem = vehicleProblem({ type: vehicleType, brand: vehicleBrand, model: vehicleModel, capacity: vehicleCapacity })
+    if (problem) return buildApiError(problem)
+    if (await prisma.vehicle.findUnique({ where: { plateNo }, select: { id: true } })) {
+      return buildApiError(`${plateNo} is already registered with us. If it is yours, please contact operations.`, 409)
     }
+    const vehicle = await prisma.vehicle.create({
+      data: {
+        type: vehicleType,
+        plateNo,
+        brand: vehicleBrand.trim(),
+        model: vehicleModel.trim(),
+        capacity: Number(vehicleCapacity),
+        photoOutside: vehiclePhotoOutside?.trim() || null,
+        photoInside: vehiclePhotoInside?.trim() || null,
+      },
+    })
+    vehicleId = vehicle.id
   }
 
   try {

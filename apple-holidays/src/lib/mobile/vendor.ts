@@ -18,6 +18,7 @@
  *   • no new tables; driver-app state (codes, app accounts, live days) is
  *     read from the existing mobile_* tables, tolerating them being absent
  */
+import { VEHICLE_TYPES, vehicleProblem } from '@/lib/vehicle-details'
 import type { BookingStatus, OperationCountry } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { normalizeEmail, phoneMatches } from '@/lib/credential-match'
@@ -31,7 +32,7 @@ import { addDaysYmd, localTodayFor, ymd } from './trips'
 import { SANDBOX_REF_PREFIX } from './sandbox'
 
 /** Same list as the vendor portal's vehicle form. */
-export const VEHICLE_TYPES = ['car', 'flatroof-van', 'highroof-van', 'van', 'minibus', 'bus-medium', 'bus-high', 'motorbike', 'other']
+export { VEHICLE_TYPES }
 
 const DEAD_BOOKING: BookingStatus[] = ['CANCELLED', 'PENDING_CANCELLATION', 'AMENDED']
 
@@ -391,6 +392,8 @@ const cleanType = (raw: unknown) => (VEHICLE_TYPES.includes(String(raw)) ? Strin
 const cleanText = (raw: unknown, max = 60) => String(raw ?? '').trim().slice(0, max) || null
 
 export async function createVehicle(v: VendorCtx, input: VehicleInput) {
+  const problem = vehicleProblem(input)
+  if (problem) throw new MobileError(problem)
   const plateNo = cleanPlate(input.plateNo)
   await assertPlateFree(v, plateNo)
   const driver = input.driverId ? await ownDriver(v, input.driverId) : null
@@ -400,7 +403,7 @@ export async function createVehicle(v: VendorCtx, input: VehicleInput) {
         data: {
           type: cleanType(input.type), plateNo,
           brand: cleanText(input.brand), model: cleanText(input.model),
-          capacity: cleanCapacity(input.capacity ?? 4),
+          capacity: cleanCapacity(input.capacity),
           photoOutside: cleanUpload(input.photoOutside), photoInside: cleanUpload(input.photoInside),
           vendorId: v.vendorId,
         },
@@ -419,6 +422,8 @@ export async function createVehicle(v: VendorCtx, input: VehicleInput) {
 
 export async function updateVehicle(v: VendorCtx, id: string, input: VehicleInput) {
   const veh = await ownVehicle(v, id)
+  const problem = vehicleProblem(input, veh)
+  if (problem) throw new MobileError(problem)
   const data: Record<string, unknown> = {}
   if (input.type !== undefined) data.type = cleanType(input.type)
   if (input.brand !== undefined) data.brand = cleanText(input.brand)

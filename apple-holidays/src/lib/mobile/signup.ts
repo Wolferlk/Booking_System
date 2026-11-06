@@ -27,7 +27,7 @@ import type { SignupStatus } from '@/lib/vendor-register'
 import { MobileError, isMobileTableMissing } from './http'
 import { whatsappNumberFor } from './otp'
 import { notify, notifyStaff } from './notify'
-import { VEHICLE_TYPES } from './vendor'
+import { vehicleProblem } from '@/lib/vehicle-details'
 
 /** `mobile_driver_requests.kind` of a driver's own registration. */
 export const SIGNUP = 'SIGNUP'
@@ -86,15 +86,15 @@ function cleanVehicle(raw: DriverSignupInput['vehicle']) {
   const plateNo = String(raw.plateNo ?? '').trim().toUpperCase().replace(/\s+/g, ' ')
   if (!plateNo) return null
   if (plateNo.length < 3) throw new MobileError('Type the vehicle’s number plate.')
-  const capacity = parseInt(String(raw.capacity ?? '4'), 10)
-  if (!Number.isFinite(capacity) || capacity < 1 || capacity > 80) throw new MobileError('Seats must be between 1 and 80.')
+  const problem = vehicleProblem(raw)
+  if (problem) throw new MobileError(problem)
   const text = (v: unknown) => String(v ?? '').trim().slice(0, 60) || null
   return {
     plateNo: plateNo.slice(0, 20),
-    type: VEHICLE_TYPES.includes(String(raw.type)) ? String(raw.type) : 'car',
+    type: String(raw.type),
     brand: text(raw.brand),
     model: text(raw.model),
-    capacity,
+    capacity: Number(raw.capacity),
   }
 }
 

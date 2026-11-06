@@ -2,6 +2,7 @@
 
 import { Suspense, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { MAX_PAX, guestRange, guestRangeLabel, vehicleProblem } from '@/lib/vehicle-details'
 import {
   User, Phone, Mail, CreditCard, Car, Truck,
   CheckCircle2, Loader2, ChevronDown, ChevronRight, Camera, X, Upload,
@@ -11,6 +12,8 @@ const VEHICLE_TYPES: { value: string; label: string }[] = [
   { value: 'car',         label: 'Car' },
   { value: 'flatroof-van', label: 'Flatroof Van' },
   { value: 'highroof-van', label: 'Highroof Van' },
+  { value: 'van',         label: 'Van' },
+  { value: 'minibus',     label: 'Minibus' },
   { value: 'bus-medium',  label: 'Bus - Medium Coach' },
   { value: 'bus-high',    label: 'Bus - High Coach' },
   { value: 'other',       label: 'Other' },
@@ -127,6 +130,8 @@ function DriverRegisterForm() {
     if (!form.phone.trim()) { setError('Phone number is required'); return }
     if (!form.licenseNo.trim()) { setError('Driver\'s license number / NIC is required'); return }
     if (!form.vehiclePlateNo.trim()) { setError('Vehicle plate number is required'); return }
+    const vehicleError = vehicleProblem({ type: form.vehicleType, brand: form.vehicleBrand, model: form.vehicleModel, capacity: form.vehicleCapacity })
+    if (vehicleError) { setError(vehicleError); return }
 
     setSubmitting(true)
     try {
@@ -139,7 +144,7 @@ function DriverRegisterForm() {
       if (data.success) {
         setSuccess(true)
       } else {
-        setError(data.message || 'Registration failed. Please try again.')
+        setError(data.error || 'Registration failed. Please try again.')
       }
     } catch {
       setError('Network error. Please check your connection and try again.')
@@ -348,7 +353,7 @@ function DriverRegisterForm() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Brand</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Brand <span className="text-red-500">*</span></label>
                   <input
                     value={form.vehicleBrand}
                     onChange={set('vehicleBrand')}
@@ -357,7 +362,7 @@ function DriverRegisterForm() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Model</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Model <span className="text-red-500">*</span></label>
                   <input
                     value={form.vehicleModel}
                     onChange={set('vehicleModel')}
@@ -368,14 +373,16 @@ function DriverRegisterForm() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">Seating Capacity</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                  Pax Count <span className="text-red-500">*</span>
+                  <span className="text-slate-400 font-normal"> · guests this vehicle takes ({guestRangeLabel(form.vehicleType)})</span>
+                </label>
                 <input
                   type="number"
-                  min="1"
-                  max="60"
+                  min={guestRange(form.vehicleType)?.[0] ?? 1}
+                  max={guestRange(form.vehicleType)?.[1] ?? MAX_PAX}
                   value={form.vehicleCapacity}
                   onChange={set('vehicleCapacity')}
-                  placeholder="7"
                   className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
                 />
               </div>

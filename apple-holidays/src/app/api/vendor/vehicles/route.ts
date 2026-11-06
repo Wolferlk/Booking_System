@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getVendorSession } from '@/lib/vendor-auth'
+import { vehicleProblem } from '@/lib/vehicle-details'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
 
     const { type, plateNo, brand, model, capacity, photoOutside, photoInside, driverId } = await req.json()
     if (!plateNo?.trim()) return buildApiError('Plate number is required')
+    const problem = vehicleProblem({ type, brand, model, capacity })
+    if (problem) return buildApiError(problem)
 
     if (driverId) {
       const driver = await prisma.driver.findFirst({ where: { id: driverId, vendorId: session.id } })
@@ -38,11 +41,11 @@ export async function POST(req: NextRequest) {
 
     const vehicle = await prisma.vehicle.create({
       data: {
-        type: type || 'car',
+        type,
         plateNo: plateNo.trim().toUpperCase(),
         brand: brand?.trim() || null,
         model: model?.trim() || null,
-        capacity: capacity ? parseInt(capacity, 10) : 4,
+        capacity: Number(capacity),
         photoOutside: photoOutside || null,
         photoInside: photoInside || null,
         vendorId: session.id,
