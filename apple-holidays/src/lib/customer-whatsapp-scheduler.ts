@@ -22,6 +22,7 @@ import {
   runCustomerFeedbackRequest,
   getDefaultBriefingTime,
 } from './customer-whatsapp-automation'
+import { runGroupAutomations } from './wa-groups/server'
 
 // Timezone the feedback-request time is read in (the briefing uses each guest's own).
 const TZ = process.env.CUSTOMER_MSG_TZ || 'Asia/Ho_Chi_Minh'
@@ -71,6 +72,8 @@ async function tick(): Promise<void> {
       console.error('[CustomerWhatsAppScheduler] daily-briefing error:', err instanceof Error ? err.message : err))
     await maybeRunFeedback().catch(err =>
       console.error('[CustomerWhatsAppScheduler] feedback-request error:', err instanceof Error ? err.message : err))
+    await runGroupAutomations().catch(err =>
+      console.error('[CustomerWhatsAppScheduler] group automation error:', err instanceof Error ? err.message : err))
   } finally {
     ticking = false
   }

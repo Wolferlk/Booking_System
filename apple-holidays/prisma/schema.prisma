@@ -3984,3 +3984,58 @@ model AgentDigestSend {
   @@index([createdAt], map: "agent_digest_sends_created_idx")
   @@map("agent_digest_sends")
 }
+
+/// WhatsApp inbox booking group: a named set of bookings the desk messages
+/// together. Sends and automation rules live here; the messages themselves are
+/// the same ones the booking pages send. See src/lib/wa-groups/.
+model WaBookingGroup {
+  id            String    @id @default(cuid()) @db.VarChar(191)
+  name          String    @db.VarChar(191)
+  color         String    @default("emerald") @db.VarChar(16)
+  autoDaily     Boolean   @default(false)
+  dailyTime     String    @default("18:00") @db.VarChar(5)
+  autoDay7      Boolean   @default(false)
+  autoDay3      Boolean   @default(false)
+  autoDriver    Boolean   @default(false)
+  docTime       String    @default("10:00") @db.VarChar(5)
+  archivedAt    DateTime?
+  createdByName String?   @db.VarChar(191)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([archivedAt], map: "wa_booking_groups_archived_idx")
+  @@map("wa_booking_groups")
+}
+
+model WaBookingGroupMember {
+  id          String   @id @default(cuid()) @db.VarChar(191)
+  groupId     String   @db.VarChar(191)
+  bookingRef  String   @db.VarChar(191)
+  addedByName String?  @db.VarChar(191)
+  createdAt   DateTime @default(now())
+
+  @@unique([groupId, bookingRef], map: "wa_booking_group_members_unique")
+  @@index([bookingRef], map: "wa_booking_group_members_ref_idx")
+  @@map("wa_booking_group_members")
+}
+
+/// One attempt to send one kind of message to one booking. `dedupeKey` is set on
+/// automatic sends only, and is UNIQUE, so overlapping sweeps or a booking in two
+/// groups can never message the guest twice.
+model WaGroupSend {
+  id         String   @id @default(cuid()) @db.VarChar(191)
+  groupId    String   @db.VarChar(191)
+  bookingRef String   @db.VarChar(191)
+  kind       String   @db.VarChar(16)
+  trigger    String   @db.VarChar(8)
+  status     String   @db.VarChar(16)
+  detail     String?  @db.Text
+  targetDate String?  @db.VarChar(10)
+  dedupeKey  String?  @unique(map: "wa_group_sends_dedupeKey_key") @db.VarChar(191)
+  sentByName String?  @db.VarChar(191)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([groupId, createdAt], map: "wa_group_sends_group_idx")
+  @@map("wa_group_sends")
+}

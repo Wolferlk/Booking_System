@@ -64,7 +64,7 @@ function dayBounds(dateStr: string): { start: Date; end: Date } {
  * imported as DRAFT; the ones put on AI calls by `b2c-guest-engage.ts` (guest's
  * own WhatsApp, not cancelled in the store) count as live too.
  */
-async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
+export async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
   const live: Prisma.BookingWhereInput = { status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] } }
   const engaged = await engagedB2cRefs().catch((err) => {
     console.error('[CustomerWhatsApp] B2C guest list unavailable (non-fatal):', err)
@@ -104,7 +104,7 @@ export function normaliseBriefingTime(v: string | null | undefined): string | nu
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
 }
 
-function timeToMinutes(t: string): number {
+export function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number)
   return h * 60 + m
 }
@@ -153,7 +153,7 @@ export function briefingTimezone(country: OperationCountry | string | null | und
 }
 
 /** Current local date (YYYY-MM-DD) and minutes-past-midnight in a timezone. */
-function nowInTz(tz: string): { date: string; minutes: number } {
+export function nowInTz(tz: string): { date: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false,
@@ -165,7 +165,7 @@ function nowInTz(tz: string): { date: string; minutes: number } {
   }
 }
 
-function addDays(dateStr: string, n: number): string {
+export function addDays(dateStr: string, n: number): string {
   return new Date(Date.parse(`${dateStr}T00:00:00.000Z`) + n * 86400000).toISOString().slice(0, 10)
 }
 
@@ -218,14 +218,15 @@ import { feedbackLinkToken } from './feedback-link'
  * A later template part failing leaves the rest queued as `pending`, which the
  * guest's next reply flushes (flushPendingConfirmations).
  */
-async function deliverToGuest(p: {
+export async function deliverToGuest(p: {
   phone: string
   text: string
   guestName: string | null
   bookingRef: string
   tag: string
-}): Promise<{ ok: boolean; waMessageId: string | null; reason?: string }> {
-  if (!(await isWithin24hWindow(p.phone))) {
+}): Promise<{ ok: boolean; waMessageId: string | null; reason?: string; unconfirmed?: boolean }> {
+  const windowOpen = await isWithin24hWindow(p.phone)
+  if (!windowOpen) {
     try {
       const sent = await sendGuestMessageTemplate({
         to: p.phone, guestName: p.guestName ?? 'Guest', bookingRef: p.bookingRef, text: p.text,
@@ -249,7 +250,9 @@ async function deliverToGuest(p: {
     }
   }
   const ok = await sendWhatsAppText(p.phone, p.text, p.guestName ?? undefined)
-  return ok ? { ok, waMessageId: null } : { ok, waMessageId: null, reason: 'WhatsApp send failed' }
+  // Plain text outside the window is accepted by Meta and then dropped, so a
+  // "sent" here proves nothing — callers can tell the desk that.
+  return ok ? { ok, waMessageId: null, unconfirmed: !windowOpen } : { ok, waMessageId: null, reason: 'WhatsApp send failed' }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -260,6 +263,7 @@ export interface SingleSendResult {
   ok: boolean
   reason?: string   // why it was skipped or failed (null when ok)
   message?: string  // the message body that was sent (for previews/logs)
+  unconfirmed?: boolean  // went as plain text outside the 24h window, so Meta may drop it
 }
 
 /**
@@ -269,11 +273,12 @@ export interface SingleSendResult {
  *
  * opts.force     — bypass the once-per-day dedupe (manual resend)
  * opts.allowEmpty — still send even if that day has nothing scheduled
+ * opts.dryRun    — build and return the message without sending or logging it
  */
 export async function sendDailyBriefingForBooking(
   bookingRef: string,
   targetDateStr: string,
-  opts: { force?: boolean; allowEmpty?: boolean } = {},
+  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean } = {},
 ): Promise<SingleSendResult> {
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
@@ -400,6 +405,8 @@ export async function sendDailyBriefingForBooking(
     branded,
   })
 
+  if (opts.dryRun) return { ok: true, message: msg }
+
   const tag = `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`
   const sent = await deliverToGuest({
     phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag,
@@ -433,11 +440,11 @@ export async function sendDailyBriefingForBooking(
     }
   }
 
-  return { ok: true, message: msg }
+  return { ok: true, message: msg, unconfirmed: sent.unconfirmed }
 }
 
 /** First real phone number among the candidates ("—" and blanks are placeholders). */
-function contactPhone(...candidates: (string | null | undefined)[]): string | null {
+export function contactPhone(...candidates: (string | null | undefined)[]): string | null {
   for (const c of candidates) {
     const v = c?.trim()
     if (v && /\d/.test(v)) return v

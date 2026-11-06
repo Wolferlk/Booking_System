@@ -24,8 +24,9 @@ import { TemplatesModal } from '@/components/whatsapp-inbox/templates-modal'
 import { MessageReportModal, RetryFailedModal } from '@/components/whatsapp-inbox/bulk-tools'
 import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
+import { GroupCommandCenter, GroupContacts, GroupsRail, GuestTripPanel, useGroupDetail } from '@/components/whatsapp-inbox/groups'
 
-type ListTab = 'all' | 'unread' | 'pinned' | 'country'
+type ListTab = 'all' | 'unread' | 'pinned' | 'country' | 'groups'
 
 /** How each search hit is labelled in the list. */
 const MATCH_META: Record<SearchField, { label: string; icon: typeof Hash; tone: string }> = {
@@ -110,6 +111,11 @@ function WhatsAppInboxInner() {
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<ListTab>('all')
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
+  const [groupId, setGroupId] = useState<string | null>(null)
+  const [groupsVersion, setGroupsVersion] = useState(0)
+  const [groupRef, setGroupRef] = useState<string | null>(null)
+  const [tripPanelOpen, setTripPanelOpen] = useState(false)
+  const groupState = useGroupDetail(tab === 'groups' ? groupId : null)
   const [pins, setPins] = useState<string[]>([])
   const [online, setOnline] = useState(true)
   const [now, setNow] = useState(() => Date.now())
@@ -784,12 +790,34 @@ function WhatsAppInboxInner() {
     { key: 'unread', label: 'Unread', count: unreadChats },
     { key: 'pinned', label: 'Pinned', count: pins.length || undefined },
     { key: 'country', label: 'Country' },
+    { key: 'groups', label: 'Groups' },
   ]
+
+  // An open group: its guests on the left, a chat in the middle with the trip
+  // panel on the right, or the group overview while no guest is open.
+  const inGroup = tab === 'groups' && groupId !== null
+  const showGroup = inGroup && !selected
+  const groupMembers = groupState.group?.members ?? []
+  const activeMember = !inGroup || !selected ? null
+    : groupMembers.find(m => m.bookingRef === groupRef && m.phone === selected) ?? groupMembers.find(m => m.phone === selected) ?? null
+  const lastMessage = messages.length ? messages[messages.length - 1] : null
+
+  function openGroupChat(ref: string, phone: string) {
+    setGroupRef(ref)
+    setTripPanelOpen(false)
+    if (phone !== selectedRef.current) openConversation(phone)
+  }
+
+  function insertIntoChat(text: string) {
+    setDraft(d => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))
+    setTripPanelOpen(false)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 text-slate-900">
       {/* ============ Conversation list ============ */}
-      <aside className={`flex w-[390px] shrink-0 flex-col border-r border-slate-200/80 bg-white/90 backdrop-blur max-[860px]:w-full ${selected ? 'max-[860px]:hidden' : ''}`}>
+      <aside className={`flex w-[390px] shrink-0 flex-col border-r border-slate-200/80 bg-white/90 backdrop-blur max-[860px]:w-full ${selected || showGroup ? 'max-[860px]:hidden' : ''}`}>
         <div className="shrink-0 border-b border-slate-100 px-4 pb-3 pt-4">
           <div className="flex items-center gap-2.5">
             <Link href="/dashboard" title="Back to dashboard" className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700">
@@ -957,7 +985,24 @@ function WhatsAppInboxInner() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-          {convLoading && conversations.length === 0 ? (
+          {tab === 'groups' && !search.trim() ? (
+            groupId ? (
+              <GroupContacts
+                state={groupState}
+                conversations={conversations}
+                activeRef={activeMember?.bookingRef ?? null}
+                onBack={() => { closeConversation(); setGroupId(null) }}
+                onOverview={closeConversation}
+                onOpen={m => { if (m.phone) openGroupChat(m.bookingRef, m.phone) }}
+              />
+            ) : (
+              <GroupsRail
+                selectedId={groupId}
+                version={groupsVersion}
+                onSelect={id => { closeConversation(); setGroupId(id) }}
+              />
+            )
+          ) : convLoading && conversations.length === 0 ? (
             <div className="space-y-1.5 px-1">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3 rounded-2xl px-3 py-3" style={{ opacity: 1 - i * 0.1 }}>
@@ -1024,13 +1069,22 @@ function WhatsAppInboxInner() {
 
       {/* ============ Thread ============ */}
       <section
-        className={`relative flex min-w-0 flex-1 flex-col ${selected ? '' : 'max-[860px]:hidden'}`}
+        className={`relative flex min-w-0 flex-1 flex-col ${selected || showGroup ? '' : 'max-[860px]:hidden'}`}
         onDragEnter={onDragEnter}
         onDragOver={e => { if (dragging) e.preventDefault() }}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {!selected ? (
+        {showGroup ? (
+          <GroupCommandCenter
+            groupId={groupId}
+            state={groupState}
+            onBack={() => setGroupId(null)}
+            onOpenChat={m => { if (m.phone) openGroupChat(m.bookingRef, m.phone) }}
+            onChanged={() => setGroupsVersion(v => v + 1)}
+            onArchived={() => { setGroupId(null); setGroupsVersion(v => v + 1) }}
+          />
+        ) : !selected ? (
           <EmptyThread onNewChat={() => setNewChatOpen(true)} onTemplates={() => setTemplatesOpen(true)} />
         ) : (
           <>
@@ -1048,6 +1102,13 @@ function WhatsAppInboxInner() {
                     {lastSynced && <span>· synced {fmtAgo(now - lastSynced)}</span>}
                   </p>
                 </div>
+                {activeMember && (
+                  <span className="min-[1180px]:hidden">
+                    <IconBtn title="Trip panel" active={tripPanelOpen} onClick={() => setTripPanelOpen(o => !o)}>
+                      <Sparkles className="h-4 w-4" />
+                    </IconBtn>
+                  </span>
+                )}
                 <IconBtn title="Search in chat (⌘F)" active={threadSearchOpen} onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); requestAnimationFrame(() => threadSearchRef.current?.focus()) }}>
                   <Search className="h-4 w-4" />
                 </IconBtn>
@@ -1395,6 +1456,19 @@ function WhatsAppInboxInner() {
           </>
         )}
       </section>
+
+      {/* ============ Trip panel (open group chat) ============ */}
+      {activeMember && groupState.group && (
+        <GuestTripPanel
+          group={groupState.group}
+          member={activeMember}
+          latest={lastMessage ? { id: lastMessage.id, direction: lastMessage.direction } : null}
+          open={tripPanelOpen}
+          onClose={() => setTripPanelOpen(false)}
+          onInsert={insertIntoChat}
+          onSent={() => { groupState.reload(); if (selectedRef.current) loadMessages(selectedRef.current) }}
+        />
+      )}
 
       {/* ============ New chat ============ */}
       <AnimatePresence>
