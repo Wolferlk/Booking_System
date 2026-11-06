@@ -1,21 +1,23 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertTriangle, ArrowLeft, BedDouble, CalendarClock, CalendarDays, Car, Check, CheckCheck, ChevronDown, Clock, CornerDownLeft, Eye,
-  FileCheck2, FileText, LayoutDashboard, Loader2, Map as MapIcon, MessageCircle, Palette, Plane, Plus, RefreshCw, Search, Send, Sparkles,
-  Square, Sun, Trash2, Users, X, Zap,
+  AlertTriangle, ArrowLeft, BedDouble, CalendarDays, Car, Check, CheckCheck, ChevronDown, Copy, CornerDownLeft,
+  FileCheck2, FileText, Link2, Loader2, Map as MapIcon, MessageCircle, Plane, Plus, RefreshCw, Search, Send, Sparkles,
+  Sun, Trash2, UserPlus, Users, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { countryFlag } from '@/lib/country-detection'
 import type { OperationCountry } from '@prisma/client'
 import {
-  GROUP_COLORS, KIND_META, SETUP_NEEDED_ERROR, memberBlocker,
-  type GroupCandidate, type GroupColor, type GroupDetail, type GroupKind, type GroupMember, type GroupSendOutcome, type GroupSummary,
-  type GuestBrief, type ReplySuggestions,
+  GROUP_COLORS, KIND_META, PARTICIPANT_ROLES, SETUP_NEEDED_ERROR, memberBlocker,
+  type ContactSuggestion, type GroupCandidate, type GroupColor, type GroupDetail, type GroupKind, type GroupMember,
+  type GroupParticipant, type GroupSendOutcome, type GroupSummary, type GuestBrief, type ParticipantRole, type ReplySuggestions,
+  type TimelineItem,
 } from '@/lib/wa-groups/shared'
-import { avatarGradient, fmtListStamp, initials, type Conversation } from './shared'
+import { avatarGradient, fmtListStamp, initials } from './shared'
 
 const KIND_ICON: Record<GroupKind, typeof Sun> = {
   daily: Sun, day7: FileText, day3: FileCheck2, flights: Plane, hotels: BedDouble, itinerary: MapIcon, driver: Car,
@@ -29,19 +31,18 @@ const KIND_TINT: Record<GroupKind, string> = {
   hotels:    'from-rose-400 to-pink-600 shadow-pink-500/30',
   itinerary: 'from-lime-400 to-emerald-600 shadow-emerald-500/30',
 }
-const AUTO_KINDS: GroupKind[] = ['daily', 'day7', 'day3', 'driver']
-const ON_DEMAND_KINDS: GroupKind[] = ['flights', 'hotels', 'itinerary']
-const ALL_KINDS: GroupKind[] = ['day7', 'day3', 'flights', 'hotels', 'itinerary', 'driver', 'daily']
-
 const AUTO_FIELD = { daily: 'autoDaily', day7: 'autoDay7', day3: 'autoDay3', driver: 'autoDriver' } as const
 const AUTO_RULE: Record<string, string> = {
-  daily:  'Every trip day. A morning time sends that day, an afternoon time sends the next day.',
+  daily:  'Every trip day. A morning time sends that day, an afternoon time the next day.',
   day7:   'Goes out 7 days before arrival.',
   day3:   'Goes out 3 days before arrival, once drivers are fully assigned.',
   driver: 'From the day before arrival once all drivers are assigned, and again if they change.',
 }
 
-const SEND_CONCURRENCY = 2
+const ROLE_TONE: Record<string, string> = {
+  guest: 'text-emerald-700', family: 'text-teal-700', driver: 'text-orange-700', guide: 'text-violet-700',
+  agent: 'text-sky-700', staff: 'text-slate-700', other: 'text-slate-600',
+}
 
 type Api<T> = { success: boolean; data?: T; error?: string; message?: string }
 
@@ -92,7 +93,8 @@ function Sheet({ title, subtitle, icon, wide, onClose, children, footer }: {
   title: string; subtitle?: string; icon: React.ReactNode; wide?: boolean
   onClose: () => void; children: React.ReactNode; footer?: React.ReactNode
 }) {
-  return (
+  // Portalled: the inbox's blurred panes would otherwise trap a fixed overlay inside them.
+  return createPortal(
     <motion.div
       className="fixed inset-0 z-50 grid place-items-center bg-slate-900/50 px-4 backdrop-blur-sm"
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}
@@ -115,87 +117,13 @@ function Sheet({ title, subtitle, icon, wide, onClose, children, footer }: {
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
         {footer && <div className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-100 px-5 py-3">{footer}</div>}
       </motion.div>
-    </motion.div>
+    </motion.div>,
+    document.body,
   )
 }
 
 const btnGhost = 'rounded-xl border border-slate-200 px-4 py-2 text-[13px] font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50'
 const btnPrimary = 'flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-green-600 px-4 py-2 text-[13px] font-bold text-white shadow-lg shadow-emerald-500/25 transition hover:brightness-105 disabled:opacity-50'
-
-// ── Left rail ────────────────────────────────────────────────────────────────
-
-export function GroupsRail({ selectedId, version, onSelect }: { selectedId: string | null; version: number; onSelect: (id: string) => void }) {
-  const [groups, setGroups] = useState<GroupSummary[] | null>(null)
-  const [needsSetup, setNeedsSetup] = useState(false)
-  const [creating, setCreating] = useState(false)
-
-  const load = useCallback(async () => {
-    const res = await api<GroupSummary[]>('/api/whatsapp/groups')
-    if (res.success) setGroups(res.data ?? [])
-    else if (res.error === SETUP_NEEDED_ERROR) { setNeedsSetup(true); setGroups([]) }
-    else { setGroups([]); toast.error(res.error ?? 'Could not load groups') }
-  }, [])
-  useEffect(() => { load() }, [load, version])
-
-  if (needsSetup) {
-    return (
-      <div className="m-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-        <p className="flex items-center gap-2 text-sm font-bold"><AlertTriangle className="h-4 w-4" /> Groups need a one-time setup</p>
-        <p className="mt-1 text-xs leading-relaxed">The database tables are not installed yet. Run <code className="rounded bg-amber-100 px-1">bash prisma/sql/apply-wa-booking-groups.sh</code>, then refresh this page.</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-1.5 px-1">
-      <button
-        onClick={() => setCreating(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/60 py-3 text-[13px] font-bold text-emerald-700 transition hover:bg-emerald-100/70"
-      >
-        <Plus className="h-4 w-4" /> New group
-      </button>
-
-      {groups === null && Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-[76px] animate-pulse rounded-2xl bg-slate-100" />)}
-
-      {groups?.length === 0 && (
-        <div className="rounded-2xl px-5 py-8 text-center">
-          <Users className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-          <p className="text-sm font-semibold text-slate-500">No groups yet</p>
-          <p className="mt-1 text-xs text-slate-400">Group bookings together, then send each guest their plan, documents and trip details from one place.</p>
-        </div>
-      )}
-
-      {groups?.map(g => {
-        const active = g.id === selectedId
-        return (
-          <motion.button
-            key={g.id} layout onClick={() => onSelect(g.id)}
-            className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition ${active ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'hover:bg-slate-50'}`}
-          >
-            <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br text-white shadow-md ${GROUP_COLORS[g.color].hero}`}>
-              <Users className="h-5 w-5" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5">
-                <span className="truncate text-[14px] font-bold text-slate-900">{g.name}</span>
-                {g.autoCount > 0 && <span title={`${g.autoCount} automation${g.autoCount === 1 ? '' : 's'} on`} className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 text-[10px] font-bold text-amber-700"><Zap className="h-2.5 w-2.5" />{g.autoCount}</span>}
-              </span>
-              <span className="mt-0.5 block truncate text-xs text-slate-500">
-                {g.total} booking{g.total === 1 ? '' : 's'}
-                {g.inTrip > 0 && ` · ${g.inTrip} on trip`}
-                {g.nextArrivalDays !== null && ` · next in ${g.nextArrivalDays}d`}
-              </span>
-            </span>
-          </motion.button>
-        )
-      })}
-
-      <AnimatePresence>
-        {creating && <CreateGroup onClose={() => setCreating(false)} onCreated={id => { setCreating(false); load(); onSelect(id) }} onSetupNeeded={() => { setCreating(false); setNeedsSetup(true) }} />}
-      </AnimatePresence>
-    </div>
-  )
-}
 
 function ColorPicker({ value, onChange }: { value: GroupColor; onChange: (c: GroupColor) => void }) {
   return (
@@ -209,47 +137,6 @@ function ColorPicker({ value, onChange }: { value: GroupColor; onChange: (c: Gro
     </div>
   )
 }
-
-function CreateGroup({ onClose, onCreated, onSetupNeeded }: { onClose: () => void; onCreated: (id: string) => void; onSetupNeeded: () => void }) {
-  const [name, setName] = useState('')
-  const [color, setColor] = useState<GroupColor>('emerald')
-  const [saving, setSaving] = useState(false)
-
-  async function create(e: React.FormEvent) {
-    e.preventDefault()
-    if (!name.trim()) return
-    setSaving(true)
-    const res = await api<{ id: string }>('/api/whatsapp/groups', { method: 'POST', body: JSON.stringify({ name, color }) })
-    setSaving(false)
-    if (res.success && res.data) onCreated(res.data.id)
-    else if (res.error === SETUP_NEEDED_ERROR) onSetupNeeded()
-    else toast.error(res.error ?? 'Could not create the group')
-  }
-
-  return (
-    <Sheet
-      title="New group" subtitle="For example: November Sri Lanka, MMT honeymooners, Team Nimal"
-      icon={<span className={`grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br text-white ${GROUP_COLORS[color].hero}`}><Users className="h-4 w-4" /></span>}
-      onClose={onClose}
-    >
-      <form onSubmit={create} className="space-y-4 p-5">
-        <input
-          autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Group name" maxLength={120}
-          className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
-        />
-        <ColorPicker value={color} onChange={setColor} />
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
-          <button type="submit" disabled={saving || !name.trim()} className={btnPrimary}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Create group
-          </button>
-        </div>
-      </form>
-    </Sheet>
-  )
-}
-
-// ── Command center ───────────────────────────────────────────────────────────
 
 /** One group, shared by the contact list, the overview and the trip panel. */
 export function useGroupDetail(groupId: string | null) {
@@ -272,750 +159,6 @@ export function useGroupDetail(groupId: string | null) {
 
   return { group, missing, reload, setGroup }
 }
-
-export function GroupCommandCenter({ groupId, state, onBack, onOpenChat, onChanged, onArchived }: {
-  groupId: string
-  state: ReturnType<typeof useGroupDetail>
-  onBack: () => void
-  onOpenChat: (m: GroupMember) => void
-  onChanged: () => void
-  onArchived: () => void
-}) {
-  const { group, missing, reload: load, setGroup } = state
-  const [sendKind, setSendKind] = useState<GroupKind | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [renaming, setRenaming] = useState<string | null>(null)
-  const [paletteOpen, setPaletteOpen] = useState(false)
-
-  async function patch(p: Partial<GroupDetail>, message?: string) {
-    setGroup(g => (g ? { ...g, ...p } : g))
-    const res = await api(`/api/whatsapp/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(p) })
-    if (!res.success) { toast.error(res.error ?? 'Could not save'); load(); return }
-    if (message) toast.success(message)
-    onChanged()
-  }
-
-  async function archive() {
-    if (!group || !window.confirm(`Archive "${group.name}"? Its automations stop. Messages already sent are not affected.`)) return
-    const res = await api(`/api/whatsapp/groups/${groupId}`, { method: 'DELETE' })
-    if (res.success) { toast.success('Group archived'); onArchived() }
-    else toast.error(res.error ?? 'Could not archive')
-  }
-
-  async function removeMember(ref: string) {
-    const res = await api(`/api/whatsapp/groups/${groupId}/members?ref=${encodeURIComponent(ref)}`, { method: 'DELETE' })
-    if (res.success) { load(); onChanged() }
-    else toast.error(res.error ?? 'Could not remove')
-  }
-
-  function toggleAuto(kind: GroupKind, on: boolean) {
-    if (!group) return
-    const field = AUTO_FIELD[kind as keyof typeof AUTO_FIELD]
-    const time = kind === 'daily' ? group.dailyTime : group.docTime
-    patch({ [field]: on }, on ? `${KIND_META[kind].label} is now automatic at ${time} guest time` : `${KIND_META[kind].label} automation is off`)
-  }
-
-  if (missing) {
-    return (
-      <div className="grid h-full place-items-center text-center text-slate-500">
-        <div>
-          <p className="font-semibold">This group could not be loaded</p>
-          <button onClick={onBack} className="mt-2 text-sm font-semibold text-emerald-600">Back to groups</button>
-        </div>
-      </div>
-    )
-  }
-  if (!group) return <div className="grid h-full place-items-center"><Loader2 className="h-6 w-6 animate-spin text-emerald-500" /></div>
-
-  const inTrip = group.members.filter(m => m.stage === 'in-trip').length
-  const soon = group.members.filter(m => m.stage === 'upcoming' && m.daysToArrival <= 7).length
-  const autos = [group.autoDaily, group.autoDay7, group.autoDay3, group.autoDriver].filter(Boolean).length
-  const stats = [
-    { label: 'Bookings', value: group.members.length },
-    { label: 'On trip now', value: inTrip },
-    { label: 'Arriving in 7 days', value: soon },
-    { label: 'Automations on', value: autos },
-  ]
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1180px] space-y-5 p-4 sm:p-5">
-        {/* Hero */}
-        <motion.section
-          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-          className={`relative overflow-hidden rounded-3xl bg-gradient-to-br p-5 text-white shadow-xl ${GROUP_COLORS[group.color].hero}`}
-        >
-          <div className="pointer-events-none absolute -right-10 -top-16 h-56 w-56 rounded-full bg-white/10" />
-          <div className="pointer-events-none absolute -bottom-20 right-32 h-44 w-44 rounded-full bg-white/10" />
-          <div className="relative flex flex-wrap items-center gap-2">
-            <button onClick={onBack} aria-label="Back to groups" className="hidden h-9 w-9 place-items-center rounded-xl bg-white/15 max-[860px]:grid"><ArrowLeft className="h-4 w-4" /></button>
-            <div className="min-w-0 flex-1">
-              {renaming !== null ? (
-                <input
-                  autoFocus value={renaming} maxLength={120}
-                  onChange={e => setRenaming(e.target.value)}
-                  onBlur={() => { const n = renaming.trim(); setRenaming(null); if (n && n !== group.name) patch({ name: n }) }}
-                  onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setRenaming(null) }}
-                  className="w-full max-w-md rounded-lg bg-white/20 px-2 py-0.5 text-2xl font-extrabold tracking-tight outline-none placeholder:text-white/60"
-                />
-              ) : (
-                <button disabled={!group.canManage} onClick={() => setRenaming(group.name)} title="Rename" className="max-w-full truncate text-left text-2xl font-extrabold tracking-tight">{group.name}</button>
-              )}
-            </div>
-            {group.canManage && (
-              <>
-                <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 text-[13px] font-bold text-slate-900 shadow-md transition hover:bg-white/90">
-                  <Plus className="h-4 w-4" /> Add bookings
-                </button>
-                <button onClick={() => setPaletteOpen(v => !v)} aria-label="Change colour" title="Change colour" className="grid h-9 w-9 place-items-center rounded-xl bg-white/15 transition hover:bg-white/25"><Palette className="h-4 w-4" /></button>
-                <button onClick={archive} aria-label="Archive group" title="Archive group" className="grid h-9 w-9 place-items-center rounded-xl bg-white/15 transition hover:bg-white/25"><Trash2 className="h-4 w-4" /></button>
-              </>
-            )}
-          </div>
-          {paletteOpen && <div className="relative mt-3 w-fit rounded-2xl bg-white p-2"><ColorPicker value={group.color} onChange={c => { setPaletteOpen(false); patch({ color: c }) }} /></div>}
-          <div className="relative mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {stats.map(s => (
-              <div key={s.label} className="rounded-2xl bg-white/15 px-3.5 py-2.5 backdrop-blur">
-                <p className="text-2xl font-extrabold leading-none tabular-nums">{s.value}</p>
-                <p className="mt-1 text-[11px] font-medium text-white/80">{s.label}</p>
-              </div>
-            ))}
-          </div>
-        </motion.section>
-
-        {group.members.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-slate-300 bg-white/70 px-6 py-14 text-center">
-            <Users className="mx-auto h-10 w-10 text-slate-300" />
-            <p className="mt-3 text-base font-bold text-slate-700">Add the first bookings</p>
-            <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">Pick from upcoming arrivals or search by file number, guest or agent. Each guest gets their own message, never a shared chat.</p>
-            {group.canManage && <button onClick={() => setAdding(true)} className={`${btnPrimary} mx-auto mt-4`}><Plus className="h-4 w-4" /> Add bookings</button>}
-          </div>
-        ) : (
-          <>
-            {/* Automated journey */}
-            <section>
-              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
-                <h2 className="text-sm font-extrabold text-slate-900">Guest journey</h2>
-                <p className="text-xs text-slate-500">Send now, or switch on Auto. Times are in each guest&apos;s own timezone.</p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                {AUTO_KINDS.map(kind => (
-                  <LaunchTile
-                    key={kind} kind={kind} group={group} onSend={() => setSendKind(kind)}
-                    auto={{
-                      on: group[AUTO_FIELD[kind as keyof typeof AUTO_FIELD]],
-                      time: kind === 'daily' ? group.dailyTime : group.docTime,
-                      onToggle: v => toggleAuto(kind, v),
-                      onTime: t => patch(kind === 'daily' ? { dailyTime: t } : { docTime: t }),
-                    }}
-                  />
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="mb-2 text-sm font-extrabold text-slate-900">Trip details on demand</h2>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {ON_DEMAND_KINDS.map(kind => <LaunchTile key={kind} kind={kind} group={group} onSend={() => setSendKind(kind)} />)}
-              </div>
-            </section>
-
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]">
-              <Board group={group} onOpenChat={onOpenChat} onRemove={removeMember} />
-              <aside className="space-y-5">
-                <NextUp group={group} />
-                <Activity group={group} />
-              </aside>
-            </div>
-          </>
-        )}
-      </div>
-
-      <AnimatePresence>
-        {sendKind && <SendSheet key={sendKind} group={group} kind={sendKind} onClose={() => setSendKind(null)} onDone={load} />}
-        {adding && <AddBookings group={group} onClose={() => setAdding(false)} onAdded={() => { setAdding(false); load(); onChanged() }} />}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-function coverageOf(members: GroupMember[], kind: GroupKind) {
-  const reachable = members.filter(m => !memberBlocker(m, kind))
-  const sent = reachable.filter(m => (kind === 'daily' ? m.dailyDates.length > 0 : isSent(m.coverage[kind]?.status)))
-  return { reachable: reachable.length, sent: sent.length }
-}
-
-function LaunchTile({ kind, group, onSend, auto }: {
-  kind: GroupKind
-  group: GroupDetail
-  onSend: () => void
-  auto?: { on: boolean; time: string; onToggle: (v: boolean) => void; onTime: (t: string) => void }
-}) {
-  const Icon = KIND_ICON[kind]
-  const { reachable, sent } = coverageOf(group.members, kind)
-  const pct = reachable ? Math.round((sent / reachable) * 100) : 0
-  const [time, setTime] = useState(auto?.time ?? '')
-  useEffect(() => { setTime(auto?.time ?? '') }, [auto?.time])
-
-  return (
-    <motion.div
-      whileHover={{ y: -2 }}
-      className={`flex flex-col rounded-2xl border bg-white p-3.5 shadow-sm transition ${auto?.on ? 'border-emerald-300 ring-2 ring-emerald-500/10' : 'border-slate-200'}`}
-    >
-      <div className="flex items-start gap-2.5">
-        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white shadow-md ${KIND_TINT[kind]}`}><Icon className="h-5 w-5" /></span>
-        <div className="min-w-0">
-          <p className="text-[14px] font-bold leading-tight text-slate-900">{KIND_META[kind].label}</p>
-          <p className="mt-0.5 text-xs leading-snug text-slate-500">{KIND_META[kind].blurb}</p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex-1">
-        <div className="flex justify-between text-[11px] font-semibold text-slate-500">
-          <span>{kind === 'daily' ? 'Guests who had a plan' : 'Guests who have it'}</span>
-          <span className="tabular-nums">{sent} of {reachable}</span>
-        </div>
-        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
-          <motion.div className="h-full rounded-full bg-emerald-500" initial={{ width: 0 }} animate={{ width: `${pct}%` }} />
-        </div>
-      </div>
-
-      {auto && (
-        <div className="mt-3 rounded-xl bg-slate-50 px-2.5 py-2">
-          <div className="flex items-center gap-2">
-            <Switch on={auto.on} disabled={!group.canManage} onChange={auto.onToggle} label={`Automatic ${KIND_META[kind].label}`} />
-            <span className={`text-xs font-bold ${auto.on ? 'text-emerald-700' : 'text-slate-500'}`}>Auto</span>
-            <input
-              type="time" value={time} disabled={!group.canManage} aria-label={`${KIND_META[kind].label} send time`}
-              onChange={e => setTime(e.target.value)}
-              onBlur={() => { if (time && time !== auto.time) auto.onTime(time) }}
-              className="ml-auto rounded-md border border-slate-200 bg-white px-1 py-0.5 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-400"
-            />
-          </div>
-          <p className="mt-1.5 text-[11px] leading-snug text-slate-500">{AUTO_RULE[kind]}{kind !== 'daily' && ' Shares its time with the other journey documents.'}</p>
-        </div>
-      )}
-
-      {group.canManage && (
-        <button onClick={onSend} className="mt-3 flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2 text-[13px] font-bold text-white transition hover:bg-slate-700">
-          <Send className="h-3.5 w-3.5" /> Send
-        </button>
-      )}
-    </motion.div>
-  )
-}
-
-function TripTrack({ m }: { m: GroupMember }) {
-  const start = addDays(m.arrival, -7)
-  const span = Math.max(1, (Date.parse(m.departure) - Date.parse(start)) / 86400000)
-  const at = (iso: string) => Math.min(100, Math.max(0, ((Date.parse(iso) - Date.parse(start)) / 86400000 / span) * 100))
-  const label = m.stage === 'finished' ? 'Finished'
-    : m.stage === 'in-trip' ? `On trip · day ${-m.daysToArrival + 1}`
-    : m.daysToArrival === 0 ? 'Arrives today' : `In ${m.daysToArrival} day${m.daysToArrival === 1 ? '' : 's'}`
-  return (
-    <div className="w-36 shrink-0" title={`${shortDate(m.arrival)} to ${shortDate(m.departure)}`}>
-      <p className={`text-[11px] font-bold ${m.stage === 'in-trip' ? 'text-emerald-600' : m.stage === 'finished' ? 'text-slate-400' : 'text-slate-700'}`}>{label}</p>
-      <div className="relative mt-1.5 h-1 rounded-full bg-slate-200">
-        <div className="absolute inset-y-0 left-0 rounded-full bg-emerald-500" style={{ width: `${at(m.localToday)}%` }} />
-        {[addDays(m.arrival, -3), m.arrival].map(d => (
-          <span key={d} className="absolute top-1/2 h-2 w-0.5 -translate-y-1/2 bg-slate-400" style={{ left: `${at(d)}%` }} />
-        ))}
-      </div>
-      <p className="mt-1 text-[10px] text-slate-400">{shortDate(m.arrival)} → {shortDate(m.departure)}</p>
-    </div>
-  )
-}
-
-function CoverageDot({ m, kind }: { m: GroupMember; kind: GroupKind }) {
-  const c = m.coverage[kind]
-  const Icon = KIND_ICON[kind]
-  const tone = !c ? 'bg-slate-100 text-slate-300'
-    : c.status === 'failed' ? 'bg-rose-100 text-rose-600'
-    : c.status === 'read' ? 'bg-sky-100 text-sky-600'
-    : c.status === 'delivered' ? 'bg-emerald-100 text-emerald-700'
-    : 'bg-emerald-50 text-emerald-500'
-  const word = !c ? 'not sent' : c.status === 'failed' ? 'failed' : c.status === 'read' ? 'read' : c.status === 'delivered' ? 'delivered' : 'sent'
-  return (
-    <span title={`${KIND_META[kind].label}: ${word}${c ? ` · ${stamp(c.at)}` : ''}`} className={`grid h-6 w-6 place-items-center rounded-full ${tone}`}>
-      <Icon className="h-3 w-3" />
-    </span>
-  )
-}
-
-function Board({ group, onOpenChat, onRemove }: { group: GroupDetail; onOpenChat: (m: GroupMember) => void; onRemove: (ref: string) => void }) {
-  return (
-    <section className="min-w-0">
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h2 className="text-sm font-extrabold text-slate-900">Guests</h2>
-        <p className="flex items-center gap-2.5 text-[11px] font-medium text-slate-500">
-          <Legend tone="bg-sky-400" label="Read" /><Legend tone="bg-emerald-500" label="Delivered" /><Legend tone="bg-emerald-200" label="Sent" /><Legend tone="bg-rose-400" label="Failed" />
-        </p>
-      </div>
-      <div className="divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {group.members.map(m => (
-          <div key={m.bookingRef} className={`group/row flex flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-3 ${m.blocked ? 'bg-slate-50/70' : ''}`}>
-            <div className="flex min-w-[190px] flex-1 items-center gap-2.5">
-              <span style={{ background: avatarGradient(m.bookingRef) }} className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[11px] font-bold text-white">{initials(m.leadName, m.bookingRef)}</span>
-              <div className="min-w-0">
-                <p className="truncate text-[13.5px] font-bold text-slate-900">{m.leadName ?? 'Guest'}</p>
-                <p className="truncate text-[11px] text-slate-500">{flag(m.country)} {m.isNumber || m.bookingRef} · {m.pax}</p>
-                {(m.blocked || !m.phone) && (
-                  <p className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-amber-700"><AlertTriangle className="h-3 w-3" /> {m.blocked ?? 'No WhatsApp number'}</p>
-                )}
-              </div>
-            </div>
-            <TripTrack m={m} />
-            <div className="flex gap-1">{ALL_KINDS.map(k => <CoverageDot key={k} m={m} kind={k} />)}</div>
-            <div className="flex w-[68px] justify-end gap-1">
-              {m.phone && (
-                <button onClick={() => onOpenChat(m)} aria-label={`Open chat with ${m.leadName ?? 'guest'}`} title="Open chat" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600"><MessageCircle className="h-4 w-4" /></button>
-              )}
-              {group.canManage && (
-                <button onClick={() => onRemove(m.bookingRef)} aria-label={`Remove ${m.leadName ?? 'booking'} from group`} title="Remove from group" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"><X className="h-4 w-4" /></button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-const Legend = ({ tone, label }: { tone: string; label: string }) => (
-  <span className="flex items-center gap-1"><span className={`h-2 w-2 rounded-full ${tone}`} /> {label}</span>
-)
-
-function NextUp({ group }: { group: GroupDetail }) {
-  return (
-    <section>
-      <h2 className="mb-2 flex items-center gap-1.5 text-sm font-extrabold text-slate-900"><CalendarClock className="h-4 w-4 text-emerald-600" /> Next automatic sends</h2>
-      <div className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-        {group.upcoming.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-slate-500">Nothing scheduled. Switch on Auto above and upcoming sends appear here.</p>
-        ) : group.upcoming.map(u => {
-          const Icon = KIND_ICON[u.kind]
-          return (
-            <div key={`${u.kind}-${u.bookingRef}`} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
-              <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white ${KIND_TINT[u.kind]}`}><Icon className="h-3.5 w-3.5" /></span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-bold text-slate-800">{KIND_META[u.kind].short} · {u.leadName ?? u.bookingRef}</p>
-                <p className="text-[11px] text-slate-500">{shortDate(u.date)} at {u.time}</p>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-function Activity({ group }: { group: GroupDetail }) {
-  const tone: Record<string, string> = {
-    sent: 'text-emerald-600', failed: 'text-rose-600', skipped: 'text-slate-400', sending: 'text-amber-600',
-  }
-  return (
-    <section>
-      <h2 className="mb-2 flex items-center gap-1.5 text-sm font-extrabold text-slate-900"><Clock className="h-4 w-4 text-emerald-600" /> Activity</h2>
-      <div className="max-h-[360px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-        {group.activity.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-slate-500">Sends from this group appear here.</p>
-        ) : group.activity.map(a => (
-          <div key={a.id} className="rounded-xl px-2 py-1.5">
-            <p className="flex items-center gap-1 text-xs font-bold text-slate-800">
-              {a.trigger === 'auto' && <Zap className="h-3 w-3 shrink-0 text-amber-500" />}
-              <span className="truncate">{KIND_META[a.kind].short} · {a.leadName ?? a.bookingRef}</span>
-              <span className={`ml-auto shrink-0 text-[11px] font-bold capitalize ${tone[a.status] ?? 'text-slate-500'}`}>{a.status}</span>
-            </p>
-            <p className="text-[11px] text-slate-400">{stamp(a.createdAt)}{a.sentByName ? ` · ${a.sentByName}` : ''}</p>
-            {a.detail && <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{a.detail}</p>}
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-// ── Send sheet ───────────────────────────────────────────────────────────────
-
-type RowState = { status: 'queued' | 'sending' | GroupSendOutcome['status']; detail?: string | null }
-
-function SendSheet({ group, kind, onClose, onDone }: { group: GroupDetail; kind: GroupKind; onClose: () => void; onDone: () => void }) {
-  const Icon = KIND_ICON[kind]
-  const isDoc = kind === 'day7' || kind === 'day3'
-  const [dayOffset, setDayOffset] = useState(() => (new Date().getHours() < 12 ? 0 : 1))
-  const [note, setNote] = useState('')
-  const dateFor = useCallback((m: GroupMember) => (kind === 'daily' ? addDays(m.localToday, dayOffset) : undefined), [kind, dayOffset])
-
-  const alreadyHas = useCallback((m: GroupMember) => {
-    if (kind === 'daily') return m.dailyDates.includes(addDays(m.localToday, dayOffset))
-    return isSent(m.coverage[kind]?.status)
-  }, [kind, dayOffset])
-
-  const [ticked, setTicked] = useState<Set<string>>(new Set())
-  useEffect(() => {
-    setTicked(new Set(group.members.filter(m => !memberBlocker(m, kind, dateFor(m)) && !alreadyHas(m)).map(m => m.bookingRef)))
-    // Only when the day changes: a background refresh must not undo the desk's ticks.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayOffset])
-
-  const [previewRef, setPreviewRef] = useState<string | null>(null)
-  const previewMember = useMemo(() => {
-    const open = group.members.filter(m => !memberBlocker(m, kind, dateFor(m)))
-    return open.find(m => m.bookingRef === previewRef) ?? open.find(m => ticked.has(m.bookingRef)) ?? open[0] ?? null
-  }, [group.members, previewRef, ticked, kind, dateFor])
-
-  const [preview, setPreview] = useState<{ text: string | null; attachment: string | null; empty?: string } | null>(null)
-  const [previewing, setPreviewing] = useState(false)
-  const previewKey = previewMember ? `${previewMember.bookingRef}|${dayOffset}|${note}` : ''
-  useEffect(() => {
-    if (!previewKey || !previewMember) { setPreview(null); return }
-    let stale = false
-    setPreviewing(true)
-    const t = setTimeout(async () => {
-      const res = await api<{ text: string | null; attachment: string | null; empty?: string }>(`/api/whatsapp/groups/${group.id}/send`, {
-        method: 'POST',
-        body: JSON.stringify({ preview: true, kind, ref: previewMember.bookingRef, date: dateFor(previewMember), note }),
-      })
-      if (stale) return
-      setPreview(res.success && res.data ? res.data : { text: null, attachment: null, empty: res.error })
-      setPreviewing(false)
-    }, 300)
-    return () => { stale = true; clearTimeout(t) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewKey])
-
-  const [rows, setRows] = useState<Record<string, RowState>>({})
-  const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready')
-  const stopRef = useRef(false)
-
-  async function run() {
-    const queue = group.members.filter(m => ticked.has(m.bookingRef))
-    if (queue.length === 0) return
-    stopRef.current = false
-    setPhase('running')
-    setRows(Object.fromEntries(queue.map(m => [m.bookingRef, { status: 'queued' as const }])))
-    const set = (ref: string, s: RowState) => setRows(r => ({ ...r, [ref]: s }))
-
-    let next = 0
-    const worker = async () => {
-      while (next < queue.length && !stopRef.current) {
-        const m = queue[next++]
-        set(m.bookingRef, { status: 'sending' })
-        const res = await api<GroupSendOutcome>(`/api/whatsapp/groups/${group.id}/send`, {
-          method: 'POST',
-          body: JSON.stringify({ kind, ref: m.bookingRef, date: dateFor(m), note, resend: alreadyHas(m) }),
-        })
-        if (res.success && res.data) set(m.bookingRef, res.data)
-        else set(m.bookingRef, { status: 'failed', detail: res.error ?? 'Send failed' })
-      }
-    }
-    await Promise.all(Array.from({ length: SEND_CONCURRENCY }, worker))
-    setPhase('done')
-    onDone()
-  }
-
-  const counts = Object.values(rows).reduce<Record<string, number>>((c, r) => ({ ...c, [r.status]: (c[r.status] ?? 0) + 1 }), {})
-  const finished = (counts.sent ?? 0) + (counts.failed ?? 0) + (counts.skipped ?? 0)
-  const total = Object.keys(rows).length
-
-  const close = () => { if (phase !== 'running') onClose() }
-
-  return (
-    <Sheet
-      wide onClose={close}
-      title={`Send ${KIND_META[kind].label.toLowerCase()}`}
-      subtitle={`${group.name}: each guest gets their own message`}
-      icon={<span className={`grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br text-white shadow-md ${KIND_TINT[kind]}`}><Icon className="h-4 w-4" /></span>}
-      footer={
-        <>
-          {phase !== 'ready' && (
-            <p className="mr-auto text-xs font-semibold text-slate-600">
-              {finished} of {total} done · {counts.sent ?? 0} sent{counts.failed ? ` · ${counts.failed} failed` : ''}{counts.skipped ? ` · ${counts.skipped} skipped` : ''}
-            </p>
-          )}
-          {phase === 'running' ? (
-            <button onClick={() => { stopRef.current = true }} className={`${btnGhost} flex items-center gap-1.5`}><Square className="h-3.5 w-3.5" /> Stop after current</button>
-          ) : phase === 'done' ? (
-            <button onClick={onClose} className={btnPrimary}><Check className="h-4 w-4" /> Done</button>
-          ) : (
-            <>
-              <button onClick={onClose} className={btnGhost}>Cancel</button>
-              <button onClick={run} disabled={ticked.size === 0} className={btnPrimary}>
-                <Send className="h-4 w-4" /> Send to {ticked.size} guest{ticked.size === 1 ? '' : 's'}
-              </button>
-            </>
-          )}
-        </>
-      }
-    >
-      <div className="grid md:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0 border-b border-slate-100 p-4 md:border-b-0 md:border-r">
-          {kind === 'daily' && (
-            <div className="mb-3 flex gap-1 rounded-xl bg-slate-100 p-1">
-              {[{ v: 0, l: "Today's plan" }, { v: 1, l: "Tomorrow's plan" }].map(o => (
-                <button key={o.v} disabled={phase !== 'ready'} onClick={() => setDayOffset(o.v)} className={`flex-1 rounded-lg py-1.5 text-xs font-bold transition ${dayOffset === o.v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{o.l}</button>
-              ))}
-            </div>
-          )}
-          {isDoc && (
-            <input
-              value={note} onChange={e => setNote(e.target.value)} maxLength={300} disabled={phase !== 'ready'}
-              placeholder="Optional line for the message, e.g. Your driver will call you the evening before"
-              className="mb-3 h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-[13px] outline-none focus:border-emerald-400 focus:bg-white"
-            />
-          )}
-          <ul className="space-y-1">
-            {group.members.map(m => {
-              const blocker = memberBlocker(m, kind, dateFor(m))
-              const row = rows[m.bookingRef]
-              const has = alreadyHas(m)
-              const on = ticked.has(m.bookingRef)
-              const driversShort = kind === 'day3' && m.readiness.driversAssigned < m.readiness.driverItems
-              return (
-                <li key={m.bookingRef} className={`flex items-center gap-2.5 rounded-xl px-2 py-1.5 ${previewMember?.bookingRef === m.bookingRef ? 'bg-emerald-50/70' : ''}`}>
-                  {row ? <RowIcon status={row.status} /> : (
-                    <input
-                      type="checkbox" checked={on} disabled={Boolean(blocker)} aria-label={`Send to ${m.leadName ?? m.bookingRef}`}
-                      onChange={() => setTicked(s => { const n = new Set(s); if (on) n.delete(m.bookingRef); else n.add(m.bookingRef); return n })}
-                      className="h-4 w-4 shrink-0 accent-emerald-600"
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className={`truncate text-[13px] font-semibold ${blocker ? 'text-slate-400' : 'text-slate-800'}`}>{m.leadName ?? 'Guest'} <span className="font-normal text-slate-400">{m.isNumber || m.bookingRef}</span></p>
-                    {row?.detail ? <p className={`text-[11px] leading-snug ${row.status === 'failed' ? 'text-rose-600' : 'text-slate-500'}`}>{row.detail}</p>
-                      : blocker ? <p className="text-[11px] text-slate-400">{blocker}</p>
-                      : has ? <p className="text-[11px] text-slate-500">Already sent. Tick to send again.</p>
-                      : driversShort ? <p className="text-[11px] text-amber-700">Drivers {m.readiness.driversAssigned} of {m.readiness.driverItems} assigned</p>
-                      : null}
-                  </div>
-                  {!blocker && !row && (
-                    <button onClick={() => setPreviewRef(m.bookingRef)} aria-label={`Preview for ${m.leadName ?? m.bookingRef}`} title="Preview this guest's message" className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Eye className="h-3.5 w-3.5" /></button>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-
-        <div className="bg-[#efeae2] p-4">
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-            Preview{previewMember ? `: ${previewMember.leadName ?? previewMember.bookingRef}` : ''}
-            {previewing && <Loader2 className="h-3 w-3 animate-spin" />}
-          </p>
-          {preview?.text ? (
-            <div className="rounded-2xl rounded-tl-sm bg-white p-3 text-[13px] leading-relaxed text-slate-800 shadow-sm">
-              {preview.attachment && (
-                <div className="mb-2 flex items-center gap-2 rounded-xl bg-slate-100 px-2.5 py-2 text-xs font-semibold text-slate-700">
-                  <FileText className="h-4 w-4 text-rose-500" /> {preview.attachment}
-                </div>
-              )}
-              <p className="whitespace-pre-wrap break-words"><WaText text={preview.text} /></p>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-500">{preview?.empty ?? (previewMember ? 'Loading…' : 'No guest can receive this right now.')}</p>
-          )}
-          {kind === 'daily' && <p className="mt-2 text-[11px] leading-snug text-slate-500">Ticket and voucher files for the day follow as separate messages.</p>}
-        </div>
-      </div>
-    </Sheet>
-  )
-}
-
-function RowIcon({ status }: { status: RowState['status'] }) {
-  if (status === 'sending') return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-emerald-500" />
-  if (status === 'sent') return <CheckCheck className="h-4 w-4 shrink-0 text-emerald-600" />
-  if (status === 'failed') return <AlertTriangle className="h-4 w-4 shrink-0 text-rose-500" />
-  if (status === 'skipped') return <X className="h-4 w-4 shrink-0 text-slate-400" />
-  return <Clock className="h-4 w-4 shrink-0 text-slate-300" />
-}
-
-// ── Add bookings ─────────────────────────────────────────────────────────────
-
-const WINDOWS = [
-  { key: 'next7', label: 'Next 7 days' }, { key: 'next14', label: 'Next 14 days' }, { key: 'next30', label: 'Next 30 days' },
-  { key: 'intrip', label: 'On trip now' }, { key: 'all', label: 'All upcoming' },
-]
-
-function AddBookings({ group, onClose, onAdded }: { group: GroupDetail; onClose: () => void; onAdded: () => void }) {
-  const [q, setQ] = useState('')
-  const [window_, setWindow] = useState('next14')
-  const [rows, setRows] = useState<GroupCandidate[] | null>(null)
-  const [picked, setPicked] = useState<Set<string>>(new Set())
-  const [saving, setSaving] = useState(false)
-  const inGroup = useMemo(() => new Set(group.members.map(m => m.bookingRef)), [group.members])
-
-  useEffect(() => {
-    let stale = false
-    const t = setTimeout(async () => {
-      const res = await api<GroupCandidate[]>(`/api/whatsapp/groups/candidates?window=${window_}&q=${encodeURIComponent(q.trim())}`)
-      if (stale) return
-      setRows(res.data ?? [])
-      if (!res.success) toast.error(res.error ?? 'Could not load bookings')
-    }, 250)
-    return () => { stale = true; clearTimeout(t) }
-  }, [q, window_])
-
-  const selectable = (rows ?? []).filter(r => !inGroup.has(r.bookingRef))
-  const allOn = selectable.length > 0 && selectable.every(r => picked.has(r.bookingRef))
-
-  async function add() {
-    setSaving(true)
-    const res = await api<{ added: number }>(`/api/whatsapp/groups/${group.id}/members`, { method: 'POST', body: JSON.stringify({ refs: Array.from(picked) }) })
-    setSaving(false)
-    if (res.success) { toast.success(`${res.data?.added ?? 0} added to ${group.name}`); onAdded() }
-    else toast.error(res.error ?? 'Could not add those bookings')
-  }
-
-  return (
-    <Sheet
-      title="Add bookings" subtitle={group.name} onClose={onClose}
-      icon={<span className={`grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br text-white ${GROUP_COLORS[group.color].hero}`}><Plus className="h-4 w-4" /></span>}
-      footer={
-        <>
-          <button onClick={onClose} className={btnGhost}>Cancel</button>
-          <button onClick={add} disabled={picked.size === 0 || saving} className={btnPrimary}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add {picked.size || ''}
-          </button>
-        </>
-      }
-    >
-      <div className="sticky top-0 z-10 space-y-2 border-b border-slate-100 bg-white p-4">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="File number, ref, guest or agent"
-            className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
-          />
-        </div>
-        {q.trim().length < 2 && (
-          <div className="flex flex-wrap gap-1.5">
-            {WINDOWS.map(w => (
-              <button key={w.key} onClick={() => setWindow(w.key)} className={`rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${window_ === w.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{w.label}</button>
-            ))}
-          </div>
-        )}
-        {selectable.length > 0 && (
-          <label className="flex w-fit items-center gap-2 text-xs font-semibold text-slate-600">
-            <input
-              type="checkbox" checked={allOn} className="h-4 w-4 accent-emerald-600"
-              onChange={() => setPicked(s => {
-                const n = new Set(s)
-                selectable.forEach(r => (allOn ? n.delete(r.bookingRef) : n.add(r.bookingRef)))
-                return n
-              })}
-            />
-            Select all shown ({selectable.length})
-          </label>
-        )}
-      </div>
-      <ul className="p-2">
-        {rows === null && <li className="grid place-items-center py-10"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></li>}
-        {rows?.length === 0 && <li className="px-3 py-10 text-center text-sm text-slate-500">No live bookings found.</li>}
-        {rows?.map(r => {
-          const member = inGroup.has(r.bookingRef)
-          return (
-            <li key={r.bookingRef}>
-              <label className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 ${member ? 'opacity-50' : 'cursor-pointer hover:bg-slate-50'}`}>
-                <input
-                  type="checkbox" disabled={member} checked={member || picked.has(r.bookingRef)} className="h-4 w-4 accent-emerald-600"
-                  onChange={() => setPicked(s => { const n = new Set(s); if (n.has(r.bookingRef)) n.delete(r.bookingRef); else n.add(r.bookingRef); return n })}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-semibold text-slate-800">{r.leadName ?? 'Guest'}</span>
-                  <span className="block truncate text-[11px] text-slate-500">{flag(r.country)} {r.isNumber || r.bookingRef}</span>
-                </span>
-                <span className="shrink-0 text-right text-[11px] text-slate-500">
-                  <span className="flex items-center justify-end gap-1"><CalendarDays className="h-3 w-3" /> {shortDate(r.arrival)}</span>
-                  {member ? <span className="font-semibold">In group</span> : !r.hasPhone && <span className="font-semibold text-amber-700">No number</span>}
-                </span>
-              </label>
-            </li>
-          )
-        })}
-      </ul>
-    </Sheet>
-  )
-}
-
-// ── Contact list (left pane of an open group) ────────────────────────────────
-
-type ContactFilter = 'all' | 'unread' | 'trip' | 'soon'
-
-export function GroupContacts({ state, conversations, activeRef, onBack, onOverview, onOpen }: {
-  state: ReturnType<typeof useGroupDetail>
-  conversations: Conversation[]
-  activeRef: string | null
-  onBack: () => void
-  onOverview: () => void
-  onOpen: (m: GroupMember) => void
-}) {
-  const { group } = state
-  const [filter, setFilter] = useState<ContactFilter>('all')
-  const byPhone = useMemo(() => new Map(conversations.map(c => [c.phone, c])), [conversations])
-
-  if (!group) return <div className="grid place-items-center py-10"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></div>
-
-  const unreadOf = (m: GroupMember) => (m.phone ? byPhone.get(m.phone)?.unreadCount ?? 0 : 0)
-  const unread = group.members.filter(m => unreadOf(m) > 0).length
-  const chips: { key: ContactFilter; label: string }[] = [
-    { key: 'all', label: `All ${group.members.length}` },
-    { key: 'unread', label: `Unread ${unread}` },
-    { key: 'trip', label: 'On trip' },
-    { key: 'soon', label: 'Arriving soon' },
-  ]
-  const rows = group.members
-    .filter(m => filter === 'all' || (filter === 'unread' ? unreadOf(m) > 0
-      : filter === 'trip' ? m.stage === 'in-trip' : m.stage === 'upcoming' && m.daysToArrival <= 7))
-    .sort((a, b) =>
-      (byPhone.get(b.phone ?? '')?.updatedAt ?? '').localeCompare(byPhone.get(a.phone ?? '')?.updatedAt ?? ''))
-
-  return (
-    <div className="px-1">
-      <div className={`relative mb-2 overflow-hidden rounded-2xl bg-gradient-to-br p-3 text-white shadow-md ${GROUP_COLORS[group.color].hero}`}>
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} aria-label="All groups" title="All groups" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/15 transition hover:bg-white/25"><ArrowLeft className="h-4 w-4" /></button>
-          <p className="min-w-0 flex-1 truncate text-[14px] font-extrabold">{group.name}</p>
-          <button onClick={onOverview} className="flex shrink-0 items-center gap-1 rounded-lg bg-white/15 px-2 py-1.5 text-[11px] font-bold transition hover:bg-white/25"><LayoutDashboard className="h-3.5 w-3.5" /> Overview</button>
-        </div>
-      </div>
-      <div className="mb-1.5 flex gap-1 overflow-x-auto pb-1">
-        {chips.map(c => (
-          <button key={c.key} onClick={() => setFilter(c.key)} className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold transition ${filter === c.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{c.label}</button>
-        ))}
-      </div>
-      {rows.length === 0 && <p className="px-3 py-8 text-center text-xs text-slate-500">No guests match this filter.</p>}
-      {rows.map(m => {
-        const c = m.phone ? byPhone.get(m.phone) : undefined
-        const n = unreadOf(m)
-        const when = m.stage === 'in-trip' ? 'On trip' : m.stage === 'finished' ? 'Finished' : m.daysToArrival === 0 ? 'Today' : `T-${m.daysToArrival}`
-        return (
-          <button
-            key={m.bookingRef} disabled={!m.phone} onClick={() => onOpen(m)}
-            className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition disabled:opacity-60 ${activeRef === m.bookingRef ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'hover:bg-slate-50'}`}
-          >
-            <span style={{ background: avatarGradient(m.bookingRef) }} className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[12px] font-bold text-white">{initials(m.leadName, m.bookingRef)}</span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-baseline gap-2">
-                <span className={`truncate text-[13.5px] text-slate-900 ${n ? 'font-extrabold' : 'font-bold'}`}>{m.leadName ?? 'Guest'}</span>
-                {c && <span className={`ml-auto shrink-0 text-[11px] ${n ? 'font-bold text-emerald-600' : 'text-slate-400'}`}>{fmtListStamp(c.updatedAt)}</span>}
-              </span>
-              <span className="mt-0.5 flex items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{!m.phone ? 'No WhatsApp number' : c?.snippet || 'No messages yet'}</span>
-                {n > 0 && <span className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">{n}</span>}
-              </span>
-              <span className="mt-1 flex items-center gap-1.5 text-[10.5px] font-bold">
-                <span className="truncate text-slate-400">{flag(m.country)} {m.isNumber || m.bookingRef}</span>
-                <span className={`rounded-full px-1.5 ${m.stage === 'in-trip' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{when}</span>
-              </span>
-            </span>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Trip panel (right pane of a guest chat) ──────────────────────────────────
 
 const MATERIAL_ORDER: GroupKind[] = ['day7', 'day3', 'daily', 'itinerary', 'flights', 'hotels', 'driver']
 
@@ -1044,8 +187,9 @@ function StatusPill({ m, kind }: { m: GroupMember; kind: GroupKind }) {
   )
 }
 
-function MaterialRow({ group, m, kind, onInsert, onSent }: {
-  group: GroupDetail; m: GroupMember; kind: GroupKind; onInsert: (text: string) => void; onSent: () => void
+function MaterialRow({ group, m, kind, onInsert, onSent, onPatch }: {
+  group: GroupDetail; m: GroupMember; kind: GroupKind
+  onInsert: (text: string) => void; onSent: () => void; onPatch: (p: Partial<GroupDetail>, message?: string) => void
 }) {
   const Icon = KIND_ICON[kind]
   const isDoc = kind === 'day7' || kind === 'day3'
@@ -1056,6 +200,12 @@ function MaterialRow({ group, m, kind, onInsert, onSent }: {
   const date = kind === 'daily' ? addDays(m.localToday, dayOffset) : undefined
   const blocker = memberBlocker(m, kind, date)
   const auto = autoNote(group, m, kind)
+  const autoField = AUTO_FIELD[kind as keyof typeof AUTO_FIELD] ?? null
+  const savedTime = kind === 'daily' ? group.dailyTime : group.docTime
+  const [time, setTime] = useState(savedTime)
+  useEffect(() => { setTime(savedTime) }, [savedTime])
+  const lastTry = group.activity.find(a => a.kind === kind)
+  const lastFail = lastTry && lastTry.status !== 'sent' && lastTry.detail ? lastTry.detail : null
   const already = kind === 'daily' ? Boolean(date && m.dailyDates.includes(date)) : isSent(m.coverage[kind]?.status)
 
   const fetchPreview = useCallback(async () => {
@@ -1114,6 +264,20 @@ function MaterialRow({ group, m, kind, onInsert, onSent }: {
         )}
       </div>
       {!open && blocker && <p className="px-3 pb-2 text-[11px] text-slate-400">{blocker}</p>}
+      {lastFail && <p className="px-3 pb-2 text-[11px] leading-snug text-rose-600">{lastFail}</p>}
+      {autoField && (
+        <div className="flex items-center gap-2 border-t border-slate-100 px-3 py-1.5">
+          <Switch on={group[autoField]} disabled={!group.canManage} label={`Automatic ${KIND_META[kind].label}`} onChange={on => onPatch({ [autoField]: on }, on ? `${KIND_META[kind].label} is now automatic` : `${KIND_META[kind].label} automation is off`)} />
+          <span className={`flex-1 text-[11px] font-bold ${group[autoField] ? 'text-emerald-700' : 'text-slate-500'}`}>Auto</span>
+          <input
+            type="time" value={time} disabled={!group.canManage} aria-label={`${KIND_META[kind].label} send time`}
+            onChange={e => setTime(e.target.value)}
+            onBlur={() => { if (time && time !== savedTime) onPatch(kind === 'daily' ? { dailyTime: time } : { docTime: time }) }}
+            className="shrink-0 rounded-md border border-slate-200 bg-white px-1 py-0.5 text-[11px] font-semibold text-slate-700 outline-none focus:border-emerald-400"
+          />
+        </div>
+      )}
+      {autoField && group[autoField] && <p className="px-3 pb-2 text-[11px] leading-snug text-slate-500">{AUTO_RULE[kind]}</p>}
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -1137,7 +301,7 @@ function MaterialRow({ group, m, kind, onInsert, onSent }: {
                   </div>
                   {already && <p className="text-[11px] font-semibold text-amber-700">This guest already has it. Sending again sends a second copy.</p>}
                   <button onClick={send} disabled={busy || !preview?.text} className={`${btnPrimary} w-full justify-center`}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {already ? 'Send again' : `Send to ${m.leadName?.split(' ')[0] ?? 'guest'}`}
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} {already ? 'Send again' : group.channel.mode === 'whatsapp' ? 'Send to the group' : 'Send to guests'}
                   </button>
                 </>
               )}
@@ -1203,8 +367,8 @@ function BoardingPass({ m, brief, color }: { m: GroupMember; brief: GuestBrief |
   )
 }
 
-function ReplyCoach({ groupId, m, latest, onInsert }: {
-  groupId: string; m: GroupMember; latest: { id: string; direction: string } | null; onInsert: (text: string) => void
+function ReplyCoach({ groupId, latest, onInsert }: {
+  groupId: string; latest: { id: string; direction: string } | null; onInsert: (text: string) => void
 }) {
   const [state, setState] = useState<{ key: string; data?: ReplySuggestions; error?: string } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1214,20 +378,18 @@ function ReplyCoach({ groupId, m, latest, onInsert }: {
   const ask = useCallback(async (key: string, withHint?: string) => {
     setLoading(true)
     const res = await api<ReplySuggestions>(`/api/whatsapp/groups/${groupId}/suggest`, {
-      method: 'POST', body: JSON.stringify({ ref: m.bookingRef, hint: withHint }),
+      method: 'POST', body: JSON.stringify({ hint: withHint }),
     })
     setLoading(false)
     setState(res.success && res.data ? { key, data: res.data } : { key, error: res.error ?? 'Suggestions are unavailable right now.' })
-  }, [groupId, m.bookingRef])
+  }, [groupId])
 
-  // Drafts itself once per new guest message, so an open chat costs one call.
+  // Drafts itself once per new message from a contact, so an open chat costs one call.
   useEffect(() => {
-    if (latest?.direction !== 'inbound') return
-    const key = `${m.bookingRef}|${latest.id}`
-    if (asked.current.has(key)) return
-    asked.current.add(key)
-    ask(key)
-  }, [latest, m.bookingRef, ask])
+    if (latest?.direction !== 'inbound' || asked.current.has(latest.id)) return
+    asked.current.add(latest.id)
+    ask(latest.id)
+  }, [latest, ask])
 
   return (
     <section className="rounded-2xl bg-gradient-to-br from-violet-50 via-white to-sky-50 p-3 ring-1 ring-violet-200/70">
@@ -1239,7 +401,7 @@ function ReplyCoach({ groupId, m, latest, onInsert }: {
 
       {loading && !state?.data && <div className="mt-2 space-y-1.5"><div className="h-12 animate-pulse rounded-xl bg-violet-100/70" /><div className="h-12 animate-pulse rounded-xl bg-violet-100/50" /></div>}
       {state?.error && <p className="mt-2 text-xs text-rose-600">{state.error}</p>}
-      {!state && !loading && <p className="mt-1.5 text-xs text-slate-500">Drafts appear when the guest writes, using this booking&apos;s details. Press refresh to draft one now.</p>}
+      {!state && !loading && <p className="mt-1.5 text-xs text-slate-500">Drafts appear when someone writes, using this booking&apos;s details. Press refresh to draft one now.</p>}
       {state?.data && (
         <>
           {state.data.summary && <p className="mt-2 text-xs font-medium leading-snug text-slate-600">{state.data.summary}</p>}
@@ -1263,45 +425,619 @@ function ReplyCoach({ groupId, m, latest, onInsert }: {
           className="h-8 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-xs outline-none focus:border-violet-400"
         />
       </form>
-      <p className="mt-1.5 text-[10.5px] text-slate-400">Goes to the chat box only. Check it before you send.</p>
+      <p className="mt-1.5 text-[10.5px] text-slate-400">Goes to the chat box only. Everyone in the group gets what you send, so check it first.</p>
     </section>
   )
 }
 
-export function GuestTripPanel({ group, member, latest, open, onClose, onInsert, onSent }: {
-  group: GroupDetail
-  member: GroupMember
-  latest: { id: string; direction: string } | null
-  /** Below the three-pane width the panel is a drawer; this says it is showing. */
-  open: boolean
-  onClose: () => void
-  onInsert: (text: string) => void
-  onSent: () => void
-}) {
-  const [brief, setBrief] = useState<GuestBrief | null>(null)
+// ── Booking picker ───────────────────────────────────────────────────────────
+
+const WINDOWS = [
+  { key: 'next7', label: 'Next 7 days' }, { key: 'next14', label: 'Next 14 days' }, { key: 'next30', label: 'Next 30 days' },
+  { key: 'intrip', label: 'On trip now' }, { key: 'all', label: 'All upcoming' },
+]
+
+function BookingPicker({ onPick, picked }: { onPick: (b: GroupCandidate) => void; picked: string | null }) {
+  const [q, setQ] = useState('')
+  const [window_, setWindow] = useState('next14')
+  const [rows, setRows] = useState<GroupCandidate[] | null>(null)
+
   useEffect(() => {
     let stale = false
+    const t = setTimeout(async () => {
+      const res = await api<GroupCandidate[]>(`/api/whatsapp/groups/candidates?window=${window_}&q=${encodeURIComponent(q.trim())}`)
+      if (stale) return
+      setRows(res.data ?? [])
+      if (!res.success) toast.error(res.error ?? 'Could not load bookings')
+    }, 250)
+    return () => { stale = true; clearTimeout(t) }
+  }, [q, window_])
+
+  return (
+    <div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          value={q} onChange={e => setQ(e.target.value)} placeholder="File number, ref, guest or agent"
+          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+        />
+      </div>
+      {q.trim().length < 2 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {WINDOWS.map(w => (
+            <button key={w.key} type="button" onClick={() => setWindow(w.key)} className={`rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${window_ === w.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{w.label}</button>
+          ))}
+        </div>
+      )}
+      <ul className="mt-2 max-h-64 overflow-y-auto">
+        {rows === null && <li className="grid place-items-center py-8"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></li>}
+        {rows?.length === 0 && <li className="px-3 py-8 text-center text-sm text-slate-500">No live bookings found.</li>}
+        {rows?.map(r => (
+          <li key={r.bookingRef}>
+            <button type="button" onClick={() => onPick(r)} className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition ${picked === r.bookingRef ? 'bg-emerald-50 ring-1 ring-emerald-300' : 'hover:bg-slate-50'}`}>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-semibold text-slate-800">{r.leadName ?? 'Guest'}</span>
+                <span className="block truncate text-[11px] text-slate-500">{flag(r.country)} {r.isNumber || r.bookingRef}</span>
+              </span>
+              <span className="shrink-0 text-right text-[11px] text-slate-500">
+                <span className="flex items-center justify-end gap-1"><CalendarDays className="h-3 w-3" /> {shortDate(r.arrival)}</span>
+                {!r.hasPhone && <span className="font-semibold text-amber-700">No number</span>}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function CreateGroup({ onClose, onCreated, onSetupNeeded }: { onClose: () => void; onCreated: (id: string) => void; onSetupNeeded: () => void }) {
+  const [booking, setBooking] = useState<GroupCandidate | null>(null)
+  const [name, setName] = useState('')
+  const [color, setColor] = useState<GroupColor>('emerald')
+  const [saving, setSaving] = useState(false)
+
+  function pick(b: GroupCandidate) {
+    setBooking(b)
+    setName(`${b.isNumber || b.bookingRef} ${b.leadName ?? 'Trip'}`.trim())
+  }
+
+  async function create() {
+    if (!booking || !name.trim()) return
+    setSaving(true)
+    const res = await api<{ id: string; existing?: boolean }>('/api/whatsapp/groups', {
+      method: 'POST', body: JSON.stringify({ name, color, ref: booking.bookingRef }),
+    })
+    setSaving(false)
+    if (res.success && res.data) {
+      if (res.data.existing) toast('This booking already has a group, so it is open now')
+      onCreated(res.data.id)
+    } else if (res.error === SETUP_NEEDED_ERROR) onSetupNeeded()
+    else toast.error(res.error ?? 'Could not create the group')
+  }
+
+  return (
+    <Sheet
+      title="New chat group" subtitle="One group per booking. The guest joins it automatically." onClose={onClose}
+      icon={<span className={`grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br text-white ${GROUP_COLORS[color].hero}`}><Users className="h-4 w-4" /></span>}
+      footer={
+        <>
+          <button onClick={onClose} className={btnGhost}>Cancel</button>
+          <button onClick={create} disabled={saving || !booking || !name.trim()} className={btnPrimary}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Create group
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-3 p-5">
+        <BookingPicker onPick={pick} picked={booking?.bookingRef ?? null} />
+        {booking && (
+          <div className="space-y-3 border-t border-slate-100 pt-3">
+            <input
+              value={name} onChange={e => setName(e.target.value)} placeholder="Group name" maxLength={120} aria-label="Group name"
+              className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+            />
+            <ColorPicker value={color} onChange={setColor} />
+          </div>
+        )}
+      </div>
+    </Sheet>
+  )
+}
+
+// ── Left pane ────────────────────────────────────────────────────────────────
+
+const avatar = (seed: string, name: string | null, size: string) => (
+  <span style={{ background: avatarGradient(seed) }} className={`grid shrink-0 place-items-center rounded-full font-bold text-white ${size}`}>{initials(name, seed)}</span>
+)
+
+export function GroupsRail({ selectedId, version, state, onSelect, onOpenPrivate }: {
+  selectedId: string | null
+  version: number
+  state: ReturnType<typeof useGroupDetail>
+  onSelect: (id: string | null) => void
+  onOpenPrivate: (phone: string) => void
+}) {
+  const [groups, setGroups] = useState<GroupSummary[] | null>(null)
+  const [needsSetup, setNeedsSetup] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  const load = useCallback(async () => {
+    const res = await api<GroupSummary[]>('/api/whatsapp/groups')
+    if (res.success) setGroups(res.data ?? [])
+    else if (res.error === SETUP_NEEDED_ERROR) { setNeedsSetup(true); setGroups([]) }
+    else setGroups(g => g ?? [])
+  }, [])
+  useEffect(() => { load() }, [load, version])
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 15000)
+    return () => clearInterval(t)
+  }, [load])
+
+  if (needsSetup) {
+    return (
+      <div className="m-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+        <p className="flex items-center gap-2 text-sm font-bold"><AlertTriangle className="h-4 w-4" /> Groups need a one-time setup</p>
+        <p className="mt-1 text-xs leading-relaxed">The database tables are not installed yet. Run <code className="rounded bg-amber-100 px-1">bash prisma/sql/apply-wa-booking-groups.sh</code>, then refresh this page.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1 px-1">
+      <button
+        onClick={() => setCreating(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-emerald-300 bg-emerald-50/60 py-3 text-[13px] font-bold text-emerald-700 transition hover:bg-emerald-100/70"
+      >
+        <Plus className="h-4 w-4" /> New chat group
+      </button>
+
+      {groups === null && Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-[72px] animate-pulse rounded-2xl bg-slate-100" />)}
+
+      {groups?.length === 0 && (
+        <div className="rounded-2xl px-5 py-8 text-center">
+          <Users className="mx-auto mb-2 h-8 w-8 text-slate-300" />
+          <p className="text-sm font-semibold text-slate-500">No chat groups yet</p>
+          <p className="mt-1 text-xs text-slate-400">Start one for a booking and bring the guest, family, driver and agent into the same chat.</p>
+        </div>
+      )}
+
+      {groups?.map(g => {
+        const open = g.id === selectedId
+        return (
+          <div key={g.id} className={`rounded-2xl transition ${open ? 'bg-emerald-50/70 ring-1 ring-emerald-200' : ''}`}>
+            <button onClick={() => onSelect(open ? null : g.id)} className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition ${open ? '' : 'hover:bg-slate-50'}`}>
+              <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br text-white shadow-md ${GROUP_COLORS[g.color].hero}`}><Users className="h-5 w-5" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-2">
+                  <span className={`truncate text-[14px] text-slate-900 ${g.unread ? 'font-extrabold' : 'font-bold'}`}>{g.name}</span>
+                  {g.lastAt && <span className={`ml-auto shrink-0 text-[11px] ${g.unread ? 'font-bold text-emerald-600' : 'text-slate-400'}`}>{fmtListStamp(g.lastAt)}</span>}
+                </span>
+                <span className="mt-0.5 flex items-center gap-1.5">
+                  <span className="min-w-0 flex-1 truncate text-xs text-slate-500">{g.lastText || (g.bookingRef ? 'No messages yet' : 'No booking linked')}</span>
+                  {g.unread > 0 && <span className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">{g.unread}</span>}
+                </span>
+                <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] font-bold text-slate-400">
+                  {g.shownRef && <span className="truncate">{flag(g.country)} {g.shownRef}</span>}
+                  <span className="shrink-0">{g.participants} contact{g.participants === 1 ? '' : 's'}</span>
+                  {g.mode === 'whatsapp' && <span className="shrink-0 text-emerald-600">WhatsApp group</span>}
+                  {g.autoCount > 0 && <span title={`${g.autoCount} automation${g.autoCount === 1 ? '' : 's'} on`} className="inline-flex shrink-0 items-center text-amber-600"><Zap className="h-2.5 w-2.5" />{g.autoCount}</span>}
+                </span>
+              </span>
+            </button>
+            {open && state.group && <div className="px-2 pb-2"><ContactList state={state} onOpenPrivate={onOpenPrivate} onChanged={load} /></div>}
+          </div>
+        )
+      })}
+
+      <AnimatePresence>
+        {creating && <CreateGroup onClose={() => setCreating(false)} onCreated={id => { setCreating(false); load(); onSelect(id) }} onSetupNeeded={() => { setCreating(false); setNeedsSetup(true) }} />}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ContactList({ state, onOpenPrivate, onChanged }: {
+  state: ReturnType<typeof useGroupDetail>; onOpenPrivate: (phone: string) => void; onChanged?: () => void
+}) {
+  const { group, reload } = state
+  const [adding, setAdding] = useState(false)
+  if (!group) return null
+  const real = group.channel.mode === 'whatsapp'
+
+  async function remove(p: GroupParticipant) {
+    if (!window.confirm(`Remove ${p.name ?? `+${p.phone}`} from this group?${real ? ' They cannot rejoin by the invite link afterwards.' : ''}`)) return
+    const res = await api(`/api/whatsapp/groups/${group!.id}/participants?id=${p.id}`, { method: 'DELETE' })
+    if (res.success) { reload(); onChanged?.() }
+    else toast.error(res.error ?? 'Could not remove')
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {group.participants.map(p => (
+        <div key={p.id} className="group/c flex items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-white">
+          {avatar(p.phone, p.name, 'h-7 w-7 text-[10px]')}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12.5px] font-semibold text-slate-800">{p.name ?? `+${p.phone}`}</p>
+            <p className="truncate text-[10.5px] capitalize text-slate-500">
+              <span className={`font-bold ${ROLE_TONE[p.role]}`}>{p.role}</span>
+              {real && ` · ${p.joinState === 'joined' ? 'joined' : 'not joined yet'}`}
+            </p>
+          </div>
+          <button onClick={() => onOpenPrivate(p.phone)} aria-label={`Private chat with ${p.name ?? p.phone}`} title="Private chat" className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600"><MessageCircle className="h-3.5 w-3.5" /></button>
+          {group.canManage && <button onClick={() => remove(p)} aria-label={`Remove ${p.name ?? p.phone}`} title="Remove from group" className="grid h-7 w-7 place-items-center rounded-lg text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"><X className="h-3.5 w-3.5" /></button>}
+        </div>
+      ))}
+      {group.canManage && group.member && (
+        <button onClick={() => setAdding(true)} className="flex w-full items-center gap-2 rounded-xl px-1.5 py-1.5 text-[12.5px] font-bold text-emerald-700 transition hover:bg-white">
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-100"><UserPlus className="h-3.5 w-3.5" /></span> Add contact
+        </button>
+      )}
+      <AnimatePresence>
+        {adding && <AddContact group={group} onClose={() => setAdding(false)} onAdded={() => { reload(); onChanged?.() }} />}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function AddContact({ group, onClose, onAdded }: { group: GroupDetail; onClose: () => void; onAdded: () => void }) {
+  const [suggestions, setSuggestions] = useState<ContactSuggestion[] | null>(null)
+  const [phone, setPhone] = useState('')
+  const [name, setName] = useState('')
+  const [role, setRole] = useState<ParticipantRole>('family')
+  const [busy, setBusy] = useState(false)
+  const inGroup = useMemo(() => new Set(group.participants.map(p => p.phone)), [group.participants])
+
+  useEffect(() => {
+    api<ContactSuggestion[]>(`/api/whatsapp/groups/${group.id}/participants`).then(res => setSuggestions(res.data ?? []))
+  }, [group.id])
+
+  async function add(p: { phone: string; name: string | null; role: ParticipantRole }) {
+    setBusy(true)
+    const res = await api(`/api/whatsapp/groups/${group.id}/participants`, { method: 'POST', body: JSON.stringify(p) })
+    setBusy(false)
+    if (res.success) { toast.success(`${p.name ?? `+${p.phone}`} added`); onAdded(); return true }
+    toast.error(res.error ?? 'Could not add this contact')
+    return false
+  }
+
+  const open = (suggestions ?? []).filter(s => !inGroup.has(s.phone))
+  return (
+    <Sheet title="Add contact" subtitle={group.name} onClose={onClose} icon={<span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><UserPlus className="h-4 w-4" /></span>}>
+      <div className="space-y-4 p-5">
+        {open.length > 0 && (
+          <section>
+            <p className="mb-1.5 text-xs font-bold text-slate-500">From this booking</p>
+            <ul className="space-y-1">
+              {open.map(s => (
+                <li key={s.phone} className="flex items-center gap-2.5 rounded-xl bg-slate-50 px-2.5 py-2">
+                  {avatar(s.phone, s.name, 'h-8 w-8 text-[10px]')}
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-semibold text-slate-800">{s.name ?? `+${s.phone}`}</span>
+                    <span className="block truncate text-[11px] text-slate-500">{s.label} · +{s.phone}</span>
+                  </span>
+                  <button disabled={busy} onClick={() => add(s)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-slate-700 disabled:opacity-50">Add</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+        <form
+          onSubmit={async e => {
+            e.preventDefault()
+            if (await add({ phone, name: name.trim() || null, role })) { setPhone(''); setName('') }
+          }}
+          className="space-y-2"
+        >
+          <p className="text-xs font-bold text-slate-500">Someone else</p>
+          <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="WhatsApp number with country code" aria-label="WhatsApp number" inputMode="tel" className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white" />
+          <div className="flex gap-2">
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Name" aria-label="Name" maxLength={120} className="h-10 min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white" />
+            <select value={role} onChange={e => setRole(e.target.value as ParticipantRole)} aria-label="Role" className="h-10 rounded-xl border border-slate-200 bg-slate-50 px-2 text-sm capitalize outline-none focus:border-emerald-400">
+              {PARTICIPANT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={onClose} className={btnGhost}>Done</button>
+            <button type="submit" disabled={busy || !phone.trim()} className={btnPrimary}><Plus className="h-4 w-4" /> Add</button>
+          </div>
+        </form>
+      </div>
+    </Sheet>
+  )
+}
+
+// ── Middle pane ──────────────────────────────────────────────────────────────
+
+function Bubble({ m }: { m: TimelineItem }) {
+  const out = m.direction === 'outbound'
+  const Icon = m.kind ? KIND_ICON[m.kind] : null
+  const d = m.delivery
+  return (
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
+      <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-[13.5px] leading-relaxed shadow-sm ${out ? 'rounded-tr-sm bg-[#d9fdd3]' : 'rounded-tl-sm bg-white'}`}>
+        {m.senderName && (
+          <p className={`mb-0.5 text-[11.5px] font-bold ${out ? 'text-emerald-700' : ROLE_TONE[m.role ?? 'other'] ?? 'text-slate-600'}`}>
+            {m.senderName}{m.role && !out ? <span className="ml-1 font-medium capitalize text-slate-400">{m.role}</span> : null}
+          </p>
+        )}
+        {m.kind && Icon && (
+          <p className="mb-1 flex items-center gap-1.5 rounded-lg bg-black/5 px-2 py-1 text-[11.5px] font-bold text-slate-700"><Icon className="h-3.5 w-3.5" /> {KIND_META[m.kind].label}</p>
+        )}
+        {m.mediaUrl && <a href={m.mediaUrl} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-sky-700 underline"><FileText className="h-3.5 w-3.5" /> Open {m.mediaType ?? 'file'}</a>}
+        {m.body && <p className="whitespace-pre-wrap break-words text-slate-800"><WaText text={m.body} /></p>}
+        <p className="mt-0.5 flex items-center justify-end gap-1.5 text-[10.5px] text-slate-500">
+          {new Date(m.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+          {out && m.status === 'sending' && <Loader2 className="h-3 w-3 animate-spin" />}
+          {out && m.status === 'failed' && <span className="font-bold text-rose-600">Failed</span>}
+          {out && d && d.total > 0 && (
+            <span title={`${d.delivered} of ${d.total} delivered, ${d.read} read, ${d.failed} failed`} className={`inline-flex items-center gap-0.5 font-semibold ${d.failed ? 'text-rose-600' : d.read === d.total ? 'text-sky-600' : ''}`}>
+              {d.delivered === d.total ? <CheckCheck className="h-3 w-3" /> : <Check className="h-3 w-3" />} {d.delivered}/{d.total}
+            </span>
+          )}
+        </p>
+        {m.detail && <p className="mt-1 border-t border-black/5 pt-1 text-[11px] leading-snug text-rose-700">{m.detail}</p>}
+      </div>
+    </motion.div>
+  )
+}
+
+export function GroupWorkspace({ state, onBack, onOpenPrivate, onChanged, onArchived }: {
+  state: ReturnType<typeof useGroupDetail>
+  onBack: () => void
+  onOpenPrivate: (phone: string) => void
+  onChanged: () => void
+  onArchived: () => void
+}) {
+  const { group, missing, reload, setGroup } = state
+  const groupId = group?.id ?? null
+  const [items, setItems] = useState<TimelineItem[] | null>(null)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const lastId = useRef<string | null>(null)
+
+  const loadChat = useCallback(async () => {
+    if (!groupId) return
+    const res = await api<TimelineItem[]>(`/api/whatsapp/groups/${groupId}/chat`)
+    if (res.success) setItems(res.data ?? [])
+  }, [groupId])
+
+  useEffect(() => { setItems(null); setDraft(''); setPanelOpen(false); lastId.current = null; loadChat() }, [groupId, loadChat])
+  useEffect(() => {
+    const t = setInterval(() => { if (document.visibilityState === 'visible') loadChat() }, 6000)
+    return () => clearInterval(t)
+  }, [loadChat])
+
+  const newest = items?.length ? items[items.length - 1] : null
+  useEffect(() => {
+    if (newest && newest.id !== lastId.current) {
+      lastId.current = newest.id
+      requestAnimationFrame(() => { if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight })
+      onChanged()
+    }
+  }, [newest, onChanged])
+
+  async function send() {
+    const text = draft.trim()
+    if (!text || !groupId || sending) return
+    setSending(true)
+    const res = await api<{ failed: number; total: number }>(`/api/whatsapp/groups/${groupId}/chat`, { method: 'POST', body: JSON.stringify({ body: text }) })
+    setSending(false)
+    if (!res.success) { toast.error(res.error ?? 'Could not send'); return }
+    setDraft('')
+    if (res.data?.failed) toast.error(`${res.data.failed} of ${res.data.total} could not be sent`)
+    loadChat()
+  }
+
+  function insert(text: string) {
+    setDraft(d => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))
+    setPanelOpen(false)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  async function patch(p: Partial<GroupDetail>, message?: string) {
+    setGroup(g => (g ? { ...g, ...p } : g))
+    const res = await api(`/api/whatsapp/groups/${groupId}`, { method: 'PATCH', body: JSON.stringify(p) })
+    if (!res.success) { toast.error(res.error ?? 'Could not save'); reload(); return }
+    if (message) toast.success(message)
+    onChanged()
+  }
+
+  async function attach(b: GroupCandidate) {
+    const res = await api(`/api/whatsapp/groups/${groupId}/members`, { method: 'POST', body: JSON.stringify({ ref: b.bookingRef }) })
+    if (res.success) { reload(); onChanged() }
+    else toast.error(res.error ?? 'Could not link this booking')
+  }
+
+  async function archive() {
+    if (!group || !window.confirm(`Archive "${group.name}"? Its automations stop. Messages already sent are not affected.`)) return
+    const res = await api(`/api/whatsapp/groups/${group.id}`, { method: 'DELETE' })
+    if (res.success) { toast.success('Group archived'); onArchived() }
+    else toast.error(res.error ?? 'Could not archive')
+  }
+
+  if (missing) {
+    return (
+      <div className="grid h-full place-items-center text-center text-slate-500">
+        <div>
+          <p className="font-semibold">This group could not be loaded</p>
+          <button onClick={onBack} className="mt-2 text-sm font-semibold text-emerald-600">Back to groups</button>
+        </div>
+      </div>
+    )
+  }
+  if (!group) return <div className="grid h-full place-items-center"><Loader2 className="h-6 w-6 animate-spin text-emerald-500" /></div>
+
+  if (!group.member) {
+    return (
+      <div className="mx-auto w-full max-w-md p-6">
+        <button onClick={onBack} className="mb-3 hidden items-center gap-1 text-sm font-semibold text-slate-500 max-[860px]:flex"><ArrowLeft className="h-4 w-4" /> Groups</button>
+        <h2 className="text-lg font-extrabold text-slate-900">Link a booking to {group.name}</h2>
+        <p className="mb-4 mt-1 text-sm text-slate-500">Each chat group belongs to one booking. The guest joins automatically.</p>
+        {group.canManage ? <BookingPicker onPick={attach} picked={null} /> : <p className="text-sm text-slate-500">You do not have access to change this group.</p>}
+        {group.canManage && <button onClick={archive} className="mt-4 text-xs font-semibold text-rose-600">Archive this group</button>}
+      </div>
+    )
+  }
+
+  const real = group.channel.mode === 'whatsapp'
+  const names = group.participants.map(p => p.name?.split(' ')[0] ?? `+${p.phone}`).join(', ')
+
+  return (
+    <div className="flex h-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="z-10 flex shrink-0 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-4 py-2.5 backdrop-blur-md">
+          <button onClick={onBack} aria-label="Back to groups" className="hidden h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 max-[860px]:grid"><ArrowLeft className="h-4 w-4" /></button>
+          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br text-white shadow-md ${GROUP_COLORS[group.color].hero}`}><Users className="h-5 w-5" /></span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-bold leading-tight text-slate-900">{group.name}</p>
+            <p className="truncate text-[11.5px] text-slate-500">{names || 'No contacts yet'}</p>
+          </div>
+          <div className="flex -space-x-2 max-[640px]:hidden">
+            {group.participants.slice(0, 5).map(p => <span key={p.id} className="rounded-full ring-2 ring-white">{avatar(p.phone, p.name, 'h-7 w-7 text-[10px]')}</span>)}
+          </div>
+          <button onClick={() => setPanelOpen(o => !o)} aria-label="Trip panel" title="Trip panel" className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 min-[1180px]:hidden"><Sparkles className="h-4 w-4" /></button>
+        </div>
+
+        <p className={`shrink-0 px-4 py-1.5 text-center text-[11px] font-medium ${real ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
+          {real ? 'Real WhatsApp group: everyone sees every message.' : 'Inbox group: each contact gets your message on their own WhatsApp and cannot see the others. All replies land here.'}
+        </p>
+
+        <div ref={boxRef} className="min-h-0 flex-1 space-y-1.5 overflow-y-auto bg-[#efeae2] px-4 py-4">
+          {items === null && <div className="grid h-full place-items-center"><Loader2 className="h-5 w-5 animate-spin text-emerald-600" /></div>}
+          {items?.length === 0 && (
+            <div className="mx-auto mt-10 max-w-xs rounded-2xl bg-white/80 p-4 text-center text-sm text-slate-600">
+              <p className="font-bold text-slate-800">Start the conversation</p>
+              <p className="mt-1 text-xs">Messages and replies from everyone in this group appear here.</p>
+            </div>
+          )}
+          {items?.map(m => <Bubble key={m.id} m={m} />)}
+        </div>
+
+        {group.canManage && (
+          <form onSubmit={e => { e.preventDefault(); send() }} className="flex shrink-0 items-end gap-2 border-t border-slate-200/80 bg-white px-3 py-2.5">
+            <textarea
+              ref={inputRef} value={draft} rows={Math.min(6, Math.max(1, draft.split('\n').length))} maxLength={4000} aria-label="Message to the group"
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+              placeholder={`Message ${group.participants.length} contact${group.participants.length === 1 ? '' : 's'}`}
+              className="min-h-[42px] flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-emerald-400 focus:bg-white focus:ring-4 focus:ring-emerald-500/10"
+            />
+            <button type="submit" disabled={!draft.trim() || sending} aria-label="Send to group" className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-full bg-gradient-to-br from-emerald-500 to-green-600 text-white shadow-md transition hover:brightness-105 disabled:opacity-40">
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </button>
+          </form>
+        )}
+      </div>
+
+      <TripPanel
+        state={state} open={panelOpen} latest={newest ? { id: newest.id, direction: newest.direction } : null}
+        onClose={() => setPanelOpen(false)} onInsert={insert} onPatch={patch} onArchive={archive} onOpenPrivate={onOpenPrivate}
+        onSent={() => { reload(); loadChat() }}
+      />
+    </div>
+  )
+}
+
+// ── Right pane ───────────────────────────────────────────────────────────────
+
+function ChannelCard({ group, onChanged }: { group: GroupDetail; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const c = group.channel
+
+  async function call(action?: string) {
+    setBusy(true)
+    const res = await api<{ sent?: number }>(`/api/whatsapp/groups/${group.id}/real`, { method: 'POST', body: JSON.stringify({ action }) })
+    setBusy(false)
+    if (res.success) toast.success(res.message ?? 'Done')
+    else toast.error(res.error ?? 'Meta refused the request')
+    onChanged()
+  }
+
+  if (c.mode === 'whatsapp') {
+    return (
+      <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+        <p className="flex items-center gap-1.5 text-[13px] font-extrabold text-emerald-800"><Link2 className="h-4 w-4" /> Real WhatsApp group</p>
+        <p className="mt-0.5 text-xs text-emerald-800/80">Contacts join by tapping the invite link. Up to 8 people.</p>
+        {c.inviteLink ? (
+          <div className="mt-2 flex gap-1.5">
+            <button onClick={() => { navigator.clipboard?.writeText(c.inviteLink!); toast.success('Link copied') }} className={`${btnGhost} flex flex-1 items-center justify-center gap-1 bg-white !px-2 !py-1.5 !text-xs`}><Copy className="h-3.5 w-3.5" /> Copy link</button>
+            {group.canManage && <button onClick={() => call('invite')} disabled={busy} className={`${btnPrimary} flex-1 justify-center !px-2 !py-1.5 !text-xs`}><Send className="h-3.5 w-3.5" /> Send invites</button>}
+          </div>
+        ) : <p className="mt-2 text-xs text-emerald-800/80">Waiting for Meta to give the invite link.</p>}
+      </section>
+    )
+  }
+  if (c.mode === 'pending') {
+    return <section className="rounded-2xl border border-slate-200 bg-white p-3 text-xs text-slate-600"><Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" /> Meta is creating the WhatsApp group. It works as an inbox group until then.</section>
+  }
+  if (!group.canManage) return null
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-3">
+      <p className="text-[13px] font-extrabold text-slate-900">Make it a real WhatsApp group</p>
+      <p className="mt-0.5 text-xs leading-snug text-slate-500">Everyone would see each other on their phones. Needs Meta&apos;s Official Business Account, 8 people at most, and contacts join by invite link.</p>
+      {c.lastError && <p className="mt-1.5 text-[11px] leading-snug text-rose-600">{c.lastError}</p>}
+      <button onClick={() => call()} disabled={busy} className={`${btnGhost} mt-2 flex w-full items-center justify-center gap-1.5 !py-1.5 !text-xs`}>
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} {c.lastError ? 'Try again' : 'Create WhatsApp group'}
+      </button>
+    </section>
+  )
+}
+
+function TripPanel({ state, open, latest, onClose, onInsert, onPatch, onSent, onArchive, onOpenPrivate }: {
+  state: ReturnType<typeof useGroupDetail>
+  /** Below the three-pane width the panel is a drawer; this says it is showing. */
+  open: boolean
+  latest: { id: string; direction: string } | null
+  onClose: () => void
+  onInsert: (text: string) => void
+  onPatch: (p: Partial<GroupDetail>, message?: string) => void
+  onSent: () => void
+  onArchive: () => void
+  onOpenPrivate: (phone: string) => void
+}) {
+  const { group, reload } = state
+  const member = group?.member ?? null
+  const ref = member?.bookingRef ?? null
+  const id = group?.id ?? null
+  const [brief, setBrief] = useState<GuestBrief | null>(null)
+  useEffect(() => {
+    if (!ref || !id) return
+    let stale = false
     setBrief(null)
-    api<GuestBrief>(`/api/whatsapp/groups/${group.id}/brief?ref=${encodeURIComponent(member.bookingRef)}`).then(res => {
+    api<GuestBrief>(`/api/whatsapp/groups/${id}/brief?ref=${encodeURIComponent(ref)}`).then(res => {
       if (!stale && res.success && res.data) setBrief(res.data)
     })
     return () => { stale = true }
-  }, [group.id, member.bookingRef])
+  }, [id, ref])
+  if (!group || !member) return null
 
   return (
-    <aside className={`${open ? 'fixed inset-y-0 right-0 z-30 flex shadow-2xl' : 'hidden'} w-[340px] max-w-full shrink-0 flex-col border-l border-slate-200/80 bg-slate-100/80 backdrop-blur min-[1180px]:static min-[1180px]:z-auto min-[1180px]:flex min-[1180px]:shadow-none`}>
+    <aside className={`${open ? 'fixed inset-y-0 right-0 z-30 flex shadow-2xl' : 'hidden'} w-[340px] max-w-full shrink-0 flex-col border-l border-slate-200/80 bg-slate-100/80 backdrop-blur min-[1180px]:static min-[1180px]:z-auto min-[1180px]:flex min-[1180px]:shadow-none max-[1179px]:bg-slate-100`}>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         <div className="flex justify-end min-[1180px]:hidden">
           <button onClick={onClose} aria-label="Close trip panel" className="grid h-8 w-8 place-items-center rounded-lg bg-white text-slate-500"><X className="h-4 w-4" /></button>
         </div>
         <BoardingPass m={member} brief={brief} color={group.color} />
-        {group.canManage && <ReplyCoach key={member.bookingRef} groupId={group.id} m={member} latest={latest} onInsert={onInsert} />}
+        {group.canManage && <ReplyCoach key={group.id} groupId={group.id} latest={latest} onInsert={onInsert} />}
         <section>
-          <h3 className="mb-1.5 px-1 text-[13px] font-extrabold text-slate-900">Send to this guest</h3>
+          <h3 className="px-1 text-[13px] font-extrabold text-slate-900">Trip materials</h3>
+          <p className="mb-1.5 px-1 text-[11px] text-slate-500">{group.channel.mode === 'whatsapp' ? 'Goes to the whole group.' : 'Goes to the guest and family in this group.'}</p>
           <div className="space-y-1.5">
-            {MATERIAL_ORDER.map(k => <MaterialRow key={`${member.bookingRef}-${k}`} group={group} m={member} kind={k} onInsert={onInsert} onSent={onSent} />)}
+            {MATERIAL_ORDER.map(k => <MaterialRow key={`${group.id}-${k}`} group={group} m={member} kind={k} onInsert={onInsert} onSent={onSent} onPatch={onPatch} />)}
           </div>
         </section>
+        <section className="rounded-2xl bg-white p-2 min-[861px]:hidden">
+          <h3 className="mb-1 px-1 text-[13px] font-extrabold text-slate-900">Contacts</h3>
+          <ContactList state={state} onOpenPrivate={onOpenPrivate} />
+        </section>
+        <ChannelCard group={group} onChanged={reload} />
+        {group.canManage && (
+          <button onClick={onArchive} className="flex w-full items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /> Archive group</button>
+        )}
       </div>
     </aside>
   )

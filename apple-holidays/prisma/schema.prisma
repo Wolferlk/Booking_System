@@ -4039,3 +4039,59 @@ model WaGroupSend {
   @@index([groupId, createdAt], map: "wa_group_sends_group_idx")
   @@map("wa_group_sends")
 }
+
+/// Who is in a chat group. In an inbox group each person gets messages on their
+/// own WhatsApp; in a real WhatsApp group they join by invite link.
+model WaGroupParticipant {
+  id        String    @id @default(cuid()) @db.VarChar(191)
+  groupId   String    @db.VarChar(191)
+  phone     String    @db.VarChar(32)
+  name      String?   @db.VarChar(191)
+  role      String    @default("guest") @db.VarChar(16)
+  joinState String    @default("active") @db.VarChar(16)
+  removedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([groupId, phone], map: "wa_group_participants_unique")
+  @@index([phone], map: "wa_group_participants_phone_idx")
+  @@map("wa_group_participants")
+}
+
+/// One line in a group's shared timeline. Replies in an inbox group are not
+/// stored here: they are read from whatsapp_messages by participant phone.
+model WaGroupMessage {
+  id          String   @id @default(cuid()) @db.VarChar(191)
+  groupId     String   @db.VarChar(191)
+  bookingRef  String   @db.VarChar(191)
+  direction   String   @db.VarChar(8)
+  senderName  String?  @db.VarChar(191)
+  senderPhone String?  @db.VarChar(32)
+  body        String?  @db.Text
+  kind        String?  @db.VarChar(16)
+  /// Set only on real-group sends, so "already sent" can see them.
+  tag         String?  @db.VarChar(32)
+  status      String   @default("sent") @db.VarChar(16)
+  detail      String?  @db.Text
+  recipients  Int      @default(0)
+  waMessageId String?  @db.VarChar(191)
+  createdAt   DateTime @default(now())
+
+  @@index([groupId, createdAt], map: "wa_group_messages_group_idx")
+  @@index([bookingRef], map: "wa_group_messages_ref_idx")
+  @@index([waMessageId], map: "wa_group_messages_wamid_idx")
+  @@map("wa_group_messages")
+}
+
+/// Present only once someone has tried to make a group a real WhatsApp group.
+model WaGroupChannel {
+  groupId    String   @id @db.VarChar(191)
+  /// inbox | pending | whatsapp
+  mode       String   @default("inbox") @db.VarChar(16)
+  waGroupId  String?  @unique(map: "wa_group_channels_waGroupId_key") @db.VarChar(191)
+  inviteLink String?  @db.VarChar(255)
+  lastError  String?  @db.Text
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("wa_group_channels")
+}

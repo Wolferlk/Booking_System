@@ -1,4 +1,4 @@
-/** One WhatsApp booking group: read, change settings, archive. */
+/** One WhatsApp chat group: read, change settings, archive. */
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -7,6 +7,7 @@ import {
   accessibleGroup, archiveGroup, canManageGroups, canViewGroups, getGroupDetail, groupsErrorResponse, updateGroup,
   type GroupPatch,
 } from '@/lib/wa-groups/server'
+import { settlePendingGroup } from '@/lib/wa-groups/chat'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,6 +18,8 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   if (!session) return buildApiError('Unauthorized', 401)
   if (!canViewGroups(session.user.role)) return buildApiError('Forbidden', 403)
   try {
+    const group = await accessibleGroup(params.id, session.user.role)
+    if (group) await settlePendingGroup(params.id, group.name).catch(() => undefined)
     const detail = await getGroupDetail(params.id, session.user.role)
     return detail ? buildApiSuccess(detail) : buildApiError('Group not found', 404)
   } catch (err) {

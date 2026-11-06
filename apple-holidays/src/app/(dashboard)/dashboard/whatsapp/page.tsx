@@ -24,7 +24,7 @@ import { TemplatesModal } from '@/components/whatsapp-inbox/templates-modal'
 import { MessageReportModal, RetryFailedModal } from '@/components/whatsapp-inbox/bulk-tools'
 import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
-import { GroupCommandCenter, GroupContacts, GroupsRail, GuestTripPanel, useGroupDetail } from '@/components/whatsapp-inbox/groups'
+import { GroupWorkspace, GroupsRail, useGroupDetail } from '@/components/whatsapp-inbox/groups'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country' | 'groups'
 
@@ -113,8 +113,6 @@ function WhatsAppInboxInner() {
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupsVersion, setGroupsVersion] = useState(0)
-  const [groupRef, setGroupRef] = useState<string | null>(null)
-  const [tripPanelOpen, setTripPanelOpen] = useState(false)
   const groupState = useGroupDetail(tab === 'groups' ? groupId : null)
   const [pins, setPins] = useState<string[]>([])
   const [online, setOnline] = useState(true)
@@ -793,25 +791,14 @@ function WhatsAppInboxInner() {
     { key: 'groups', label: 'Groups' },
   ]
 
-  // An open group: its guests on the left, a chat in the middle with the trip
-  // panel on the right, or the group overview while no guest is open.
-  const inGroup = tab === 'groups' && groupId !== null
-  const showGroup = inGroup && !selected
-  const groupMembers = groupState.group?.members ?? []
-  const activeMember = !inGroup || !selected ? null
-    : groupMembers.find(m => m.bookingRef === groupRef && m.phone === selected) ?? groupMembers.find(m => m.phone === selected) ?? null
-  const lastMessage = messages.length ? messages[messages.length - 1] : null
+  // An open chat group takes the middle and right panes in place of a private chat.
+  const showGroup = tab === 'groups' && groupId !== null
 
-  function openGroupChat(ref: string, phone: string) {
-    setGroupRef(ref)
-    setTripPanelOpen(false)
-    if (phone !== selectedRef.current) openConversation(phone)
-  }
+  const bumpGroups = useCallback(() => setGroupsVersion(v => v + 1), [])
 
-  function insertIntoChat(text: string) {
-    setDraft(d => (d.trim() ? `${d.trimEnd()}\n\n${text}` : text))
-    setTripPanelOpen(false)
-    requestAnimationFrame(() => textareaRef.current?.focus())
+  function openPrivateChat(phone: string) {
+    setTab('all')
+    openConversation(phone)
   }
 
   return (
@@ -986,22 +973,13 @@ function WhatsAppInboxInner() {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {tab === 'groups' && !search.trim() ? (
-            groupId ? (
-              <GroupContacts
-                state={groupState}
-                conversations={conversations}
-                activeRef={activeMember?.bookingRef ?? null}
-                onBack={() => { closeConversation(); setGroupId(null) }}
-                onOverview={closeConversation}
-                onOpen={m => { if (m.phone) openGroupChat(m.bookingRef, m.phone) }}
-              />
-            ) : (
-              <GroupsRail
-                selectedId={groupId}
-                version={groupsVersion}
-                onSelect={id => { closeConversation(); setGroupId(id) }}
-              />
-            )
+            <GroupsRail
+              selectedId={groupId}
+              version={groupsVersion}
+              state={groupState}
+              onSelect={id => { closeConversation(); setGroupId(id) }}
+              onOpenPrivate={openPrivateChat}
+            />
           ) : convLoading && conversations.length === 0 ? (
             <div className="space-y-1.5 px-1">
               {Array.from({ length: 8 }).map((_, i) => (
@@ -1076,13 +1054,12 @@ function WhatsAppInboxInner() {
         onDrop={onDrop}
       >
         {showGroup ? (
-          <GroupCommandCenter
-            groupId={groupId}
+          <GroupWorkspace
             state={groupState}
             onBack={() => setGroupId(null)}
-            onOpenChat={m => { if (m.phone) openGroupChat(m.bookingRef, m.phone) }}
-            onChanged={() => setGroupsVersion(v => v + 1)}
-            onArchived={() => { setGroupId(null); setGroupsVersion(v => v + 1) }}
+            onOpenPrivate={openPrivateChat}
+            onChanged={bumpGroups}
+            onArchived={() => { setGroupId(null); bumpGroups() }}
           />
         ) : !selected ? (
           <EmptyThread onNewChat={() => setNewChatOpen(true)} onTemplates={() => setTemplatesOpen(true)} />
@@ -1102,13 +1079,6 @@ function WhatsAppInboxInner() {
                     {lastSynced && <span>· synced {fmtAgo(now - lastSynced)}</span>}
                   </p>
                 </div>
-                {activeMember && (
-                  <span className="min-[1180px]:hidden">
-                    <IconBtn title="Trip panel" active={tripPanelOpen} onClick={() => setTripPanelOpen(o => !o)}>
-                      <Sparkles className="h-4 w-4" />
-                    </IconBtn>
-                  </span>
-                )}
                 <IconBtn title="Search in chat (⌘F)" active={threadSearchOpen} onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); requestAnimationFrame(() => threadSearchRef.current?.focus()) }}>
                   <Search className="h-4 w-4" />
                 </IconBtn>
@@ -1456,19 +1426,6 @@ function WhatsAppInboxInner() {
           </>
         )}
       </section>
-
-      {/* ============ Trip panel (open group chat) ============ */}
-      {activeMember && groupState.group && (
-        <GuestTripPanel
-          group={groupState.group}
-          member={activeMember}
-          latest={lastMessage ? { id: lastMessage.id, direction: lastMessage.direction } : null}
-          open={tripPanelOpen}
-          onClose={() => setTripPanelOpen(false)}
-          onInsert={insertIntoChat}
-          onSent={() => { groupState.reload(); if (selectedRef.current) loadMessages(selectedRef.current) }}
-        />
-      )}
 
       {/* ============ New chat ============ */}
       <AnimatePresence>

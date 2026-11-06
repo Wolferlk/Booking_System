@@ -1,10 +1,11 @@
 /**
- * WhatsApp booking groups: reads, the one-booking send, and the automation sweep.
+ * WhatsApp chat groups: reads, trip material sends, and the automation sweep.
  *
- * A group sends the messages the booking pages already send, so a guest gets the
- * same daily plan and the same PDFs whichever screen triggered them. Bulk sends
- * are driven one booking at a time by the browser: a run of PDFs would outlast a
- * single Lambda call, and it gives the desk a live per-guest result.
+ * A chat group belongs to one booking and holds many contacts. It sends the
+ * messages the booking pages already send, so guests get the same daily plan and
+ * the same PDFs whichever screen triggered them. Trip materials go to the guest
+ * and family in the group, not to drivers, guides or agents. In a real WhatsApp
+ * group there is one shared audience, so they go to the whole group.
  *
  * "Already sent" is read from whatsapp_messages, not from wa_group_sends, so it
  * also sees sends from the booking page and the global daily plan, and it carries
@@ -26,11 +27,13 @@ import {
 } from '@/lib/booking-details-template'
 import { listVersionLinks } from '@/lib/b2c-version-links'
 import { syncDeliveryReceipts } from '@/lib/whatsapp-shared-inbox-sync'
+import { sendRealGroupDocument, sendRealGroupText } from './meta-groups'
 import { formatDriverDetails, formatFlightDetails, formatHotelDetails, formatItinerary, type DriverLine } from './messages'
 import {
-  SETUP_NEEDED_ERROR, isGroupColor, isGroupKind,
-  type GroupActivity, type GroupCandidate, type GuestBrief, type GroupColor, type GroupCoverage, type GroupDetail, type GroupKind,
-  type GroupMember, type GroupSendOutcome, type GroupSummary, type GroupUpcoming,
+  SETUP_NEEDED_ERROR, isGroupColor, isGroupKind, isParticipantRole,
+  type ContactSuggestion, type GroupActivity, type GroupCandidate, type GroupChannel, type GroupColor, type GroupCoverage,
+  type GroupDetail, type GroupKind, type GroupMember, type GroupMode, type GroupParticipant, type GroupSendOutcome,
+  type GroupSummary, type GuestBrief,
 } from './shared'
 
 /** Same roles as the booking page's customer WhatsApp panel. */
@@ -45,8 +48,6 @@ const TRIP_TAGS = {
 
 const DOC_LABELS = { day7: 'Tour Confirmation (PDF)', day3: 'Full Tour Details & Vouchers (PDF)' } as const
 
-const SOON_DAYS = 7
-const MAX_MEMBERS = 200
 const COVERAGE_LOOKBACK_DAYS = 120
 /** A message that did not reach the guest does not count as sent. */
 const UNDELIVERED = new Set(['failed', 'retried'])
@@ -98,13 +99,29 @@ export async function accessibleGroup(id: string, role: string) {
 export async function listGroups(role: string): Promise<GroupSummary[]> {
   const groups = await prisma.waBookingGroup.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'desc' } })
   if (groups.length === 0) return []
-  const members = await prisma.waBookingGroupMember.findMany({
-    where: { groupId: { in: groups.map(g => g.id) } }, select: { groupId: true, bookingRef: true },
-  })
+  const ids = groups.map(g => g.id)
+  const [members, participants, channels, lines] = await Promise.all([
+    prisma.waBookingGroupMember.findMany({ where: { groupId: { in: ids } }, select: { groupId: true, bookingRef: true } }),
+    prisma.waGroupParticipant.findMany({ where: { groupId: { in: ids }, removedAt: null }, select: { groupId: true, phone: true, createdAt: true } }),
+    prisma.waGroupChannel.findMany({ where: { groupId: { in: ids } }, select: { groupId: true, mode: true } }),
+    prisma.waGroupMessage.findMany({
+      where: { groupId: { in: ids } }, orderBy: { createdAt: 'desc' }, take: 500,
+      select: { groupId: true, body: true, createdAt: true, kind: true },
+    }),
+  ])
   const bookings = await prisma.booking.findMany({
     where:  { bookingRef: { in: Array.from(new Set(members.map(m => m.bookingRef))) } },
-    select: { bookingRef: true, operationCountry: true, arrivalDate: true, departureDate: true },
+    select: { bookingRef: true, isNumber: true, operationCountry: true },
   })
+  const inbound = participants.length ? await prisma.whatsAppMessage.findMany({
+    where: {
+      phone: { in: Array.from(new Set(participants.map(p => p.phone))) }, direction: 'inbound',
+      createdAt: { gte: new Date(Date.now() - 30 * 86400000) },
+    },
+    orderBy: { createdAt: 'desc' }, take: 500,
+    select: { phone: true, body: true, createdAt: true, read: true },
+  }) : []
+
   const byRef = new Map(bookings.map(b => [b.bookingRef, b]))
   const country = whatsappInboxCountry(role)
 
@@ -114,23 +131,25 @@ export async function listGroups(role: string): Promise<GroupSummary[]> {
       return b ? [b] : []
     })
     if (!allowedForCountry(country, rows.map(r => r.operationCountry))) return []
-    let inTrip = 0, arrivingSoon = 0
-    let nextArrivalDays: number | null = null
-    for (const b of rows) {
-      const today = nowInTz(briefingTimezone(b.operationCountry, b.bookingRef)).date
-      const until = daysBetween(today, isoDay(b.arrivalDate))
-      if (until <= 0 && isoDay(b.departureDate) >= today) inTrip++
-      if (until > 0) {
-        if (until <= SOON_DAYS) arrivingSoon++
-        nextArrivalDays = nextArrivalDays === null ? until : Math.min(nextArrivalDays, until)
-      }
-    }
+    const people = participants.filter(p => p.groupId === g.id)
+    const mode = (channels.find(c => c.groupId === g.id)?.mode ?? 'inbox') as GroupMode
+    // A real group's replies arrive in its own timeline, not in private chats.
+    const heard = mode === 'whatsapp' ? [] : inbound.filter(m => people.some(p => p.phone === m.phone && p.createdAt <= m.createdAt))
+    const own = lines.find(l => l.groupId === g.id)
+    const newest = heard[0] && (!own || heard[0].createdAt > own.createdAt) ? heard[0] : own
     return [{
       id: g.id, name: g.name, color: (isGroupColor(g.color) ? g.color : 'emerald') as GroupColor,
-      total: rows.length, inTrip, arrivingSoon, nextArrivalDays,
-      autoCount: [g.autoDaily, g.autoDay7, g.autoDay3, g.autoDriver].filter(Boolean).length,
+      bookingRef: rows[0]?.bookingRef ?? null,
+      shownRef:   rows[0] ? rows[0].isNumber || rows[0].bookingRef : null,
+      country:    rows[0]?.operationCountry ?? null,
+      participants: people.length,
+      mode,
+      lastText:   (newest?.body ?? '').slice(0, 90),
+      lastAt:     newest?.createdAt.toISOString() ?? null,
+      unread:     heard.filter(m => !m.read).length,
+      autoCount:  [g.autoDaily, g.autoDay7, g.autoDay3, g.autoDriver].filter(Boolean).length,
     }]
-  })
+  }).sort((a, b) => (b.lastAt ?? '').localeCompare(a.lastAt ?? ''))
 }
 
 interface CoverageRow { bookingRef: string; senderName: string | null; status: string; createdAt: Date; body: string | null; waMessageId: string | null }
@@ -149,7 +168,16 @@ function kindOfMessage(m: CoverageRow): GroupKind | null {
   return null
 }
 
-function readCoverageRows(refs: string[]): Promise<CoverageRow[]> {
+async function readCoverageRows(refs: string[]): Promise<CoverageRow[]> {
+  const [private_, group] = await Promise.all([readPrivateCoverage(refs), prisma.waGroupMessage.findMany({
+    where:  { bookingRef: { in: refs }, tag: { not: null } },
+    select: { bookingRef: true, tag: true, status: true, createdAt: true, body: true, waMessageId: true },
+  })])
+  return [...private_, ...group.map(({ tag, ...m }) => ({ ...m, senderName: tag }))]
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+}
+
+function readPrivateCoverage(refs: string[]): Promise<CoverageRow[]> {
   return prisma.whatsAppMessage.findMany({
     where: {
       bookingRef: { in: refs },
@@ -186,14 +214,23 @@ export async function getGroupDetail(id: string, role: string): Promise<GroupDet
   const group = await accessibleGroup(id, role)
   if (!group) return null
 
-  const memberRows = await prisma.waBookingGroupMember.findMany({ where: { groupId: id }, select: { bookingRef: true } })
+  const memberRows = await prisma.waBookingGroupMember.findMany({ where: { groupId: id }, select: { bookingRef: true }, orderBy: { createdAt: 'asc' }, take: 1 })
   const refs = memberRows.map(m => m.bookingRef)
-  const [bookings, live, links, sends] = await Promise.all([
+  const [bookings, live, links, sends, peopleRows, channelRow] = await Promise.all([
     prisma.booking.findMany({ where: { bookingRef: { in: refs } }, select: memberSelect, orderBy: { arrivalDate: 'asc' } }),
     liveBookingWhere().then(w => prisma.booking.findMany({ where: { AND: [w, { bookingRef: { in: refs } }] }, select: { bookingRef: true } })),
     listVersionLinks().catch(() => []),
     prisma.waGroupSend.findMany({ where: { groupId: id }, orderBy: { createdAt: 'desc' }, take: 40 }),
+    prisma.waGroupParticipant.findMany({ where: { groupId: id, removedAt: null }, orderBy: { createdAt: 'asc' } }),
+    prisma.waGroupChannel.findUnique({ where: { groupId: id } }),
   ])
+  const participants: GroupParticipant[] = peopleRows.map(p => ({
+    id: p.id, phone: p.phone, name: p.name, role: isParticipantRole(p.role) ? p.role : 'other', joinState: p.joinState,
+  }))
+  const channel: GroupChannel = {
+    mode: (channelRow?.mode ?? 'inbox') as GroupMode, inviteLink: channelRow?.inviteLink ?? null, lastError: channelRow?.lastError ?? null,
+  }
+  const audience = channel.mode === 'whatsapp' ? channelRow?.waGroupId ?? null : participants.find(p => MATERIAL_ROLES.has(p.role))?.phone ?? null
   const liveRefs = new Set(live.map(b => b.bookingRef))
   const replaced = new Set(links.filter(l => l.state === 'superseded').map(l => l.ref))
 
@@ -231,7 +268,7 @@ export async function getGroupDetail(id: string, role: string): Promise<GroupDet
       country:    b.operationCountry,
       arrival, departure,
       pax:        paxLabel(b.paxAdults, b.paxChildren, b.paxInfants),
-      phone:      phone ? normalisePhone(phone) || null : null,
+      phone:      audience ?? (phone ? normalisePhone(phone) || null : null),
       blocked:    replaced.has(b.bookingRef) ? 'Replaced by a newer version'
                 : liveRefs.has(b.bookingRef) ? null
                 : b.status === 'DRAFT' ? 'Still a draft' : 'Cancelled',
@@ -262,29 +299,9 @@ export async function getGroupDetail(id: string, role: string): Promise<GroupDet
     autoDaily: group.autoDaily, dailyTime: group.dailyTime, autoDay7: group.autoDay7, autoDay3: group.autoDay3,
     autoDriver: group.autoDriver, docTime: group.docTime,
     canManage: canManageGroups(role),
-    members, activity,
-    upcoming: buildUpcoming(group, members),
+    member: members[0] ?? null,
+    participants, channel, activity,
   }
-}
-
-/** The dated automatic sends still ahead, soonest first. */
-function buildUpcoming(
-  g: { autoDaily: boolean; dailyTime: string; autoDay7: boolean; autoDay3: boolean; docTime: string },
-  members: GroupMember[],
-): GroupUpcoming[] {
-  const out: GroupUpcoming[] = []
-  for (const m of members) {
-    if (m.blocked || !m.phone) continue
-    const push = (date: string, time: string, kind: GroupKind) => {
-      if (date >= m.localToday) out.push({ date, time, kind, bookingRef: m.bookingRef, leadName: m.leadName })
-    }
-    if (g.autoDay7 && !m.coverage.day7) push(addDays(m.arrival, -7), g.docTime, 'day7')
-    if (g.autoDay3 && !m.coverage.day3) push(addDays(m.arrival, -3), g.docTime, 'day3')
-    if (g.autoDaily && m.stage === 'upcoming') {
-      push(briefingTargetsSameDay(g.dailyTime) ? m.arrival : addDays(m.arrival, -1), g.dailyTime, 'daily')
-    }
-  }
-  return out.sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`)).slice(0, 8)
 }
 
 export async function findCandidates(opts: { q: string; window: string; role: string }): Promise<GroupCandidate[]> {
@@ -332,8 +349,77 @@ export async function findCandidates(opts: { q: string; window: string; role: st
 
 // ── Writes ───────────────────────────────────────────────────────────────────
 
+/** Who trip materials go to in an inbox group. */
+const MATERIAL_ROLES = new Set<string>(['guest', 'family'])
+
+/** Link a group to its one booking and bring in the guest. Returns why not, or null. */
+export async function attachBooking(groupId: string, ref: string, role: string): Promise<string | null> {
+  const country = whatsappInboxCountry(role)
+  const b = await prisma.booking.findUnique({
+    where:  { bookingRef: ref },
+    select: {
+      operationCountry: true, contactWhatsapp: true, contactPhone: true,
+      passengers: { where: { isLead: true }, take: 1, select: { name: true } },
+    },
+  })
+  if (!b || (country && b.operationCountry !== country)) return 'Booking not found'
+  const held = await prisma.waBookingGroupMember.count({ where: { groupId } })
+  if (held > 0) return 'This group already has its booking'
+  await prisma.waBookingGroupMember.create({ data: { groupId, bookingRef: ref } })
+  const phone = normalisePhone(b.contactWhatsapp || b.contactPhone || '')
+  if (phone) {
+    await prisma.waGroupParticipant.upsert({
+      where:  { groupId_phone: { groupId, phone } },
+      create: { groupId, phone, name: b.passengers[0]?.name ?? null, role: 'guest' },
+      update: { removedAt: null },
+    })
+  }
+  return null
+}
+
+/** The open group already on a booking, so one booking keeps one chat. */
+export async function findGroupForBooking(ref: string): Promise<string | null> {
+  const rows = await prisma.waBookingGroupMember.findMany({ where: { bookingRef: ref }, select: { groupId: true } })
+  if (!rows.length) return null
+  const open = await prisma.waBookingGroup.findFirst({ where: { id: { in: rows.map(r => r.groupId) }, archivedAt: null }, select: { id: true } })
+  return open?.id ?? null
+}
+
 export function createGroup(name: string, color: GroupColor, actor: string) {
   return prisma.waBookingGroup.create({ data: { name: name.slice(0, 120), color, createdByName: actor } })
+}
+
+/** People on the booking who could join, for the add-contact picker. */
+export async function suggestContacts(ref: string): Promise<ContactSuggestion[]> {
+  const b = await prisma.booking.findUnique({
+    where:  { bookingRef: ref },
+    select: {
+      contactWhatsapp: true, contactPhone: true, agent: true, agentWhatsapp: true, agentPhone: true,
+      passengers: { where: { isLead: true }, take: 1, select: { name: true } },
+      tourAgenda: { select: { items: { select: { assignment: { select: {
+        driverName: true, driverPhone: true, guideName: true, guidePhone: true,
+        driver: { select: { name: true, phone: true } },
+        guide:  { select: { name: true, phone: true, whatsappPhone: true } },
+      } } } } } },
+    },
+  })
+  if (!b) return []
+  const out = new Map<string, ContactSuggestion>()
+  const add = (raw: string | null | undefined, name: string | null, role: ContactSuggestion['role'], label: string) => {
+    const phone = normalisePhone(raw ?? '')
+    if (phone.length >= 7 && !out.has(phone)) out.set(phone, { phone, name, role, label })
+  }
+  const lead = b.passengers[0]?.name ?? null
+  add(b.contactWhatsapp, lead, 'guest', 'Guest WhatsApp')
+  add(b.contactPhone, lead, 'guest', 'Guest phone')
+  add(b.agentWhatsapp || b.agentPhone, b.agent, 'agent', 'Agent')
+  for (const item of b.tourAgenda?.items ?? []) {
+    const a = item.assignment
+    if (!a) continue
+    add(contactPhone(a.driverPhone, a.driver?.phone), a.driverName ?? a.driver?.name ?? null, 'driver', 'Driver')
+    add(contactPhone(a.guidePhone, a.guide?.whatsappPhone, a.guide?.phone), a.guideName ?? a.guide?.name ?? null, 'guide', 'Guide')
+  }
+  return Array.from(out.values())
 }
 
 export interface GroupPatch {
@@ -370,25 +456,6 @@ export async function archiveGroup(id: string) {
     where: { id },
     data:  { archivedAt: new Date(), autoDaily: false, autoDay7: false, autoDay3: false, autoDriver: false },
   })
-}
-
-export async function addMembers(groupId: string, refs: string[], role: string, actor: string): Promise<{ added: number; error?: string }> {
-  const country = whatsappInboxCountry(role)
-  const found = await prisma.booking.findMany({
-    where:  { bookingRef: { in: refs }, ...(country ? { operationCountry: country } : {}) },
-    select: { bookingRef: true },
-  })
-  const existing = await prisma.waBookingGroupMember.count({ where: { groupId } })
-  if (existing + found.length > MAX_MEMBERS) return { added: 0, error: `A group can hold ${MAX_MEMBERS} bookings` }
-  const { count } = await prisma.waBookingGroupMember.createMany({
-    data: found.map(b => ({ groupId, bookingRef: b.bookingRef, addedByName: actor })),
-    skipDuplicates: true,
-  })
-  return { added: count }
-}
-
-export async function removeMember(groupId: string, bookingRef: string) {
-  await prisma.waBookingGroupMember.deleteMany({ where: { groupId, bookingRef } })
 }
 
 // ── Composing ────────────────────────────────────────────────────────────────
@@ -518,50 +585,95 @@ export async function previewGroupMessage(
 const UNCONFIRMED_NOTE =
   'Sent as plain text outside the guest\'s 24h window and the guest template is unavailable, so Meta may drop it.'
 
-/** Runs the send itself. Throws or returns a failure; never logs to wa_group_sends. */
+interface Audience { waGroupId: string | null; people: { phone: string; name: string | null }[] }
+
+/** A real group's id, or the guest and family in it, or else the booking's own contact. */
+async function audienceFor(groupId: string, b: { contactWhatsapp: string | null; contactPhone: string | null }, lead: string | null): Promise<Audience> {
+  const channel = await prisma.waGroupChannel.findUnique({ where: { groupId } })
+  if (channel?.mode === 'whatsapp' && channel.waGroupId) return { waGroupId: channel.waGroupId, people: [] }
+  const rows = await prisma.waGroupParticipant.findMany({ where: { groupId, removedAt: null } })
+  const people = rows.filter(p => MATERIAL_ROLES.has(p.role)).map(p => ({ phone: p.phone, name: p.name }))
+  if (people.length) return { waGroupId: null, people }
+  const own = normalisePhone(b.contactWhatsapp || b.contactPhone || '')
+  return { waGroupId: null, people: own ? [{ phone: own, name: lead }] : [] }
+}
+
+const TAG_OF = { ...TRIP_TAGS, daily: TAG_DAILY_BRIEFING, day7: BOOKING_DOCS_TAG, day3: BOOKING_DOCS_TAG }
+
+/** Sends one kind of material. Throws or returns a failure; never logs to wa_group_sends. */
 async function dispatch(o: {
-  ref: string; kind: GroupKind; date?: string; note?: string; actor: string; force: boolean; allowEmptyDay: boolean
+  groupId: string; ref: string; kind: GroupKind; date?: string; note?: string; actor: string; force: boolean; allowEmptyDay: boolean
 }): Promise<GroupSendOutcome> {
   const { ref, kind } = o
-
-  if (kind === 'daily') {
-    if (!o.date) return { status: 'failed', detail: 'No trip day chosen' }
-    const r = await sendDailyBriefingForBooking(ref, o.date, { force: o.force, allowEmpty: o.allowEmptyDay })
-    if (r.ok) return { status: 'sent', detail: r.unconfirmed ? UNCONFIRMED_NOTE : null }
-    return /Already sent|Nothing scheduled|No WhatsApp/.test(r.reason ?? '')
-      ? { status: 'skipped', detail: r.reason ?? null }
-      : { status: 'failed', detail: r.reason ?? 'Send failed' }
-  }
+  if (kind === 'daily' && !o.date) return { status: 'failed', detail: 'No trip day chosen' }
 
   const b = await prisma.booking.findUnique({
     where:  { bookingRef: ref },
     select: { contactWhatsapp: true, contactPhone: true, passengers: { where: { isLead: true }, take: 1, select: { name: true } } },
   })
-  const phone = b?.contactWhatsapp || b?.contactPhone
-  if (!b || !phone || !normalisePhone(phone)) return { status: 'skipped', detail: 'No WhatsApp number' }
+  if (!b) return { status: 'failed', detail: 'Booking not found' }
   const lead = b.passengers[0]?.name ?? null
-
-  if (kind === 'day7' || kind === 'day3') {
-    const doc = await buildBookingPdf(ref, kind === 'day7' ? 'confirmation' : 'full', 'pdf')
-    await sendBookingDocTemplate({
-      bookingRef: ref, to: phone, document: doc, attachedLabel: DOC_LABELS[kind], note: o.note, senderName: o.actor,
-      baseUrl: process.env.APP_URL ?? process.env.NEXTAUTH_URL,
+  const audience = await audienceFor(o.groupId, b, lead)
+  const isDoc = kind === 'day7' || kind === 'day3'
+  const doc = isDoc ? await buildBookingPdf(ref, kind === 'day7' ? 'confirmation' : 'full', 'pdf') : null
+  const timeline = (body: string, recipients: number, extra: { tag?: string; waMessageId?: string | null } = {}) =>
+    prisma.waGroupMessage.create({
+      data: { groupId: o.groupId, bookingRef: ref, direction: 'outbound', senderName: o.actor, body, kind, recipients, status: 'sent', ...extra },
     })
+
+  if (audience.waGroupId) {
+    if (doc) {
+      const label = DOC_LABELS[kind as 'day7' | 'day3']
+      const id = await sendRealGroupDocument(audience.waGroupId, doc, o.note || label)
+      await timeline(`Attached: ${label}`, 1, { tag: BOOKING_DOCS_TAG, waMessageId: id })
+      return { status: 'sent', detail: null }
+    }
+    const p = await previewGroupMessage(ref, kind, o.date, o.note)
+    if (!p.text) return { status: 'skipped', detail: p.empty ?? 'Nothing to send' }
+    const id = await sendRealGroupText(audience.waGroupId, p.text)
+    await timeline(p.text, 1, { tag: TAG_OF[kind], waMessageId: id })
     return { status: 'sent', detail: null }
   }
 
-  const composed = await composeTripText(ref, kind)
-  if ('empty' in composed) return { status: 'skipped', detail: composed.empty }
-  const tag = `${TRIP_TAGS[kind]} ${lead ?? 'Guest'}`
-  const sent = await deliverToGuest({ phone, text: composed.text, guestName: lead, bookingRef: ref, tag })
-  if (!sent.ok) return { status: 'failed', detail: sent.reason ?? 'Send failed' }
-  await prisma.whatsAppMessage.create({
-    data: {
-      bookingRef: ref, phone: normalisePhone(phone), direction: 'outbound', body: composed.text,
-      waMessageId: sent.waMessageId, status: 'sent', senderName: tag,
-    },
-  })
-  return { status: 'sent', detail: sent.unconfirmed ? UNCONFIRMED_NOTE : null }
+  if (audience.people.length === 0) return { status: 'skipped', detail: 'No WhatsApp number' }
+
+  const composed = isDoc || kind === 'daily' ? null : await composeTripText(ref, kind)
+  if (composed && 'empty' in composed) return { status: 'skipped', detail: composed.empty }
+
+  let sent = 0
+  let text = doc ? `Attached: ${DOC_LABELS[kind as 'day7' | 'day3']}` : composed?.text ?? ''
+  const problems: string[] = []
+  for (const [i, person] of audience.people.entries()) {
+    const who = person.name ?? `+${person.phone}`
+    try {
+      if (kind === 'daily') {
+        const r = await sendDailyBriefingForBooking(ref, o.date!, { force: o.force || i > 0, allowEmpty: o.allowEmptyDay, to: person.phone })
+        if (r.ok) { sent++; text = r.message ?? text; if (r.unconfirmed) problems.push(`${who}: ${UNCONFIRMED_NOTE}`) }
+        else if (i === 0 && /Already sent|Nothing scheduled/.test(r.reason ?? '')) return { status: 'skipped', detail: r.reason ?? null }
+        else problems.push(`${who}: ${r.reason ?? 'Send failed'}`)
+      } else if (doc) {
+        await sendBookingDocTemplate({
+          bookingRef: ref, to: person.phone, document: doc, attachedLabel: DOC_LABELS[kind as 'day7' | 'day3'], note: o.note,
+          senderName: o.actor, baseUrl: process.env.APP_URL ?? process.env.NEXTAUTH_URL,
+        })
+        sent++
+      } else {
+        const tag = `${TAG_OF[kind]} ${person.name ?? 'Guest'}`
+        const r = await deliverToGuest({ phone: person.phone, text, guestName: person.name, bookingRef: ref, tag })
+        if (!r.ok) { problems.push(`${who}: ${r.reason ?? 'Send failed'}`); continue }
+        await prisma.whatsAppMessage.create({
+          data: { bookingRef: ref, phone: person.phone, direction: 'outbound', body: text, waMessageId: r.waMessageId, status: 'sent', senderName: tag },
+        })
+        sent++
+        if (r.unconfirmed) problems.push(`${who}: ${UNCONFIRMED_NOTE}`)
+      }
+    } catch (err) {
+      problems.push(`${who}: ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`)
+    }
+  }
+  if (sent === 0) return { status: 'failed', detail: problems.join(' ').slice(0, 400) || 'Send failed' }
+  await timeline(text, sent)
+  return { status: 'sent', detail: problems.length ? problems.join(' ').slice(0, 400) : null }
 }
 
 /** Claim, send, record. A taken `dedupeKey` means another run owns it: returns null. */
@@ -586,7 +698,7 @@ async function sendAndLog(o: {
 
   let outcome: GroupSendOutcome
   try {
-    outcome = await dispatch({ ...o })
+    outcome = await dispatch(o)
   } catch (err) {
     outcome = { status: 'failed', detail: (err instanceof Error ? err.message : String(err)).slice(0, 400) }
   }
@@ -655,6 +767,13 @@ export async function runGroupAutomations(): Promise<GroupAutomationResult> {
     },
   })
   const byRef = new Map(bookings.map(b => [b.bookingRef, b]))
+  const [peopleRows, realGroups] = await Promise.all([
+    prisma.waGroupParticipant.findMany({ where: { groupId: { in: groups.map(g => g.id) }, removedAt: null }, select: { groupId: true, role: true } }),
+    prisma.waGroupChannel.findMany({ where: { groupId: { in: groups.map(g => g.id) }, mode: 'whatsapp' }, select: { groupId: true } }),
+  ])
+  const canReach = (groupId: string, b: { contactWhatsapp: string | null; contactPhone: string | null }) =>
+    realGroups.some(c => c.groupId === groupId) || peopleRows.some(p => p.groupId === groupId && MATERIAL_ROLES.has(p.role)) ||
+    Boolean(b.contactWhatsapp || b.contactPhone)
   const offRows = await prisma.systemSetting.findMany({
     where: { key: { startsWith: SETTING_BRIEFING_TIME_PREFIX }, value: 'OFF' }, select: { key: true },
   })
@@ -675,7 +794,7 @@ export async function runGroupAutomations(): Promise<GroupAutomationResult> {
     for (const m of members.filter(x => x.groupId === g.id)) {
       if (Date.now() - startedAt > AUTO_RUN_BUDGET_MS) return result
       const b = byRef.get(m.bookingRef)
-      if (!b || !(b.contactWhatsapp || b.contactPhone)) continue
+      if (!b || !canReach(g.id, b)) continue
 
       const ref = b.bookingRef
       const now = nowInTz(briefingTimezone(b.operationCountry, ref))

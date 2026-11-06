@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# Creates the three WhatsApp booking group tables (groups, members, sends).
+# Creates the WhatsApp chat group tables (groups, members, sends, participants,
+# messages, channels).
 # Nothing else is touched.
 #
 # The app builds its connection string from the DB_* parts in .env at runtime
 # (see src/lib/prisma.ts), but the Prisma CLI only reads DATABASE_URL — so this
 # script assembles the same URL and hands it to `prisma db execute`.
 #
-# The SQL it runs is three CREATE TABLE IF NOT EXISTS. It does not ALTER, DROP or
+# The SQL it runs is six CREATE TABLE IF NOT EXISTS. It does not ALTER, DROP or
 # write to any existing table, and it is safe to run twice.
 #
 # Usage, from the apple-holidays/ directory:
@@ -41,7 +42,7 @@ urlencode() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.a
 URL="mysql://$(urlencode "$DB_USERNAME"):$(urlencode "$DB_PASSWORD")@${DB_HOST}:${DB_PORT:-3306}/${DB_DATABASE}"
 
 echo "Target : ${DB_USERNAME}@${DB_HOST}:${DB_PORT:-3306}/${DB_DATABASE}"
-echo "Action : CREATE TABLE IF NOT EXISTS wa_booking_groups, wa_booking_group_members, wa_group_sends  (additive only)"
+echo "Action : CREATE TABLE IF NOT EXISTS wa_booking_groups, wa_booking_group_members, wa_group_sends, wa_group_participants, wa_group_messages, wa_group_channels  (additive only)"
 
 if [[ "${1:-}" == "--check" ]]; then
   echo "--check given; nothing was run."
@@ -53,6 +54,10 @@ read -r -p "Proceed? [y/N] " reply
 
 DATABASE_URL="$URL" npx prisma db execute \
   --file prisma/sql/2026-11-06-wa-booking-groups.sql \
+  --schema prisma/schema.prisma
+
+DATABASE_URL="$URL" npx prisma db execute \
+  --file prisma/sql/2026-11-06-wa-group-chats.sql \
   --schema prisma/schema.prisma
 
 echo "Done. Run 'npx prisma generate' if you have not already."

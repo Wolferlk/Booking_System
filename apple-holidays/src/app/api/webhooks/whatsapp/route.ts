@@ -4,6 +4,7 @@ import { findBookingByPhone, normalisePhone } from '@/lib/whatsapp'
 import { flushPendingConfirmations } from '@/lib/booking-whatsapp-delivery'
 import { putUpload } from '@/lib/storage'
 import { applyDeliveryStatuses, type MetaDeliveryStatus } from '@/lib/whatsapp-delivery-status'
+import { applyGroupStatus, handleGroupWebhook } from '@/lib/wa-groups/chat'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,11 +77,19 @@ async function processIncoming(payload: MetaWebhookPayload) {
     for (const change of entry.changes ?? []) {
       const value = change.value
 
-      if (value?.statuses?.length) await applyDeliveryStatuses(value.statuses)
+      if (value?.statuses?.length) {
+        await applyDeliveryStatuses(value.statuses)
+        await applyGroupStatus(value.statuses).catch(err => console.error('[WA Webhook] group status', err))
+      }
 
-      if (!value?.messages?.length) continue
+      // Real WhatsApp groups are filed on their own; only private chats go on below.
+      const privateMessages = await handleGroupWebhook(value, value?.messages).catch(err => {
+        console.error('[WA Webhook] group message', err)
+        return (value?.messages ?? []).filter(m => !(m as { group_id?: string }).group_id)
+      })
+      if (!privateMessages.length) continue
 
-      for (const msg of value.messages) {
+      for (const msg of privateMessages) {
         const waMessageId = msg.id
         const phone = normalisePhone(msg.from)
 

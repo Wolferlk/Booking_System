@@ -38,16 +38,67 @@ export function isGroupColor(v: unknown): v is GroupColor {
 /** Answer to any groups call before apply-wa-booking-groups.sh has been run. */
 export const SETUP_NEEDED_ERROR = 'wa-groups-setup-needed'
 
+export const PARTICIPANT_ROLES = ['guest', 'family', 'driver', 'guide', 'agent', 'staff', 'other'] as const
+export type ParticipantRole = (typeof PARTICIPANT_ROLES)[number]
+export const isParticipantRole = (v: unknown): v is ParticipantRole =>
+  typeof v === 'string' && (PARTICIPANT_ROLES as readonly string[]).includes(v)
+
+/** A real WhatsApp group holds 8 people (Meta's limit). An inbox group has more room. */
+export const MAX_REAL_PARTICIPANTS = 8
+export const MAX_INBOX_PARTICIPANTS = 20
+
+export type GroupMode = 'inbox' | 'pending' | 'whatsapp'
+
 export interface GroupSummary {
   id: string
   name: string
   color: GroupColor
-  total: number
-  inTrip: number
-  arrivingSoon: number
-  /** Days until the soonest arrival still ahead, if any. */
-  nextArrivalDays: number | null
+  bookingRef: string | null
+  shownRef: string | null
+  country: string | null
+  participants: number
+  mode: GroupMode
+  lastText: string
+  lastAt: string | null
+  unread: number
   autoCount: number
+}
+
+export interface GroupParticipant {
+  id: string
+  phone: string
+  name: string | null
+  role: ParticipantRole
+  joinState: string
+}
+
+export interface GroupChannel {
+  mode: GroupMode
+  inviteLink: string | null
+  lastError: string | null
+}
+
+export interface TimelineItem {
+  id: string
+  direction: 'inbound' | 'outbound'
+  senderName: string | null
+  role: string | null
+  body: string | null
+  kind: GroupKind | null
+  status: string
+  detail: string | null
+  /** Inbox groups: how the copies to each person got on. */
+  delivery: { total: number; delivered: number; read: number; failed: number } | null
+  mediaType: string | null
+  mediaUrl: string | null
+  createdAt: string
+}
+
+export interface ContactSuggestion {
+  phone: string
+  name: string | null
+  role: ParticipantRole
+  label: string
 }
 
 export interface GroupCoverage {
@@ -92,14 +143,6 @@ export interface GroupActivity {
   createdAt: string
 }
 
-export interface GroupUpcoming {
-  date: string
-  time: string
-  kind: GroupKind
-  bookingRef: string
-  leadName: string | null
-}
-
 export interface GroupDetail {
   id: string
   name: string
@@ -111,9 +154,11 @@ export interface GroupDetail {
   autoDriver: boolean
   docTime: string
   canManage: boolean
-  members: GroupMember[]
+  /** The group's one booking; null only on a group made before bookings were required. */
+  member: GroupMember | null
+  participants: GroupParticipant[]
+  channel: GroupChannel
   activity: GroupActivity[]
-  upcoming: GroupUpcoming[]
 }
 
 export interface GroupCandidate {
@@ -135,7 +180,7 @@ export interface GroupSendOutcome {
 /** Can this kind go to this member on this day? Returns the reason it can't. */
 export function memberBlocker(m: GroupMember, kind: GroupKind, date?: string): string | null {
   if (m.blocked) return m.blocked
-  if (!m.phone) return 'No WhatsApp number'
+  if (!m.phone) return 'No contact to send to'
   if (kind === 'flights' && m.readiness.flights === 0) return 'No flights on file'
   if (kind === 'hotels' && m.readiness.hotels === 0) return 'No hotels on file'
   if (kind === 'itinerary' && m.readiness.itinerary === 0) return 'No itinerary on file'

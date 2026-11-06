@@ -274,11 +274,12 @@ export interface SingleSendResult {
  * opts.force     — bypass the once-per-day dedupe (manual resend)
  * opts.allowEmpty — still send even if that day has nothing scheduled
  * opts.dryRun    — build and return the message without sending or logging it
+ * opts.to        — send to this number instead of the booking's own contact
  */
 export async function sendDailyBriefingForBooking(
   bookingRef: string,
   targetDateStr: string,
-  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean } = {},
+  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean; to?: string } = {},
 ): Promise<SingleSendResult> {
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
@@ -299,7 +300,7 @@ export async function sendDailyBriefingForBooking(
   })
   if (!b) return { ok: false, reason: 'Booking not found' }
 
-  const phone = b.contactWhatsapp || b.contactPhone
+  const phone = opts.to || b.contactWhatsapp || b.contactPhone
   if (!phone || !normalisePhone(phone)) {
     return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
   }

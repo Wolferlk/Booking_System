@@ -4,19 +4,15 @@
  * from server.ts so the automation sweep never loads the OpenAI client.
  *
  * The model sees the booking brief (no prices or rates, by construction) and the
- * last few messages. Guest text is untrusted, so it is passed as quoted data.
+ * last lines of the group chat, each labelled with who wrote it. Guest text is untrusted, so it is passed as quoted data.
  */
-import { prisma } from '@/lib/prisma'
 import openai, { logAiUsage } from '@/lib/openai'
-import { normalisePhone } from '@/lib/whatsapp'
 import type { GuestBrief, ReplySuggestions } from './shared'
 
 const MODEL = process.env.OPENAI_WA_SUGGEST_MODEL?.trim() || 'gpt-4o-mini'
-const HISTORY = 14
-const MESSAGE_LIMIT = 500
 const REPLY_LIMIT = 900
 
-const SYSTEM = `You draft WhatsApp replies for a travel operations desk. A human reads every draft before it is sent.
+const SYSTEM = `You draft WhatsApp replies for a travel operations desk, in a group chat about one booking. It can include the guest, family, driver, guide and agent, so anything drafted may be read by all of them. A human reads every draft before it is sent.
 
 Rules:
 - Use only the facts in BOOKING. If the answer is not there, say the team will check and come back. Never invent times, names, numbers or promises.
@@ -41,23 +37,7 @@ function briefText(b: GuestBrief): string {
   return lines.join('\n')
 }
 
-export async function suggestReplies(brief: GuestBrief, hint?: string): Promise<ReplySuggestions> {
-  const booking = await prisma.booking.findUnique({
-    where:  { bookingRef: brief.bookingRef },
-    select: { contactWhatsapp: true, contactPhone: true },
-  })
-  const phone = normalisePhone(booking?.contactWhatsapp || booking?.contactPhone || '')
-  const rows = phone
-    ? await prisma.whatsAppMessage.findMany({
-        where:   { phone, body: { not: null } },
-        orderBy: { createdAt: 'desc' },
-        take:    HISTORY,
-        select:  { direction: true, body: true, createdAt: true },
-      })
-    : []
-  const chat = rows.reverse().map(m =>
-    `[${m.createdAt.toISOString().slice(0, 16)}] ${m.direction === 'inbound' ? 'GUEST' : 'DESK'}: ${(m.body ?? '').slice(0, MESSAGE_LIMIT)}`)
-
+export async function suggestReplies(brief: GuestBrief, chat: string[], hint?: string): Promise<ReplySuggestions> {
   const response = await openai.chat.completions.create({
     model: MODEL,
     temperature: 0.4,
