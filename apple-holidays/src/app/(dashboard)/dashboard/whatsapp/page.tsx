@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertCircle, ArrowDown, ArrowLeft, BarChart3, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
   Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderSearch, Hash, Inbox, Keyboard, LayoutTemplate,
-  Loader2, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, RotateCcw, Search,
+  Loader2, Luggage, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, RotateCcw, Search,
   Send, Smile, Sparkles, Trash2, User, WifiOff, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -25,6 +25,7 @@ import { MessageReportModal, RetryFailedModal } from '@/components/whatsapp-inbo
 import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 import { GroupWorkspace, GroupsRail, useGroupDetail } from '@/components/whatsapp-inbox/groups'
+import { TripPanel } from '@/components/whatsapp-inbox/trip-panel'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country' | 'groups'
 
@@ -50,6 +51,9 @@ const PREFIX_CHIPS = [
 
 const PINS_KEY = 'wa-inbox:pins'
 const QR_KEY = 'wa-inbox:quick-replies'
+const TRIP_PANEL_KEY = 'wa-inbox:trip-panel'
+/** Below this the trip panel floats over the chat, so it starts closed there. */
+const TRIP_PANEL_INLINE_PX = 1240
 const AT_BOTTOM_PX = 96
 
 /**
@@ -155,6 +159,7 @@ function WhatsAppInboxInner() {
   const [reportOpen, setReportOpen] = useState(false)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [tripPanelOpen, setTripPanelOpen] = useState(false)
 
   const boxRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -182,6 +187,7 @@ function WhatsAppInboxInner() {
   useEffect(() => {
     setPins(readLocal<string[]>(PINS_KEY, []))
     setQuickReplies(readLocal<QuickReply[]>(QR_KEY, DEFAULT_QUICK_REPLIES))
+    setTripPanelOpen(window.innerWidth >= TRIP_PANEL_INLINE_PX && readLocal<boolean>(TRIP_PANEL_KEY, true))
     setOnline(navigator.onLine)
     const on = () => setOnline(true)
     const off = () => setOnline(false)
@@ -801,6 +807,11 @@ function WhatsAppInboxInner() {
     openConversation(phone)
   }
 
+  function showTripPanel(open: boolean) {
+    setTripPanelOpen(open)
+    writeLocal(TRIP_PANEL_KEY, open)
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-white to-emerald-50/40 text-slate-900">
       {/* ============ Conversation list ============ */}
@@ -1079,6 +1090,13 @@ function WhatsAppInboxInner() {
                     {lastSynced && <span>· synced {fmtAgo(now - lastSynced)}</span>}
                   </p>
                 </div>
+                <IconBtn
+                  title={tripPanelOpen ? 'Hide trip details' : 'Show trip details'}
+                  active={tripPanelOpen}
+                  onClick={() => showTripPanel(!tripPanelOpen)}
+                >
+                  <Luggage className="h-4 w-4" />
+                </IconBtn>
                 <IconBtn title="Search in chat (⌘F)" active={threadSearchOpen} onClick={() => { setThreadSearchOpen(o => !o); setThreadQuery(''); requestAnimationFrame(() => threadSearchRef.current?.focus()) }}>
                   <Search className="h-4 w-4" />
                 </IconBtn>
@@ -1426,6 +1444,24 @@ function WhatsAppInboxInner() {
           </>
         )}
       </section>
+
+      {/* ============ Trip details ============ */}
+      {selected && !showGroup && tripPanelOpen && (
+        <TripPanel
+          phone={selected}
+          bookingRef={threadBooking?.bookingRef ?? null}
+          ready={windowOpen !== null}
+          contactName={displayName}
+          windowOpen={windowOpen}
+          onClose={() => showTripPanel(false)}
+          onOpenChat={openPrivateChat}
+          onSent={() => {
+            scrollModeRef.current = 'force'
+            loadMessages(selected)
+            loadConversations()
+          }}
+        />
+      )}
 
       {/* ============ New chat ============ */}
       <AnimatePresence>

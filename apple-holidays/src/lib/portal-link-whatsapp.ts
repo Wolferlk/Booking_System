@@ -165,10 +165,15 @@ function fillTemplate(body: string, footer: string, params: string[]): string {
   return `${text}\n\n${footer}`
 }
 
-/** The stage's message as this booking's recipient would read it. Sends nothing. */
+/**
+ * The stage's message as this booking's recipient would read it. Sends nothing.
+ * `to` mirrors the same option on the send: a named number gets the guest
+ * message, so the ops "please forward" text never applies.
+ */
 export async function portalMessagePreview(
   bookingRef: string,
   stage: PortalStage,
+  opts: { to?: string } = {},
 ): Promise<{ text: string; forwardToOps: boolean } | null> {
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
@@ -180,7 +185,7 @@ export async function portalMessagePreview(
   if (!b) return null
 
   const link = portalLinkUrl(b.bookingRef)
-  if (!normalisePhone(b.contactWhatsapp || b.contactPhone || '')) {
+  if (!normalisePhone(opts.to || b.contactWhatsapp || b.contactPhone || '')) {
     return { text: fillTemplate(PORTAL_BODY_FORWARD, PORTAL_FOOTER_FORWARD, [b.bookingRef, link]), forwardToOps: true }
   }
   const firstName = (b.passengers[0]?.name ?? '').trim().split(/\s+/)[0] || 'there'

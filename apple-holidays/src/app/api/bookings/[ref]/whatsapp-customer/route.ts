@@ -77,7 +77,7 @@ async function messageDetail(ref: string, query: URLSearchParams) {
   } else if (kind === 'portal') {
     const stage = query.get('stage')
     if (stage !== 'welcome' && stage !== 'reminder') return buildApiError('stage must be "welcome" or "reminder"')
-    const p = await portalMessagePreview(ref, stage)
+    const p = await portalMessagePreview(ref, stage, { to: query.get('to') ?? undefined })
     if (!p) return buildApiError('Booking not found', 404)
     current = p.text
     forwardToOps = p.forwardToOps
