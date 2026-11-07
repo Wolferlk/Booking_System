@@ -34,6 +34,22 @@ export const TEMPLATE_REMINDER = process.env.WHATSAPP_PORTAL_REMINDER_TEMPLATE?.
 export const TEMPLATE_FORWARD  = process.env.WHATSAPP_PORTAL_FORWARD_TEMPLATE?.trim()  || 'apple_holidays_trip_portal_forward'
 const TEMPLATE_LANG = process.env.WHATSAPP_PORTAL_TEMPLATE_LANG?.trim() || 'en'
 
+/** The bodies registered with Meta — also rendered locally so staff can view and copy them. */
+export const PORTAL_BODY_WELCOME =
+  'Hi {{1}}, your AppleHolidays booking {{2}} is confirmed.\n\n' +
+  'You can see all the updates of your booking any time on your own trip page:\n{{3}}\n\n' +
+  'No login is needed — just open the link. We keep it updated as your flights, hotels and transfers are finalised.'
+export const PORTAL_BODY_REMINDER =
+  'Hi {{1}}, are you ready for your travel?\n\n' +
+  'Here are the latest updated details of your booking {{2}}:\n{{3}}\n\n' +
+  'Please open the link to check your final itinerary, hotels, flights and transfers before you leave.'
+export const PORTAL_BODY_FORWARD =
+  'Booking {{1}}: the guest/tourist contact number is not available in the system.\n\n' +
+  'Please pass this trip link on to the guest:\n{{2}}\n\n' +
+  'Kindly also add the guest contact number to the booking so future updates reach them directly.'
+export const PORTAL_FOOTER         = 'AppleHolidays'
+export const PORTAL_FOOTER_FORWARD = 'AppleHolidays Operations'
+
 /** Ops numbers that receive the link when the booking carries no guest contact. */
 export const FALLBACK_NUMBERS: string[] = (
   process.env.WHATSAPP_PORTAL_FALLBACK_NUMBERS?.trim() ||
@@ -142,6 +158,34 @@ async function logSend(params: {
       senderName:  `${params.tag} ${params.senderLabel}`,
     },
   })
+}
+
+function fillTemplate(body: string, footer: string, params: string[]): string {
+  const text = body.replace(/\{\{(\d+)\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? '')
+  return `${text}\n\n${footer}`
+}
+
+/** The stage's message as this booking's recipient would read it. Sends nothing. */
+export async function portalMessagePreview(
+  bookingRef: string,
+  stage: PortalStage,
+): Promise<{ text: string; forwardToOps: boolean } | null> {
+  const b = await prisma.booking.findUnique({
+    where: { bookingRef },
+    select: {
+      bookingRef: true, contactWhatsapp: true, contactPhone: true,
+      passengers: { where: { isLead: true }, take: 1, select: { name: true } },
+    },
+  })
+  if (!b) return null
+
+  const link = portalLinkUrl(b.bookingRef)
+  if (!normalisePhone(b.contactWhatsapp || b.contactPhone || '')) {
+    return { text: fillTemplate(PORTAL_BODY_FORWARD, PORTAL_FOOTER_FORWARD, [b.bookingRef, link]), forwardToOps: true }
+  }
+  const firstName = (b.passengers[0]?.name ?? '').trim().split(/\s+/)[0] || 'there'
+  const body = stage === 'welcome' ? PORTAL_BODY_WELCOME : PORTAL_BODY_REMINDER
+  return { text: fillTemplate(body, PORTAL_FOOTER, [firstName, b.bookingRef, link]), forwardToOps: false }
 }
 
 // ── Single-booking send ──────────────────────────────────────────────────────

@@ -2,6 +2,8 @@
  * Per-booking customer WhatsApp control panel API.
  *  GET  — trip day list (with per-day schedule summary + last-sent status),
  *         feedback-request send status, and any received guest feedback.
+ *  GET ?message=briefing&date= | feedback | portal&stage= — one message's text as
+ *         it would go out now, plus the versions already sent. Sends nothing.
  *  POST — manually send a daily briefing for a chosen day, or the feedback form.
  */
 import { NextRequest } from 'next/server'
@@ -23,12 +25,15 @@ import {
   getSuperPartners,
 } from '@/lib/customer-whatsapp-automation'
 import { isSuperPartner } from '@/lib/super-partners'
-import { briefingDayLabel } from '@/lib/whatsapp'
+import { briefingDayLabel, normalisePhone } from '@/lib/whatsapp'
 import {
   sendPortalLinkForBooking,
   portalSendStatus,
   portalLinkUrl,
+  portalMessagePreview,
   FALLBACK_NUMBERS,
+  TAG_PORTAL_WELCOME,
+  TAG_PORTAL_REMINDER,
 } from '@/lib/portal-link-whatsapp'
 
 export const dynamic = 'force-dynamic'
@@ -38,10 +43,93 @@ function dateStr(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { ref: string } }) {
+/** Whitespace-only differences are not a change the guest would notice. */
+function sameText(a: string, b: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
+  return norm(a) === norm(b)
+}
+
+/** The View / Copy payload for one message. Read-only: dry runs and the send log. */
+async function messageDetail(ref: string, query: URLSearchParams) {
+  const kind = query.get('message')
+  let current: string
+  let tag: string
+  let attachments = 0
+  let forwardToOps = false
+  let bodyContains: string | undefined
+  // Portal sends log a one-line note rather than the template text.
+  let logHoldsMessage = true
+
+  if (kind === 'briefing') {
+    const date = query.get('date') ?? ''
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return buildApiError('A valid date is required')
+    const r = await sendDailyBriefingForBooking(ref, date, { force: true, allowEmpty: true, dryRun: true })
+    if (!r.ok || r.message === undefined) return buildApiError(r.reason ?? 'Could not build the message')
+    current = r.message
+    attachments = r.attachments ?? 0
+    tag = TAG_DAILY_BRIEFING
+    bodyContains = briefingDayLabel(`${date}T00:00:00.000Z`)
+  } else if (kind === 'feedback') {
+    const r = await sendFeedbackRequestForBooking(ref, { force: true, dryRun: true })
+    if (!r.ok || r.message === undefined) return buildApiError(r.reason ?? 'Could not build the message')
+    current = r.message
+    tag = TAG_FEEDBACK_REQUEST
+  } else if (kind === 'portal') {
+    const stage = query.get('stage')
+    if (stage !== 'welcome' && stage !== 'reminder') return buildApiError('stage must be "welcome" or "reminder"')
+    const p = await portalMessagePreview(ref, stage)
+    if (!p) return buildApiError('Booking not found', 404)
+    current = p.text
+    forwardToOps = p.forwardToOps
+    tag = stage === 'welcome' ? TAG_PORTAL_WELCOME : TAG_PORTAL_REMINDER
+    logHoldsMessage = false
+  } else {
+    return buildApiError('Unknown message')
+  }
+
+  const [booking, rows] = await Promise.all([
+    prisma.booking.findUnique({
+      where: { bookingRef: ref },
+      select: { contactWhatsapp: true, contactPhone: true },
+    }),
+    prisma.whatsAppMessage.findMany({
+      where: {
+        bookingRef: ref,
+        direction: 'outbound',
+        senderName: { startsWith: tag },
+        // 'pending' rows are the unsent tail of a split template, not a whole message.
+        status: { not: 'pending' },
+        ...(bodyContains ? { body: { contains: bodyContains } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+      select: { id: true, body: true, status: true, phone: true, createdAt: true },
+    }),
+  ])
+
+  const lastGood = logHoldsMessage ? rows.find(s => s.status !== 'failed' && s.status !== 'retried') : undefined
+  return buildApiSuccess({
+    current,
+    attachments,
+    forwardToOps,
+    to: normalisePhone(booking?.contactWhatsapp || booking?.contactPhone || '') || null,
+    changedSinceSent: Boolean(lastGood?.body) && !sameText(lastGood!.body!, current),
+    sends: rows.map(s => ({
+      id: s.id,
+      at: s.createdAt.toISOString(),
+      status: s.status,
+      phone: s.phone,
+      body: logHoldsMessage ? s.body : null,
+    })),
+  })
+}
+
+export async function GET(req: NextRequest, { params }: { params: { ref: string } }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   if (!ALLOWED.includes(session.user.role as UserRole)) return buildApiError('Forbidden', 403)
+
+  if (req.nextUrl.searchParams.has('message')) return messageDetail(params.ref, req.nextUrl.searchParams)
 
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: params.ref },

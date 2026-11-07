@@ -264,6 +264,7 @@ export interface SingleSendResult {
   reason?: string   // why it was skipped or failed (null when ok)
   message?: string  // the message body that was sent (for previews/logs)
   unconfirmed?: boolean  // went as plain text outside the 24h window, so Meta may drop it
+  attachments?: number   // ticket/voucher files that follow the text (dry runs only)
 }
 
 /**
@@ -299,11 +300,6 @@ export async function sendDailyBriefingForBooking(
     },
   })
   if (!b) return { ok: false, reason: 'Booking not found' }
-
-  const phone = opts.to || b.contactWhatsapp || b.contactPhone
-  if (!phone || !normalisePhone(phone)) {
-    return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
-  }
 
   if (!opts.force && await alreadySentForDay(bookingRef, targetDateStr)) {
     return { ok: false, reason: 'Already sent for this day' }
@@ -406,7 +402,12 @@ export async function sendDailyBriefingForBooking(
     branded,
   })
 
-  if (opts.dryRun) return { ok: true, message: msg }
+  if (opts.dryRun) return { ok: true, message: msg, attachments: attachments.length }
+
+  const phone = opts.to || b.contactWhatsapp || b.contactPhone
+  if (!phone || !normalisePhone(phone)) {
+    return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
+  }
 
   const tag = `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`
   const sent = await deliverToGuest({
@@ -591,10 +592,13 @@ export async function runDueCustomerDailyBriefings(): Promise<AutomationRunResul
 // 2. Feedback request — departure-day 6pm invite to the public feedback form
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Send the post-departure feedback-form invite to one booking's guest. */
+/**
+ * Send the post-departure feedback-form invite to one booking's guest.
+ * opts.dryRun builds and returns the message without sending or logging it.
+ */
 export async function sendFeedbackRequestForBooking(
   bookingRef: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; dryRun?: boolean } = {},
 ): Promise<SingleSendResult> {
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
@@ -604,12 +608,7 @@ export async function sendFeedbackRequestForBooking(
     },
   })
   if (!b) return { ok: false, reason: 'Booking not found' }
-  if (b.guestFeedback) return { ok: false, reason: 'Feedback already received' }
-
-  const phone = b.contactWhatsapp || b.contactPhone
-  if (!phone || !normalisePhone(phone)) {
-    return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
-  }
+  if (b.guestFeedback && !opts.dryRun) return { ok: false, reason: 'Feedback already received' }
 
   if (!opts.force && await alreadySentToday(bookingRef, TAG_FEEDBACK_REQUEST)) {
     return { ok: false, reason: 'Already sent today' }
@@ -622,6 +621,13 @@ export async function sendFeedbackRequestForBooking(
     leadName:   b.passengers[0]?.name ?? null,
     formUrl,
   })
+
+  if (opts.dryRun) return { ok: true, message: msg }
+
+  const phone = b.contactWhatsapp || b.contactPhone
+  if (!phone || !normalisePhone(phone)) {
+    return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
+  }
 
   const tag = `${TAG_FEEDBACK_REQUEST} ${b.passengers[0]?.name ?? 'Guest'}`
   const sent = await deliverToGuest({

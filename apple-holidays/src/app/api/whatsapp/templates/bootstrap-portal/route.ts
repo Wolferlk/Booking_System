@@ -16,7 +16,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { createMetaTemplate, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
-import { TEMPLATE_WELCOME, TEMPLATE_REMINDER, TEMPLATE_FORWARD } from '@/lib/portal-link-whatsapp'
+import {
+  TEMPLATE_WELCOME, TEMPLATE_REMINDER, TEMPLATE_FORWARD,
+  PORTAL_BODY_WELCOME, PORTAL_BODY_REMINDER, PORTAL_BODY_FORWARD,
+  PORTAL_FOOTER, PORTAL_FOOTER_FORWARD,
+} from '@/lib/portal-link-whatsapp'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -32,30 +36,21 @@ const EXAMPLE_LINK = 'https://ops.aahaas.com/trip/464516CNTL?t=46c05230e67629e60
 const TEMPLATES = [
   {
     name: TEMPLATE_WELCOME,
-    bodyText:
-      'Hi {{1}}, your AppleHolidays booking {{2}} is confirmed.\n\n' +
-      'You can see all the updates of your booking any time on your own trip page:\n{{3}}\n\n' +
-      'No login is needed — just open the link. We keep it updated as your flights, hotels and transfers are finalised.',
+    bodyText: PORTAL_BODY_WELCOME,
     bodyExamples: ['Nimal', 'VN19018', EXAMPLE_LINK],
-    footerText: 'AppleHolidays',
+    footerText: PORTAL_FOOTER,
   },
   {
     name: TEMPLATE_REMINDER,
-    bodyText:
-      'Hi {{1}}, are you ready for your travel?\n\n' +
-      'Here are the latest updated details of your booking {{2}}:\n{{3}}\n\n' +
-      'Please open the link to check your final itinerary, hotels, flights and transfers before you leave.',
+    bodyText: PORTAL_BODY_REMINDER,
     bodyExamples: ['Nimal', 'VN19018', EXAMPLE_LINK],
-    footerText: 'AppleHolidays',
+    footerText: PORTAL_FOOTER,
   },
   {
     name: TEMPLATE_FORWARD,
-    bodyText:
-      'Booking {{1}}: the guest/tourist contact number is not available in the system.\n\n' +
-      'Please pass this trip link on to the guest:\n{{2}}\n\n' +
-      'Kindly also add the guest contact number to the booking so future updates reach them directly.',
+    bodyText: PORTAL_BODY_FORWARD,
     bodyExamples: ['VN19018', EXAMPLE_LINK],
-    footerText: 'AppleHolidays Operations',
+    footerText: PORTAL_FOOTER_FORWARD,
   },
 ]
 

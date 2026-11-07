@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   MessageCircle, Send, Loader2, CheckCircle2, Calendar, Plane, Hotel,
   ChevronDown, ChevronUp, Star, RefreshCw, Clock, Sparkles, MapPin, ExternalLink,
@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import WhatsappMessageViewer, { MessageRowActions, type ViewerItem } from './whatsapp-message-viewer'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,28 @@ function fmtSent(iso: string) {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+/** Every message on the booking, in the order the guest meets them. */
+function viewerItems(data: PanelData): ViewerItem[] {
+  return [
+    {
+      id: 'portal:welcome', query: 'message=portal&stage=welcome', chip: 'Welcome',
+      title: PORTAL_STAGES[0].title, copiedLabel: 'Welcome message', sent: Boolean(data.portalWelcomeSentAt),
+    },
+    {
+      id: 'portal:reminder', query: 'message=portal&stage=reminder', chip: 'Ready',
+      title: PORTAL_STAGES[1].title, copiedLabel: 'Ready-to-travel message', sent: Boolean(data.portalReminderSentAt),
+    },
+    ...data.days.map(day => ({
+      id: `day:${day.date}`, query: `message=briefing&date=${day.date}`, chip: `Day ${day.dayNo}`,
+      title: `Day ${day.dayNo} · ${fmtDay(day.date)}`, copiedLabel: `Day ${day.dayNo} message`, sent: Boolean(day.lastSentAt),
+    })),
+    {
+      id: 'feedback', query: 'message=feedback', chip: 'Feedback',
+      title: 'Feedback form', copiedLabel: 'Feedback message', sent: Boolean(data.feedbackRequestSentAt),
+    },
+  ]
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: string }) {
@@ -99,6 +122,10 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
   const [sendingFeedback, setSendingFeedback] = useState(false)
   const [sendingPortal, setSendingPortal] = useState<'welcome' | 'reminder' | null>(null)
   const [savingTime, setSavingTime] = useState(false)
+  const [viewingId, setViewingId] = useState<string | null>(null)
+
+  const items = useMemo(() => (data ? viewerItems(data) : []), [data])
+  const itemById = (id: string) => items.find(i => i.id === id)!
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -238,11 +265,11 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                     const sentAt = stage === 'welcome' ? data.portalWelcomeSentAt : data.portalReminderSentAt
                     const sending = sendingPortal === stage
                     return (
-                      <div key={stage} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:border-slate-200 bg-white transition-colors">
+                      <div key={stage} className="flex flex-wrap sm:flex-nowrap items-center justify-end gap-x-3 gap-y-2 px-3 py-2 rounded-xl border border-slate-100 hover:border-slate-200 bg-white transition-colors">
                         <div className="w-9 h-9 rounded-lg bg-brand-600 text-white flex items-center justify-center flex-shrink-0">
                           <LinkIcon className="w-4 h-4" />
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 basis-[calc(100%-3rem)] sm:basis-0">
                           <p className="text-xs font-bold text-slate-800 truncate">{title}</p>
                           <p className="text-[11px] text-slate-400 truncate mt-0.5">
                             {sentAt ? `Last sent ${fmtSent(sentAt)}` : blurb}
@@ -253,6 +280,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                             <CheckCircle2 className="w-3 h-3" /> Sent
                           </span>
                         )}
+                        <MessageRowActions bookingRef={bookingRef} item={itemById(`portal:${stage}`)} onView={setViewingId} />
                         <button
                           onClick={() => sendPortal(stage)}
                           disabled={sending}
@@ -300,12 +328,12 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                     if (day.checkOut) parts.push('check-out')
                     const sending = sendingDate === day.date
                     return (
-                      <div key={day.date} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:border-slate-200 bg-white transition-colors">
+                      <div key={day.date} className="flex flex-wrap sm:flex-nowrap items-center justify-end gap-x-3 gap-y-2 px-3 py-2 rounded-xl border border-slate-100 hover:border-slate-200 bg-white transition-colors">
                         <div className="w-9 h-9 rounded-lg bg-slate-900 text-white flex flex-col items-center justify-center flex-shrink-0 leading-none">
                           <span className="text-[8px] uppercase text-slate-400 font-bold">Day</span>
                           <span className="text-xs font-black">{day.dayNo}</span>
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 basis-[calc(100%-3rem)] sm:basis-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-bold text-slate-800">{fmtDay(day.date)}</span>
                             {day.isArrival && <Tag color="blue" icon={<Plane className="w-2.5 h-2.5" />}>Arrival</Tag>}
@@ -320,6 +348,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                             <CheckCircle2 className="w-3 h-3" /> Sent
                           </span>
                         )}
+                        <MessageRowActions bookingRef={bookingRef} item={itemById(`day:${day.date}`)} onView={setViewingId} />
                         <button
                           onClick={() => sendBriefing(day.date)}
                           disabled={!data.hasContact || sending}
@@ -340,9 +369,14 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
 
               {/* Feedback form sender */}
               <div className="border-t border-slate-100 pt-4">
-                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                  <Star className="w-3.5 h-3.5" /> Feedback Form
-                </p>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5" /> Feedback Form
+                  </p>
+                  <span className="flex items-center gap-1.5">
+                    <MessageRowActions bookingRef={bookingRef} item={itemById('feedback')} onView={setViewingId} />
+                  </span>
+                </div>
                 {data.feedback ? (
                   <FeedbackView feedback={data.feedback} />
                 ) : (
@@ -368,6 +402,17 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                   </div>
                 )}
               </div>
+
+              {viewingId && (
+                <WhatsappMessageViewer
+                  bookingRef={bookingRef}
+                  items={items}
+                  activeId={viewingId}
+                  recipient={data.leadName ?? 'Guest'}
+                  onSelect={setViewingId}
+                  onClose={() => setViewingId(null)}
+                />
+              )}
             </>
           )}
         </CardBody>
