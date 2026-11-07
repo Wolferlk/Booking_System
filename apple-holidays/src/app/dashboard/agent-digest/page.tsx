@@ -12,6 +12,11 @@
  *   Tomorrow — what every digest will send next, built live, nothing sent.
  *   History  — every delivery, by day (yesterday by default), with the exact
  *              message and the frozen snapshot behind it.
+ *   Tickets  — the ticket radar: every booking arriving soon, how far its
+ *              tickets have got and what the ticket pack will do with it.
+ *
+ * A digest of kind TICKETS is a ticket pack: every ticket of the guests arriving
+ * in N days (D-3 by default), with status and files to download.
  *
  * Safety: previews never write; "Send test" goes only to the number/email you
  * type; auto-send is OFF until switched on per digest.
@@ -23,7 +28,7 @@ import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Archive, BellRing, CalendarClock, CalendarDays, Check, CheckCircle2,
   ChevronLeft, ChevronRight, Clock, ExternalLink, Eye, FlaskConical, History, Layers, Loader2, Mail,
-  MessageCircle, Plus, RefreshCw, Rocket, RotateCcw, Save, Search, Send, Smartphone, Sparkles, Trash2, Users, X, XCircle, Zap,
+  MessageCircle, Plane, Plus, Radar, RefreshCw, Rocket, RotateCcw, Save, Search, Send, ShieldCheck, Smartphone, Sparkles, Ticket, Trash2, Users, X, XCircle, Zap,
 } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
@@ -35,6 +40,10 @@ import {
   renderTemplateText, SCOPE_META, templateParams, todayIn,
   type DateBasis, type DigestBlock, type DigestConfig, type DigestPayload, type DigestRecipient, type DigestRuleView,
 } from '@/lib/agent-digest/shared'
+import {
+  TICKET_CATEGORIES, TICKET_HOLD_META, TICKET_SHOW_FIELDS, TICKET_STATE_META,
+  type TicketHold, type TicketPackConfig, type TicketState,
+} from '@/lib/agent-digest/tickets-config'
 
 // ── API ──────────────────────────────────────────────────────────────────────
 
@@ -165,7 +174,7 @@ const inputCls = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 t
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
-type Tab = 'designer' | 'upcoming' | 'history'
+type Tab = 'designer' | 'upcoming' | 'radar' | 'history'
 
 export default function AgentDigestPage() {
   const [tab, setTab] = useState<Tab>('designer')
@@ -218,6 +227,7 @@ export default function AgentDigestPage() {
   }
 
   const startFromPreset = (key: string) => {
+    if (dirty && !confirm('Discard unsaved changes?')) return
     const preset = DIGEST_PRESETS.find(p => p.key === key)!
     const built = preset.build()
     const base = blankDraft()
@@ -254,6 +264,7 @@ export default function AgentDigestPage() {
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" icon={<RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />} onClick={() => load()}>Refresh</Button>
+            <Button variant="secondary" size="sm" icon={<Ticket className="h-3.5 w-3.5" />} onClick={() => startFromPreset('ticket-pack')} disabled={overview?.setupRequired}>New ticket pack</Button>
             <Button size="sm" icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setShowGallery(true)} disabled={overview?.setupRequired}>New digest</Button>
           </div>
         </div>
@@ -273,10 +284,11 @@ export default function AgentDigestPage() {
           ))}
         </div>
 
-        <div className="relative mt-5 flex gap-1 rounded-xl bg-white/5 p-1 text-sm w-fit">
+        <div className="relative mt-5 flex w-fit max-w-full flex-wrap gap-1 rounded-xl bg-white/5 p-1 text-sm">
           {([
             ['designer', 'Designer', <Sparkles key="a" className="h-4 w-4" />],
             ['upcoming', 'Tomorrow’s sends', <CalendarClock key="b" className="h-4 w-4" />],
+            ['radar', 'Ticket radar', <Radar key="d" className="h-4 w-4" />],
             ['history', 'Sent history', <History key="c" className="h-4 w-4" />],
           ] as [Tab, string, React.ReactNode][]).map(([k, label, icon]) => (
             <button key={k} onClick={() => setTab(k)}
@@ -313,6 +325,7 @@ export default function AgentDigestPage() {
           </div>
         )}
         {tab === 'upcoming' && <UpcomingTab onOpen={r => pick(r)} />}
+        {tab === 'radar' && <RadarTab rules={rules} onNewPack={() => startFromPreset('ticket-pack')} />}
         {tab === 'history' && <HistoryTab rules={rules} />}
       </div>
 
@@ -350,6 +363,7 @@ function RuleRail({ rules, archived, activeId, onPick, onRestore, onNew, loading
               <span key={a} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">{a}</span>
             ))}
             {r.config.countries.map(c => <CountryFlag key={c} country={c} className="h-3 w-4 rounded-[2px]" />)}
+            {r.config.kind === 'TICKETS' && <span className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"><Ticket className="h-2.5 w-2.5" />D-{r.config.ticketPack.daysBefore}</span>}
           </div>
           <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-500">
             <Clock className="h-3 w-3" />
@@ -487,7 +501,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
       <div className="space-y-5">
         {/* Title bar */}
         <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <input value={draft.name} onChange={e => patch({ name: e.target.value })} placeholder="Digest name, e.g. 30 Sundays — daily ops"
+          <input value={draft.name} onChange={e => patch({ name: e.target.value })} placeholder={c.kind === 'TICKETS' ? 'Pack name, e.g. 30 Sundays — tickets D-3' : 'Digest name, e.g. 30 Sundays — daily ops'}
             className="min-w-[240px] flex-1 border-0 bg-transparent text-lg font-semibold text-slate-900 placeholder:text-slate-300 focus:outline-none" />
           {dirty && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">Unsaved</span>}
           <div className="flex flex-wrap gap-2">
@@ -501,8 +515,12 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
         {lastResult && <ResultCard result={lastResult} onClose={() => setLastResult(null)} />}
 
         <WhoSection c={c} patchConfig={patchConfig} />
-        <BlocksSection c={c} patchConfig={patchConfig} />
-        <FieldsSection c={c} patchConfig={patchConfig} />
+        {c.kind === 'TICKETS' ? <TicketPackSection c={c} patchConfig={patchConfig} /> : (
+          <>
+            <BlocksSection c={c} patchConfig={patchConfig} />
+            <FieldsSection c={c} patchConfig={patchConfig} />
+          </>
+        )}
         <RecipientsSection c={c} patchConfig={patchConfig} />
         <DeliverySection draft={draft} patch={patch} patchConfig={patchConfig} />
       </div>
@@ -513,7 +531,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
 
       {showTest && <BodyPortal><TestDialog draft={draft} me={me} onClose={() => setShowTest(false)} onResult={setLastResult} /></BodyPortal>}
       <Modal
-        open={confirmSend} onClose={() => setConfirmSend(false)} title="Send today’s digest now?"
+        open={confirmSend} onClose={() => setConfirmSend(false)} title={c.kind === 'TICKETS' ? 'Send today’s ticket pack now?' : 'Send today’s digest now?'}
         footer={<>
           <Button variant="secondary" size="sm" onClick={() => setConfirmSend(false)}>Cancel</Button>
           <Button size="sm" icon={<Send className="h-3.5 w-3.5" />} onClick={sendNow}>Send now</Button>
@@ -746,6 +764,7 @@ function RecipientsSection({ c, patchConfig }: { c: DigestConfig; patchConfig: (
 }
 
 const TOKENS = ['{recipient}', '{agent}', '{day}', '{date}', '{bookings}', '{lines}', '{countries}']
+const PACK_TOKENS = ['{recipient}', '{agent}', '{arrival}', '{day}', '{bookings}', '{tickets}', '{ready}', '{countries}']
 
 function DeliverySection({ draft, patch, patchConfig }: { draft: Draft; patch: (p: Partial<Draft>) => void; patchConfig: (p: Partial<DigestConfig>) => void }) {
   const c = draft.config
@@ -763,7 +782,11 @@ function DeliverySection({ draft, patch, patchConfig }: { draft: Draft; patch: (
           <div className={cn('flex items-center justify-between gap-3 rounded-xl border p-3.5', draft.autoSend ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200')}>
             <div>
               <p className="text-sm font-semibold text-slate-900">Send automatically every day</p>
-              <p className="text-xs text-slate-500">Off = only when you press “Send now”. Saved designs start off.</p>
+              <p className="text-xs text-slate-500">
+                {c.kind === 'TICKETS'
+                  ? `Checks every day at the send time; only bookings that are due that day go out. Off = only when you press “Send now”.`
+                  : 'Off = only when you press “Send now”. Saved designs start off.'}
+              </p>
             </div>
             <Toggle on={draft.autoSend} onChange={v => patch({ autoSend: v })} label="Auto send" />
           </div>
@@ -810,7 +833,7 @@ function DeliverySection({ draft, patch, patchConfig }: { draft: Draft; patch: (
             <label className="text-xs font-medium text-slate-600">Opening <span className="font-normal text-slate-400">— email & full-update page</span></label>
             <textarea ref={introRef} rows={3} value={c.intro} onChange={e => patchConfig({ intro: e.target.value })} className={cn(inputCls, 'mt-1 font-mono text-xs')} />
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {TOKENS.map(t => <button key={t} onClick={() => insert(t)} className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 hover:bg-teal-100 hover:text-teal-800">{t}</button>)}
+              {(c.kind === 'TICKETS' ? PACK_TOKENS : TOKENS).map(t => <button key={t} onClick={() => insert(t)} className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-600 hover:bg-teal-100 hover:text-teal-800">{t}</button>)}
             </div>
           </div>
           <div>
@@ -818,12 +841,254 @@ function DeliverySection({ draft, patch, patchConfig }: { draft: Draft; patch: (
             <textarea rows={3} value={c.footer} onChange={e => patchConfig({ footer: e.target.value })} className={cn(inputCls, 'mt-1 font-mono text-xs')} />
           </div>
           <div className="rounded-xl bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
-            <b>WhatsApp always uses the approved template</b> <code>aahaas_agent_daily_digest</code>: name, agent, date, booking and line counts, and a link to the
-            full update (every driver, guide and vendor, laid out with the fields and wording chosen here). It must be approved by Meta first — submit it under Sent history.
+            {c.kind === 'TICKETS' ? (
+              <><b>WhatsApp always uses the approved template</b> <code>aahaas_agent_ticket_pack</code>: name, agent, arrival date, booking and ticket counts, and a link to
+              the tickets with their downloads. It must be approved by Meta first — submit it under Sent history.</>
+            ) : (
+              <><b>WhatsApp always uses the approved template</b> <code>aahaas_agent_daily_digest</code>: name, agent, date, booking and line counts, and a link to the
+              full update (every driver, guide and vendor, laid out with the fields and wording chosen here). It must be approved by Meta first — submit it under Sent history.</>
+            )}
           </div>
         </div>
       </div>
     </Section>
+  )
+}
+
+// ── Ticket pack settings ─────────────────────────────────────────────────────
+
+function SwitchRow({ title, hint, on, onChange }: { title: string; hint: string; on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-3">
+      <div>
+        <p className="text-sm font-medium text-slate-800">{title}</p>
+        <p className="text-xs text-slate-500">{hint}</p>
+      </div>
+      <Toggle on={on} onChange={onChange} label={title} />
+    </div>
+  )
+}
+
+function TicketPackSection({ c, patchConfig }: { c: DigestConfig; patchConfig: (p: Partial<DigestConfig>) => void }) {
+  const t = c.ticketPack
+  const set = (p: Partial<TicketPackConfig>) => patchConfig({ ticketPack: { ...t, ...p } })
+  const days = [7, 6, 5, 4, 3, 2, 1]
+  return (
+    <>
+      <Section icon={<Plane className="h-4 w-4" />} title="When it goes out" hint="Counted back from each booking’s arrival date">
+        <div className="rounded-2xl bg-gradient-to-r from-teal-50 to-emerald-50 p-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {days.map(d => (
+              <button key={d} onClick={() => set({ daysBefore: d })} aria-pressed={t.daysBefore === d}
+                className={cn('h-10 min-w-[46px] rounded-xl px-2 text-sm font-semibold transition', t.daysBefore === d ? 'bg-teal-600 text-white shadow-md' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:ring-teal-300')}>
+                D-{d}
+              </button>
+            ))}
+            <span className="flex h-10 items-center gap-1 rounded-xl bg-slate-900 px-3 text-sm font-semibold text-white"><Plane className="h-3.5 w-3.5" /> Arrival</span>
+            <label className="ml-auto flex items-center gap-2 text-xs text-slate-600">Other
+              <input type="number" min={0} max={30} value={t.daysBefore}
+                onChange={e => set({ daysBefore: Math.max(0, Math.min(30, Number(e.target.value) || 0)) })}
+                className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm" /> days before
+            </label>
+          </div>
+          <p className="mt-3 text-sm text-teal-900">
+            Guests arriving on <b>{fmtShort(addDays(todayIn('Asia/Colombo'), t.daysBefore))}</b> go out today; {t.daysBefore === 1 ? 'one day' : `${t.daysBefore} days`} before arrival, every time.
+          </p>
+        </div>
+        <div className="mt-4">
+          <label className="text-xs font-medium text-slate-600">Wait for tickets before sending</label>
+          <div className="mt-1.5 grid gap-2 md:grid-cols-3">
+            {(Object.keys(TICKET_HOLD_META) as TicketHold[]).map(k => (
+              <button key={k} onClick={() => set({ hold: k })} aria-pressed={t.hold === k}
+                className={cn('rounded-xl border p-3 text-left transition', t.hold === k ? 'border-teal-500 bg-teal-50' : 'border-slate-200 hover:border-slate-300')}>
+                <p className="text-sm font-semibold text-slate-900">{TICKET_HOLD_META[k].label}</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-500">{TICKET_HOLD_META[k].hint}</p>
+              </button>
+            ))}
+          </div>
+          {t.hold !== 'NONE' && !t.catchUp && (
+            <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Turn on “Catch up” below, or a booking held on its day will never go out.
+            </p>
+          )}
+        </div>
+        <div className="mt-4 grid gap-2 md:grid-cols-2">
+          <SwitchRow title="Catch up on late bookings" hint="A booking added or held after its day goes out on the next send." on={t.catchUp} onChange={v => set({ catchUp: v })} />
+          <SwitchRow title="Follow up when tickets arrive" hint="Sends again, marked New, when a pending ticket becomes downloadable." on={t.followUps} onChange={v => set({ followUps: v })} />
+        </div>
+      </Section>
+
+      <Section icon={<Ticket className="h-4 w-4" />} title="Which tickets, and what the agent sees" hint="No prices, costs or portals are ever included">
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-slate-600">Categories <span className="font-normal text-slate-400">— none selected sends all of them</span></label>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {TICKET_CATEGORIES.map(cat => {
+                const on = t.categories.includes(cat.key)
+                return (
+                  <button key={cat.key} onClick={() => set({ categories: on ? t.categories.filter(x => x !== cat.key) : [...t.categories, cat.key] })} aria-pressed={on}
+                    className={cn('flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium', on ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-600')}>
+                    {on && <Check className="h-3 w-3" />}{cat.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600">Show on each ticket</label>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {TICKET_SHOW_FIELDS.map(f => {
+                const on = t.show[f.key]
+                return (
+                  <button key={f.key} onClick={() => set({ show: { ...t.show, [f.key]: !on } })} aria-pressed={on}
+                    className={cn('flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition', on ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-400 line-through decoration-slate-300')}>
+                    {on && <Check className="h-3 w-3" />}{f.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <SwitchRow title="Include bookings with no tickets entered" hint="Shows “Tickets are being arranged”. No Tickets and Hotel Only bookings are always left out." on={t.includeEmpty} onChange={v => set({ includeEmpty: v })} />
+        </div>
+      </Section>
+
+      <Section icon={<ShieldCheck className="h-4 w-4" />} title="Downloads" hint="PDF and image files open from a private link. A ticket that is not activated is never downloadable.">
+        <div className="grid gap-2 md:grid-cols-2">
+          <SwitchRow title="Only after purchase" hint="Off: a file is available once the ticket is activated, as in the client portal." on={t.downloadOnlyPurchased} onChange={v => set({ downloadOnlyPurchased: v })} />
+          <SwitchRow title="Include the main ticket file" hint="Turn off if that file is a receipt showing a price. Per-guest files are always included." on={t.includeMainFile} onChange={v => set({ includeMainFile: v })} />
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+          Link stops working
+          <input type="number" min={1} max={60} value={t.linkDaysAfterTrip}
+            onChange={e => set({ linkDaysAfterTrip: Math.max(1, Math.min(60, Number(e.target.value) || 1)) })}
+            className="w-16 rounded-lg border border-slate-300 px-2 py-1.5 text-sm" />
+          days after the guests leave
+        </label>
+      </Section>
+    </>
+  )
+}
+
+// ── Ticket radar ─────────────────────────────────────────────────────────────
+
+interface RadarRow {
+  ref: string; lead: string | null; agent: string | null; arrival: string; sendDay: string; tickets: number; ready: number
+  counts: Record<string, number>; stage: 'SENT' | 'WAIVED' | 'NO_TICKETS' | 'HELD' | 'TODAY' | 'LATE' | 'UPCOMING'; sentOn: string | null
+}
+
+const RADAR_STAGE: Record<RadarRow['stage'], { label: string; cls: string }> = {
+  SENT:       { label: 'Sent', cls: 'bg-emerald-100 text-emerald-700' },
+  TODAY:      { label: 'Goes out today', cls: 'bg-teal-100 text-teal-700' },
+  LATE:       { label: 'Next send', cls: 'bg-sky-100 text-sky-700' },
+  UPCOMING:   { label: 'Upcoming', cls: 'bg-slate-100 text-slate-600' },
+  HELD:       { label: 'Held', cls: 'bg-amber-100 text-amber-800' },
+  NO_TICKETS: { label: 'No tickets entered', cls: 'bg-rose-100 text-rose-700' },
+  WAIVED:     { label: 'No tickets needed', cls: 'bg-slate-100 text-slate-500' },
+}
+
+function ReadinessBar({ row }: { row: RadarRow }) {
+  const order: TicketState[] = ['READY', 'FILE_READY', 'PURCHASED', 'ACTIVATED', 'NOT_ACTIVATED']
+  if (!row.tickets) return <span className="text-xs text-slate-400">—</span>
+  return (
+    <div className="min-w-[150px]">
+      <div className="flex h-2 overflow-hidden rounded-full bg-slate-100">
+        {order.map(s => row.counts[s] ? (
+          <span key={s} title={`${row.counts[s]} · ${TICKET_STATE_META[s].label}`} style={{ width: `${(row.counts[s] / row.tickets) * 100}%`, backgroundColor: TICKET_STATE_META[s].bar }} />
+        ) : null)}
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500"><b className="text-slate-800">{row.ready}</b> of {row.tickets} ready to download</p>
+    </div>
+  )
+}
+
+function RadarTab({ rules, onNewPack }: { rules: DigestRuleView[]; onNewPack: () => void }) {
+  const packs = useMemo(() => rules.filter(r => r.config.kind === 'TICKETS'), [rules])
+  const [ruleId, setRuleId] = useState('')
+  const [days, setDays] = useState(14)
+  const [data, setData] = useState<{ today: string; daysBefore: number; rows: RadarRow[] } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [onlyGaps, setOnlyGaps] = useState(false)
+  const activeId = ruleId || packs[0]?.id || ''
+
+  const load = useCallback(async () => {
+    setBusy(true)
+    try {
+      const qs = new URLSearchParams({ days: String(days) }); if (activeId) qs.set('ruleId', activeId)
+      const { data } = await api<{ today: string; daysBefore: number; rows: RadarRow[] }>(`/api/agent-digest/tickets/radar?${qs}`)
+      setData(data)
+    } catch (e) { toast.error((e as Error).message) } finally { setBusy(false) }
+  }, [activeId, days])
+  useEffect(() => { void load() }, [load])
+
+  const rows = useMemo(() => (data?.rows ?? []).filter(r => !onlyGaps || (r.stage !== 'WAIVED' && (r.ready < r.tickets || !r.tickets))), [data, onlyGaps])
+  const sum = useMemo(() => {
+    const all = data?.rows ?? []
+    return {
+      today: all.filter(r => r.stage === 'TODAY').length,
+      gaps: all.filter(r => r.sendDay <= addDays(data?.today ?? '', 1) && r.stage !== 'WAIVED' && r.stage !== 'SENT' && r.ready < r.tickets).length,
+      empty: all.filter(r => r.stage === 'NO_TICKETS').length,
+      sent: all.filter(r => r.stage === 'SENT').length,
+    }
+  }, [data])
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div><label className="block text-[11px] text-slate-500">Ticket pack</label>
+          {packs.length ? (
+            <select value={activeId} onChange={e => setRuleId(e.target.value)} className="rounded-lg border border-slate-200 py-1.5 pl-2 pr-8 text-xs">
+              {packs.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          ) : <p className="py-1.5 text-xs text-slate-600">All agents at D-3 · <button onClick={onNewPack} className="font-semibold text-teal-700 hover:underline">create a pack</button></p>}
+        </div>
+        <div className="flex gap-1.5">
+          {[7, 14, 30].map(d => (
+            <button key={d} onClick={() => setDays(d)} className={cn('rounded-full px-3 py-1.5 text-xs font-medium', days === d ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>Next {d} days</button>
+          ))}
+        </div>
+        <button onClick={() => setOnlyGaps(v => !v)} aria-pressed={onlyGaps} className={cn('rounded-full px-3 py-1.5 text-xs font-medium', onlyGaps ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>Only not ready</button>
+        <Button variant="ghost" size="sm" icon={<RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />} onClick={load}>Refresh</Button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          ['Going out today', sum.today, 'text-teal-700'],
+          ['Due by tomorrow, not ready', sum.gaps, sum.gaps ? 'text-rose-600' : 'text-slate-900'],
+          ['No tickets entered', sum.empty, sum.empty ? 'text-amber-600' : 'text-slate-900'],
+          ['Already sent', sum.sent, 'text-slate-900'],
+        ].map(([l, v, cls]) => (
+          <div key={l as string} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <div className={cn('text-2xl font-bold', cls as string)}>{v as number}</div>
+            <div className="text-xs text-slate-500">{l as string}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-[11px] uppercase tracking-wider text-slate-500">
+            <tr><th className="px-4 py-2.5">Goes out</th><th className="px-4 py-2.5">Arrival</th><th className="px-4 py-2.5">Booking</th><th className="px-4 py-2.5">Tickets</th><th className="px-4 py-2.5">Status</th><th className="px-4 py-2.5" /></tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {busy && !data && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400"><Loader2 className="mx-auto h-5 w-5 animate-spin" /></td></tr>}
+            {rows.map(r => (
+              <tr key={r.ref} className="hover:bg-slate-50">
+                <td className="px-4 py-2.5 text-xs font-medium text-slate-800">{fmtShort(r.sendDay)}</td>
+                <td className="px-4 py-2.5 text-xs text-slate-600">{fmtShort(r.arrival)}</td>
+                <td className="px-4 py-2.5 text-xs"><div className="font-semibold text-slate-900">{r.ref}</div><div className="text-slate-500">{[r.lead, r.agent].filter(Boolean).join(' · ')}</div></td>
+                <td className="px-4 py-2.5"><ReadinessBar row={r} /></td>
+                <td className="px-4 py-2.5 text-xs">
+                  <span className={cn('rounded-full px-2 py-0.5 font-semibold', RADAR_STAGE[r.stage].cls)}>{RADAR_STAGE[r.stage].label}</span>
+                  {r.sentOn && <div className="mt-1 text-[11px] text-slate-400">{fmtShort(r.sentOn)}</div>}
+                </td>
+                <td className="px-4 py-2.5 text-right"><a href={`/dashboard/bookings/${encodeURIComponent(r.ref)}/tickets`} className="rounded-lg px-2 py-1 text-xs font-medium text-teal-700 hover:bg-teal-50">Open tickets</a></td>
+              </tr>
+            ))}
+            {data && !rows.length && <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-slate-400">{onlyGaps ? 'Every ticket in this period is ready.' : 'No bookings arrive in this period.'}</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
@@ -837,7 +1102,7 @@ function LivePreview({ draft }: { draft: Draft }) {
   const [mode, setMode] = useState<'whatsapp' | 'email'>('whatsapp')
   const c = draft.config
   // Only what changes the DATA triggers a refetch; wording/fields render locally.
-  const dataKey = JSON.stringify({ a: c.agents, co: c.countries, s: c.statusFilter, b: c.blocks, n: c.fields.movementNote, day })
+  const dataKey = JSON.stringify({ k: c.kind, id: draft.id, tp: c.ticketPack, a: c.agents, co: c.countries, s: c.statusFilter, b: c.blocks, n: c.fields.movementNote, day })
 
   useEffect(() => {
     let alive = true
@@ -845,7 +1110,7 @@ function LivePreview({ draft }: { draft: Draft }) {
     const t = setTimeout(async () => {
       try {
         const { data } = await api<{ payload: DigestPayload }>('/api/agent-digest/preview', {
-          method: 'POST', body: JSON.stringify({ name: draft.name, config: c, runDate: day }),
+          method: 'POST', body: JSON.stringify({ name: draft.name, config: c, runDate: day, ruleId: draft.id }),
         })
         if (alive) { setPayload(data.payload); setErr(null) }
       } catch (e) { if (alive) setErr((e as Error).message) } finally { if (alive) setBusy(false) }
@@ -856,7 +1121,8 @@ function LivePreview({ draft }: { draft: Draft }) {
 
   const recipient = c.recipients[0]?.name || 'Team'
   const live = payload ? { ...payload, agentLabel: c.agents[0] || 'All agents', ruleName: draft.name } : null
-  const text = live ? renderTemplateText(templateParams(live, recipient, 'https://ops.aahaas.com/digest/…')) : ''
+  const isPack = c.kind === 'TICKETS'
+  const text = live ? renderTemplateText(templateParams(live, recipient, 'https://ops.aahaas.com/digest/…'), c.kind) : ''
   const html = live ? renderEmailHtml(live, c, recipient, 'https://ops.aahaas.com/digest/…') : ''
 
   return (
@@ -864,7 +1130,7 @@ function LivePreview({ draft }: { draft: Draft }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1 text-xs">
           <button onClick={() => setMode('whatsapp')} className={cn('flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium', mode === 'whatsapp' ? 'bg-white shadow text-emerald-700' : 'text-slate-500')}><MessageCircle className="h-3.5 w-3.5" /> WhatsApp</button>
-          <button onClick={() => setMode('email')} className={cn('flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium', mode === 'email' ? 'bg-white shadow text-sky-700' : 'text-slate-500')}><Mail className="h-3.5 w-3.5" /> Email / full update</button>
+          <button onClick={() => setMode('email')} className={cn('flex items-center gap-1 rounded-lg px-2.5 py-1 font-medium', mode === 'email' ? 'bg-white shadow text-sky-700' : 'text-slate-500')}><Mail className="h-3.5 w-3.5" /> {isPack ? 'Email / tickets' : 'Email / full update'}</button>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setDay(d => addDays(d, -1))} className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"><ChevronLeft className="h-4 w-4" /></button>
@@ -873,12 +1139,12 @@ function LivePreview({ draft }: { draft: Draft }) {
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-        <span>Real data for <b>{fmtDay(day)}</b> — nothing is sent.</span>
+        <span>{isPack ? <>If sent on <b>{fmtDay(day)}</b>: arrivals of <b>{fmtShort(addDays(day, c.ticketPack.daysBefore))}</b>. Nothing is sent.</> : <>Real data for <b>{fmtDay(day)}</b> — nothing is sent.</>}</span>
         {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
       </div>
       {live && (
         <div className="mt-2 grid grid-cols-3 gap-2">
-          {[['Bookings', live.totals.bookings, 'text-slate-900'], ['Lines', live.totals.lines, 'text-slate-900'], ['Pending', live.totals.missing, live.totals.missing ? 'text-rose-600' : 'text-slate-900']].map(([l, v, cls]) => (
+          {[['Bookings', live.totals.bookings, 'text-slate-900'], [isPack ? 'Tickets' : 'Lines', live.totals.lines, 'text-slate-900'], [isPack ? 'Not ready' : 'Pending', live.totals.missing, live.totals.missing ? 'text-rose-600' : 'text-slate-900']].map(([l, v, cls]) => (
             <div key={l as string} className="rounded-xl bg-slate-50 px-3 py-2 text-center">
               <div className={cn('text-lg font-bold', cls as string)}>{v as number}</div><div className="text-[10px] uppercase tracking-wider text-slate-400">{l as string}</div>
             </div>
@@ -886,6 +1152,12 @@ function LivePreview({ draft }: { draft: Draft }) {
         </div>
       )}
       {err && <p className="mt-3 rounded-lg bg-rose-50 p-2 text-xs text-rose-700">{err}</p>}
+      {!!live?.pack?.held.length && (
+        <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+          <p className="font-semibold">Held back, waiting for tickets ({live.pack.held.length})</p>
+          {live.pack.held.slice(0, 5).map(h => <p key={h.ref}>{h.ref}{h.lead ? ` · ${h.lead}` : ''} · {h.ready} of {h.tickets} ready</p>)}
+        </div>
+      )}
 
       {mode === 'whatsapp' ? (
         <div className="mx-auto mt-3 w-full max-w-[380px] rounded-[2.2rem] border-[10px] border-slate-900 bg-slate-900 shadow-xl">
@@ -904,7 +1176,7 @@ function LivePreview({ draft }: { draft: Draft }) {
                   <div className="mt-1 text-right text-[10px] text-slate-500">{draft.sendTime} ✓✓</div>
                 </div>
                 <p className="mx-auto mt-3 w-fit rounded-lg bg-white/80 px-3 py-1.5 text-center text-[11px] text-slate-500">
-                  WhatsApp template <code>aahaas_agent_daily_digest</code> · the link opens the full update (switch to Email to see it)
+                  WhatsApp template <code>{isPack ? 'aahaas_agent_ticket_pack' : 'aahaas_agent_daily_digest'}</code> · the link opens the {isPack ? 'tickets' : 'full update'} (switch to Email to see it)
                 </p>
               </>
             )}
@@ -1037,7 +1309,8 @@ function UpcomingTab({ onOpen }: { onOpen: (r: DigestRuleView) => void }) {
       <div className="grid gap-4 lg:grid-cols-2">
         {items?.map(it => {
           const c = it.rule.config
-          const text = renderTemplateText(templateParams(it.payload, it.recipients[0]?.name || 'Team', 'https://ops.aahaas.com/digest/…'))
+          const isPack = c.kind === 'TICKETS'
+          const text = renderTemplateText(templateParams(it.payload, it.recipients[0]?.name || 'Team', 'https://ops.aahaas.com/digest/…'), c.kind)
           const isOpen = open === it.rule.id
           return (
             <div key={it.rule.id} className={cn('rounded-2xl border bg-white p-4 shadow-sm', it.willSkip ? 'border-slate-200' : 'border-teal-200')}>
@@ -1052,11 +1325,13 @@ function UpcomingTab({ onOpen }: { onOpen: (r: DigestRuleView) => void }) {
               </div>
               <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-xl bg-slate-50 py-2"><div className="text-lg font-bold">{it.payload.totals.bookings}</div><div className="text-[10px] uppercase text-slate-400">bookings</div></div>
-                <div className="rounded-xl bg-slate-50 py-2"><div className="text-lg font-bold">{it.payload.totals.lines}</div><div className="text-[10px] uppercase text-slate-400">lines</div></div>
-                <div className={cn('rounded-xl py-2', it.payload.totals.missing ? 'bg-rose-50' : 'bg-slate-50')}><div className={cn('text-lg font-bold', it.payload.totals.missing && 'text-rose-600')}>{it.payload.totals.missing}</div><div className="text-[10px] uppercase text-slate-400">pending</div></div>
+                <div className="rounded-xl bg-slate-50 py-2"><div className="text-lg font-bold">{it.payload.totals.lines}</div><div className="text-[10px] uppercase text-slate-400">{isPack ? 'tickets' : 'lines'}</div></div>
+                <div className={cn('rounded-xl py-2', it.payload.totals.missing ? 'bg-rose-50' : 'bg-slate-50')}><div className={cn('text-lg font-bold', it.payload.totals.missing && 'text-rose-600')}>{it.payload.totals.missing}</div><div className="text-[10px] uppercase text-slate-400">{isPack ? 'not ready' : 'pending'}</div></div>
               </div>
               {it.payload.totals.missing > 0 && (
-                <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> {it.payload.totals.missing} line(s) with nobody allocated (no driver, vehicle or vendor) — allocate before the send to avoid “Driver pending”.</p>
+                <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-700"><AlertTriangle className="h-3.5 w-3.5" /> {isPack
+                  ? `${it.payload.totals.missing} ticket(s) cannot be downloaded yet — activate, buy or upload them before the send.`
+                  : `${it.payload.totals.missing} line(s) with nobody allocated (no driver, vehicle or vendor) — allocate before the send to avoid “Driver pending”.`}</p>
               )}
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {it.recipients.map((r, i) => (
@@ -1103,6 +1378,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState<RunDetail | null>(null)
   const [tpl, setTpl] = useState<TemplateInfo | null>(null)
+  const [packTpl, setPackTpl] = useState<TemplateInfo | null>(null)
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -1112,23 +1388,27 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
     } catch (e) { toast.error((e as Error).message) } finally { setBusy(false) }
   }, [from, to, ruleId, status])
   useEffect(() => { void load() }, [load])
-  const loadTpl = useCallback(() => { api<TemplateInfo>('/api/agent-digest/template').then(r => setTpl(r.data)).catch(() => undefined) }, [])
+  const loadTpl = useCallback(() => {
+    api<TemplateInfo>('/api/agent-digest/template').then(r => setTpl(r.data)).catch(() => undefined)
+    api<TemplateInfo>('/api/agent-digest/template?kind=tickets').then(r => setPackTpl(r.data)).catch(() => undefined)
+  }, [])
   useEffect(() => { loadTpl() }, [loadTpl])
 
   const openRun = async (runId: string | null) => {
     if (!runId) return
     try { const { data } = await api<RunDetail>(`/api/agent-digest/runs/${runId}`); setDetail(data) } catch (e) { toast.error((e as Error).message) }
   }
-  const registerTpl = async () => {
+  const registerTpl = async (tickets = false) => {
+    const set = tickets ? setPackTpl : setTpl
     try {
-      const { message } = await api('/api/agent-digest/template', { method: 'POST' })
+      const { message } = await api(`/api/agent-digest/template${tickets ? '?kind=tickets' : ''}`, { method: 'POST' })
       toast.success(message ?? 'Submitted')
       loadTpl()
     } catch (e) {
       // Keep Meta's reason on screen — a toast disappears before it can be read.
       const msg = (e as Error).message
       toast.error(msg, { duration: 15000 })
-      setTpl(t => (t ? { ...t, error: msg } : t))
+      set(t => (t ? { ...t, error: msg } : t))
       loadTpl()
     }
   }
@@ -1141,7 +1421,8 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
 
   return (
     <div className="space-y-4">
-      {tpl && <TemplateBanner tpl={tpl} onSubmit={registerTpl} onRefresh={loadTpl} />}
+      {tpl && <TemplateBanner tpl={tpl} onSubmit={() => registerTpl()} onRefresh={loadTpl} />}
+      {packTpl && <TemplateBanner tpl={packTpl} onSubmit={() => registerTpl(true)} onRefresh={loadTpl} />}
 
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex gap-1.5">
@@ -1180,7 +1461,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
                   <div className="flex items-center gap-1.5 text-slate-800">{r.channel === 'whatsapp' ? <MessageCircle className="h-3.5 w-3.5 text-emerald-600" /> : <Mail className="h-3.5 w-3.5 text-sky-600" />}{r.recipientName ?? r.recipient}</div>
                   <div className="text-slate-400">{r.recipient}{r.mode ? ` · ${r.mode}` : ''}</div>
                 </td>
-                <td className="px-4 py-2.5 text-xs text-slate-600">{r.bookingCount} bookings · {r.itemCount} lines</td>
+                <td className="px-4 py-2.5 text-xs text-slate-600">{r.bookingCount} bookings · {r.itemCount} {rules.find(x => x.id === r.ruleId)?.config.kind === 'TICKETS' ? 'tickets' : 'lines'}</td>
                 <td className="px-4 py-2.5 text-xs">
                   <span className={cn('rounded-full px-2 py-0.5 font-semibold', r.status === 'sent' ? 'bg-emerald-100 text-emerald-700' : r.status === 'failed' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600')}>{r.status}</span>
                   {r.error && <div className="mt-1 max-w-[260px] truncate text-[11px] text-slate-400" title={r.error}>{r.error}</div>}
@@ -1236,7 +1517,7 @@ function TemplateBanner({ tpl, onSubmit, onRefresh }: { tpl: TemplateInfo; onSub
       </div>
       {differs && (
         <p className="w-full rounded-lg bg-white/70 px-3 py-2 text-[11px] text-slate-600">
-          The wording on Meta is an earlier version — that is fine, it takes the same 6 values. Meta’s text: <span className="italic">{tpl.metaBody}</span>
+          The wording on Meta is an earlier version — that is fine, it takes the same values. Meta’s text: <span className="italic">{tpl.metaBody}</span>
         </p>
       )}
       {tpl.status !== 'APPROVED' && tpl.error && tpl.status === 'MISSING' && <p className="w-full rounded-lg bg-white/70 px-3 py-2 font-mono text-[11px] text-rose-700">{tpl.error}</p>}

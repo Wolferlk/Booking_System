@@ -22,16 +22,19 @@ import { sendMailViaGraph } from '@/lib/send-mail'
 import { normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
 import { movementNeedsDriver } from '@/lib/driver-requirement'
 import { resolveIsLeisure } from '@/lib/leisure-day'
-import { detectCountryFromRef } from '@/lib/country-detection'
 import { serviceTypeLabel } from '@/lib/service-types'
 import { testBookingWhere } from '@/lib/test-bookings'
 import {
-  addDays, agentMatches, allocationPending, DIGEST_COUNTRIES, emailSubject, isEmail, isEmptyPayload,
+  addDays, agentMatches, allocationPending, emailSubject, isEmail, isEmptyPayload,
   normaliseConfig, nowHmIn, renderEmailHtml, renderTemplateText, renderWhatsApp, templateParams, todayIn,
-  AGENT_DIGEST_TEMPLATE_BODY,
-  type DigestBlockResult, type DigestBooking, type DigestConfig, type DigestCountry, type DigestItem,
+  AGENT_DIGEST_TEMPLATE_BODY, AGENT_TICKETS_TEMPLATE_BODY,
+  type DigestBlockResult, type DigestBooking, type DigestConfig, type DigestItem,
   type DigestParty, type DigestPayload, type DigestRecipient, type DigestRuleView,
 } from './shared'
+import {
+  ACTIVE_EXCLUDED, agentLabelOf, bookingCountry, CONFIRMED_EXCLUDED, countryAllowed, dayDiff, displayCountry, ymd,
+} from './scope'
+import { buildTicketPayload } from './tickets-server'
 
 // ── Setup / errors ───────────────────────────────────────────────────────────
 
@@ -60,6 +63,19 @@ export const AGENT_DIGEST_TEMPLATE_DEF = {
   footerText: 'AppleHolidays Operations',
 }
 
+/** A ticket pack has its own wording, so it is its own template. */
+export const TEMPLATE_AGENT_TICKETS =
+  process.env.WHATSAPP_AGENT_TICKETS_TEMPLATE?.trim() || 'aahaas_agent_ticket_pack'
+
+export const AGENT_TICKETS_TEMPLATE_DEF = {
+  name: TEMPLATE_AGENT_TICKETS,
+  category: 'UTILITY',
+  language: AGENT_DIGEST_TEMPLATE_LANG,
+  bodyText: AGENT_TICKETS_TEMPLATE_BODY,
+  bodyExamples: ['Priya', '30 Sundays', '10 Nov', '3', '8', '11', 'https://ops.aahaas.com/digest/cm1abc234?t=0123456789abcdef'],
+  footerText: 'AppleHolidays Operations',
+}
+
 export function appBaseUrl(): string {
   return (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? 'https://ops.aahaas.com').replace(/\/$/, '')
 }
@@ -68,29 +84,12 @@ export function runLink(run: { id: string; token: string }): string {
   return `${appBaseUrl()}/digest/${encodeURIComponent(run.id)}?t=${run.token}`
 }
 
+/** The token-checked download of one ticket file in a pack. */
+export function runFileLink(run: { id: string; token: string }, fileId: string): string {
+  return `${appBaseUrl()}/digest/${encodeURIComponent(run.id)}/file/${encodeURIComponent(fileId)}?t=${run.token}`
+}
+
 // ── Building the digest (read-only) ──────────────────────────────────────────
-
-const ACTIVE_EXCLUDED = ['DRAFT', 'CANCELLED', 'PENDING_CANCELLATION'] as const
-/** "Confirmed" = past the booking-team / ground-review stages. */
-const CONFIRMED_EXCLUDED = [...ACTIVE_EXCLUDED, 'BT_CONFIRMED', 'GT_REVIEW', 'CHANGE_REQUESTED'] as const
-
-const ymd = (d: Date | string) => new Date(d).toISOString().slice(0, 10)
-const dayDiff = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)
-
-function bookingCountry(op: string | null, ref: string): string | null {
-  return op ?? detectCountryFromRef(ref)
-}
-
-function countryAllowed(country: string | null, wanted: DigestCountry[]): boolean {
-  if (!wanted.length) return true
-  if (!country || country === 'ALL') return false
-  if (country === 'SINGAPORE_MALAYSIA') return wanted.includes('SINGAPORE') || wanted.includes('MALAYSIA')
-  return (wanted as string[]).includes(country)
-}
-
-function displayCountry(c: string | null): DigestCountry | null {
-  return c && (DIGEST_COUNTRIES as readonly string[]).includes(c) ? (c as DigestCountry) : null
-}
 
 function party(name: string | null | undefined, phone: string | null | undefined): DigestParty | null {
   const n = name?.trim() || null
@@ -268,12 +267,11 @@ function matchesBasis(b: LoadedBooking, basis: string, day: string): boolean {
   }
 }
 
-export function agentLabelOf(config: DigestConfig): string {
-  return config.agents[0] || 'All agents'
-}
+export { agentLabelOf }
 
-/** Builds the digest for one send day. Pure read. */
-export async function buildPayload(config: DigestConfig, runDate: string, ruleName: string): Promise<DigestPayload> {
+/** Builds the digest for one send day. Pure read. `ruleId` lets a ticket pack see what it already sent. */
+export async function buildPayload(config: DigestConfig, runDate: string, ruleName: string, ruleId: string | null = null): Promise<DigestPayload> {
+  if (config.kind === 'TICKETS') return buildTicketPayload(config, runDate, ruleName, ruleId)
   const blocks = config.blocks.filter(b => b.enabled)
   const payload: DigestPayload = {
     ruleName, runDate, agentLabel: agentLabelOf(config), countries: config.countries,
@@ -437,7 +435,8 @@ export async function sendDigest(opts: {
   }
 
   const runDate = opts.runDate ?? todayIn(tz)
-  const payload = await buildPayload(config, runDate, name)
+  const payload = await buildPayload(config, runDate, name, ruleId)
+  const isPack = config.kind === 'TICKETS'
   const result: SendResult = {
     ruleId, ruleName: name, runDate, runId: null, link: null,
     bookings: payload.totals.bookings, lines: payload.totals.lines,
@@ -504,12 +503,12 @@ export async function sendDigest(opts: {
         await guardAndRecord('whatsapp', phone, who, async () => {
           // Always the approved template — never free-form text, whatever the 24h window.
           const params = templateParams(payload, r.name, link)
-          const res = await sendViaMetaTemplate({ to: phone, templateName: TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params })
-          const tplBody = renderTemplateText(params)
+          const res = await sendViaMetaTemplate({ to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS : TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params })
+          const tplBody = renderTemplateText(params, config.kind)
           if (!res) return { ok: false, mode: 'template', body: tplBody, error: 'WhatsApp (Meta) is not configured on this server' }
           const waMessageId = (res.template as { messages?: { id?: string }[] })?.messages?.[0]?.id ?? null
           await prisma.whatsAppMessage.create({
-            data: { bookingRef: 'AGENT-DIGEST', phone, direction: 'outbound', body: tplBody, waMessageId, status: 'sent', senderName: `[AGENT-DIGEST] ${name}` },
+            data: { bookingRef: 'AGENT-DIGEST', phone, direction: 'outbound', body: tplBody, waMessageId, status: 'sent', senderName: `[${isPack ? 'AGENT-TICKETS' : 'AGENT-DIGEST'}] ${name}` },
           }).catch(() => undefined)
           return { ok: true, mode: 'template', waMessageId, body: tplBody }
         })
@@ -524,7 +523,7 @@ export async function sendDigest(opts: {
         const to = r.email.trim()
         await guardAndRecord('email', to, who, async () => {
           const subject = emailSubject(payload)
-          const html = renderEmailHtml(payload, config, r.name, link)
+          const html = renderEmailHtml(payload, config, r.name, link, { fileLink: id => runFileLink(run, id) })
           await sendMailViaGraph({ to, cc: opts.testTo ? [] : config.ccEmails, subject, bodyHtml: html })
           return { ok: true, mode: 'html', subject, body: renderWhatsApp(payload, config, r.name, link) }
         })
@@ -596,7 +595,7 @@ export async function upcoming(dayOffset = 1, now = new Date()): Promise<Upcomin
   const out: UpcomingItem[] = []
   for (const rule of rules) {
     const runDate = addDays(todayIn(rule.timezone, now), dayOffset)
-    const payload = await buildPayload(rule.config, runDate, rule.name)
+    const payload = await buildPayload(rule.config, runDate, rule.name, rule.id)
     out.push({
       rule, runDate,
       sendAt: `${runDate} ${rule.sendTime}`,

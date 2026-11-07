@@ -22,7 +22,7 @@ function parseBody(body: Record<string, unknown>) {
   const sendTime = isTime(body.sendTime) ? body.sendTime : '07:00'
   const tz = typeof body.timezone === 'string' && DIGEST_TIMEZONES.some(t => t.value === body.timezone) ? body.timezone : 'Asia/Colombo'
   const config = normaliseConfig(body.config)
-  if (!config.blocks.some(b => b.enabled)) throw new Error('Add at least one block (e.g. “On ground today”)')
+  if (config.kind !== 'TICKETS' && !config.blocks.some(b => b.enabled)) throw new Error('Add at least one block (e.g. “On ground today”)')
   return {
     name, sendTime, timezone: tz,
     isActive: body.isActive !== false,

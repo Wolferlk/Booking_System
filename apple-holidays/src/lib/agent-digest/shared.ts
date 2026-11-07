@@ -18,7 +18,18 @@
  * summary (TOUR — everyone allocated across the whole trip).
  *
  * Never carries driver rates or any money: this goes to an external agent.
+ *
+ * A digest of kind TICKETS is a ticket pack: see tickets-config.ts and
+ * tickets-select.ts. It has no blocks of its own; its bookings arrive as blocks
+ * with `tickets` on them, so counts, history and previews work unchanged.
  */
+
+import {
+  defaultTicketPack, normaliseTicketPack, TICKET_STATE_META,
+  type DigestKind, type TicketPackConfig, type TicketState,
+} from './tickets-config'
+
+export type { DigestKind, TicketPackConfig } from './tickets-config'
 
 export const DIGEST_COUNTRIES = ['SRILANKA', 'VIETNAM', 'SINGAPORE', 'MALAYSIA'] as const
 export type DigestCountry = (typeof DIGEST_COUNTRIES)[number]
@@ -122,6 +133,9 @@ export type DigestStyle = 'detailed' | 'compact'
 export type StatusFilter = 'ACTIVE' | 'CONFIRMED'
 
 export interface DigestConfig {
+  kind: DigestKind
+  /** Used when kind is TICKETS. */
+  ticketPack: TicketPackConfig
   /** Agent match keys (case/punctuation-insensitive). Empty = every agent. */
   agents: string[]
   /** Empty = every country. */
@@ -134,7 +148,7 @@ export interface DigestConfig {
   ccEmails: string[]
   channels: { whatsapp: boolean; email: boolean }
   style: DigestStyle
-  /** Supports {agent} {date} {day} {bookings} {lines} {recipient} {countries}. */
+  /** Supports {agent} {date} {day} {bookings} {lines} {recipient} {countries}; ticket packs add {arrival} {tickets} {ready}. */
   intro: string
   footer: string
   /** Do not send when every block is empty. */
@@ -180,6 +194,8 @@ export function defaultBlocks(): DigestBlock[] {
 
 export function defaultConfig(): DigestConfig {
   return {
+    kind: 'DAILY',
+    ticketPack: defaultTicketPack(),
     agents: [],
     countries: [],
     statusFilter: 'ACTIVE',
@@ -225,6 +241,15 @@ export const DIGEST_PRESETS: { key: string; title: string; blurb: string; emoji:
     }),
   },
   {
+    key: 'ticket-pack', title: 'Ticket pack (D-3)', emoji: '🎟️',
+    blurb: 'Every ticket three days before arrival: status, reference and files to download.',
+    build: () => ({
+      name: 'Ticket pack — D-3', kind: 'TICKETS', blocks: [],
+      intro: 'Hello {recipient} 👋\nHere are the tickets for your guests arriving {arrival}.',
+      footer: 'Any questions? Just reply to this message.\n— AppleHolidays Operations',
+    }),
+  },
+  {
     key: 'blank', title: 'Blank canvas', emoji: '✨',
     blurb: 'Start empty and build your own blocks.',
     build: () => ({ name: 'New digest', blocks: [] }),
@@ -249,6 +274,8 @@ export function normaliseConfig(raw: unknown): DigestConfig {
     if (typeof fieldsIn[k] === 'boolean') fields[k] = fieldsIn[k] as boolean
   }
   return {
+    kind: r.kind === 'TICKETS' ? 'TICKETS' : 'DAILY',
+    ticketPack: normaliseTicketPack(r.ticketPack),
     agents: Array.isArray(r.agents) ? Array.from(new Set(r.agents.map(a => str(a, 120).trim()).filter(Boolean))).slice(0, 30) : [],
     countries: Array.isArray(r.countries) ? r.countries.filter((c): c is DigestCountry => (DIGEST_COUNTRIES as readonly string[]).includes(c as string)) : [],
     statusFilter: r.statusFilter === 'CONFIRMED' ? 'CONFIRMED' : 'ACTIVE',
@@ -361,6 +388,24 @@ export interface DigestItem {
   tourVendor: DigestParty | null
 }
 
+export interface DigestTicketFile { id: string; name: string; kind: 'pdf' | 'image' | 'file' }
+
+/** One ticket as an agent may see it. Costs, portals and approvals never get here. */
+export interface DigestTicket {
+  id: string
+  name: string
+  category: string
+  qty: number
+  date: string | null
+  location: string | null
+  reference: string | null
+  supplier: string | null
+  state: TicketState
+  files: DigestTicketFile[]
+  /** Became downloadable since the agent last heard about this booking. */
+  isNew?: boolean
+}
+
 export interface DigestBooking {
   ref: string
   tripNo: string
@@ -382,6 +427,9 @@ export interface DigestBooking {
   /** TOUR scope: everyone allocated anywhere on the trip, de-duplicated. */
   team: { drivers: (DigestParty & { vehicle: string | null })[]; driverVendors: DigestParty[]; guides: DigestParty[]; tourVendors: DigestParty[] }
   missing: number
+  /** Ticket pack only. */
+  tickets?: DigestTicket[]
+  reason?: 'DUE' | 'LATE' | 'UPDATE'
 }
 
 export interface DigestBlockResult {
@@ -394,6 +442,15 @@ export interface DigestBlockResult {
 }
 
 export interface DigestPayload {
+  kind?: DigestKind
+  /** Ticket pack only. In `totals`, lines = tickets and missing = not ready. */
+  pack?: {
+    dueDate: string
+    daysBefore: number
+    ready: number
+    files: number
+    held: { ref: string; lead: string | null; arrival: string; ready: number; tickets: number }[]
+  }
   ruleName: string
   runDate: string
   agentLabel: string
@@ -447,6 +504,9 @@ export function fillTokens(text: string, p: DigestPayload, recipient: string): s
     lines: String(p.totals.lines),
     recipient: recipient || 'team',
     countries: p.countries.length ? p.countries.map(c => DIGEST_COUNTRY_META[c].label).join(', ') : 'all countries',
+    arrival: packArrivalText(p),
+    tickets: String(p.totals.lines),
+    ready: String(p.pack?.ready ?? 0),
   }
   return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in map ? map[k] : m))
 }
@@ -516,6 +576,7 @@ function teamLinesWa(b: DigestBooking, f: DigestFields): string[] {
 
 /** One string per block — the sender splits long digests on these seams. */
 export function renderWhatsAppParts(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null): string[] {
+  if (p.kind === 'TICKETS') return renderPackTextParts(p, c, recipient, link)
   p = withFreshPending(p)
   const f = c.fields
   const parts: string[] = []
@@ -608,10 +669,12 @@ function statTile(value: number, label: string, bg: string, border: string, fg: 
 }
 
 export function emailSubject(p: DigestPayload): string {
+  if (p.kind === 'TICKETS') return `${p.agentLabel} · Ticket pack · arriving ${packArrivalText(p)} (${p.totals.bookings} booking${p.totals.bookings === 1 ? '' : 's'})`
   return `${p.agentLabel} · Daily operations update · ${fmtDay(p.runDate)} (${p.totals.bookings} booking${p.totals.bookings === 1 ? '' : 's'})`
 }
 
-export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null): string {
+export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null, opts?: PackRenderOptions): string {
+  if (p.kind === 'TICKETS') return renderPackHtml(p, c, recipient, link, opts)
   p = withFreshPending(p)
   const f = c.fields
   const intro = esc(fillTokens(c.intro, p, recipient)).replace(/\n/g, '<br>')
@@ -723,12 +786,162 @@ function tplParam(v: string): string {
   return clean.length > 180 ? `${clean.slice(0, 177)}…` : clean || '—'
 }
 
-/** Template parameters {{1}}…{{6}} for one recipient. */
+/** The exact body submitted to Meta as `aahaas_agent_ticket_pack`. */
+export const AGENT_TICKETS_TEMPLATE_BODY =
+  'Hi {{1}}, the ticket pack for {{2}} guests arriving {{3}} is ready: {{4}} bookings, with {{5}} of {{6}} tickets ' +
+  'available to download.\n\nOpen and download them here: {{7}}\n\n' +
+  'Please reply to this message if anything needs to change.'
+
+/** Template parameters for one recipient: {{1}}…{{6}}, or {{1}}…{{7}} for a ticket pack. */
 export function templateParams(p: DigestPayload, recipient: string, link: string): string[] {
+  if (p.kind === 'TICKETS') {
+    return [recipient || 'there', p.agentLabel, packArrivalText(p), String(p.totals.bookings), String(p.pack?.ready ?? 0), String(p.totals.lines), link].map(tplParam)
+  }
   return [recipient || 'there', p.agentLabel, fmtShort(p.runDate), String(p.totals.bookings), String(p.totals.lines), link].map(tplParam)
 }
 
 /** What the recipient sees on WhatsApp. */
-export function renderTemplateText(params: string[]): string {
-  return AGENT_DIGEST_TEMPLATE_BODY.replace(/\{\{\s*(\d+)\s*\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? '')
+export function renderTemplateText(params: string[], kind: DigestKind = 'DAILY'): string {
+  const body = kind === 'TICKETS' ? AGENT_TICKETS_TEMPLATE_BODY : AGENT_DIGEST_TEMPLATE_BODY
+  return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? '')
+}
+
+// ── Ticket pack rendering ───────────────────────────────────────────────────
+
+export interface PackRenderOptions {
+  /** The token-checked download link of a file. Absent in previews. */
+  fileLink?: (fileId: string) => string
+}
+
+/** "10 Nov", or "08 Nov – 10 Nov" when the pack spans several arrival days. */
+export function packArrivalText(p: DigestPayload): string {
+  const days = p.blocks.flatMap(b => b.bookings.map(x => x.arrival)).sort()
+  if (!days.length) return fmtShort(p.pack?.dueDate ?? p.runDate)
+  const first = days[0], last = days[days.length - 1]
+  return first === last ? fmtShort(first) : `${fmtShort(first)} – ${fmtShort(last)}`
+}
+
+function packIds(b: DigestBooking, f: DigestFields): string {
+  const ids = [f.tripNo ? b.tripNo : null, f.isNumber ? b.isNumber : null, f.isNumber ? b.cntlNumber : null]
+    .filter((v, i, a): v is string => !!v && a.indexOf(v) === i)
+  return ids.join(' / ') || b.ref
+}
+
+const packVisible = (b: DigestBooking, c: DigestConfig) =>
+  (b.tickets ?? []).filter(t => c.ticketPack.show.pending || t.files.length > 0)
+
+function ticketFacts(t: DigestTicket, c: DigestConfig): string[] {
+  const s = c.ticketPack.show
+  return [
+    s.ticketDate && t.date ? fmtShort(t.date) : null,
+    s.location ? t.location : null,
+    s.qty ? `Qty ${t.qty}` : null,
+    s.reference && t.reference ? `Ref ${t.reference}` : null,
+    s.supplier ? t.supplier : null,
+  ].filter((v): v is string => !!v)
+}
+
+function renderPackTextParts(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null): string[] {
+  const parts: string[] = [[
+    fillTokens(c.intro, p, recipient).trim(),
+    `🎟️ *${p.totals.bookings}* booking${p.totals.bookings === 1 ? '' : 's'} · *${p.pack?.ready ?? 0}* of *${p.totals.lines}* tickets ready`,
+  ].filter(Boolean).join('\n\n')]
+  for (const blk of p.blocks) {
+    const lines = ['━━━━━━━━━━━━━━', `*${blk.label.toUpperCase()}* (${blk.bookings.length})`]
+    for (const b of blk.bookings) {
+      lines.push('', `🧾 *${packIds(b, c.fields)}*${c.fields.leadGuest && b.lead ? ` · ${b.lead}` : ''} · arrives ${fmtShort(b.arrival)}`)
+      const list = packVisible(b, c)
+      if (!list.length) lines.push('   _Tickets are being arranged._')
+      for (const t of list) {
+        const meta = TICKET_STATE_META[t.state]
+        const status = c.ticketPack.show.status ? ` — ${meta.emoji} ${meta.label}` : ''
+        lines.push(`   ▸ ${t.isNew ? '🆕 ' : ''}${t.name}${status}`)
+        const facts = ticketFacts(t, c)
+        if (facts.length) lines.push(`      ${facts.join(' · ')}`)
+      }
+    }
+    parts.push(lines.join('\n'))
+  }
+  const tail: string[] = []
+  if (link) tail.push(`🔗 Tickets: ${link}`)
+  const footer = fillTokens(c.footer, p, recipient).trim()
+  if (footer) tail.push(footer)
+  if (tail.length) parts.push(tail.join('\n\n'))
+  return parts
+}
+
+/** A light pill with dark text: stays readable if a mail client drops the fill. */
+function fileButton(href: string, label: string): string {
+  return `<a href="${esc(href)}" style="display:inline-block;background-color:#ccfbf1;color:#115e59;border:1px solid #5eead4;border-radius:8px;padding:5px 10px;margin:6px 6px 0 0;font-size:12px;line-height:16px;font-weight:600;text-decoration:none">⬇ ${esc(label)}</a>`
+}
+
+function ticketHtml(t: DigestTicket, c: DigestConfig, opts?: PackRenderOptions): string {
+  const meta = TICKET_STATE_META[t.state]
+  const facts = ticketFacts(t, c)
+  const buttons = t.files.map(f => fileButton(opts?.fileLink?.(f.id) ?? '#', f.name)).join('')
+  return `<table ${TABLE_RESET} width="100%" style="margin-top:10px"><tr>
+    <td style="border-left:3px solid ${meta.bar};padding:2px 0 2px 12px">
+      <div style="font-size:14px;line-height:20px;font-weight:600;color:#0f172a">${esc(t.name)}${t.isNew ? ' <span style="color:#047857;font-weight:700">· New</span>' : ''}</div>
+      ${c.ticketPack.show.status ? `<div>${chip(`${meta.emoji} ${meta.label}`, meta.bg, meta.fg)}</div>` : ''}
+      ${facts.length ? detailLine(esc(facts.join(' · '))) : ''}
+      ${buttons ? `<div>${buttons}</div>` : ''}
+    </td></tr></table>`
+}
+
+function renderPackHtml(p: DigestPayload, c: DigestConfig, recipient: string, link?: string | null, opts?: PackRenderOptions): string {
+  const f = c.fields
+  const intro = esc(fillTokens(c.intro, p, recipient)).replace(/\n/g, '<br>')
+  const footer = esc(fillTokens(c.footer, p, recipient)).replace(/\n/g, '<br>')
+  const ready = p.pack?.ready ?? 0
+
+  const blocks = p.blocks.map(blk => {
+    const cards = blk.bookings.map(b => {
+      const list = packVisible(b, c)
+      const all = b.tickets ?? []
+      const done = all.filter(t => t.files.length > 0).length
+      const chips = [
+        f.pax ? chip(`${paxText(b)} pax`, '#eef2ff', '#4338ca') : '',
+        chip(`Arrives ${fmtShort(b.arrival)}`, '#f0fdfa', '#0f766e'),
+        b.country ? chip(DIGEST_COUNTRY_META[b.country].label, '#f1f5f9', '#475569') : '',
+        all.length ? chip(`${done} of ${all.length} ready`, done === all.length ? '#ecfdf5' : '#fffbeb', done === all.length ? '#047857' : '#b45309') : '',
+      ].join('')
+      return `<table ${TABLE_RESET} width="100%" bgcolor="#ffffff" style="background-color:#ffffff;border:1px solid #e2e8f0;border-collapse:separate;border-radius:12px;margin-top:12px"><tr>
+        <td style="padding:14px 16px">
+          <div style="font-size:16px;line-height:22px;font-weight:700;color:#0f172a">${esc(packIds(b, f))}</div>
+          ${f.leadGuest && b.lead ? `<div style="font-size:14px;line-height:20px;color:#334155">${esc(b.lead)}</div>` : ''}
+          <div style="margin-top:2px">${chips}</div>
+          ${list.length ? list.map(t => ticketHtml(t, c, opts)).join('') : detailLine('Tickets are being arranged.', '#64748b')}
+        </td></tr></table>`
+    }).join('')
+    return `<table ${TABLE_RESET} width="100%" style="margin-top:24px"><tr><td style="border-bottom:2px solid #ccfbf1;padding-bottom:6px">
+        <span style="font-size:13px;line-height:18px;letter-spacing:.06em;text-transform:uppercase;color:#0f766e;font-weight:700">🎟️ ${esc(blk.label)}</span>
+      </td><td align="right" style="border-bottom:2px solid #ccfbf1;padding-bottom:6px;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;white-space:nowrap">${blk.bookings.length}</td></tr></table>
+      ${cards}`
+  }).join('')
+
+  const tiles = [
+    statTile(p.totals.bookings, 'bookings', '#f0fdfa', '#ccfbf1', '#0f172a'),
+    statTile(p.totals.lines, 'tickets', '#f0fdfa', '#ccfbf1', '#0f172a'),
+    statTile(ready, 'ready to download', '#ecfdf5', '#a7f3d0', '#047857'),
+  ].join('<td width="8" style="font-size:0;line-height:0">&nbsp;</td>')
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;padding:0;background-color:#f1f5f9;${EMAIL_FONT}">
+  <table ${TABLE_RESET} width="100%" bgcolor="#f1f5f9" style="background-color:#f1f5f9;${EMAIL_FONT}"><tr><td align="center" style="padding:16px 8px">
+    <table ${TABLE_RESET} width="680" style="width:100%;max-width:680px">
+      <tr><td height="5" bgcolor="#0f766e" style="background-color:#0f766e;font-size:0;line-height:0;height:5px">&nbsp;</td></tr>
+      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:20px">
+        <div style="font-size:12px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:#0f766e">Ticket pack</div>
+        <div style="font-size:26px;line-height:32px;font-weight:700;color:#0f172a;margin-top:4px">${esc(p.agentLabel)}</div>
+        <div style="font-size:14px;line-height:20px;color:#475569">Arriving ${esc(packArrivalText(p))}</div>
+        <table ${TABLE_RESET} width="100%" style="margin-top:16px;border-collapse:separate"><tr>${tiles}</tr></table>
+      </td></tr>
+      <tr><td height="10" style="font-size:0;line-height:0;height:10px">&nbsp;</td></tr>
+      <tr><td bgcolor="#ffffff" style="background-color:#ffffff;padding:20px">
+        <div style="color:#0f172a;font-size:15px;line-height:23px">${intro}</div>
+        ${blocks}
+        ${link ? `<table ${TABLE_RESET} style="margin-top:22px"><tr><td bgcolor="#0f766e" style="background-color:#0f766e;border-radius:8px;padding:11px 20px"><a href="${esc(link)}" style="color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;line-height:20px">Open the latest tickets</a></td></tr></table>` : ''}
+        ${footer ? `<div style="margin-top:20px;color:#475569;font-size:14px;line-height:22px">${footer}</div>` : ''}
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`
 }

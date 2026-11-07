@@ -1,24 +1,31 @@
 /**
  * GET  /api/agent-digest/template — is the digest-link WhatsApp template approved?
  * POST /api/agent-digest/template — submit it to Meta for review.
+ *
+ * `?kind=tickets` means the ticket pack's template instead.
  */
+import { NextRequest } from 'next/server'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { createMetaTemplate, listMetaTemplates } from '@/lib/whatsapp'
 import { requireDaStaff } from '@/lib/driver-auto/api-auth'
-import { AGENT_DIGEST_TEMPLATE_DEF } from '@/lib/agent-digest/server'
+import { AGENT_DIGEST_TEMPLATE_DEF, AGENT_TICKETS_TEMPLATE_DEF } from '@/lib/agent-digest/server'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+const defFor = (req: NextRequest) =>
+  req.nextUrl.searchParams.get('kind') === 'tickets' ? AGENT_TICKETS_TEMPLATE_DEF : AGENT_DIGEST_TEMPLATE_DEF
+
+export async function GET(req: NextRequest) {
   const staff = await requireDaStaff()
   if ('error' in staff) return buildApiError(staff.error, staff.status)
-  const base = { name: AGENT_DIGEST_TEMPLATE_DEF.name, language: AGENT_DIGEST_TEMPLATE_DEF.language, body: AGENT_DIGEST_TEMPLATE_DEF.bodyText }
+  const def = defFor(req)
+  const base = { name: def.name, language: def.language, body: def.bodyText }
   try {
     // Every status, not only APPROVED — so a template waiting for review reads
     // as PENDING rather than "missing" (and nobody re-submits it).
     const all = await listMetaTemplates('ALL')
-    const hit = all.find(t => t.name === AGENT_DIGEST_TEMPLATE_DEF.name && t.language === AGENT_DIGEST_TEMPLATE_DEF.language)
-      ?? all.find(t => t.name === AGENT_DIGEST_TEMPLATE_DEF.name)
+    const hit = all.find(t => t.name === def.name && t.language === def.language)
+      ?? all.find(t => t.name === def.name)
     return buildApiSuccess({
       ...base,
       status: hit ? hit.status : 'MISSING',
@@ -31,11 +38,11 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const staff = await requireDaStaff()
   if ('error' in staff) return buildApiError(staff.error, staff.status)
   try {
-    const created = await createMetaTemplate(AGENT_DIGEST_TEMPLATE_DEF)
+    const created = await createMetaTemplate(defFor(req))
     return buildApiSuccess(created, `Template ${created.name} submitted to Meta (${created.status})`)
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'Template submission failed', 400)
