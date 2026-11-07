@@ -28,7 +28,7 @@ import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, Archive, BellRing, CalendarClock, CalendarDays, Check, CheckCircle2,
   ChevronLeft, ChevronRight, Clock, ExternalLink, Eye, FlaskConical, History, Layers, Loader2, Mail,
-  MessageCircle, Plane, Plus, Radar, RefreshCw, Rocket, RotateCcw, Save, Search, Send, ShieldCheck, Smartphone, Sparkles, Ticket, Trash2, Users, X, XCircle, Zap,
+  FileText, MessageCircle, Plane, Plus, Radar, RefreshCw, Rocket, RotateCcw, Save, Search, Send, ShieldCheck, Smartphone, Sparkles, Ticket, Trash2, Users, X, XCircle, Zap,
 } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
@@ -820,6 +820,27 @@ function DeliverySection({ draft, patch, patchConfig }: { draft: Draft; patch: (
               </div>
             ))}
           </div>
+          <div className="rounded-xl border border-slate-200 p-3">
+            <p className="text-sm font-semibold text-slate-900">Attachments</p>
+            <p className="text-xs text-slate-500">{c.kind === 'TICKETS' ? 'A list of the tickets and their status. The ticket files stay on the link.' : 'A copy of the digest, with the details chosen on this page.'}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="flex items-center gap-1 text-xs font-medium text-slate-600"><Mail className="h-3.5 w-3.5 text-sky-600" /> Email</span>
+              {([['pdf', 'PDF'], ['excel', 'Excel'], ['word', 'Word']] as const).map(([k, label]) => {
+                const on = c.attachments[k]
+                return (
+                  <button key={k} onClick={() => patchConfig({ attachments: { ...c.attachments, [k]: !on } })} aria-pressed={on}
+                    className={cn('flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition', on ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-400 line-through decoration-slate-300')}>
+                    {on && <Check className="h-3 w-3" />}{label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-2.5 flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 text-sm text-slate-700"><MessageCircle className="h-4 w-4 text-emerald-600" />PDF on WhatsApp</span>
+              <Toggle on={c.attachments.whatsappPdf} onChange={v => patchConfig({ attachments: { ...c.attachments, whatsappPdf: v } })} label="PDF on WhatsApp" />
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">WhatsApp can only carry a PDF. Until its template is approved under Sent history, the message goes with the link only.</p>
+          </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-slate-600">Layout</span>
             {(['detailed', 'compact'] as const).map(s => (
@@ -1122,7 +1143,7 @@ function LivePreview({ draft }: { draft: Draft }) {
   const recipient = c.recipients[0]?.name || 'Team'
   const live = payload ? { ...payload, agentLabel: c.agents[0] || 'All agents', ruleName: draft.name } : null
   const isPack = c.kind === 'TICKETS'
-  const text = live ? renderTemplateText(templateParams(live, recipient, 'https://ops.aahaas.com/digest/…'), c.kind) : ''
+  const text = live ? renderTemplateText(templateParams(live, recipient, 'https://ops.aahaas.com/digest/…'), c.kind, c.attachments.whatsappPdf) : ''
   const html = live ? renderEmailHtml(live, c, recipient, 'https://ops.aahaas.com/digest/…') : ''
 
   return (
@@ -1171,12 +1192,18 @@ function LivePreview({ draft }: { draft: Draft }) {
             ) : (
               <>
                 <div className="ml-auto w-[92%] rounded-xl rounded-tr-sm bg-[#dcf8c6] px-3 py-2 text-[12.5px] leading-snug text-slate-800 shadow-sm">
+                  {c.attachments.whatsappPdf && (
+                    <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-black/5 px-2.5 py-2">
+                      <FileText className="h-5 w-5 shrink-0 text-rose-600" />
+                      <span className="min-w-0 truncate text-[11.5px] font-medium">{isPack ? 'Ticket-Pack' : 'Daily-Update'}-{day}.pdf</span>
+                    </div>
+                  )}
                   <WaText text={text} />
                   <div className="mt-1.5 border-t border-black/5 pt-1 text-[10px] text-slate-500">AppleHolidays Operations</div>
                   <div className="mt-1 text-right text-[10px] text-slate-500">{draft.sendTime} ✓✓</div>
                 </div>
                 <p className="mx-auto mt-3 w-fit rounded-lg bg-white/80 px-3 py-1.5 text-center text-[11px] text-slate-500">
-                  WhatsApp template <code>{isPack ? 'aahaas_agent_ticket_pack' : 'aahaas_agent_daily_digest'}</code> · the link opens the {isPack ? 'tickets' : 'full update'} (switch to Email to see it)
+                  WhatsApp template <code>{isPack ? 'aahaas_agent_ticket_pack' : 'aahaas_agent_daily_digest'}{c.attachments.whatsappPdf ? '_pdf' : ''}</code> · the link opens the {isPack ? 'tickets' : 'full update'} (switch to Email to see it)
                 </p>
               </>
             )}
@@ -1377,8 +1404,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
   const [rows, setRows] = useState<HistoryRow[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [detail, setDetail] = useState<RunDetail | null>(null)
-  const [tpl, setTpl] = useState<TemplateInfo | null>(null)
-  const [packTpl, setPackTpl] = useState<TemplateInfo | null>(null)
+  const [templates, setTemplates] = useState<Record<string, TemplateInfo>>({})
 
   const load = useCallback(async () => {
     setBusy(true)
@@ -1389,8 +1415,9 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
   }, [from, to, ruleId, status])
   useEffect(() => { void load() }, [load])
   const loadTpl = useCallback(() => {
-    api<TemplateInfo>('/api/agent-digest/template').then(r => setTpl(r.data)).catch(() => undefined)
-    api<TemplateInfo>('/api/agent-digest/template?kind=tickets').then(r => setPackTpl(r.data)).catch(() => undefined)
+    for (const qs of TEMPLATE_QUERIES) {
+      api<TemplateInfo>(`/api/agent-digest/template${qs}`).then(r => setTemplates(t => ({ ...t, [qs]: r.data }))).catch(() => undefined)
+    }
   }, [])
   useEffect(() => { loadTpl() }, [loadTpl])
 
@@ -1398,17 +1425,16 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
     if (!runId) return
     try { const { data } = await api<RunDetail>(`/api/agent-digest/runs/${runId}`); setDetail(data) } catch (e) { toast.error((e as Error).message) }
   }
-  const registerTpl = async (tickets = false) => {
-    const set = tickets ? setPackTpl : setTpl
+  const registerTpl = async (qs: string) => {
     try {
-      const { message } = await api(`/api/agent-digest/template${tickets ? '?kind=tickets' : ''}`, { method: 'POST' })
+      const { message } = await api(`/api/agent-digest/template${qs}`, { method: 'POST' })
       toast.success(message ?? 'Submitted')
       loadTpl()
     } catch (e) {
       // Keep Meta's reason on screen — a toast disappears before it can be read.
       const msg = (e as Error).message
       toast.error(msg, { duration: 15000 })
-      set(t => (t ? { ...t, error: msg } : t))
+      setTemplates(t => (t[qs] ? { ...t, [qs]: { ...t[qs], error: msg } } : t))
       loadTpl()
     }
   }
@@ -1421,8 +1447,7 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
 
   return (
     <div className="space-y-4">
-      {tpl && <TemplateBanner tpl={tpl} onSubmit={() => registerTpl()} onRefresh={loadTpl} />}
-      {packTpl && <TemplateBanner tpl={packTpl} onSubmit={() => registerTpl(true)} onRefresh={loadTpl} />}
+      {TEMPLATE_QUERIES.map(qs => templates[qs] && <TemplateBanner key={qs} tpl={templates[qs]} onSubmit={() => registerTpl(qs)} onRefresh={loadTpl} />)}
 
       <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex gap-1.5">
@@ -1479,6 +1504,9 @@ function HistoryTab({ rules }: { rules: DigestRuleView[] }) {
   )
 }
 
+/** Every WhatsApp template the digests use: link-only and with the PDF. */
+const TEMPLATE_QUERIES = ['', '?kind=tickets', '?pdf=1', '?kind=tickets&pdf=1']
+
 interface TemplateInfo {
   name: string
   language: string
@@ -1502,8 +1530,13 @@ const TPL_STATUS: Record<string, { tone: string; text: string }> = {
 }
 
 function TemplateBanner({ tpl, onSubmit, onRefresh }: { tpl: TemplateInfo; onSubmit: () => void; onRefresh: () => void }) {
-  const meta = tpl.status ? TPL_STATUS[tpl.status] ?? { tone: 'border-amber-200 bg-amber-50 text-amber-900', text: `has status ${tpl.status}.` }
+  const base = tpl.status ? TPL_STATUS[tpl.status] ?? { tone: 'border-amber-200 bg-amber-50 text-amber-900', text: `has status ${tpl.status}.` }
     : { tone: 'border-slate-200 bg-slate-50 text-slate-700', text: `status unknown — Meta not reachable (${tpl.error ?? 'no detail'}).` }
+  // A PDF template only adds the attachment: without it the link message still goes.
+  const pdfNote = tpl.name.endsWith('_pdf') && tpl.status === 'MISSING' ? 'does not exist on Meta yet — submit it. Until it is approved, WhatsApp goes with the link only, without the PDF.'
+    : tpl.name.endsWith('_pdf') && tpl.status === 'PENDING' ? 'is waiting for Meta’s review. Until then, WhatsApp goes with the link only, without the PDF.'
+      : tpl.name.endsWith('_pdf') && tpl.status === 'APPROVED' ? 'is approved — WhatsApp messages carry the PDF.' : null
+  const meta = pdfNote ? { ...base, text: pdfNote } : base
   const differs = tpl.metaBody && tpl.metaBody.trim() !== tpl.body.trim()
   return (
     <div className={cn('flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-3.5 text-sm', meta.tone)}>

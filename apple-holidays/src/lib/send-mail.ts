@@ -22,6 +22,8 @@ interface SendMailOptions {
   subject: string
   bodyHtml: string
   attachment?: MailAttachment
+  /** Several files. Graph refuses a mail over about 4 MB in all. */
+  attachments?: MailAttachment[]
 }
 
 export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
@@ -49,15 +51,14 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
       : {}),
   }
 
-  if (opts.attachment) {
-    message.attachments = [
-      {
-        '@odata.type': '#microsoft.graph.fileAttachment',
-        name: opts.attachment.name,
-        contentType: opts.attachment.contentType,
-        contentBytes: Buffer.from(opts.attachment.buffer).toString('base64'),
-      },
-    ]
+  const files = [...(opts.attachment ? [opts.attachment] : []), ...(opts.attachments ?? [])]
+  if (files.length) {
+    message.attachments = files.map(file => ({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name: file.name,
+      contentType: file.contentType,
+      contentBytes: Buffer.from(file.buffer).toString('base64'),
+    }))
   }
 
   const res = await fetch(

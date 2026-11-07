@@ -2,18 +2,29 @@
  * GET  /api/agent-digest/template — is the digest-link WhatsApp template approved?
  * POST /api/agent-digest/template — submit it to Meta for review.
  *
- * `?kind=tickets` means the ticket pack's template instead.
+ * `?kind=tickets` means the ticket pack's template instead, and `&pdf=1` the
+ * version with the PDF in its header.
  */
 import { NextRequest } from 'next/server'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { createMetaTemplate, listMetaTemplates } from '@/lib/whatsapp'
+import { createMetaTemplate, listMetaTemplates, uploadTemplateHeaderHandle } from '@/lib/whatsapp'
 import { requireDaStaff } from '@/lib/driver-auto/api-auth'
-import { AGENT_DIGEST_TEMPLATE_DEF, AGENT_TICKETS_TEMPLATE_DEF } from '@/lib/agent-digest/server'
+import {
+  AGENT_DIGEST_PDF_TEMPLATE_DEF, AGENT_DIGEST_TEMPLATE_DEF, AGENT_TICKETS_PDF_TEMPLATE_DEF, AGENT_TICKETS_TEMPLATE_DEF,
+} from '@/lib/agent-digest/server'
+import { sampleDigestPdf } from '@/lib/agent-digest/attachments'
 
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+export const maxDuration = 60
 
-const defFor = (req: NextRequest) =>
-  req.nextUrl.searchParams.get('kind') === 'tickets' ? AGENT_TICKETS_TEMPLATE_DEF : AGENT_DIGEST_TEMPLATE_DEF
+const isPack = (req: NextRequest) => req.nextUrl.searchParams.get('kind') === 'tickets'
+const withPdf = (req: NextRequest) => req.nextUrl.searchParams.get('pdf') === '1'
+
+function defFor(req: NextRequest) {
+  if (isPack(req)) return withPdf(req) ? AGENT_TICKETS_PDF_TEMPLATE_DEF : AGENT_TICKETS_TEMPLATE_DEF
+  return withPdf(req) ? AGENT_DIGEST_PDF_TEMPLATE_DEF : AGENT_DIGEST_TEMPLATE_DEF
+}
 
 export async function GET(req: NextRequest) {
   const staff = await requireDaStaff()
@@ -42,7 +53,11 @@ export async function POST(req: NextRequest) {
   const staff = await requireDaStaff()
   if ('error' in staff) return buildApiError(staff.error, staff.status)
   try {
-    const created = await createMetaTemplate(defFor(req))
+    // A document header needs an uploaded sample before Meta will review it.
+    const header = withPdf(req)
+      ? { headerFormat: 'DOCUMENT' as const, headerHandle: await uploadTemplateHeaderHandle(await sampleDigestPdf(isPack(req)), 'Agent-digest-sample.pdf') }
+      : {}
+    const created = await createMetaTemplate({ ...defFor(req), ...header })
     return buildApiSuccess(created, `Template ${created.name} submitted to Meta (${created.status})`)
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'Template submission failed', 400)

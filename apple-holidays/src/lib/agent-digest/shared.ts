@@ -132,6 +132,8 @@ export interface DigestRecipient {
 export type DigestStyle = 'detailed' | 'compact'
 export type StatusFilter = 'ACTIVE' | 'CONFIRMED'
 
+export interface DigestAttachments { pdf: boolean; excel: boolean; word: boolean; whatsappPdf: boolean }
+
 export interface DigestConfig {
   kind: DigestKind
   /** Used when kind is TICKETS. */
@@ -151,6 +153,8 @@ export interface DigestConfig {
   /** Supports {agent} {date} {day} {bookings} {lines} {recipient} {countries}; ticket packs add {arrival} {tickets} {ready}. */
   intro: string
   footer: string
+  /** Copies sent with the digest: email files, and the PDF on WhatsApp. */
+  attachments: DigestAttachments
   /** Do not send when every block is empty. */
   skipEmpty: boolean
   /** Add the "view full update" web link to WhatsApp text. */
@@ -207,6 +211,7 @@ export function defaultConfig(): DigestConfig {
     style: 'detailed',
     intro: 'Good morning {recipient}! 👋\nHere is the {agent} operations update for {day}.',
     footer: 'Any questions — just reply here.\n— AppleHolidays Operations',
+    attachments: { pdf: true, excel: true, word: true, whatsappPdf: true },
     skipEmpty: true,
     includeLink: true,
   }
@@ -304,6 +309,12 @@ export function normaliseConfig(raw: unknown): DigestConfig {
     style: r.style === 'compact' ? 'compact' : 'detailed',
     intro: typeof r.intro === 'string' ? r.intro.slice(0, 1000) : d.intro,
     footer: typeof r.footer === 'string' ? r.footer.slice(0, 1000) : d.footer,
+    attachments: {
+      pdf: r.attachments?.pdf !== false,
+      excel: r.attachments?.excel !== false,
+      word: r.attachments?.word !== false,
+      whatsappPdf: r.attachments?.whatsappPdf !== false,
+    },
     skipEmpty: r.skipEmpty !== false,
     includeLink: r.includeLink !== false,
   }
@@ -511,12 +522,12 @@ export function fillTokens(text: string, p: DigestPayload, recipient: string): s
   return text.replace(/\{(\w+)\}/g, (m, k: string) => (k in map ? map[k] : m))
 }
 
-function partyText(p: DigestParty | null, withPhone: boolean): string {
+export function partyText(p: DigestParty | null, withPhone: boolean): string {
   if (!p?.name && !p?.phone) return ''
   return [p.name, withPhone && p.phone ? p.phone : null].filter(Boolean).join(' · ')
 }
 
-function paxText(b: DigestBooking): string {
+export function paxText(b: DigestBooking): string {
   const parts = [`${b.paxAdults}A`]
   if (b.paxChildren) parts.push(`${b.paxChildren}C`)
   if (b.paxInfants) parts.push(`${b.paxInfants}I`)
@@ -800,9 +811,17 @@ export function templateParams(p: DigestPayload, recipient: string, link: string
   return [recipient || 'there', p.agentLabel, fmtShort(p.runDate), String(p.totals.bookings), String(p.totals.lines), link].map(tplParam)
 }
 
+/** The same messages for the templates with a PDF in the header. They take the same values. */
+export const AGENT_DIGEST_PDF_TEMPLATE_BODY =
+  AGENT_DIGEST_TEMPLATE_BODY.replace('View the full update here:', 'The PDF is attached. View the full update here:')
+export const AGENT_TICKETS_PDF_TEMPLATE_BODY =
+  AGENT_TICKETS_TEMPLATE_BODY.replace('Open and download them here:', 'A PDF summary is attached. Open and download the tickets here:')
+
 /** What the recipient sees on WhatsApp. */
-export function renderTemplateText(params: string[], kind: DigestKind = 'DAILY'): string {
-  const body = kind === 'TICKETS' ? AGENT_TICKETS_TEMPLATE_BODY : AGENT_DIGEST_TEMPLATE_BODY
+export function renderTemplateText(params: string[], kind: DigestKind = 'DAILY', withPdf = false): string {
+  const body = kind === 'TICKETS'
+    ? (withPdf ? AGENT_TICKETS_PDF_TEMPLATE_BODY : AGENT_TICKETS_TEMPLATE_BODY)
+    : (withPdf ? AGENT_DIGEST_PDF_TEMPLATE_BODY : AGENT_DIGEST_TEMPLATE_BODY)
   return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (_m, n: string) => params[Number(n) - 1] ?? '')
 }
 
@@ -821,16 +840,16 @@ export function packArrivalText(p: DigestPayload): string {
   return first === last ? fmtShort(first) : `${fmtShort(first)} – ${fmtShort(last)}`
 }
 
-function packIds(b: DigestBooking, f: DigestFields): string {
+export function packIds(b: DigestBooking, f: DigestFields): string {
   const ids = [f.tripNo ? b.tripNo : null, f.isNumber ? b.isNumber : null, f.isNumber ? b.cntlNumber : null]
     .filter((v, i, a): v is string => !!v && a.indexOf(v) === i)
   return ids.join(' / ') || b.ref
 }
 
-const packVisible = (b: DigestBooking, c: DigestConfig) =>
+export const packVisible = (b: DigestBooking, c: DigestConfig) =>
   (b.tickets ?? []).filter(t => c.ticketPack.show.pending || t.files.length > 0)
 
-function ticketFacts(t: DigestTicket, c: DigestConfig): string[] {
+export function ticketFacts(t: DigestTicket, c: DigestConfig): string[] {
   const s = c.ticketPack.show
   return [
     s.ticketDate && t.date ? fmtShort(t.date) : null,

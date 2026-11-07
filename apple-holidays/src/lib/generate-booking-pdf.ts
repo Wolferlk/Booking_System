@@ -57,7 +57,7 @@ function dayKey(d: string | Date | null | undefined): string {
 }
 
 /** Strip characters the standard PDF fonts cannot draw. */
-function safe(s: unknown): string {
+export function safe(s: unknown): string {
   return String(s ?? '')
     .replace(/[→⇒➜]/g, '»')
     .replace(/[★☆]/g, '*')

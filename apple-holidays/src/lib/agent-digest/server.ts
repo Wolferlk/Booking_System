@@ -19,7 +19,7 @@
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import { normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
+import { normalisePhone, sendViaMetaTemplate, uploadMetaMedia } from '@/lib/whatsapp'
 import { movementNeedsDriver } from '@/lib/driver-requirement'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { serviceTypeLabel } from '@/lib/service-types'
@@ -27,7 +27,7 @@ import { testBookingWhere } from '@/lib/test-bookings'
 import {
   addDays, agentMatches, allocationPending, emailSubject, isEmail, isEmptyPayload,
   normaliseConfig, nowHmIn, renderEmailHtml, renderTemplateText, renderWhatsApp, templateParams, todayIn,
-  AGENT_DIGEST_TEMPLATE_BODY, AGENT_TICKETS_TEMPLATE_BODY,
+  AGENT_DIGEST_PDF_TEMPLATE_BODY, AGENT_DIGEST_TEMPLATE_BODY, AGENT_TICKETS_PDF_TEMPLATE_BODY, AGENT_TICKETS_TEMPLATE_BODY,
   type DigestBlockResult, type DigestBooking, type DigestConfig, type DigestItem,
   type DigestParty, type DigestPayload, type DigestRecipient, type DigestRuleView,
 } from './shared'
@@ -35,6 +35,7 @@ import {
   ACTIVE_EXCLUDED, agentLabelOf, bookingCountry, CONFIRMED_EXCLUDED, countryAllowed, dayDiff, displayCountry, ymd,
 } from './scope'
 import { buildTicketPayload } from './tickets-server'
+import { digestMailFiles, digestPdfFile } from './attachments'
 
 // ── Setup / errors ───────────────────────────────────────────────────────────
 
@@ -75,6 +76,19 @@ export const AGENT_TICKETS_TEMPLATE_DEF = {
   bodyExamples: ['Priya', '30 Sundays', '10 Nov', '3', '8', '11', 'https://ops.aahaas.com/digest/cm1abc234?t=0123456789abcdef'],
   footerText: 'AppleHolidays Operations',
 }
+
+/**
+ * The same two messages with the PDF in a DOCUMENT header. Separate templates,
+ * because Meta will not add a header to an approved one, and it accepts only a
+ * PDF there. Until they are approved a send falls back to the link-only template.
+ */
+export const TEMPLATE_AGENT_DIGEST_PDF =
+  process.env.WHATSAPP_AGENT_DIGEST_PDF_TEMPLATE?.trim() || 'aahaas_agent_daily_digest_pdf'
+export const TEMPLATE_AGENT_TICKETS_PDF =
+  process.env.WHATSAPP_AGENT_TICKETS_PDF_TEMPLATE?.trim() || 'aahaas_agent_ticket_pack_pdf'
+
+export const AGENT_DIGEST_PDF_TEMPLATE_DEF = { ...AGENT_DIGEST_TEMPLATE_DEF, name: TEMPLATE_AGENT_DIGEST_PDF, bodyText: AGENT_DIGEST_PDF_TEMPLATE_BODY }
+export const AGENT_TICKETS_PDF_TEMPLATE_DEF = { ...AGENT_TICKETS_TEMPLATE_DEF, name: TEMPLATE_AGENT_TICKETS_PDF, bodyText: AGENT_TICKETS_PDF_TEMPLATE_BODY }
 
 export function appBaseUrl(): string {
   return (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? 'https://ops.aahaas.com').replace(/\/$/, '')
@@ -460,6 +474,12 @@ export async function sendDigest(opts: {
   result.runId = run.id
   result.link = link
 
+  // Built once per run and shared by every recipient.
+  let waPdf: Promise<{ id: string; filename: string }> | null = null
+  const whatsappPdf = () => (waPdf ??= digestPdfFile(payload, config, link).then(async f => ({ id: await uploadMetaMedia(f.buffer, f.name), filename: f.name })))
+  let mailFiles: ReturnType<typeof digestMailFiles> | null = null
+  const emailFiles = () => (mailFiles ??= digestMailFiles(payload, config, link))
+
   const keyOf = (channel: string, to: string) =>
     opts.trigger === 'test' ? `test|${run.id}|${channel}|${to}` : `${ruleId}|${runDate}|${channel}|${to}`
 
@@ -503,14 +523,32 @@ export async function sendDigest(opts: {
         await guardAndRecord('whatsapp', phone, who, async () => {
           // Always the approved template — never free-form text, whatever the 24h window.
           const params = templateParams(payload, r.name, link)
-          const res = await sendViaMetaTemplate({ to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS : TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params })
-          const tplBody = renderTemplateText(params, config.kind)
-          if (!res) return { ok: false, mode: 'template', body: tplBody, error: 'WhatsApp (Meta) is not configured on this server' }
+          let res: Awaited<ReturnType<typeof sendViaMetaTemplate>> = null
+          let note: string | undefined
+          if (config.attachments.whatsappPdf) {
+            try {
+              res = await sendViaMetaTemplate({
+                to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS_PDF : TEMPLATE_AGENT_DIGEST_PDF,
+                lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params, headerDocument: await whatsappPdf(),
+              })
+            } catch (err) {
+              // The update matters more than its attachment: go out with the link alone.
+              const why = err instanceof Error ? err.message : String(err)
+              note = /132001|template name does not exist|does not exist in .*(translation|locale)/i.test(why)
+                ? 'PDF template not approved yet, so this went with the link only'
+                : `PDF not attached: ${why.slice(0, 180)}`
+            }
+          }
+          const withPdf = !!res
+          res ??= await sendViaMetaTemplate({ to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS : TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params })
+          const tplBody = renderTemplateText(params, config.kind, withPdf)
+          const mode = withPdf ? 'template-pdf' : 'template'
+          if (!res) return { ok: false, mode, body: tplBody, error: 'WhatsApp (Meta) is not configured on this server' }
           const waMessageId = (res.template as { messages?: { id?: string }[] })?.messages?.[0]?.id ?? null
           await prisma.whatsAppMessage.create({
             data: { bookingRef: 'AGENT-DIGEST', phone, direction: 'outbound', body: tplBody, waMessageId, status: 'sent', senderName: `[${isPack ? 'AGENT-TICKETS' : 'AGENT-DIGEST'}] ${name}` },
           }).catch(() => undefined)
-          return { ok: true, mode: 'template', waMessageId, body: tplBody }
+          return { ok: true, mode, waMessageId, body: tplBody, error: note }
         })
       }
     }
@@ -524,8 +562,12 @@ export async function sendDigest(opts: {
         await guardAndRecord('email', to, who, async () => {
           const subject = emailSubject(payload)
           const html = renderEmailHtml(payload, config, r.name, link, { fileLink: id => runFileLink(run, id) })
-          await sendMailViaGraph({ to, cc: opts.testTo ? [] : config.ccEmails, subject, bodyHtml: html })
-          return { ok: true, mode: 'html', subject, body: renderWhatsApp(payload, config, r.name, link) }
+          const { files, failed } = await emailFiles()
+          await sendMailViaGraph({ to, cc: opts.testTo ? [] : config.ccEmails, subject, bodyHtml: html, attachments: files })
+          return {
+            ok: true, mode: 'html', subject, body: renderWhatsApp(payload, config, r.name, link),
+            error: failed.length ? `Not attached: ${failed.join(', ')}` : undefined,
+          }
         })
       }
     }
