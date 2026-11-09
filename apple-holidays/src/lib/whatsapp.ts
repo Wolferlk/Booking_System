@@ -211,6 +211,8 @@ export async function sendViaMetaTemplate(params: {
    * publicly fetchable HTTPS URL. Mutually exclusive with `headerParams`.
    */
   headerDocument?: { id?: string; link?: string; filename?: string }
+  /** Fills a copy-code button on an AUTHENTICATION template (Meta sends it as a url button). */
+  otpButtonCode?: string
 }): Promise<{ channel: 'meta'; template: unknown } | null> {
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) return null
@@ -236,6 +238,9 @@ export async function sendViaMetaTemplate(params: {
   }
   if (params.bodyParams && params.bodyParams.length) {
     components.push({ type: 'body', parameters: params.bodyParams.map(text => ({ type: 'text', text })) })
+  }
+  if (params.otpButtonCode) {
+    components.push({ type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: params.otpButtonCode }] })
   }
 
   const res = await fetch(
@@ -394,6 +399,41 @@ export async function uploadTemplateHeaderHandle(
   const handle = (JSON.parse(putBody) as { h?: string }).h
   if (!handle) throw new Error('Header upload returned no handle')
   return handle
+}
+
+/**
+ * Register an AUTHENTICATION (one-time code) template. Meta writes the body of
+ * these itself ("<code> is your verification code"), so only the name, language
+ * and expiry are ours to choose — which is why createMetaTemplate cannot do it.
+ */
+export async function createMetaAuthTemplate(params: {
+  name: string
+  language?: string
+  expiryMinutes: number
+}): Promise<{ id: string | null; status: string; name: string }> {
+  const { accessToken, businessAccountId } = getWabaCreds()
+  if (!accessToken || !businessAccountId) {
+    throw new Error('Templates unavailable: WHATSAPP_ACCESS_TOKEN / WHATSAPP_BUSINESS_ACCOUNT_ID not configured')
+  }
+  const res = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${businessAccountId}/message_templates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: params.name,
+      category: 'AUTHENTICATION',
+      language: params.language || 'en',
+      components: [
+        { type: 'BODY', add_security_recommendation: true },
+        { type: 'FOOTER', code_expiration_minutes: params.expiryMinutes },
+        { type: 'BUTTONS', buttons: [{ type: 'OTP', otp_type: 'COPY_CODE', text: 'Copy code' }] },
+      ],
+    }),
+  })
+  const text = await res.text()
+  let json: { id?: string; status?: string; error?: { message?: string; error_user_msg?: string } } | null = null
+  try { json = text ? JSON.parse(text) : null } catch { json = null }
+  if (!res.ok) throw new Error([json?.error?.message, json?.error?.error_user_msg].filter(Boolean).join(' — ') || `Graph API ${res.status}`)
+  return { id: json?.id ?? null, status: json?.status ?? 'PENDING', name: params.name }
 }
 
 export async function createMetaTemplate(params: {

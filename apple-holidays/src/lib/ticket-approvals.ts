@@ -616,6 +616,23 @@ export async function markApprovalPurchased(ticketId: string, reference: string 
   }
 }
 
+/**
+ * The portal purchase behind that stamp was cancelled, so take the stamp back.
+ * Only the stamp this reference made. Never throws, like the stamp itself.
+ */
+export async function clearApprovalPurchased(ticketId: string, reference: string | null): Promise<void> {
+  try {
+    await accountsWrite(
+      `UPDATE ticket_approvals
+          SET purchased_at = NULL, purchase_reference = NULL, updated_at = NOW()
+        WHERE ops_ticket_id = ? AND purchase_reference = ?`,
+      [ticketId, reference],
+    )
+  } catch (err) {
+    console.warn('[ticket-approvals] purchase stamp not cleared:', err instanceof Error ? err.message : err)
+  }
+}
+
 /* ─── Internals ────────────────────────────────────────────────────────────── */
 
 /** Copy one request's state onto its ticket. Best-effort, like the bulk sync. */

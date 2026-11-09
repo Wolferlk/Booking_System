@@ -20,6 +20,7 @@ import GuestEmergencyContactsCard from '@/components/settings/guest-emergency-co
 import { GUEST_EMERGENCY_KEY, parseGuestEmergencyPolicy } from '@/lib/emergency-contacts'
 import MovementWhatsAppCard from '@/components/settings/movement-whatsapp-card'
 import CustomerDailyBriefingCard from '@/components/settings/customer-daily-briefing-card'
+import TicketPortalCard from '@/components/settings/ticket-portal-card'
 import DataProtectionCard from '@/components/settings/data-protection-card'
 import { DATA_PROTECTION_KEY, parseDataProtectionPolicy } from '@/lib/data-protection'
 import { parseFlightPickupRules, durationLabel } from '@/lib/flight-pickup-rules'
@@ -330,6 +331,7 @@ const SECTIONS: SectionMeta[] = [
 
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
   { id: 'customer-daily', title: 'Customer Daily Trip Details', group: 'Operations',    icon: MessageCircle, keywords: 'guest customer whatsapp daily briefing plan auto send default time 18:00 6pm trip portal next day super partner agent mmt makemytrip branding white label appleholidays' },
+  { id: 'ticket-issue-desk', title: 'Ticket Issue Desk', group: 'Operations', icon: Ticket, keywords: 'globaltix cebu portal issue hold purchase cancel otp code whatsapp approver template manual lowest price compare' },
   { id: 'movement-whatsapp', title: 'Movement WhatsApp Briefing', group: 'Operations',   icon: MessageCircle, keywords: 'agenda movement chart driver vendor guide tour vendor whatsapp template send single item is number phone duplicate meta approve' },
   { id: 'guest-emergency', title: 'Guest Emergency Contacts',     group: 'Operations',      icon: PhoneCall,    keywords: 'emergency contact phone call guest customer pdf tour confirmation full details vouchers t-3 t-7 whatsapp hotline 24/7 country' },
   { id: 'airport-pickup', title: 'Airport Pickup Timings',       group: 'Operations',      icon: PlaneTakeoff, keywords: 'flight departure arrival pickup meeting time hours before after landing buffer check-in movement chart agenda' },
@@ -1165,6 +1167,11 @@ export default function ConfigPage() {
             <Section id="customer-daily" visible={show('customer-daily')} flashed={flashId === 'customer-daily'}>
               {/* Default send time + on/off for the guests' daily WhatsApp plan */}
               <CustomerDailyBriefingCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
+            </Section>
+
+            <Section id="ticket-issue-desk" visible={show('ticket-issue-desk')} flashed={flashId === 'ticket-issue-desk'}>
+              {/* GlobalTix / Cebu issuing and its WhatsApp approval codes */}
+              <TicketPortalCard />
             </Section>
 
             <Section id="movement-whatsapp" visible={show('movement-whatsapp')} flashed={flashId === 'movement-whatsapp'}>

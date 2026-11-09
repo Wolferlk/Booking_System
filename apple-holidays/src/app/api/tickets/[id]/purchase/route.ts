@@ -45,6 +45,16 @@ export async function POST(
     )
   }
 
+  // A live hold on the Ticket Issue Desk means this ticket is being bought on a
+  // portal; marking it purchased here too would pay for it twice. A database
+  // without the desk's table simply has no holds to check.
+  const liveHold = await prisma.ticketPortalBooking
+    .findFirst({ where: { ticketId: ticket.id, liveKey: { not: null } }, select: { reference: true, provider: true } })
+    .catch(() => null)
+  if (liveHold) {
+    return buildApiError(`This ticket has a live ${liveHold.provider} booking (${liveHold.reference ?? 'in progress'}). Release it on the Issue Desk first.`, 409)
+  }
+
   const body = await req.json().catch(() => ({}))
   const { reference } = body
 

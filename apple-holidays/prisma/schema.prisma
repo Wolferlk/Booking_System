@@ -4095,3 +4095,78 @@ model WaGroupChannel {
 
   @@map("wa_group_channels")
 }
+
+/// One hold on GlobalTix or Cebu for a ticket — prisma/sql/2026-11-09-ticket-portal-issue.sql.
+/// `liveKey` is the ticket id while live, NULL once ended: the unique index refuses a second live booking.
+model TicketPortalBooking {
+  id              String    @id @default(cuid())
+  ticketId        String
+  bookingId       String
+  bookingRef      String
+  provider        String    @db.VarChar(16)
+  productId       String    @db.VarChar(64)
+  productName     String?   @db.VarChar(255)
+  optionId        String?   @db.VarChar(64)
+  optionName      String?   @db.VarChar(255)
+  kind            String?   @db.VarChar(32)
+  tickets         String    @db.Text
+  alsoCovers      String?   @db.Text
+  visitDate       String?   @db.VarChar(10)
+  eventTime       String?   @db.VarChar(32)
+  customerName    String?   @db.VarChar(191)
+  customerMobile  String?   @db.VarChar(32)
+  reference       String?   @db.VarChar(64)
+  status          String    @db.VarChar(16)
+  amount          Decimal?  @db.Decimal(12, 2)
+  currency        String?   @db.VarChar(8)
+  lastError       String?   @db.VarChar(500)
+  liveKey         String?   @unique(map: "ticket_portal_bookings_liveKey_key")
+  ticketSnapshot  String?   @db.MediumText
+  fileIds         String?   @db.Text
+  reserveJson     String?   @db.MediumText
+  confirmJson     String?   @db.MediumText
+  releaseJson     String?   @db.MediumText
+  detailsJson     String?   @db.MediumText
+  createdById     String?
+  createdByName   String?   @db.VarChar(191)
+  confirmedByName String?   @db.VarChar(191)
+  releasedByName  String?   @db.VarChar(191)
+  cancelledByName String?   @db.VarChar(191)
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([ticketId], map: "ticket_portal_bookings_ticketId_idx")
+  @@index([bookingId], map: "ticket_portal_bookings_bookingId_idx")
+  @@index([reference], map: "ticket_portal_bookings_reference_idx")
+  @@map("ticket_portal_bookings")
+}
+
+/// A WhatsApp approval code. Only its HMAC is stored.
+model TicketPortalOtp {
+  id              String    @id @default(cuid())
+  portalBookingId String
+  purpose         String    @db.VarChar(16)
+  codeHash        String    @db.VarChar(128)
+  bindHash        String    @db.VarChar(128)
+  recipients      String?   @db.Text
+  requestedById   String?
+  requestedByName String?   @db.VarChar(191)
+  expiresAt       DateTime
+  attempts        Int       @default(0)
+  consumedAt      DateTime?
+  voidedAt        DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([portalBookingId, purpose], map: "ticket_portal_otps_booking_idx")
+  @@map("ticket_portal_otps")
+}
+
+model TicketPortalCache {
+  cacheKey  String   @id @db.VarChar(191)
+  value     String   @db.MediumText
+  fetchedAt DateTime @default(now())
+
+  @@map("ticket_portal_cache")
+}

@@ -25,6 +25,7 @@ import PasteDropzone from '@/components/shared/paste-dropzone'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import TicketApprovalPanel from '@/components/tickets/ticket-approval-panel'
 import TicketFilesPanel, { type TicketExtraFile } from '@/components/tickets/ticket-files-panel'
+import PortalIssueDesk from '@/components/tickets/portal-issue-desk'
 import { NO_TICKETS_LABEL, NO_TICKETS_DONE } from '@/lib/no-tickets'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -319,6 +320,16 @@ export default function TicketsPage() {
   const [apiAvailable, setApiAvailable] = useState(false)
   const [apiCreating,  setApiCreating]  = useState(false)
 
+  // ── Ticket Issue Desk (GlobalTix / Cebu) ──────────────────────────────────
+  // Stays empty until Settings turns the desk on, so the page is unchanged.
+  const [portalDesk, setPortalDesk] = useState<{ enabled: boolean; byTicket: Record<string, { provider: string; reference: string | null; status: string }> }>({ enabled: false, byTicket: {} })
+  const [deskTicket, setDeskTicket] = useState<Ticket | null>(null)
+  const loadPortalDesk = () =>
+    fetch(`/api/bookings/${ref}/ticket-portal`)
+      .then(res => res.json())
+      .then(json => { if (json.success && json.data) setPortalDesk(json.data) })
+      .catch(() => { /* no desk this time; manual purchase is unaffected */ })
+
   // ── Ticket portals ────────────────────────────────────────────────────────
   // Where a ticket can be bought, for this booking's country. The list is
   // shared with Accounts — it pays whichever portal is recorded here — and is
@@ -515,7 +526,7 @@ export default function TicketsPage() {
     }
   }
 
-  useEffect(() => { load(); loadNoTickets() }, [ref])
+  useEffect(() => { load(); loadNoTickets(); loadPortalDesk() }, [ref])
   useEffect(() => { setPreviewError(false) }, [viewFile])
 
   // Paste a screenshot straight into the open Activate modal → AI extract
@@ -996,6 +1007,16 @@ export default function TicketsPage() {
           </div>
         }
       />
+
+      {deskTicket && (
+        <PortalIssueDesk
+          ticketId={deskTicket.id}
+          ticketName={deskTicket.type}
+          onClose={() => setDeskTicket(null)}
+          onChanged={() => { load(); loadPortalDesk() }}
+          onManual={() => { const t = deskTicket; setDeskTicket(null); openPurchase(t) }}
+        />
+      )}
 
       {/* Hidden file inputs */}
       <input
@@ -1490,7 +1511,14 @@ export default function TicketsPage() {
                           </button>
                         )}
 
-                        {canPurchase && t.status === 'DRAFT' && (() => {
+                        {canPurchase && portalDesk.enabled && (t.status === 'DRAFT' || portalDesk.byTicket[t.id]) && (
+                          <button onClick={() => setDeskTicket(t)} className="btn btn-sm bg-slate-900 text-white hover:bg-slate-800" title="Compare GlobalTix, Cebu and manual, then issue">
+                            <Zap className="w-3.5 h-3.5 text-amber-300" />
+                            {!portalDesk.byTicket[t.id] ? 'Issue ticket' : portalDesk.byTicket[t.id].status === 'confirmed' ? 'Portal ticket' : 'Continue issue'}
+                          </button>
+                        )}
+
+                        {canPurchase && t.status === 'DRAFT' && !portalDesk.byTicket[t.id] && (() => {
                           // Two gates, and the button says which one is shut:
                           // the P&L payment (G2) and, on MY/SG/VN, Accounts
                           // having approved and paid for the ticket (G4).
