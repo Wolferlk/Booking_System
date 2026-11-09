@@ -10,7 +10,7 @@ import {
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
   Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
-  Database, Store, Ban, Undo2, Power,
+  Store, Ban, Undo2, Power,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -305,9 +305,7 @@ export default function TicketsPage() {
   const canCreate   = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canPurchase = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canUpload   = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canPnlSync  = ['AC_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
-  // ── Accounts PNL import state ─────────────────────────────────────────────
   // ── "No Tickets" mark ─────────────────────────────────────────────────────
   // Some bookings sell nothing at all. Without a decision recorded, this page
   // and QC can only report the emptiness as unknown; with it, Ticket Activation
@@ -317,10 +315,9 @@ export default function TicketsPage() {
   const [noTicketsNote,  setNoTicketsNote]  = useState('')
   const [noTicketsSaving, setNoTicketsSaving] = useState(false)
 
-  const [pnlLinked,    setPnlLinked]    = useState(false)
-  const [pnlImporting, setPnlImporting] = useState(false)
-  const [pnlSyncing,   setPnlSyncing]   = useState(false)
-  const [pnlResult,    setPnlResult]    = useState<{ created: number; updated: number; skipped: number } | null>(null)
+  // ── Tickets from the AppleSystem API ──────────────────────────────────────
+  const [apiAvailable, setApiAvailable] = useState(false)
+  const [apiCreating,  setApiCreating]  = useState(false)
 
   // ── Ticket portals ────────────────────────────────────────────────────────
   // Where a ticket can be bought, for this booking's country. The list is
@@ -474,65 +471,47 @@ export default function TicketsPage() {
     }
   }
 
-  // Is an Accounts costing sheet available for this booking? Read-only: this
-  // check writes nothing, so opening the page never creates a ticket. Ticket
-  // creation happens only when someone presses "Generate Tickets from P&L".
+  // Can this booking take tickets from the API? (Not B2C, not cancelled.) Reads
+  // the local DB only: opening the page never creates a ticket.
   useEffect(() => {
-    if (!ref || !canPnlSync) return
-    async function checkPnlAvailable() {
-      try {
-        const res  = await fetch(`/api/bookings/${ref}/detailed-pnl`)
-        const json = await res.json()
-        setPnlLinked(Boolean(json.success && json.data?.available))
-      } catch { /* silent — PNL check is best-effort */ }
-    }
-    checkPnlAvailable()
+    if (!ref || !canCreate) return
+    fetch(`/api/bookings/${ref}/as-tickets`)
+      .then(res => res.json())
+      .then(json => setApiAvailable(Boolean(json.success && json.data?.available)))
+      .catch(() => { /* the button just stays hidden; Add Ticket still works */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref])
+  }, [ref, canCreate])
 
   /**
-   * The one ticket-generation path on this page.
-   *
-   * Step 1 links/refreshes the Accounts P&L for this booking (GET /ext-pnl
-   * creates the link and moves it to the latest amendment), so the costing sheet
-   * step 2 reads is the current one. Step 2 builds the tickets from the Detailed
-   * P&L — one per hotel stay, attraction, transfer leg, transport charge and
-   * meal day. Additive: lines that already have a ticket are skipped, and a
-   * ticket that has left DRAFT is never touched.
+   * Pull the booking's quote from AppleSystem and create a DRAFT ticket for each
+   * costing line that has none yet. Lines that already have a ticket are
+   * skipped, and existing tickets are never changed.
    */
-  async function generateFromPnl(opts: { resync?: boolean } = {}) {
-    const resync = opts.resync ?? false
-    resync ? setPnlSyncing(true) : setPnlImporting(true)
+  async function createFromApi() {
+    setApiCreating(true)
     try {
-      // 1 — create / refresh the P&L link before costing anything off it.
-      const linkRes  = await fetch(`/api/bookings/${ref}/ext-pnl`)
-      const linkJson = await linkRes.json()
-      if (linkJson.success && linkJson.data) setPnlLinked(true)
-
-      // 2 — generate the tickets from the Detailed P&L.
-      const res  = await fetch(
-        `/api/bookings/${ref}/ext-pnl/create-tickets${resync ? '?resync=true' : ''}`,
-        { method: 'POST' },
-      )
+      const res  = await fetch(`/api/bookings/${ref}/as-tickets`, { method: 'POST' })
       // A crashed route answers with an empty body; res.json() would then throw
       // "Unexpected end of JSON input", which says nothing about what failed.
       const text = await res.text()
-      let json: { success?: boolean; error?: string; message?: string; data?: { created: number; updated: number; skipped: number } }
+      let json: { success?: boolean; error?: string; message?: string; data?: { created: number; skipped: number } }
       try { json = text ? JSON.parse(text) : {} }
-      catch { throw new Error(`Ticket generation failed on the server (HTTP ${res.status}).`) }
-      if (!json.success || !json.data) throw new Error(json.error || `Failed to generate tickets (HTTP ${res.status})`)
+      catch { throw new Error(`Ticket creation failed on the server (HTTP ${res.status}).`) }
+      if (!json.success || !json.data) throw new Error(json.error || `Failed to create tickets (HTTP ${res.status})`)
 
-      setPnlResult(json.data)
-      if (json.data.created > 0 || json.data.updated > 0) {
-        toast.success(json.message ?? `${json.data.created} ticket${json.data.created !== 1 ? 's' : ''} generated from the Detailed P&L`)
+      const { created, skipped } = json.data
+      if (created > 0) {
+        toast.success(json.message ?? `${created} ticket${created !== 1 ? 's' : ''} created from the API`)
         load()
+      } else if (skipped > 0) {
+        toast.info(`Every API costing line already has a ticket (${skipped} skipped)`)
       } else {
-        toast.info(`Every costing line already has a ticket (${json.data.skipped} skipped)`)
+        toast.info('The API quote has no attractions or other services to buy')
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : resync ? 'Re-sync failed' : 'Ticket generation failed')
+      toast.error(err instanceof Error ? err.message : 'Ticket creation failed')
     } finally {
-      resync ? setPnlSyncing(false) : setPnlImporting(false)
+      setApiCreating(false)
     }
   }
 
@@ -967,37 +946,18 @@ export default function TicketsPage() {
         subtitle={`${active.length} active · ${purchased} purchased · ${pending} pending · ${inactive.length} pending activation`}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Accounts PNL import buttons */}
-            {canPnlSync && pnlLinked && (
-              <>
-                <button
-                  onClick={() => generateFromPnl()}
-                  disabled={pnlImporting || pnlSyncing}
-                  className="btn btn-sm flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
-                  title="Link the Accounts P&L, then create tickets for every Detailed P&L costing line that doesn't have one yet"
-                >
-                  {pnlImporting
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Database className="w-3.5 h-3.5" />}
-                  Generate Tickets from P&L
-                  {pnlResult && pnlResult.skipped > 0 && (
-                    <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 rounded-full">
-                      {pnlResult.skipped} exist
-                    </span>
-                  )}
-                </button>
-                <button
-                  onClick={() => generateFromPnl({ resync: true })}
-                  disabled={pnlImporting || pnlSyncing}
-                  className="btn btn-sm flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
-                  title="Re-sync all draft tickets with the latest Detailed P&L costing"
-                >
-                  {pnlSyncing
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <CheckCircle2 className="w-3.5 h-3.5" />}
-                  Re-sync PNL
-                </button>
-              </>
+            {canCreate && apiAvailable && (
+              <button
+                onClick={createFromApi}
+                disabled={apiCreating}
+                className="btn btn-sm flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                title="Read this booking's quote from the AppleSystem API and create tickets for every costing line that doesn't have one yet"
+              >
+                {apiCreating
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Zap className="w-3.5 h-3.5" />}
+                Create Tickets from API
+              </button>
             )}
             {purchased > 0 && (
               <Link
@@ -1063,48 +1023,6 @@ export default function TicketsPage() {
       />
 
       <div className="p-8 space-y-6 max-w-6xl">
-
-        {/* ── Accounts PNL status banner ───────────────────────────────────── */}
-        {canPnlSync && pnlLinked && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm">
-            <Database className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <span className="font-semibold text-emerald-800">Accounts PNL linked</span>
-              {pnlResult ? (
-                <span className="text-emerald-700 ml-2">
-                  — {pnlResult.created > 0 && `${pnlResult.created} created`}
-                  {pnlResult.updated > 0 && ` · ${pnlResult.updated} updated`}
-                  {pnlResult.skipped > 0 && ` · ${pnlResult.skipped} already exist`}
-                </span>
-              ) : (pnlImporting || pnlSyncing) ? (
-                <span className="text-emerald-600 ml-2 flex items-center gap-1 inline-flex">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Processing…
-                </span>
-              ) : (
-                <span className="text-emerald-600 ml-2">Press “Generate Tickets from P&amp;L” to create tickets</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => generateFromPnl()}
-                disabled={pnlImporting || pnlSyncing}
-                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-40 flex items-center gap-1"
-              >
-                {pnlImporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                Generate Missing
-              </button>
-              <span className="text-emerald-300">|</span>
-              <button
-                onClick={() => generateFromPnl({ resync: true })}
-                disabled={pnlImporting || pnlSyncing}
-                className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-40 flex items-center gap-1"
-              >
-                {pnlSyncing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                Re-sync All
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ── Global selection action bar ──────────────────────────────────── */}
         {canCreate && tickets.length > 0 && (
@@ -1172,7 +1090,7 @@ export default function TicketsPage() {
                 )}
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <h2 className="text-sm font-semibold text-slate-900">
-                  Generated from P&L
+                  Created automatically
                   <span className="ml-2 text-xs font-normal text-slate-400">— review & activate before purchasing</span>
                 </h2>
               </div>
@@ -1328,8 +1246,8 @@ export default function TicketsPage() {
               <p className="font-semibold text-emerald-800">Flow</p>
               <p className="text-emerald-600 mt-0.5">
                 {directIssue
-                  ? 'AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → GT purchases & uploads receipt.'
-                  : 'AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.'}
+                  ? 'Tickets are created from the API at import (or with “Create Tickets from API”) → GT activates (with optional ticket scan) → GT purchases & uploads receipt.'
+                  : 'Tickets are created from the API at import (or with “Create Tickets from API”) → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.'}
               </p>
             </div>
           </div>
