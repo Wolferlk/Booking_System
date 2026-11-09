@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 
-const extra = (Constants.expoConfig?.extra ?? {}) as { apiUrl?: string; opsPhone?: string; emergencyPhone?: string };
+const extra = (Constants.expoConfig?.extra ?? {}) as { apiUrl?: string; opsPhone?: string; emergencyPhone?: string; privacyUrl?: string };
 
 /**
  * The ops server the app talks to. Override for a test server with
@@ -13,3 +13,5 @@ export const OPS_PHONE = extra.opsPhone || '+94707224229';
 /** The line a driver calls when something is wrong on a trip. */
 export const EMERGENCY_PHONE = extra.emergencyPhone || '+94706812853';
 export const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
+/** Public privacy policy — also entered in App Store Connect. Always the live site, never a test server. */
+export const PRIVACY_URL = extra.privacyUrl || 'https://ops.aahaas.com/privacy/app';

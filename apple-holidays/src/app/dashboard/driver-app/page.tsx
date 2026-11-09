@@ -82,6 +82,7 @@ const KIND_LABEL: Record<string, { label: string; tone: string }> = {
   HANDOVER: { label: 'Driver change', tone: 'bg-amber-100 text-amber-800' },
   PROFILE_CHANGE: { label: 'Profile change', tone: 'bg-sky-100 text-sky-700' },
   FEEDBACK_WAIVER: { label: 'Feedback waiver', tone: 'bg-violet-100 text-violet-700' },
+  ACCOUNT_DELETE: { label: 'Account deletion', tone: 'bg-rose-100 text-rose-800' },
 }
 
 function ago(iso: string | null): string {
@@ -322,15 +323,22 @@ export default function DriverAppPage() {
                     </tbody>
                   </table>
                 )}
+                {r.kind === 'ACCOUNT_DELETE' && r.status === 'PENDING' && (
+                  <p className="text-xs text-rose-700 mt-2">
+                    {payload.actor === 'VENDOR' ? 'This vendor' : 'This driver'} deleted their account in the app. Sign-in is already blocked and they are switched off.
+                    Once their trips and payments are settled, <b>Erase details</b> wipes name, phone, e-mail, licence, photo and bank details (trip and payment records stay, unnamed).
+                    Do this within 30 days. <b>Keep account</b> switches them back on (use only if they asked to come back).
+                  </p>
+                )}
                 {r.kind === 'HANDOVER' && r.status === 'PENDING' && (
                   <p className="text-xs text-amber-700 mt-2">Pick the new driver in SL Driver Allocation / the movement chart as usual, then approve here to close this driver&apos;s trip in the app.</p>
                 )}
                 {r.status === 'PENDING' ? (
                   <div className="flex gap-2 mt-3">
                     <Button size="sm" loading={busy === r.id} onClick={() => decide('requests', r.id, 'APPROVED')} icon={<Check className="h-4 w-4" />}>
-                      {r.kind === 'HELP' ? 'Handled' : 'Approve'}
+                      {r.kind === 'HELP' ? 'Handled' : r.kind === 'ACCOUNT_DELETE' ? 'Erase details' : 'Approve'}
                     </Button>
-                    {r.kind !== 'HELP' && <Button size="sm" variant="secondary" disabled={busy === r.id} onClick={() => decide('requests', r.id, 'REJECTED')} icon={<X className="h-4 w-4" />}>Decline</Button>}
+                    {r.kind !== 'HELP' && <Button size="sm" variant="secondary" disabled={busy === r.id} onClick={() => decide('requests', r.id, 'REJECTED')} icon={<X className="h-4 w-4" />}>{r.kind === 'ACCOUNT_DELETE' ? 'Keep account' : 'Decline'}</Button>}
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500 mt-2">{r.status.toLowerCase()} by {r.decidedByName}{r.decisionNote ? ` — ${r.decisionNote}` : ''}</p>

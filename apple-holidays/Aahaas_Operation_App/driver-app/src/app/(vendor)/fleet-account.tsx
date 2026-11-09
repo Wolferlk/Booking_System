@@ -2,13 +2,14 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { IconBubble } from '@/components/fancy';
 import { Ionicons, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION, OPS_PHONE } from '@/lib/config';
+import { API_URL, APP_VERSION, OPS_PHONE, PRIVACY_URL } from '@/lib/config';
 import { C } from '@/lib/theme';
 import { initials } from '@/lib/vendor';
 
@@ -76,7 +77,9 @@ export default function FleetAccount() {
         <MenuRow icon="notifications" color={C.red} bg={C.redSoft} title="Notifications" sub="Trip approvals and changes" onPress={() => router.push('/notifications')} />
         <MenuRow icon="globe" color={C.blue} bg={C.blueSoft} title="Open the web portal" sub="ops.aahaas.com/vendor" onPress={() => Linking.openURL(`${API_URL}/vendor/login`)} />
         <MenuRow icon="headset" color={C.green} bg={C.greenSoft} title="Call operations" sub={OPS_PHONE} onPress={() => Linking.openURL(`tel:${OPS_PHONE}`)} />
+        <MenuRow icon="shield-checkmark" color={C.blue} bg={C.blueSoft} title="Privacy policy" sub="What we collect and why" onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
         <MenuRow icon="log-out" color={C.sub} bg={C.cardHi} title="Sign out" onPress={() => Alert.alert('Sign out?', undefined, [{ text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: () => { signOut(); } }])} />
+        <MenuRow icon="trash" color={C.red} bg={C.redSoft} title="Delete my account" sub="Close your vendor account" onPress={() => router.push('/delete-account')} />
       </View>
       <Text style={{ color: C.dim, textAlign: 'center', fontSize: 12 }}>Aahaas · v{APP_VERSION}</Text>
     </Screen>

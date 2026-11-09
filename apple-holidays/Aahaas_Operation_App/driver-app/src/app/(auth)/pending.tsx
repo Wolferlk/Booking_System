@@ -8,11 +8,12 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AppState, Linking, Platform, ScrollView, Text, View } from 'react-native';
+import { Alert, AppState, Linking, Platform, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, ErrorBox, Ionicons, Loading, P, Row, type IconName } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
-import { OPS_PHONE } from '@/lib/config';
+import * as WebBrowser from 'expo-web-browser';
+import { OPS_PHONE, PRIVACY_URL } from '@/lib/config';
 import { ago, firstName } from '@/lib/format';
 import { expoPushToken } from '@/lib/push';
 import { getPendingSignup, setPendingSignup, type PendingSignup, type SignupStatus } from '@/lib/signup';
@@ -80,6 +81,25 @@ export default function Pending() {
       : { pathname: '/vendor-sign-in', params: { identifier: pending!.identifier } });
   }
 
+  function deleteRegistration() {
+    Alert.alert(
+      'Delete your registration?',
+      'Your details are deleted and the operations team will not review them. You can register again later.',
+      [{ text: 'Cancel', style: 'cancel' }, {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          try {
+            await api('/api/mobile/auth/register/cancel', { auth: false, body: { token: pending!.token } });
+            await setPendingSignup(null);
+            router.replace('/welcome');
+            Alert.alert('Deleted', 'Your registration and details have been deleted.');
+          } catch (e) {
+            Alert.alert('Could not delete', `${(e as ApiError).message}\n\nYou can also call operations on ${OPS_PHONE}.`);
+          }
+        },
+      }],
+    );
+  }
+
   async function startOver() {
     await setPendingSignup(null);
     router.replace('/welcome');
@@ -137,6 +157,10 @@ export default function Pending() {
         {status === 'PENDING' && (
           <Button title="Back to start" kind="ghost" onPress={() => router.replace('/welcome')} />
         )}
+        {status !== 'GONE' && (
+          <Button title="Delete my registration" icon="trash-outline" kind="ghost" onPress={deleteRegistration} />
+        )}
+        <Button title="Privacy policy" icon="shield-checkmark-outline" kind="ghost" onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
       </ScrollView>
     </SafeAreaView>
   );

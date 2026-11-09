@@ -14,6 +14,7 @@ interface Check { id: string; driverName: string; createdAt: string; photos: Rec
 const KIND: Record<string, { label: string; tone: 'red' | 'gold' | 'blue' | 'dim' }> = {
   HELP: { label: 'HELP', tone: 'red' }, HANDOVER: { label: 'Driver change', tone: 'gold' },
   PROFILE_CHANGE: { label: 'Profile change', tone: 'blue' }, FEEDBACK_WAIVER: { label: 'Feedback waiver', tone: 'dim' },
+  ACCOUNT_DELETE: { label: 'Account deletion', tone: 'red' },
 };
 
 export default function Inbox() {
@@ -57,8 +58,8 @@ export default function Inbox() {
             <TextInput placeholder="Note to the driver (optional)" placeholderTextColor={C.dim} value={notes[r.id] ?? ''} onChangeText={v => setNotes(n => ({ ...n, [r.id]: v }))}
               style={{ color: C.text, backgroundColor: C.cardHi, borderRadius: R.sm, padding: S.md }} />
             <Row gap={S.sm}>
-              <Button title={r.kind === 'HELP' ? 'Handled' : 'Approve'} icon="checkmark" style={{ flex: 1 }} loading={busy === r.id} onPress={() => decide('requests', r.id, 'APPROVED')} />
-              {r.kind !== 'HELP' && <Button title="Decline" kind="secondary" style={{ flex: 1 }} disabled={busy === r.id} onPress={() => decide('requests', r.id, 'REJECTED')} />}
+              <Button title={r.kind === 'HELP' ? 'Handled' : r.kind === 'ACCOUNT_DELETE' ? 'Erase details' : 'Approve'} icon="checkmark" style={{ flex: 1 }} loading={busy === r.id} onPress={() => decide('requests', r.id, 'APPROVED')} />
+              {r.kind !== 'HELP' && <Button title={r.kind === 'ACCOUNT_DELETE' ? 'Keep account' : 'Decline'} kind="secondary" style={{ flex: 1 }} disabled={busy === r.id} onPress={() => decide('requests', r.id, 'REJECTED')} />}
             </Row>
           </Card>
         );

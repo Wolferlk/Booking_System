@@ -85,6 +85,7 @@
       "apiUrl": "https://ops.aahaas.com",
       "opsPhone": "+94707224229",
       "emergencyPhone": "+94706812853",
+      "privacyUrl": "https://ops.aahaas.com/privacy/app",
       "router": {},
       "eas": {
         "projectId": "e10e61cf-e111-4c99-ac84-b5558af10734"

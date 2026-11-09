@@ -1,13 +1,14 @@
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { IconBubble } from '@/components/fancy';
 import { Ionicons, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION } from '@/lib/config';
+import { API_URL, APP_VERSION, PRIVACY_URL } from '@/lib/config';
 import { LANGS, useT } from '@/lib/i18n';
 import { C } from '@/lib/theme';
 
@@ -144,6 +145,7 @@ export default function Me() {
         <MenuRow icon="notifications" color="#2563EB" bg="#EFF6FF" title={t('notifications')} sub="Trips, reminders and updates" onPress={() => router.push('/notifications')} />
         <MenuRow icon="chatbox-ellipses" color="#7C3AED" bg="#F5F3FF" title="My requests to operations" sub="Hand-overs, help, profile changes" onPress={() => router.push('/requests')} />
         <MenuRow icon="alert-circle" color={C.red} bg={C.redSoft} title={t('help')} sub="Call or message operations" onPress={() => router.push('/help')} />
+        <MenuRow icon="shield-checkmark" color="#0F766E" bg="#F0FDFA" title="Privacy policy" sub="What we collect and why" onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
       </Animated.View>
 
       <Pressable onPress={() => Alert.alert(t('signOut'), 'Sign out of this phone?', [
@@ -151,6 +153,11 @@ export default function Me() {
       ])} style={({ pressed }) => [styles.signOut, pressed && { backgroundColor: C.redSoft }]}>
         <Ionicons name="log-out-outline" size={18} color={C.red} />
         <Text style={{ color: C.red, fontWeight: '900', fontSize: 15 }}>{t('signOut')}</Text>
+      </Pressable>
+
+      <Pressable onPress={() => router.push('/delete-account')} style={({ pressed }) => [styles.deleteRow, pressed && { opacity: 0.6 }]} accessibilityRole="button">
+        <Ionicons name="trash-outline" size={16} color={C.sub} />
+        <Text style={{ color: C.sub, fontWeight: '800', fontSize: 14 }}>Delete my account</Text>
       </Pressable>
     </Screen>
   );
@@ -186,5 +193,6 @@ const styles = StyleSheet.create({
   menu: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 18 },
   menuTitle: { color: C.text, fontWeight: '800', fontSize: 15 },
   menuSub: { color: C.sub, fontSize: 12 },
+  deleteRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10 },
   signOut: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 18, borderWidth: 1.5, borderColor: '#FECDD3', paddingVertical: 14 },
 });

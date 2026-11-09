@@ -1,9 +1,10 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { Alert, Linking, Pressable, Text, View } from 'react-native';
 import { Card, Ionicons, Label, Row, Screen, type IconName } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
-import { API_URL, APP_VERSION } from '@/lib/config';
+import { API_URL, APP_VERSION, PRIVACY_URL } from '@/lib/config';
 import { C, R, S } from '@/lib/theme';
 
 function Item({ icon, label, hint, onPress, tone = C.red }: { icon: IconName; label: string; hint?: string; onPress: () => void; tone?: string }) {
@@ -54,6 +55,8 @@ export default function More() {
       <Label>Account</Label>
       <Card style={{ paddingVertical: S.xs }}>
         <Item icon="globe-outline" label="Open ops.aahaas.com" hint="Full web system" tone={C.sub} onPress={() => Linking.openURL(API_URL)} />
+        <Item icon="shield-checkmark-outline" label="Privacy policy" tone={C.sub} onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
+        <Item icon="trash-outline" label="Delete account" hint="Company logins are closed by your admin" tone={C.sub} onPress={() => router.push('/delete-account')} />
         <Item icon="log-out-outline" label="Sign out" tone={C.red} onPress={() => Alert.alert('Sign out', 'Sign out of this phone?', [
           { text: 'Cancel', style: 'cancel' }, { text: 'Sign out', style: 'destructive', onPress: () => { signOut(); router.replace('/welcome'); } },
         ])} />

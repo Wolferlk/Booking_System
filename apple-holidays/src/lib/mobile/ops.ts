@@ -23,6 +23,7 @@ import { MobileError } from './http'
 import { SANDBOX_REF_PREFIX } from './sandbox'
 import { closeOpenPauses } from './sessions'
 import { SIGNUP, approveDriverSignup, declineDriverSignup } from './signup'
+import { ACCOUNT_DELETE, eraseDriverDetails, eraseVendorDetails, restoreDeletedAccount } from './account-delete'
 
 export interface OpsViewer {
   name: string
@@ -203,6 +204,21 @@ export async function decideRequest(id: string, decision: 'APPROVED' | 'REJECTED
     if (decision === 'APPROVED') await approveDriverSignup(id, by, note)
     else await declineDriverSignup(id, by, note)
     return prisma.mobileDriverRequest.findUniqueOrThrow({ where: { id } })
+  }
+  // "Delete my account": Approve erases the personal details, Decline keeps the
+  // account (switched back on). The person has no app login any more, so no push.
+  if (r.kind === ACCOUNT_DELETE) {
+    const who = ((r.payload ?? {}) as { actor?: string }).actor === 'VENDOR' ? 'VENDOR' : 'DRIVER'
+    if (decision === 'APPROVED') {
+      if (who === 'VENDOR') await eraseVendorDetails(r.driverId)
+      else await eraseDriverDetails(r.driverId)
+    } else {
+      await restoreDeletedAccount(r.driverId, who)
+    }
+    return prisma.mobileDriverRequest.update({
+      where: { id },
+      data: { status: decision, decidedByName: viewer.name, decidedAt: new Date(), decisionNote: note?.slice(0, 1000) ?? null },
+    })
   }
 
   if (decision === 'APPROVED') {
