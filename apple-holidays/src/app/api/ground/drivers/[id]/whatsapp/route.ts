@@ -46,7 +46,7 @@ export async function POST(
   const { message, bookingRef } = await req.json() as { message: string; bookingRef?: string }
   if (!message?.trim()) return buildApiError('Message is required')
 
-  const sent = await sendWhatsAppText(driver.phone, message, driver.name)
+  const sent = await sendWhatsAppText(driver.phone, message, driver.name, { audience: 'internal' })
   if (!sent) return buildApiError('Failed to send WhatsApp message', 500)
 
   const log = await prisma.whatsAppMessage.create({

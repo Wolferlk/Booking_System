@@ -6,6 +6,8 @@
 import { prisma } from '@/lib/prisma'
 import { contentTypeFor } from '@/lib/storage'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
+import { brandGuard } from '@/lib/customer-branding-server'
+import type { BrandAudience } from '@/lib/customer-branding'
 
 const WHATSAPP_API     = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -137,9 +139,24 @@ export async function sendViaMetaApi(params: {
     kind:     'document' | 'image'
     caption?: string
   }
+  /** Who reads it — guests (default) get the brand switch; 'internal' is sent as written. */
+  audience?: BrandAudience
 }): Promise<{ channel: 'meta'; text: unknown; media: unknown } | null> {
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) return null
+
+  const guard = await brandGuard('whatsapp', params.audience ?? 'guest')
+  if (guard.hidden) {
+    params = {
+      ...params,
+      message: params.message ? guard.text(params.message) : params.message,
+      media: params.media && {
+        ...params.media,
+        filename: guard.file(params.media.filename),
+        caption: params.media.caption ? guard.text(params.media.caption) : params.media.caption,
+      },
+    }
+  }
 
   const baseUrl = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}`
   const headers = { Authorization: `Bearer ${accessToken}` }
@@ -213,9 +230,27 @@ export async function sendViaMetaTemplate(params: {
   headerDocument?: { id?: string; link?: string; filename?: string }
   /** Fills a copy-code button on an AUTHENTICATION template (Meta sends it as a url button). */
   otpButtonCode?: string
+  /**
+   * Who reads it. The template's fixed wording is approved at Meta and can't
+   * be changed here — only the values we fill in pass the brand switch.
+   */
+  audience?: BrandAudience
 }): Promise<{ channel: 'meta'; template: unknown } | null> {
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) return null
+
+  const guard = await brandGuard('whatsapp', params.audience ?? 'guest')
+  if (guard.hidden) {
+    params = {
+      ...params,
+      bodyParams: params.bodyParams?.map(guard.text),
+      headerParams: params.headerParams?.map(guard.text),
+      headerDocument: params.headerDocument && {
+        ...params.headerDocument,
+        filename: params.headerDocument.filename && guard.file(params.headerDocument.filename),
+      },
+    }
+  }
 
   const to = normalisePhone(params.to)
   if (!to) return null
@@ -627,14 +662,22 @@ export async function sendViaNotifyProxy(params: {
   name?: string
   message: string
   files?: Array<{ url: string; filename: string; caption?: string }>
+  audience?: BrandAudience
 }): Promise<{ channel: 'proxy'; response: unknown } | null> {
   const notifySecret = process.env.WHATSAPP_NOTIFY_SECRET?.trim()
   if (!notifySecret) return null
 
+  const { audience, ...body } = params
+  const guard = await brandGuard('whatsapp', audience ?? 'guest')
+  if (guard.hidden) {
+    body.message = guard.text(body.message)
+    body.files = body.files?.map(f => ({ ...f, filename: guard.file(f.filename), caption: f.caption && guard.text(f.caption) }))
+  }
+
   const res = await fetch(WHATSAPP_API, {
     method: 'POST',
     headers: { 'x-notify-secret': notifySecret, 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
+    body: JSON.stringify(body),
   })
 
   const text = await res.text()
@@ -653,9 +696,11 @@ export async function sendWhatsAppText(
   to: string,
   message: string,
   recipientName?: string,
+  opts: { audience?: BrandAudience } = {},
 ): Promise<boolean> {
   const phone = normalisePhone(to)
   if (!phone) return false
+  message = (await brandGuard('whatsapp', opts.audience ?? 'guest')).text(message)
 
   // Try Meta API first
   const { accessToken, phoneNumberId } = getMetaCreds()
@@ -715,10 +760,14 @@ export async function sendWhatsAppMedia(
   to: string,
   mediaUrl: string,
   kind: 'image' | 'document',
-  opts: { caption?: string; filename?: string } = {},
+  opts: { caption?: string; filename?: string; audience?: BrandAudience } = {},
 ): Promise<boolean> {
   const phone = normalisePhone(to)
   if (!phone || !/^https:\/\//i.test(mediaUrl)) return false
+  const guard = await brandGuard('whatsapp', opts.audience ?? 'guest')
+  if (guard.hidden) {
+    opts = { ...opts, caption: opts.caption && guard.text(opts.caption), filename: opts.filename && guard.file(opts.filename) }
+  }
 
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) {

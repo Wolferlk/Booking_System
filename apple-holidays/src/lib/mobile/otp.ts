@@ -125,7 +125,7 @@ async function sendWhatsAppCode(to: string, code: string, name: string): Promise
   // Inside the 24h window a plain message is delivered too — the template may
   // still be waiting for Meta's approval.
   if (await isWithin24hWindow(to).catch(() => false)) {
-    const ok = await sendWhatsAppText(to, `Your Aahaas Driver App code is *${code}*.\nIt expires in ${CODE_TTL_MIN} minutes. Never share this code.`, name)
+    const ok = await sendWhatsAppText(to, `Your Aahaas Driver App code is *${code}*.\nIt expires in ${CODE_TTL_MIN} minutes. Never share this code.`, name, { audience: 'internal' })
     if (ok) return
   }
   throw new MobileError('We could not send the code on WhatsApp. Please try e-mail instead.', 502, 'whatsapp_failed')
@@ -134,6 +134,7 @@ async function sendWhatsAppCode(to: string, code: string, name: string): Promise
 async function sendEmailCode(to: string, code: string, name: string, purpose: OtpPurpose): Promise<void> {
   const title = purpose === 'RESET' ? 'Reset your password' : 'Your sign-in code'
   await sendMailViaGraph({
+    audience: 'internal',
     to,
     subject: `${code} is your Aahaas Driver App code`,
     bodyHtml: `

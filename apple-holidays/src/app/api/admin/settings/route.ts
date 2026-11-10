@@ -5,6 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { SETTING_DAILY_BRIEFING_TIME, normaliseBriefingTime } from '@/lib/customer-whatsapp-automation'
 import { SETTING_SUPER_PARTNERS, parseSuperPartners } from '@/lib/super-partners'
+import { CUSTOMER_BRANDING_KEY, parseCustomerBranding, serialiseCustomerBranding } from '@/lib/customer-branding'
+import { invalidateCustomerBranding } from '@/lib/customer-branding-server'
 
 export const dynamic = 'force-dynamic'
 const PROTECTED_KEYS = new Set([
@@ -64,10 +66,16 @@ export async function POST(req: NextRequest) {
     value = JSON.stringify(parseSuperPartners(String(value ?? '[]')))
   }
 
+  // Normalised on the way in, so every sender reads the same well-formed policy.
+  if (key === CUSTOMER_BRANDING_KEY) {
+    value = serialiseCustomerBranding(parseCustomerBranding(String(value ?? '')))
+  }
+
   await prisma.systemSetting.upsert({
     where:  { key },
     create: { key, value },
     update: { value },
   })
+  if (key === CUSTOMER_BRANDING_KEY) invalidateCustomerBranding()
   return buildApiSuccess(null, 'Setting saved')
 }

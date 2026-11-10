@@ -1,6 +1,8 @@
 import path from 'path'
 import { mkdir, writeFile, open, rm, access } from 'fs/promises'
 import { constants as fsConstants } from 'fs'
+import { brandGuard } from '@/lib/customer-branding-server'
+import type { BrandAudience } from '@/lib/customer-branding'
 
 const PDF_DIR = path.join(process.cwd(), 'public', 'uploads', 'booking-pdfs')
 
@@ -177,15 +179,34 @@ export async function launchBrowser() {
 export interface PdfMeta {
   bookingRef: string
   sentAt?: Date
+  /** Who receives the PDF, for Settings → Customer Branding. Omitted = internal (unchanged). */
+  audience?: BrandAudience
 }
 
 export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta): Promise<Buffer> {
+  const brand = await brandGuard('pdf', meta?.audience ?? 'internal')
+  html = brand.html(html)
   const sentStr = (meta?.sentAt ?? new Date()).toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   })
 
-  const headerTemplate = `
+  const headerTemplate = brand.hidden ? `
+    <div style="
+      width:100%; padding:6px 42px; box-sizing:border-box;
+      display:flex; justify-content:space-between; align-items:center;
+      border-bottom:1px solid #e2e8f0;
+      font-family:Arial,Helvetica,sans-serif;
+    ">
+      <span style="font-size:10px;font-weight:800;color:#1e293b;">${brand.name.replace(/[<>&]/g, '')}</span>
+      ${meta?.bookingRef ? `<span style="font-size:11px;font-weight:700;font-family:monospace;color:#d97706;">${meta.bookingRef}</span>` : ''}
+      <div style="text-align:right;">
+        <div style="font-size:8px;color:#94a3b8;">Sent: ${sentStr}</div>
+        <div style="font-size:8px;color:#cbd5e1;">
+          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+        </div>
+      </div>
+    </div>` : `
     <div style="
       width:100%; padding:6px 42px; box-sizing:border-box;
       display:flex; justify-content:space-between; align-items:center;

@@ -230,6 +230,7 @@ export async function sendAgendaEmail(opts: {
 
   await sendMailViaGraph({
     to,
+    audience: 'guest',
     subject:  subject?.trim() || `Tour Confirmation — ${booking.bookingRef}`,
     bodyHtml: buildAgendaEmailHtml(booking, extraMessage),
     attachment: {

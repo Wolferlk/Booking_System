@@ -512,7 +512,7 @@ export async function sendClientMail(
   }
 
   try {
-    await sendMailViaGraph({ to, cc: cc.length ? cc : undefined, subject, bodyHtml })
+    await sendMailViaGraph({ to, cc: cc.length ? cc : undefined, subject, bodyHtml, audience: 'guest' })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     await saveClientMail(id, record.narrative, { ...base, error: message })
@@ -583,7 +583,7 @@ export async function escalate(
   })
 
   try {
-    await sendMailViaGraph({ to, subject: buildEscalationSubject(dossier, risk), bodyHtml: html })
+    await sendMailViaGraph({ to, subject: buildEscalationSubject(dossier, risk), bodyHtml: html, audience: 'internal' })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     await appendEvent(id, event('escalation_failed', opts.actor, message))

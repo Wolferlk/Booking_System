@@ -328,6 +328,7 @@ export async function sendMovementBrief(params: {
         templateName: config.templateName,
         lang:         config.lang,
         bodyParams:   brief.params,
+        audience:     'internal',
       })
       if (!sent) {
         results.push({ ...base, ok: false, reason: 'WhatsApp is not configured on this server (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID)' })
@@ -345,7 +346,7 @@ export async function sendMovementBrief(params: {
       let followUpSent = false
       if (config.fullDetailFollowUp && brief.detailsTrimmed && (await isWithin24hWindow(to))) {
         const text = movementFollowUpText(movement.input, brief.fullDetails)
-        followUpSent = await sendWhatsAppText(to, text, name)
+        followUpSent = await sendWhatsAppText(to, text, name, { audience: 'internal' })
         if (followUpSent) {
           await prisma.whatsAppMessage.create({
             data: { bookingRef: movement.bookingRef, phone: to, direction: 'outbound', body: text, status: 'sent', senderName: tag },

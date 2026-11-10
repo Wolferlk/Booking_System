@@ -482,6 +482,7 @@ async function notifyAssigned(trip: OpenTrip, party: ResolvedParty): Promise<str
     try {
       const settings = await readSettings()
       await sendMailViaGraph({
+        audience: 'internal',
         to: party.email,
         subject: `Trip confirmed — ${trip.fileNo}${trip.fileNo !== trip.bookingRef ? ` (${trip.bookingRef})` : ''} · ${fmtTripDay(trip.startDate, { year: true })}`,
         bodyHtml: assignedEmailHtml(trip, party, boardUrl(party.key, settings)),

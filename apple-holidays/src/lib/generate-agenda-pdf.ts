@@ -7,6 +7,7 @@
  * booking-confirmation PDF already uses (see generate-booking-pdf.ts).
  */
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
+import { brandGuard, guardPdfText } from './customer-branding-server'
 import { readUploadAsBuffer, imageDimensions, fitImage } from './local-upload'
 import { withoutRetiredContacts } from './emergency-contacts'
 import { SERVICE_TYPE_SHORT_LABELS } from './service-types'
@@ -192,7 +193,9 @@ export async function generateAgendaPdf(
   const hideMoney = opts.hideMoney === true
   await ensurePdfkitDataFiles()
   const PDFDocument = await loadPdfDocumentCtor()
-  const logo = await loadLogo()
+  // The driver copy (hideMoney) is internal; every other copy reaches the guest.
+  const brand = await brandGuard('pdf', hideMoney ? 'internal' : 'guest')
+  const logo = brand.hidden ? null : await loadLogo()
   // Airport pickup / arrivals timings, as set on Settings.
   const pickupRules = await loadFlightPickupRules()
 
@@ -214,9 +217,9 @@ export async function generateAgendaPdf(
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const doc = new (PDFDocument as any)({
+    const doc = guardPdfText(new (PDFDocument as any)({
       margin: MARGIN, size: 'A4', bufferPages: true, autoFirstPage: true,
-    })
+    }), brand)
 
     doc.on('data', (chunk: Buffer) => chunks.push(chunk))
     doc.on('end', () => resolve(Buffer.concat(chunks)))

@@ -166,6 +166,7 @@ export async function sendCancellationEmail(i: CancellationMailInput): Promise<v
     : CANCELLATION_NOTIFY_LIST[0]
 
   await sendMailViaGraph({
+    audience: 'internal',
     to,
     cc: CANCELLATION_NOTIFY_LIST,
     subject: `CANCELLED — ${i.bookingRef}${i.leadPassenger ? ` (${i.leadPassenger})` : ''} · ${fmtDate(i.arrivalDate)}`,
@@ -245,6 +246,7 @@ export async function sendCancellationApprovalEmail(
   const cc = [...list.slice(1), i.cancelledByEmail].filter(e => e?.includes('@'))
 
   await sendMailViaGraph({
+    audience: 'internal',
     to,
     cc,
     subject: `APPROVAL REQUIRED — Cancellation of ${i.bookingRef}${i.leadPassenger ? ` (${i.leadPassenger})` : ''} · ${fmtDate(i.arrivalDate)}`,
@@ -291,6 +293,7 @@ export async function sendCancellationRejectedEmail(
 </div>`
 
   await sendMailViaGraph({
+    audience: 'internal',
     to,
     cc: CANCELLATION_NOTIFY_LIST,
     subject: `CANCELLATION REJECTED — ${i.bookingRef} returned to ${restoredStatus.replace(/_/g, ' ')}`,
@@ -346,6 +349,7 @@ export async function sendCancellationRecoveredEmail(
 </div>`
 
   await sendMailViaGraph({
+    audience: 'internal',
     to,
     cc: CANCELLATION_NOTIFY_LIST,
     subject: `BOOKING RECOVERED — ${i.bookingRef} is live again at ${i.restoredStatus.replace(/_/g, ' ')}`,

@@ -175,6 +175,7 @@ export async function sendDriverLog(
       const res = await sendViaMetaApi({
         to: phone,
         message,
+        audience: 'internal',
         media: {
           buffer:   pdf.buffer,
           filename: pdf.filename,
@@ -193,6 +194,7 @@ export async function sendDriverLog(
         lang:           DRIVER_ADVANCE_TEMPLATE_LANG,
         bodyParams,
         headerDocument: { id: mediaId, filename: pdf.filename },
+        audience:       'internal',
       })
       if (!res) return { ok: false, reason: 'WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured', phone }
       sendResult = res.template

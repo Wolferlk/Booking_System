@@ -6,6 +6,7 @@
  *   • generateConfirmationDocx  → Send 1 · Tour Confirmation (no drivers/tickets)
  *   • generateFullDetailsDocx   → Send 2 · Full Details + Drivers & Vouchers
  */
+import { brandGuard, guardDocx } from '@/lib/customer-branding-server'
 import {
   Document, Packer, Paragraph, Table, TableRow, TableCell,
   TextRun, AlignmentType, WidthType, BorderStyle,
@@ -530,7 +531,8 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
     }],
   })
 
-  return Packer.toBuffer(doc)
+  // Guest document — Settings → Customer Branding decides whether our name shows.
+  return guardDocx(await Packer.toBuffer(doc), await brandGuard('word', 'guest'))
 }
 
 // ── Public exports ───────────────────────────────────────────────────────────

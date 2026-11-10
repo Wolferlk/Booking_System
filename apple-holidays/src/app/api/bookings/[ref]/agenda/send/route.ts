@@ -181,6 +181,7 @@ async function handleSend(
     try {
       await sendMailViaGraph({
         to: to,
+        audience: 'guest',
         subject: emailSubject,
         bodyHtml,
         attachment: {

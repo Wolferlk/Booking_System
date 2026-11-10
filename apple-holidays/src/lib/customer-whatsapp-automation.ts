@@ -25,6 +25,8 @@ import { SETTING_SUPER_PARTNERS, parseSuperPartners, isSuperPartner } from '@/li
 import { engagedB2cRefs } from '@/lib/b2c-guest-engage'
 import { B2C_AGENT_NAME } from '@/lib/booking-source'
 import { listVersionLinks } from '@/lib/b2c-version-links'
+import { getCustomerBranding } from '@/lib/customer-branding-server'
+import { shouldHideBrand, type BrandAudience } from '@/lib/customer-branding'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -224,12 +226,14 @@ export async function deliverToGuest(p: {
   guestName: string | null
   bookingRef: string
   tag: string
+  /** Settings → Customer Branding; an ordinary guest unless said otherwise. */
+  audience?: BrandAudience
 }): Promise<{ ok: boolean; waMessageId: string | null; reason?: string; unconfirmed?: boolean }> {
   const windowOpen = await isWithin24hWindow(p.phone)
   if (!windowOpen) {
     try {
       const sent = await sendGuestMessageTemplate({
-        to: p.phone, guestName: p.guestName ?? 'Guest', bookingRef: p.bookingRef, text: p.text,
+        to: p.phone, guestName: p.guestName ?? 'Guest', bookingRef: p.bookingRef, text: p.text, audience: p.audience,
       })
       if (sent.unsent) {
         await prisma.whatsAppMessage.create({
@@ -249,7 +253,7 @@ export async function deliverToGuest(p: {
       // Not approved yet — fall through to the free-form send, as before.
     }
   }
-  const ok = await sendWhatsAppText(p.phone, p.text, p.guestName ?? undefined)
+  const ok = await sendWhatsAppText(p.phone, p.text, p.guestName ?? undefined, { audience: p.audience })
   // Plain text outside the window is accepted by Meta and then dropped, so a
   // "sent" here proves nothing — callers can tell the desk that.
   return ok ? { ok, waMessageId: null, unconfirmed: !windowOpen } : { ok, waMessageId: null, reason: 'WhatsApp send failed' }
@@ -378,7 +382,11 @@ export async function sendDailyBriefingForBooking(
         .filter(a => /^https:\/\//i.test(a.url))
     : []
 
-  const branded = isSuperPartner(b.agent, await getSuperPartners())
+  // A Super Partner's guests get the branded plan — unless Settings →
+  // Customer Branding has the name off for WhatsApp and no exception for them.
+  const superPartner = isSuperPartner(b.agent, await getSuperPartners())
+  const brandAudience: BrandAudience = superPartner ? 'superPartnerGuest' : 'guest'
+  const branded = superPartner && !shouldHideBrand(await getCustomerBranding(), 'whatsapp', brandAudience)
 
   const msg = formatCustomerDailyBriefingMessage({
     bookingRef:  b.bookingRef,
@@ -411,7 +419,7 @@ export async function sendDailyBriefingForBooking(
 
   const tag = `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`
   const sent = await deliverToGuest({
-    phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag,
+    phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag, audience: brandAudience,
   })
   if (!sent.ok) return { ok: false, reason: sent.reason, message: msg }
 
@@ -436,6 +444,7 @@ export async function sendDailyBriefingForBooking(
       await sendWhatsAppMedia(phone, att.url, att.kind, {
         caption:  att.caption,
         filename: att.filename,
+        audience: brandAudience,
       })
     } catch (err) {
       console.error(`[CustomerBriefing] media send failed for ${b.bookingRef}:`, err)

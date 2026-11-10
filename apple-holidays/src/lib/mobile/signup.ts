@@ -46,6 +46,7 @@ async function mailRegistrant(to: string | null | undefined, subject: string, he
   if (!address || !address.includes('@')) return
   try {
     await sendMailViaGraph({
+      audience: 'internal',
       to: address,
       subject,
       bodyHtml: `

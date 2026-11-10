@@ -271,6 +271,7 @@ async function deliver(opts: {
       const sent = await sendViaMetaApi({
         to: opts.msisdn,
         message: preview,
+        audience: 'internal',
         media: { buffer: opts.pdf.buffer, filename: opts.pdf.filename, kind: 'document', caption: opts.pdf.filename },
       })
       if (!sent) throw new Error('WhatsApp is not configured on this server.')
@@ -283,6 +284,7 @@ async function deliver(opts: {
         lang:           SETTLEMENT_DOCS_TEMPLATE_LANG,
         bodyParams:     opts.params,
         headerDocument: { id: opts.mediaId, filename: opts.pdf.filename },
+        audience:       'internal',
       })
       if (!sent) throw new Error('WhatsApp is not configured on this server.')
       result  = sent.template

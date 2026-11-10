@@ -1,4 +1,5 @@
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
+import { brandGuard, guardPdfText } from './customer-branding-server'
 import { serviceTypeShortLabel } from './service-types'
 import { filledPackageNotes } from './booking-package-notes'
 import { guestEmergencyContactsFor } from './guest-emergency-contacts'
@@ -236,10 +237,13 @@ async function buildPdf(booking: any, full: boolean): Promise<Buffer> {
     void (async () => {
       await ensurePdfkitDataFiles()
       const PDFDocument = await loadPdfDocumentCtor()
-      const logo = await loadLogo()
+      // Guest document: Settings → Customer Branding decides whether our name
+      // and mark appear. Hidden → header shows the chosen team name, no logo.
+      const brand = await brandGuard('pdf', 'guest')
+      const logo = brand.hidden ? null : await loadLogo()
 
       const chunks: Buffer[] = []
-      const doc = new (PDFDocument as any)({ margin: MARGIN, size: 'A4', bufferPages: true, autoFirstPage: true })
+      const doc = guardPdfText(new (PDFDocument as any)({ margin: MARGIN, size: 'A4', bufferPages: true, autoFirstPage: true }), brand)
       doc.on('data', (chunk: Buffer) => chunks.push(chunk))
       doc.on('end', () => resolve(Buffer.concat(chunks)))
       doc.on('error', reject)

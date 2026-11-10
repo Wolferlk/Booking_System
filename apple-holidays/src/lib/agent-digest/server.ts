@@ -529,7 +529,7 @@ export async function sendDigest(opts: {
             try {
               res = await sendViaMetaTemplate({
                 to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS_PDF : TEMPLATE_AGENT_DIGEST_PDF,
-                lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params, headerDocument: await whatsappPdf(),
+                lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params, headerDocument: await whatsappPdf(), audience: 'agent',
               })
             } catch (err) {
               // The update matters more than its attachment: go out with the link alone.
@@ -540,7 +540,7 @@ export async function sendDigest(opts: {
             }
           }
           const withPdf = !!res
-          res ??= await sendViaMetaTemplate({ to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS : TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params })
+          res ??= await sendViaMetaTemplate({ to: phone, templateName: isPack ? TEMPLATE_AGENT_TICKETS : TEMPLATE_AGENT_DIGEST, lang: AGENT_DIGEST_TEMPLATE_LANG, bodyParams: params, audience: 'agent' })
           const tplBody = renderTemplateText(params, config.kind, withPdf)
           const mode = withPdf ? 'template-pdf' : 'template'
           if (!res) return { ok: false, mode, body: tplBody, error: 'WhatsApp (Meta) is not configured on this server' }

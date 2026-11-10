@@ -25,6 +25,7 @@
  * POST /api/whatsapp/templates/bootstrap-guest.
  */
 import { listMetaTemplates, normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
+import type { BrandAudience } from '@/lib/customer-branding'
 
 // ── Template ─────────────────────────────────────────────────────────────────
 
@@ -217,6 +218,8 @@ export async function sendGuestMessageTemplate(p: {
   guestName: string
   bookingRef: string
   text: string
+  /** For Settings → Customer Branding; defaults to an ordinary guest. */
+  audience?: BrandAudience
 }): Promise<GuestTemplateSend> {
   const phone = normalisePhone(p.to)
   if (!phone) throw new Error('Phone number is required')
@@ -234,6 +237,7 @@ export async function sendGuestMessageTemplate(p: {
         templateName: TEMPLATE_GUEST_MESSAGE,
         lang:         GUEST_MESSAGE_TEMPLATE_LANG,
         bodyParams:   plan.params[i],
+        audience:     p.audience,
       })
       if (!result) {
         throw new GuestTemplateUnavailableError('WhatsApp Meta credentials are not configured (WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID)')

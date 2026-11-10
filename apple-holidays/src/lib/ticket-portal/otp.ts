@@ -39,7 +39,7 @@ export interface SentTo { name: string; phone: string; ok: boolean; error?: stri
 /** One code, sent as the approved code template. Throws if Meta refuses it. */
 async function sendCode(config: PortalConfig, phone: string, code: string) {
   const res = await sendViaMetaTemplate({
-    to: phone, templateName: config.otpTemplate, lang: config.language, bodyParams: [code], otpButtonCode: code,
+    to: phone, templateName: config.otpTemplate, lang: config.language, bodyParams: [code], otpButtonCode: code, audience: 'internal',
   })
   if (!res) throw new Error('WhatsApp is not configured on this server.')
 }
@@ -91,7 +91,7 @@ export async function issueOtp(input: {
   const sentTo = await Promise.all(config.recipients.map(async (r): Promise<SentTo> => {
     // The details are a courtesy; the code is what matters. Details first, so
     // the approver reads what they are approving before the code lands.
-    await sendViaMetaTemplate({ to: r.phone, templateName: config.detailsTemplate, lang: config.language, bodyParams })
+    await sendViaMetaTemplate({ to: r.phone, templateName: config.detailsTemplate, lang: config.language, bodyParams, audience: 'internal' })
       .catch(err => console.warn('[ticket-portal] details message failed:', reason(err)))
     try {
       await sendCode(config, r.phone, code)

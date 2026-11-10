@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
       rateCurrency:  assignment.rateCurrency,
     })
 
-    const ok = await sendWhatsAppText(assignment.driverPhone, msg, assignment.driverName)
+    const ok = await sendWhatsAppText(assignment.driverPhone, msg, assignment.driverName, { audience: 'internal' })
     if (ok) {
       // Record in WhatsApp log and update waSentAt
       await Promise.all([

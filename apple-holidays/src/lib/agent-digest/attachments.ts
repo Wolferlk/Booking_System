@@ -12,6 +12,7 @@ import {
 import { newWorkbook, workbookBuffer } from '@/lib/excel-kit'
 import { safe as pdfText } from '@/lib/generate-booking-pdf'
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
+import { brandGuard, guardDocx, guardPdfText } from '@/lib/customer-branding-server'
 import {
   allocationPending, DIGEST_COUNTRY_META, fmtDay, fmtShort, packArrivalText, packIds, packVisible, partyText, paxText,
   ticketFacts, withFreshPending,
@@ -218,7 +219,8 @@ const PAGE_W = 595.28, MARGIN = 40, WIDTH = PAGE_W - MARGIN * 2, BOTTOM = 790
 export async function digestPdf(m: DocModel, link?: string | null): Promise<Buffer> {
   await ensurePdfkitDataFiles()
   const PDFDocument = (await loadPdfDocumentCtor()) as any
-  const doc = new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true, info: { Title: pdfText(`${m.agent} ${m.heading}`), Author: 'AppleHolidays Operations' } })
+  const brand = await brandGuard('pdf', 'agent')
+  const doc = guardPdfText(new PDFDocument({ size: 'A4', margin: MARGIN, bufferPages: true, info: { Title: pdfText(`${m.agent} ${m.heading}`), Author: brand.text('AppleHolidays Operations') } }), brand)
   const chunks: Buffer[] = []
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('data', (b: Buffer) => chunks.push(b))
@@ -367,7 +369,7 @@ export async function digestWord(m: DocModel, link?: string | null): Promise<Buf
   if (link) children.push(para(`Online version: ${link}`, { size: 18, color: '0F766E', before: 240 }))
   children.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 240 }, children: [new TextRun({ text: 'AppleHolidays Operations', size: 16, color: '64748B' })] }))
   const doc = new Document({ sections: [{ properties: { page: { margin: { top: 720, bottom: 720, left: 720, right: 720 } } }, children }] })
-  return Packer.toBuffer(doc)
+  return guardDocx(await Packer.toBuffer(doc), await brandGuard('word', 'agent'))
 }
 
 // ── What a send uses ─────────────────────────────────────────────────────────

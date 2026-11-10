@@ -276,6 +276,7 @@ export async function issueVerification(params: IssueParams): Promise<IssuedChal
 
     try {
       await sendMailViaGraph({
+        audience: 'internal',
         to: email,
         subject: `${code} is your confirmation code — ${ACTION_COPY[params.action].title}`,
         bodyHtml: buildCodeEmail({

@@ -452,6 +452,7 @@ export async function runDriverBriefReport(opts: {
     ` · ${pretty(report.forDate)}`
 
   await sendMailViaGraph({
+    audience: 'internal',
     to: to[0],
     cc: to.slice(1),
     subject,

@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     const html = buildConfirmationHtml(quote, withCosts)
     const suffix = withCosts ? 'with-costs' : 'no-costs'
     const filename = `AS-${quotationNo}-confirmation-${suffix}.pdf`
-    const pdf = await htmlToPdf(html, filename, { bookingRef: quotationNo })
+    const pdf = await htmlToPdf(html, filename, { bookingRef: quotationNo, audience: 'agent' })
 
     return new Response(new Uint8Array(pdf), {
       status: 200,

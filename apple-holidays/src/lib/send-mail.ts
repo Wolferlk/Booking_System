@@ -1,5 +1,7 @@
 import { getGraphToken } from '@/lib/mail-processor'
 import { matchAgentForBooking, agentAddresses } from '@/lib/mailbox/resolve'
+import { brandGuard } from '@/lib/customer-branding-server'
+import type { BrandAudience } from '@/lib/customer-branding'
 
 const SENDER_EMAIL = process.env.Outlookmail_USERNAME ?? 'confirm.booking@aahaas.com'
 /**
@@ -24,6 +26,12 @@ interface SendMailOptions {
   attachment?: MailAttachment
   /** Several files. Graph refuses a mail over about 4 MB in all. */
   attachments?: MailAttachment[]
+  /**
+   * Who reads it, for the customer brand switch (Settings → Customer Branding).
+   * Defaults to 'agent' — most booking mail goes to agents. Guest mail says
+   * 'guest'; staff/driver/OTP mail says 'internal' and is never rewritten.
+   */
+  audience?: BrandAudience
 }
 
 export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
@@ -33,13 +41,14 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
   const cleanCc = (opts.cc ?? []).map(a => a?.trim()).filter((a): a is string => !!a && a.includes('@') && a !== to)
 
   const token = await getGraphToken()
+  const guard = await brandGuard('email', opts.audience ?? 'agent')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const message: Record<string, any> = {
-    subject: opts.subject,
+    subject: guard.text(opts.subject),
     body: {
       contentType: 'HTML',
-      content: opts.bodyHtml,
+      content: guard.html(opts.bodyHtml),
     },
     toRecipients: [
       {
@@ -55,7 +64,7 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
   if (files.length) {
     message.attachments = files.map(file => ({
       '@odata.type': '#microsoft.graph.fileAttachment',
-      name: file.name,
+      name: guard.file(file.name),
       contentType: file.contentType,
       contentBytes: Buffer.from(file.buffer).toString('base64'),
     }))

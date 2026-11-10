@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit'
 import { readFileSync } from 'fs'
 import path from 'path'
 import type { FhPdfBooking } from './filehandler-booking-html'
+import { brandGuard, guardPdfText } from './customer-branding-server'
 
 /**
  * Server-side "Booking Update" PDF, rendered with PDFKit — pure Node, no headless
@@ -56,7 +57,9 @@ function statusMeta(status: string): { label: string; bg: string; bd: string; fg
 }
 
 export async function generateFhBookingPdf(b: FhPdfBooking, opts?: { generatedBy?: string }): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true })
+  // Agent document — follows Settings → Customer Branding when "also agents" is on.
+  const brand = await brandGuard('pdf', 'agent')
+  const doc = guardPdfText(new PDFDocument({ size: 'A4', margin: 40, bufferPages: true }), brand)
   const chunks: Buffer[] = []
   doc.on('data', (c: Buffer) => chunks.push(c))
   const done = new Promise<Buffer>((resolve, reject) => {
@@ -77,7 +80,7 @@ export async function generateFhBookingPdf(b: FhPdfBooking, opts?: { generatedBy
   const ensure = (h: number) => { if (y + h > BOTTOM - 24) { doc.addPage(); y = M } }
 
   // ── Header ────────────────────────────────────────────────────────────────
-  const lg = logo()
+  const lg = brand.hidden ? null : logo()
   let brandX = M
   if (lg) {
     try { doc.image(lg, M, y, { fit: [46, 46] }); brandX = M + 58 } catch { /* bad image → skip */ }

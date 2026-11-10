@@ -230,6 +230,7 @@ export async function raiseAsImportAlert(input: RaiseAlertInput): Promise<AsImpo
       const to = splitAddresses(ALERT_TO)
       if (to.length === 0) throw new Error('No AS_ALERT_EMAIL recipient configured')
       await sendMailViaGraph({
+        audience: 'internal',
         to: to[0],
         cc: [...to.slice(1), ...splitAddresses(ALERT_CC)],
         subject: `[AppleSystem import ${input.severity === 'error' ? 'FAILED' : 'warning'}] ${input.title}`,

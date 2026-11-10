@@ -20,6 +20,8 @@ import GuestEmergencyContactsCard from '@/components/settings/guest-emergency-co
 import { GUEST_EMERGENCY_KEY, parseGuestEmergencyPolicy } from '@/lib/emergency-contacts'
 import MovementWhatsAppCard from '@/components/settings/movement-whatsapp-card'
 import CustomerDailyBriefingCard from '@/components/settings/customer-daily-briefing-card'
+import CustomerBrandingCard from '@/components/settings/customer-branding-card'
+import { BRAND_CHANNELS, CUSTOMER_BRANDING_KEY, parseCustomerBranding } from '@/lib/customer-branding'
 import TicketPortalCard from '@/components/settings/ticket-portal-card'
 import DataProtectionCard from '@/components/settings/data-protection-card'
 import { DATA_PROTECTION_KEY, parseDataProtectionPolicy } from '@/lib/data-protection'
@@ -330,6 +332,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'pnl-sync',       title: 'Accounts PNL Database Sync',   group: 'Money & Tickets', icon: Database,     keywords: 'link matching is number tour ref invoice snapshot refresh bulk' },
 
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
+  { id: 'customer-branding', title: 'Customer Branding (White-label)', group: 'Operations', icon: EyeOff, keywords: 'apple holidays name brand logo hide remove white label whatsapp mail email pdf word docx document guest customer agent replace greetings from super partner' },
   { id: 'customer-daily', title: 'Customer Daily Trip Details', group: 'Operations',    icon: MessageCircle, keywords: 'guest customer whatsapp daily briefing plan auto send default time 18:00 6pm trip portal next day super partner agent mmt makemytrip branding white label appleholidays' },
   { id: 'ticket-issue-desk', title: 'Ticket Issue Desk', group: 'Operations', icon: Ticket, keywords: 'globaltix cebu portal issue hold purchase cancel otp code whatsapp approver template manual lowest price compare' },
   { id: 'movement-whatsapp', title: 'Movement WhatsApp Briefing', group: 'Operations',   icon: MessageCircle, keywords: 'agenda movement chart driver vendor guide tour vendor whatsapp template send single item is number phone duplicate meta approve' },
@@ -750,6 +753,11 @@ export default function ConfigPage() {
       const p = parseGuestEmergencyPolicy((settings as Record<string, string | undefined>)[GUEST_EMERGENCY_KEY])
       return p.configured ? { label: String(p.contacts.length), tone: p.contacts.length ? 'on' : 'warn' } : { label: 'Default', tone: 'muted' }
     })(),
+    'customer-branding': (() => {
+      const b = parseCustomerBranding((settings as Record<string, string | undefined>)[CUSTOMER_BRANDING_KEY])
+      const n = BRAND_CHANNELS.filter(c => b.hide[c]).length
+      return n === 4 ? { label: 'Hidden', tone: 'on' } : n === 0 ? { label: 'Shown', tone: 'off' } : { label: `${n}/4`, tone: 'warn' }
+    })(),
     'airport-pickup': { label: durationLabel(parseFlightPickupRules(settings.flight_pickup_rules).departureIntlMin), tone: 'on' },
     'data-protection': { label: `${dataProtectionOn}/4`, tone: dataProtectionOn === 4 ? 'on' : dataProtectionOn === 0 ? 'off' : 'warn' },
     // Sealed cancellation is the louder fact, so it wins the pill when it is live.
@@ -1167,6 +1175,11 @@ export default function ConfigPage() {
             <Section id="customer-daily" visible={show('customer-daily')} flashed={flashId === 'customer-daily'}>
               {/* Default send time + on/off for the guests' daily WhatsApp plan */}
               <CustomerDailyBriefingCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
+            </Section>
+
+            <Section id="customer-branding" visible={show('customer-branding')} flashed={flashId === 'customer-branding'}>
+              {/* Apple Holidays name off WhatsApp / mail / PDF / Word for guests */}
+              <CustomerBrandingCard settings={settings as Record<string, string | undefined>} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="ticket-issue-desk" visible={show('ticket-issue-desk')} flashed={flashId === 'ticket-issue-desk'}>

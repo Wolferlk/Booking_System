@@ -281,6 +281,7 @@ export async function sendDriverAssignment(
       templateName: TEMPLATE_DRIVER_ASSIGN,
       lang:         DRIVER_TEMPLATE_LANG,
       bodyParams:   params,
+      audience:     'internal',
     })
     if (!result) {
       return { ok: false, reason: 'WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured on this server' }
@@ -312,7 +313,7 @@ export async function sendDriverAssignment(
         driverRate:    null,
         movements:     input.movements,
       })
-      detailSent = await sendWhatsAppText(phone, detail, driverName)
+      detailSent = await sendWhatsAppText(phone, detail, driverName, { audience: 'internal' })
       if (detailSent) {
         await prisma.whatsAppMessage.create({
           data: {
@@ -355,6 +356,7 @@ export async function sendDriverCancellation(
       templateName: TEMPLATE_DRIVER_CANCEL,
       lang:         DRIVER_TEMPLATE_LANG,
       bodyParams,
+      audience:     'internal',
     })
     if (!result) {
       return { ok: false, reason: 'WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured on this server' }

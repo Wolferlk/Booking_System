@@ -5,6 +5,7 @@
  * attached to WhatsApp / e-mail sends from `agenda/send` when the desk picks
  * the Word format.
  */
+import { brandGuard, guardDocx } from '@/lib/customer-branding-server'
 import { prisma } from '@/lib/prisma'
 import {
   Document, Packer, Paragraph, Table, TableRow, TableCell,
@@ -853,5 +854,6 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
     }],
   })
 
-  return Packer.toBuffer(doc)
+  // Guest document — Settings → Customer Branding decides whether our name shows.
+  return guardDocx(await Packer.toBuffer(doc), await brandGuard('word', 'guest'))
 }

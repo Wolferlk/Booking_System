@@ -1,4 +1,5 @@
 import { getGraphToken } from '@/lib/mail-processor'
+import { brandGuard } from '@/lib/customer-branding-server'
 
 /**
  * Mail Box's sender.
@@ -81,11 +82,13 @@ export async function sendTrackedMail(opts: TrackedSendOptions): Promise<Tracked
 
   const token = await getGraphToken()
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(SENDER_EMAIL)}`
+  // Mail Box writes to agents: rewritten only when "also hide from agents" is on.
+  const guard = await brandGuard('email', 'agent')
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const draft: Record<string, any> = {
-    subject: opts.subject,
-    body: { contentType: 'HTML', content: opts.bodyHtml },
+    subject: guard.text(opts.subject),
+    body: { contentType: 'HTML', content: guard.html(opts.bodyHtml) },
     toRecipients: to.map(recip),
     ...(cc.length  ? { ccRecipients:  cc.map(recip) }  : {}),
     ...(bcc.length ? { bccRecipients: bcc.map(recip) } : {}),
@@ -95,7 +98,7 @@ export async function sendTrackedMail(opts: TrackedSendOptions): Promise<Tracked
   if (opts.attachments?.length) {
     draft.attachments = opts.attachments.map(att => ({
       '@odata.type': '#microsoft.graph.fileAttachment',
-      name:          att.name,
+      name:          guard.file(att.name),
       contentType:   att.contentType,
       contentBytes:  Buffer.from(att.buffer).toString('base64'),
     }))

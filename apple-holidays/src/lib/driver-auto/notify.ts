@@ -270,7 +270,7 @@ export async function sendBoardLinks(opts: {
         let ok = false
         let note = ''
         try {
-          const res = await sendViaMetaTemplate({ to: phone, templateName: TEMPLATE_DRIVER_BOARD, lang: DRIVER_BOARD_TEMPLATE_LANG, bodyParams: params })
+          const res = await sendViaMetaTemplate({ to: phone, templateName: TEMPLATE_DRIVER_BOARD, lang: DRIVER_BOARD_TEMPLATE_LANG, bodyParams: params, audience: 'internal' })
           if (res) {
             ok = true
             waMessageId = (res.template as { messages?: { id?: string }[] })?.messages?.[0]?.id ?? null
@@ -281,7 +281,7 @@ export async function sendBoardLinks(opts: {
           note = err instanceof Error ? err.message : String(err)
           // Template unapproved / missing — free-form still lands inside the 24h window.
           if (await isWithin24hWindow(phone)) {
-            ok = await sendWhatsAppText(phone, renderBody(params), p.name)
+            ok = await sendWhatsAppText(phone, renderBody(params), p.name, { audience: 'internal' })
             if (ok) note = 'sent free-form (template failed, inside 24h window)'
           }
         }
@@ -306,6 +306,7 @@ export async function sendBoardLinks(opts: {
       if (await alreadySent(p.key, sendDate, 'email')) continue
       try {
         await sendMailViaGraph({
+          audience: 'internal',
           to: p.email.trim(),
           subject: `${trips.length} open trip${trips.length === 1 ? '' : 's'} in ${DA_COUNTRY_META[opts.country].label} — request yours`,
           bodyHtml: boardEmailHtml(p.name, trips, opts.country, link),
