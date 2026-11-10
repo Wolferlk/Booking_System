@@ -8,7 +8,7 @@
  *
  * Delivery
  *   • WhatsApp — ALWAYS the approved template TEMPLATE_AGENT_DIGEST (counts +
- *     a link to the frozen web view with every detail). Never free-form text,
+ *     a link to the web view with every detail, allocations re-read live). Never free-form text,
  *     even inside the 24h window — one predictable message for the agent.
  *   • Email — the HTML digest through Microsoft Graph.
  *
@@ -118,7 +118,7 @@ function vehicleText(type: string | null | undefined, plate: string | null | und
 
 type LoadedBooking = Awaited<ReturnType<typeof loadBookings>>[number]
 
-async function loadBookings(config: DigestConfig, minDate: string, maxDate: string) {
+async function loadBookings(config: DigestConfig, minDate: string, maxDate: string, onlyRefs?: string[]) {
   const excluded = config.statusFilter === 'CONFIRMED' ? CONFIRMED_EXCLUDED : ACTIVE_EXCLUDED
   const test = await testBookingWhere('exclude')
   const rows = await prisma.booking.findMany({
@@ -131,6 +131,7 @@ async function loadBookings(config: DigestConfig, minDate: string, maxDate: stri
         { arrivalDate: { lte: new Date(`${addDays(maxDate, 1)}T23:59:59.999Z`) } },
         { departureDate: { gte: new Date(`${addDays(minDate, -1)}T00:00:00.000Z`) } },
         ...(test.clause ? [test.clause] : []),
+        ...(onlyRefs ? [{ bookingRef: { in: onlyRefs } }] : []),
       ],
     },
     select: {
@@ -284,7 +285,7 @@ function matchesBasis(b: LoadedBooking, basis: string, day: string): boolean {
 export { agentLabelOf }
 
 /** Builds the digest for one send day. Pure read. `ruleId` lets a ticket pack see what it already sent. */
-export async function buildPayload(config: DigestConfig, runDate: string, ruleName: string, ruleId: string | null = null): Promise<DigestPayload> {
+export async function buildPayload(config: DigestConfig, runDate: string, ruleName: string, ruleId: string | null = null, onlyRefs?: string[]): Promise<DigestPayload> {
   if (config.kind === 'TICKETS') return buildTicketPayload(config, runDate, ruleName, ruleId)
   const blocks = config.blocks.filter(b => b.enabled)
   const payload: DigestPayload = {
@@ -296,7 +297,7 @@ export async function buildPayload(config: DigestConfig, runDate: string, ruleNa
   const days = blocks.map(b => addDays(runDate, b.offset))
   const minDate = days.reduce((m, d) => (d < m ? d : m))
   const maxDate = days.reduce((m, d) => (d > m ? d : m))
-  const bookings = await loadBookings(config, minDate, maxDate)
+  const bookings = await loadBookings(config, minDate, maxDate, onlyRefs)
 
   // MC "special request" per movement — optional table; absence is not an error.
   const notes = new Map<string, string>()
@@ -331,6 +332,41 @@ export async function buildPayload(config: DigestConfig, runDate: string, ruleNa
   }
   payload.totals.bookings = seen.size
   return payload
+}
+
+/**
+ * The public link of a sent daily digest: the SAME bookings in the same order
+ * as were sent, but each one's lines, drivers, vehicles and vendors re-read
+ * now — so allocations made after the send show (and stop counting as
+ * pending). A booking that no longer matches (cancelled, dates moved, agent
+ * changed) keeps its sent copy rather than vanishing. Pure read; any failure
+ * falls back to the sent copy.
+ */
+export async function refreshDailyPayload(sent: DigestPayload, config: DigestConfig): Promise<DigestPayload> {
+  if (sent.kind === 'TICKETS') return sent
+  const refs = Array.from(new Set(sent.blocks.flatMap(b => b.bookings.map(x => x.ref))))
+  if (!refs.length) return sent
+  try {
+    const live = await buildPayload(config, sent.runDate, sent.ruleName, null, refs)
+    const liveBlocks = new Map(live.blocks.map(b => [`${b.id}|${b.date}`, new Map(b.bookings.map(x => [x.ref, x]))]))
+    const totals = { bookings: 0, lines: 0, missing: 0 }
+    const seen = new Set<string>()
+    const blocks = sent.blocks.map(blk => {
+      const now = liveBlocks.get(`${blk.id}|${blk.date}`)
+      const bookings = blk.bookings.map(b => now?.get(b.ref) ?? b)
+      for (const b of bookings) {
+        seen.add(b.ref)
+        totals.lines += blk.scope === 'ITEM' ? b.items.length : 0
+        totals.missing += b.missing
+      }
+      return { ...blk, bookings }
+    })
+    totals.bookings = seen.size
+    return { ...sent, blocks, totals, liveAt: new Date().toISOString() }
+  } catch (err) {
+    console.warn('[agent-digest] live refresh failed, showing the sent copy:', (err as Error)?.message)
+    return sent
+  }
 }
 
 // ── Rules ────────────────────────────────────────────────────────────────────

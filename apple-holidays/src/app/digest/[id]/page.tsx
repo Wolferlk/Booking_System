@@ -2,12 +2,14 @@
  * Public web view of one sent Agent Daily Digest — the link in the WhatsApp
  * message. Only with the run's random token. No login: the agent is external.
  *
- * A daily digest shows the FROZEN snapshot taken at send time. A ticket pack
+ * A daily digest shows the bookings that were sent, with their CURRENT lines,
+ * drivers and vendors (so the pending count matches today). A ticket pack
  * shows the same bookings with their CURRENT tickets, until the link expires.
  */
 import type { Metadata } from 'next'
 import { renderEmailHtml } from '@/lib/agent-digest/shared'
 import { isPackExpired, refreshPack } from '@/lib/agent-digest/tickets-server'
+import { refreshDailyPayload } from '@/lib/agent-digest/server'
 import DownloadAll, { type PackGroup } from './download-all'
 import { loadRun } from './run-access'
 
@@ -41,7 +43,7 @@ export default async function DigestPage({ params, searchParams }: { params: { i
       files: (b.tickets ?? []).flatMap(t => t.files.map(f => ({ url: fileUrl(f.id), name: f.name }))),
     })))
   } else {
-    html = renderEmailHtml(run.payload, run.config, '', null)
+    html = renderEmailHtml(await refreshDailyPayload(run.payload, run.config), run.config, '', null)
   }
 
   // Every value inside was escaped by renderEmailHtml.

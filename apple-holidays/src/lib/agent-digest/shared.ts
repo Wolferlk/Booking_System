@@ -467,6 +467,8 @@ export interface DigestPayload {
   agentLabel: string
   countries: DigestCountry[]
   generatedAt: string
+  /** Set on the public link: drivers / vendors were re-read at this moment (ISO). */
+  liveAt?: string
   blocks: DigestBlockResult[]
   totals: { bookings: number; lines: number; missing: number }
 }
@@ -770,6 +772,7 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
         <div style="font-size:12px;line-height:16px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:#0f766e">Daily operations update</div>
         <div style="font-size:26px;line-height:32px;font-weight:700;color:#0f172a;margin-top:4px">${esc(p.agentLabel)}</div>
         <div style="font-size:14px;line-height:20px;color:#475569">${esc(fmtDay(p.runDate))}</div>
+        ${p.liveAt ? `<div style="margin-top:6px;font-size:12px;line-height:16px;color:#047857">&#9679; Drivers and vendors shown as they are now</div>` : ''}
         <table ${TABLE_RESET} width="100%" style="margin-top:16px;border-collapse:separate"><tr>${tiles}</tr></table>
       </td></tr>
       <tr><td height="10" style="font-size:0;line-height:0;height:10px">&nbsp;</td></tr>
