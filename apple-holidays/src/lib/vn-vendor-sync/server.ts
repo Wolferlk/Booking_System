@@ -36,7 +36,8 @@ import {
 } from './match'
 import {
   DEFAULT_DAYS_AHEAD, DEFAULT_INTERVAL_MIN, VENDOR_SYNC_SETTINGS, sameVendorName,
-  type AlsoCandidate, type BookingVendorSyncPayload, type EventAction, type LinkStatus, type RunSummary,
+  CHANGE_ACTIONS,
+  type AlsoCandidate, type BookingVendorSyncPayload, type CompareRow, type DirectoryHit, type EventAction, type LinkStatus, type RunSummary,
   type VendorSyncConfig, type VendorSyncEventInfo, type VendorSyncLinkInfo, type VendorSyncMode,
   type VendorSyncRunInfo,
 } from './shared'
@@ -747,10 +748,14 @@ export async function bookingVendorSync(bookingRef: string, canEdit: boolean): P
   }
 }
 
-export async function listRuns(page = 1, pageSize = 25): Promise<{ runs: VendorSyncRunInfo[]; total: number }> {
+export async function listRuns(page = 1, pageSize = 25, hideQuiet = true): Promise<{ runs: VendorSyncRunInfo[]; total: number }> {
+  // A booking opened with nothing new to do still logs a run; hide those unless asked.
+  const where: Prisma.VnVendorSyncRunWhereInput = hideQuiet
+    ? { OR: [{ scope: 'ALL' }, { applied: { gt: 0 } }, { updated: { gt: 0 } }, { suggested: { gt: 0 } }, { keptManual: { gt: 0 } }, { status: 'FAILED' }] }
+    : {}
   const [rows, total] = await Promise.all([
-    prisma.vnVendorSyncRun.findMany({ orderBy: { startedAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
-    prisma.vnVendorSyncRun.count(),
+    prisma.vnVendorSyncRun.findMany({ where, orderBy: { startedAt: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.vnVendorSyncRun.count({ where }),
   ])
   return { runs: rows.map(toRunInfo), total }
 }
@@ -775,4 +780,203 @@ export async function linkStatusTotals(): Promise<Record<string, number>> {
     where: { movementDate: { gte: vnToday() } },
   })
   return Object.fromEntries(rows.map(r => [r.status, r._count._all]))
+}
+
+// ── Compare board: Excel vs system vs before ─────────────────────────────────
+
+export type CompareView = 'attention' | 'all' | 'applied' | 'manual' | 'review' | 'ignored'
+
+export async function listCompare(q: {
+  page?: number; pageSize?: number; view?: CompareView; ref?: string | null; runId?: string | null; vendor?: string | null
+}): Promise<{ rows: CompareRow[]; total: number }> {
+  const page = Math.max(1, q.page ?? 1), pageSize = Math.min(100, Math.max(10, q.pageSize ?? 30))
+  const statusIn: Record<CompareView, LinkStatus[] | null> = {
+    attention: ['SUGGESTED', 'KEPT_MANUAL', 'STALE'], all: null, applied: ['APPLIED', 'IN_SYNC'],
+    manual: ['KEPT_MANUAL'], review: ['SUGGESTED'], ignored: ['IGNORED'],
+  }
+  const st = statusIn[q.view ?? 'attention']
+  const where: Prisma.VnVendorSyncLinkWhereInput = {
+    movementDate: { gte: vnToday() },
+    ...(st ? { status: { in: st } } : {}),
+    ...(q.ref?.trim() ? { bookingRef: { contains: q.ref.trim().toUpperCase() } } : {}),
+    ...(q.runId ? { appliedRunId: q.runId } : {}),
+    ...(q.vendor?.trim() ? { OR: [{ sheetVendor: { contains: q.vendor.trim() } }, { vendorName: { contains: q.vendor.trim() } }, { appliedName: { contains: q.vendor.trim() } }] } : {}),
+  }
+  const [links, total] = await Promise.all([
+    prisma.vnVendorSyncLink.findMany({ where, orderBy: [{ movementDate: 'asc' }, { bookingRef: 'asc' }, { movementLabel: 'asc' }], skip: (page - 1) * pageSize, take: pageSize }),
+    prisma.vnVendorSyncLink.count({ where }),
+  ])
+  if (!links.length) return { rows: [], total }
+
+  const itemIds = links.map(l => l.agendaItemId).filter((x): x is string => Boolean(x))
+  const [assignments, events] = await Promise.all([
+    prisma.assignment.findMany({ where: { agendaItemId: { in: itemIds } }, select: { agendaItemId: true, tourVendorId: true, tourVendorName: true, tourVendorPhone: true } }),
+    prisma.vnVendorSyncEvent.findMany({
+      where: { action: { in: CHANGE_ACTIONS }, OR: links.map(l => ({ bookingRef: l.bookingRef, movementKey: l.movementKey })) },
+      // cuid ids grow with time — the tie-breaker for two changes in the same millisecond.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    }),
+  ])
+  const aBy = new Map(assignments.map(a => [a.agendaItemId, a]))
+  const lastBy = new Map<string, VnVendorSyncEvent>()
+  for (const e of events) { const k = `${e.bookingRef}::${e.movementKey}`; if (!lastBy.has(k)) lastBy.set(k, e) }
+
+  const rows: CompareRow[] = links.map(l => {
+    const a = l.agendaItemId ? aBy.get(l.agendaItemId) : undefined
+    const now = a ? { name: a.tourVendorName?.trim() || null, phone: a.tourVendorPhone, tourVendorId: a.tourVendorId } : { name: null, phone: null, tourVendorId: null }
+    const last = lastBy.get(`${l.bookingRef}::${l.movementKey}`) ?? null
+    let also: AlsoCandidate[] = []
+    try { also = l.alsoJson ? JSON.parse(l.alsoJson) : [] } catch { also = [] }
+    const before: CompareRow['before'] = last
+      ? { name: last.fromValue, from: 'HISTORY' }
+      : l.appliedName ? { name: l.prevName, from: 'SYNC' } : { name: null, from: 'UNKNOWN' }
+    const setBy = !now.name ? '—'
+      : last && sameVendorName(last.toValue, now.name) ? (last.actor ?? 'Auto sync')
+        : l.appliedName && sameVendorName(l.appliedName, now.name) ? (l.appliedBy ?? 'Auto sync')
+          : 'By hand (Assign Driver dialog)'
+    return {
+      linkId: l.id, bookingRef: l.bookingRef, agendaItemId: l.agendaItemId,
+      movementDate: l.movementDate ? iso(l.movementDate) : null, movementLabel: l.movementLabel, movementKind: l.movementKind,
+      status: l.status as LinkStatus, note: l.note,
+      excel: {
+        vendor: l.sheetVendor, resolved: l.vendorName, phone: l.vendorPhone,
+        source: (l.directorySource as CompareRow['excel']['source']) ?? null,
+        line: l.lineDetails, code: l.lineCode, sheetRow: l.sheetRow, tourCode: l.tourCode,
+        score: num(l.score), confidence: (l.confidence as 'HIGH' | 'MEDIUM' | null) ?? null, reason: l.reason, also,
+      },
+      now,
+      before,
+      same: Boolean(now.name) && (sameVendorName(now.name, l.vendorName) || sameVendorName(now.name, l.sheetVendor)),
+      lastChange: last ? { action: last.action as EventAction, actor: last.actor ?? 'Auto sync', at: last.createdAt.toISOString(), from: last.fromValue, to: last.toValue } : null,
+      setBy,
+      canRevert: Boolean(l.appliedName && sameVendorName(l.appliedName, now.name)) || Boolean(last && (last.toValue ? sameVendorName(now.name, last.toValue) : !now.name) && (last.toValue ?? null) !== (last.fromValue ?? null)),
+    }
+  })
+  return { rows, total }
+}
+
+/** Tour vendors and transport vendors in Vietnam whose name contains `q`, for the edit box. */
+export async function searchDirectory(q: string): Promise<DirectoryHit[]> {
+  const term = q.trim()
+  const dir = await loadDirectory()
+  const f = (s: string) => fold(s)
+  const hits = term ? dir.filter(d => f(d.name).includes(f(term))) : dir
+  return hits
+    .sort((a, b) => (a.source === b.source ? a.name.localeCompare(b.name) : a.source === 'TOUR_VENDOR' ? -1 : 1))
+    .slice(0, 15)
+    .map(d => ({ id: d.id, name: d.name, phone: d.phone, source: d.source }))
+}
+
+/** Status a movement should carry once a PERSON has decided its value. */
+function statusForHumanValue(link: VnVendorSyncLink, name: string | null): LinkStatus {
+  if (!name) return 'IGNORED'                       // cleared on purpose: do not refill it
+  return sameVendorName(name, link.vendorName) || sameVendorName(name, link.sheetVendor) ? 'IN_SYNC' : 'KEPT_MANUAL'
+}
+
+/**
+ * A person types the tour vendor on the compare board. Compare-and-set against
+ * what their screen showed (`expected`), logged as EDITED, and from then on the
+ * sync treats it as a hand-set value (never overwrites it).
+ */
+export async function setManualVendor(
+  linkId: string,
+  input: { name: string | null; tourVendorId?: string | null; phone?: string | null; expected?: string | null },
+  actor: string,
+): Promise<{ ok: boolean; message: string }> {
+  const link = await prisma.vnVendorSyncLink.findUnique({ where: { id: linkId } })
+  if (!link) return { ok: false, message: 'Not found — refresh' }
+  const itemId = await resolveItemId(link)
+  if (!itemId) return { ok: false, message: 'The movement was changed or removed — refresh' }
+  const a = await prisma.assignment.findUnique({ where: { agendaItemId: itemId }, select: { tourVendorId: true, tourVendorName: true, tourVendorPhone: true } })
+  const curRaw = a?.tourVendorName ?? null
+  const curName = curRaw?.trim() || null
+  if (input.expected !== undefined && (input.expected?.trim() || null) !== curName) {
+    return { ok: false, message: `Someone changed it to "${curName ?? 'empty'}" since you loaded the page — refresh` }
+  }
+
+  let name = input.name?.trim() || null
+  let id: string | null = null
+  let phone = input.phone?.trim() || null
+  if (input.tourVendorId) {
+    const tv = await prisma.tourVendor.findUnique({ where: { id: input.tourVendorId }, select: { id: true, name: true, phone: true, whatsappPhone: true } })
+    if (tv) { id = tv.id; name = tv.name; phone = phone ?? (tv.whatsappPhone || tv.phone || null) }
+  }
+  if (name && name.length > 191) return { ok: false, message: 'That name is too long' }
+  if ((name ?? null) === curName && (id ?? null) === (a?.tourVendorId ?? null) && (phone ?? null) === (a?.tourVendorPhone ?? null)) {
+    return { ok: true, message: 'Nothing changed' }
+  }
+
+  const wrote = curName
+    ? await writeTourVendor(itemId, curRaw, { id, name, phone })
+    : name ? await writeTourVendor(itemId, null, { id, name, phone }) : true
+  if (!wrote) return { ok: false, message: 'Someone changed this movement a moment ago — refresh' }
+  if (!name) await dropIfEmpty(itemId)
+
+  await prisma.vnVendorSyncLink.update({
+    where: { id: link.id },
+    data: {
+      agendaItemId: itemId, status: statusForHumanValue(link, name),
+      note: `Edited by ${actor}`, appliedName: null, appliedId: null, appliedPhone: null, appliedRunId: null,
+    },
+  })
+  await prisma.vnVendorSyncEvent.create({
+    data: { bookingRef: link.bookingRef, movementKey: link.movementKey, movementLabel: link.movementLabel, action: 'EDITED', fromValue: curName, toValue: name, actor, detail: phone ? `Phone ${phone}` : null },
+  })
+  return { ok: true, message: name ? `Set to ${name}` : 'Tour vendor cleared' }
+}
+
+/**
+ * Walk back the LAST change to this movement, whoever made it: a sync write
+ * goes back through undoLink (to the value before the sync's first write); a
+ * person's edit or revert goes back to the value it replaced.
+ */
+export async function revertLast(linkId: string, actor: string): Promise<{ ok: boolean; message: string }> {
+  const link = await prisma.vnVendorSyncLink.findUnique({ where: { id: linkId } })
+  if (!link) return { ok: false, message: 'Not found — refresh' }
+  const last = await prisma.vnVendorSyncEvent.findFirst({
+    where: { bookingRef: link.bookingRef, movementKey: link.movementKey, action: { in: CHANGE_ACTIONS } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  })
+  if ((!last || last.action === 'APPLIED' || last.action === 'UPDATED') && link.appliedName) return undoLink(link.id, actor)
+  if (!last) return { ok: false, message: 'No change recorded to revert' }
+
+  const itemId = await resolveItemId(link)
+  if (!itemId) return { ok: false, message: 'The movement was changed or removed — refresh' }
+  const a = await prisma.assignment.findUnique({ where: { agendaItemId: itemId }, select: { tourVendorName: true } })
+  const curRaw = a?.tourVendorName ?? null
+  const curName = curRaw?.trim() || null
+  const matchesLast = last.toValue ? sameVendorName(curName, last.toValue) : !curName
+  if (!matchesLast) return { ok: false, message: `The movement now has "${curName ?? 'nothing'}", not "${last.toValue ?? 'empty'}" — changed elsewhere, left alone` }
+
+  const back = last.fromValue?.trim() || null
+  let target: { id: string | null; name: string | null; phone: string | null } = { id: null, name: back, phone: null }
+  if (back) {
+    const hit = (await loadDirectory()).find(d => sameVendorName(d.name, back) && fold(d.name) === fold(back))
+      ?? (await loadDirectory()).find(d => sameVendorName(d.name, back))
+    if (hit) target = { id: hit.source === 'TOUR_VENDOR' ? hit.id : null, name: back, phone: hit.phone }
+  }
+  const wrote = curName ? await writeTourVendor(itemId, curRaw, target) : back ? await writeTourVendor(itemId, null, target) : true
+  if (!wrote) return { ok: false, message: 'Someone changed this movement a moment ago — refresh' }
+  if (!back) await dropIfEmpty(itemId)
+
+  await prisma.vnVendorSyncLink.update({
+    where: { id: link.id },
+    data: { agendaItemId: itemId, status: statusForHumanValue(link, back), note: `Reverted by ${actor}`, appliedName: null, appliedId: null, appliedPhone: null, appliedRunId: null },
+  })
+  await prisma.vnVendorSyncEvent.create({
+    data: { bookingRef: link.bookingRef, movementKey: link.movementKey, movementLabel: link.movementLabel, action: 'REVERTED', fromValue: curName, toValue: back, actor, detail: `Reverted the ${last.action.toLowerCase()} by ${last.actor ?? 'Auto sync'}` },
+  })
+  return { ok: true, message: `Put back ${back ? `"${back}"` : 'an empty tour vendor'}` }
+}
+
+/** "Use Excel" on several rows at once. */
+export async function applyMany(linkIds: string[], actor: string): Promise<{ applied: number; failed: { linkId: string; message: string }[] }> {
+  let applied = 0
+  const failed: { linkId: string; message: string }[] = []
+  for (const id of linkIds.slice(0, 100)) {
+    const r = await applyLink(id, actor)
+    if (r.ok) applied++
+    else failed.push({ linkId: id, message: r.message })
+  }
+  return { applied, failed }
 }

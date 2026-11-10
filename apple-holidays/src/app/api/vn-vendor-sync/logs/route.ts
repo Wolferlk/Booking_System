@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const [config, runs, events, totals] = await Promise.all([
       getVendorSyncConfig(),
-      listRuns(Number(sp.get('runPage')) || 1, 15),
+      listRuns(Number(sp.get('runPage')) || 1, 15, sp.get('quiet') !== '1'),
       listEvents({
         page: Number(sp.get('page')) || 1, pageSize: 40,
         action: sp.get('action'), ref: sp.get('ref'), runId: sp.get('runId'),

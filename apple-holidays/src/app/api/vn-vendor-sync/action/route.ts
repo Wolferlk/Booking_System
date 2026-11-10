@@ -7,7 +7,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { vendorSyncSession } from '@/lib/vn-vendor-sync/access'
 import {
-  applyLink, ignoreLink, isMissingTable, resumeLink, runVendorSync, undoLink, undoRun,
+  applyLink, applyMany, ignoreLink, isMissingTable, resumeLink, revertLast, runVendorSync, setManualVendor, undoLink, undoRun,
 } from '@/lib/vn-vendor-sync/server'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +16,10 @@ export const maxDuration = 300
 export async function POST(req: NextRequest) {
   const auth = await vendorSyncSession('edit')
   if ('error' in auth) return buildApiError(auth.error, auth.status)
-  const body = await req.json().catch(() => ({})) as { action?: string; linkId?: string; runId?: string }
+  const body = await req.json().catch(() => ({})) as {
+    action?: string; linkId?: string; runId?: string; linkIds?: string[]
+    name?: string | null; tourVendorId?: string | null; phone?: string | null; expected?: string | null
+  }
   try {
     switch (body.action) {
       case 'apply':
@@ -29,6 +32,25 @@ export async function POST(req: NextRequest) {
         const fn = { apply: applyLink, undo: undoLink, ignore: ignoreLink, resume: resumeLink }[body.action]
         const r = await fn(body.linkId, auth.actor)
         return r.ok ? buildApiSuccess(r) : buildApiError(r.message, 409)
+      }
+      case 'edit': {
+        if (!body.linkId) return buildApiError('linkId is required')
+        const r = await setManualVendor(body.linkId, {
+          name: body.name ?? null, tourVendorId: body.tourVendorId ?? null, phone: body.phone ?? null,
+          ...(body.expected !== undefined ? { expected: body.expected } : {}),
+        }, auth.actor)
+        return r.ok ? buildApiSuccess(r) : buildApiError(r.message, 409)
+      }
+      case 'revert': {
+        if (!body.linkId) return buildApiError('linkId is required')
+        const r = await revertLast(body.linkId, auth.actor)
+        return r.ok ? buildApiSuccess(r) : buildApiError(r.message, 409)
+      }
+      case 'applyMany': {
+        const ids = Array.isArray(body.linkIds) ? body.linkIds.filter(x => typeof x === 'string') : []
+        if (!ids.length) return buildApiError('linkIds is required')
+        const r = await applyMany(ids, auth.actor)
+        return buildApiSuccess({ ...r, message: `${r.applied} applied${r.failed.length ? `, ${r.failed.length} skipped` : ''}` })
       }
       case 'undoRun': {
         if (!auth.isAdmin) return buildApiError('Only admins can undo a whole run', 403)

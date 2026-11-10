@@ -13,6 +13,7 @@ import {
   AlertTriangle, Clock, Filter as FilterIcon, ShieldCheck, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
+import VendorCompareBoard from '@/components/vn-vendor-sync/vendor-compare-board'
 import { cn } from '@/lib/utils'
 import {
   EVENT_ACTION, LINK_STATUS, timeAgo,
@@ -30,7 +31,7 @@ interface LogPayload {
   totals: Record<string, number>
 }
 
-const ACTIONS: EventAction[] = ['APPLIED', 'UPDATED', 'SUGGESTED', 'KEPT_MANUAL', 'SHEET_DROPPED', 'UNDONE', 'IGNORED', 'RESTORED']
+const ACTIONS: EventAction[] = ['APPLIED', 'UPDATED', 'EDITED', 'REVERTED', 'SUGGESTED', 'KEPT_MANUAL', 'SHEET_DROPPED', 'UNDONE', 'IGNORED', 'RESTORED']
 
 function RunRow({ r, isAdmin, onUndo, onPick, picked }: {
   r: VendorSyncRunInfo; isAdmin: boolean; onUndo: (r: VendorSyncRunInfo) => void; onPick: (id: string) => void; picked: boolean
@@ -76,6 +77,7 @@ export default function VendorSyncLogPage() {
   const [action, setAction] = useState<string>('')
   const [ref, setRef] = useState('')
   const [runId, setRunId] = useState<string | null>(null)
+  const [showQuiet, setShowQuiet] = useState(false)
   const [cfg, setCfg] = useState<VendorSyncConfig | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -84,13 +86,14 @@ export default function VendorSyncLogPage() {
     if (action) sp.set('action', action)
     if (ref.trim()) sp.set('ref', ref.trim())
     if (runId) sp.set('runId', runId)
+    if (showQuiet) sp.set('quiet', '1')
     try {
       const res = await fetch(`/api/vn-vendor-sync/logs?${sp}`, { cache: 'no-store' })
       const json = await res.json()
       if (json.success) { setData(json.data); setCfg(c => c ?? json.data.config ?? null) }
       else toast.error(json.error)
     } finally { setLoading(false) }
-  }, [page, runPage, action, ref, runId])
+  }, [page, runPage, action, ref, runId, showQuiet])
 
   useEffect(() => { const t = setTimeout(() => { void load() }, ref ? 300 : 0); return () => clearTimeout(t) }, [load, ref])
   useEffect(() => { const t = setInterval(() => { void load() }, 60_000); return () => clearInterval(t) }, [load])
@@ -195,6 +198,10 @@ export default function VendorSyncLogPage() {
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <h2 className="text-sm font-semibold text-slate-800">Sweeps</h2>
+              <label className="ml-3 mr-auto inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-slate-400" title="Runs started by opening a booking that changed nothing">
+                <input type="checkbox" checked={showQuiet} onChange={e => { setShowQuiet(e.target.checked); setRunPage(1) }} className="h-3 w-3 rounded border-slate-300" />
+                Show quiet runs
+              </label>
               <div className="flex items-center gap-1 text-xs text-slate-400">
                 <button type="button" disabled={runPage <= 1} onClick={() => setRunPage(p => p - 1)} className="rounded p-1 hover:bg-slate-100 disabled:opacity-30"><ChevronLeft className="h-4 w-4" /></button>
                 {runPage}
@@ -256,6 +263,9 @@ export default function VendorSyncLogPage() {
             )}
           </section>
         </div>
+
+        {/* Excel ⇄ System, per movement */}
+        {data?.installed && <VendorCompareBoard runId={runId} onChanged={() => { void load() }} />}
 
         {/* Events */}
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">

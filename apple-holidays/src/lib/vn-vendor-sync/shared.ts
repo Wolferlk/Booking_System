@@ -25,7 +25,10 @@ export const VENDOR_SYNC_NOT_INSTALLED =
 export type LinkStatus = 'APPLIED' | 'SUGGESTED' | 'IN_SYNC' | 'KEPT_MANUAL' | 'IGNORED' | 'STALE'
 export type EventAction =
   | 'APPLIED' | 'UPDATED' | 'SUGGESTED' | 'KEPT_MANUAL' | 'SHEET_DROPPED'
-  | 'UNDONE' | 'IGNORED' | 'RESTORED' | 'ERROR'
+  | 'UNDONE' | 'IGNORED' | 'RESTORED' | 'ERROR' | 'EDITED' | 'REVERTED'
+
+/** Actions that changed what the movement holds (the history "Revert" walks back). */
+export const CHANGE_ACTIONS: EventAction[] = ['APPLIED', 'UPDATED', 'UNDONE', 'EDITED', 'REVERTED']
 
 export const LINK_STATUS: Record<LinkStatus, { label: string; hint: string; pill: string; dot: string }> = {
   APPLIED:     { label: 'Applied',        hint: 'Filled in from the Excel by the sync',              pill: 'bg-emerald-50 text-emerald-700 ring-emerald-200', dot: 'bg-emerald-500' },
@@ -46,6 +49,8 @@ export const EVENT_ACTION: Record<EventAction, { label: string; tone: string }> 
   IGNORED:       { label: 'Ignored',        tone: 'text-slate-500 bg-slate-50 ring-slate-200' },
   RESTORED:      { label: 'Resumed',        tone: 'text-indigo-700 bg-indigo-50 ring-indigo-200' },
   ERROR:         { label: 'Error',          tone: 'text-rose-700 bg-rose-50 ring-rose-200' },
+  EDITED:        { label: 'Edited',         tone: 'text-fuchsia-700 bg-fuchsia-50 ring-fuchsia-200' },
+  REVERTED:      { label: 'Reverted',       tone: 'text-orange-700 bg-orange-50 ring-orange-200' },
 }
 
 export const KIND_LABEL: Record<string, string> = {
@@ -151,6 +156,47 @@ export interface BookingVendorSyncPayload {
   lastRun: VendorSyncRunInfo | null
   sheetSyncedAt: string | null
   nextRunAt: string | null
+}
+
+/** One movement on the compare board: Excel vs system vs before, and who changed it. */
+export interface CompareRow {
+  linkId: string
+  bookingRef: string
+  agendaItemId: string | null
+  movementDate: string | null
+  movementLabel: string | null
+  movementKind: string | null
+  status: LinkStatus
+  note: string | null
+  excel: {
+    vendor: string | null          // as typed in the sheet
+    resolved: string | null        // directory name it resolves to
+    phone: string | null
+    source: 'TOUR_VENDOR' | 'VEHICLE_VENDOR' | 'NONE' | null
+    line: string | null
+    code: string | null
+    sheetRow: number | null
+    tourCode: string | null
+    score: number | null
+    confidence: 'HIGH' | 'MEDIUM' | null
+    reason: string | null
+    also: AlsoCandidate[]
+  }
+  now: { name: string | null; phone: string | null; tourVendorId: string | null } | null
+  before: { name: string | null; from: 'SYNC' | 'HISTORY' | 'UNKNOWN' }
+  /** Does the system already say what the Excel says? */
+  same: boolean
+  lastChange: { action: EventAction; actor: string; at: string; from: string | null; to: string | null } | null
+  /** Who the current value came from. */
+  setBy: string
+  canRevert: boolean
+}
+
+export interface DirectoryHit {
+  id: string
+  name: string
+  phone: string | null
+  source: 'TOUR_VENDOR' | 'VEHICLE_VENDOR'
 }
 
 export interface RunSummary extends VendorSyncRunInfo {

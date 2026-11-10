@@ -21,6 +21,7 @@ import TicketFilterBar, {
   type TicketFilterState, type TicketTab,
 } from '@/components/tickets/ticket-filter-bar'
 import TicketReportModal from '@/components/tickets/ticket-report-modal'
+import BulkApiTicketsModal from '@/components/tickets/bulk-api-tickets-modal'
 import type { UserRole } from '@prisma/client'
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -133,6 +134,7 @@ export default function TETicketsPage() {
   const [tickets, setTickets]         = useState<Ticket[]>([])
   const [loading, setLoading]         = useState(true)
   const [filters, setFilters]         = useState<TicketFilterState>(EMPTY_FILTERS)
+  const [bulkApiOpen, setBulkApiOpen] = useState(false)
   const [page, setPage]               = useState(1)
   const [total, setTotal]             = useState(0)
   const [pageCount, setPageCount]     = useState(1)
@@ -418,6 +420,15 @@ export default function TETicketsPage() {
             >
               <BarChart3 className="w-4 h-4" /> Report
             </button>
+            {canCreate && (
+              <button
+                onClick={() => setBulkApiOpen(true)}
+                className="btn border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                title="Pick a travel date and create tickets from the API for every booking travelling that day"
+              >
+                <Zap className="w-4 h-4" /> Create Tickets from API
+              </button>
+            )}
             {canCreate && (
               <button onClick={() => setNewModal(true)} className="btn btn-primary">
                 <Plus className="w-4 h-4" /> Add Ticket
@@ -760,6 +771,16 @@ export default function TETicketsPage() {
         params={queryParams}
         filterSummary={filterSummary}
       />
+
+      {/* ── Bulk: Create Tickets from API by travel date ─────────────────── */}
+      {bulkApiOpen && (
+        <BulkApiTicketsModal
+          open={bulkApiOpen}
+          onClose={() => setBulkApiOpen(false)}
+          onDone={load}
+          countryFilter={countryFilter}
+        />
+      )}
 
       {/* ── Add Ticket Modal ─────────────────────────────────────────────── */}
       <Modal
