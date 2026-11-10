@@ -27,6 +27,7 @@ import type {
   BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmStatusLine, ReportData, TourLine,
 } from './report-data'
 import { todayNewAndUpdated } from './report-data'
+import { activitySection } from './activity-html'
 import type { CountCheckSection, CountCheckTally } from './count-check'
 import type { BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
@@ -1630,6 +1631,10 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     // and it is read on /sync-ledger. `renderCountCheckBlock()` is kept for the
     // render-check script, so nothing about the block itself has been lost.
     want.created ? createdSection(d) : '',
+    // Created / created & updated / old booking updated, by creation method,
+    // with what each update did to the invoice — the same block the weekly and
+    // monthly reviews print.
+    want.created ? activitySection(d, 'day') : '',
     // The board, today and the next 7 days, straight after intake: what came in,
     // then what is on the ground and coming. Follows the On ground switch.
     want.onGround ? opsBoardSection(d) : '',

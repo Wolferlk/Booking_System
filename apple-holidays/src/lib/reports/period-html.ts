@@ -48,6 +48,8 @@ import {
   STYLE_BLOCK, TABLE_CLOSE, tableOpen, td, truncate,
 } from './email-kit'
 import { todayNewAndUpdated, type ReportData } from './report-data'
+import { activitySection } from './activity-html'
+import { activityBreakdown } from './activity-breakdown'
 import type { MoverRow, PeriodAction, PeriodInsights, PeriodPoint } from './period-insights'
 import type { PeriodAdvice } from './period-outlook'
 import type { CountryRow } from './booking-lines'
@@ -910,7 +912,9 @@ function scorecard(d: ReportData, i: PeriodInsights): string {
         {
           label: 'This month new & updated',
           value: num(todayNewAndUpdated(d)),
-          sub: `<span style="color:${HERO.dim};">${sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'accounts unreachable'}</span>`,
+          sub: `<span style="color:${HERO.dim};">${sp.available
+            ? (() => { const [c, u, o] = activityBreakdown(sp).stages; return `${num(c.count)} created · ${num(u.count)} created &amp; updated · ${num(o.count)} old updated` })()
+            : 'accounts unreachable'}</span>`,
         },
         {
           label: 'Old amendments',
@@ -1239,6 +1243,9 @@ export function renderPeriodEmail(d: ReportData, opts: PeriodRenderOptions = {})
 
   const body = [
     actionSection(i, periodWord),
+    // Created / created & updated / old booking updated — the same three-stage
+    // cut the daily mail prints, with the creation method and the money moved.
+    want.commercial ? activitySection(d, periodWord) : '',
     want.commercial ? moversStrip(i, periodWord) : '',
     want.commercial ? trendSection(i, periodWord) : '',
     want.commercial ? marketSection(i, periodWord) : '',

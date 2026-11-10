@@ -27,6 +27,8 @@ import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { todayNewAndUpdated, reportCountryLabel, type ReportData, type BookingLine, type SplitFile } from './report-data'
 import type { BoardRow, BoardView } from './ops-board-digest'
+import { addActivitySheets } from './activity-workbook'
+import { stageOf, changeWord } from './activity-breakdown'
 import { formatReportDate, PERIOD_LABEL } from './report-window'
 import {
   P, SERIES, Canvas, SheetPlan, newWorkbook, yes, daysBetween, shortDay, groupBy,
@@ -123,6 +125,8 @@ function bookingCols(): Col<BookingLine>[] {
 function splitFileCols(): Col<SplitFile>[] {
   return [
     { header: 'New / Amended', width: 11, kind: 'flag', value: f => f.pass },
+    { header: 'Stage', width: 18, value: f => stageOf(f) },
+    { header: 'Created by', width: 16, value: f => f.intake },
     { header: 'Booking ref', width: 13, value: f => f.booking?.bookingRef ?? f.ref },
     { header: 'Invoice no.', width: 16, value: f => f.invoiceNumber },
     { header: 'Document', width: 10, value: f => f.type },
@@ -139,12 +143,18 @@ function splitFileCols(): Col<SplitFile>[] {
     { header: 'Children', width: 8, kind: 'int', value: f => f.booking?.paxChildren ?? null, total: 'sum' },
     { header: 'Infants', width: 7, kind: 'int', value: f => f.booking?.paxInfants ?? null, total: 'sum' },
     { header: 'Currency', width: 9, value: f => f.currency },
+    { header: 'Previous invoice', width: 16, value: f => f.previousInvoice ?? '' },
+    { header: 'Previous amount', width: 13, kind: 'money', value: f => f.previousAmount },
     { header: 'Invoice amount', width: 13, kind: 'money', value: f => f.amount },
+    {
+      header: 'Change', width: 12, kind: 'money', value: f => f.amountChange,
+      tone: f => (f.amountChange === null || Math.abs(f.amountChange) < 0.005 ? null : f.amountChange > 0 ? 'good' : 'bad'),
+    },
+    { header: 'Up / Down', width: 10, value: f => changeWord(f) },
     { header: 'First raised', width: 12, kind: 'date', value: f => f.firstOn },
     { header: 'Age (days)', width: 9, kind: 'int', value: f => f.ageDays },
     { header: 'Revisions', width: 9, kind: 'int', value: f => f.revisions },
     { header: 'Raised at', width: 17, kind: 'stamp', value: f => f.raisedAt },
-    { header: 'Intake', width: 16, value: f => f.intake },
   ]
 }
 
@@ -302,7 +312,10 @@ function overview(wb: import('exceljs').Workbook, d: ReportData, index: { name: 
   c.line(['  B2C', d.created.channel.b2c], { labelColor: P.b2c })
   c.line(['  Pax booked', d.created.pax])
   if (sp.available) {
+    const created1 = sp.files.filter(f => stageOf(f) === 'Created').length
     c.line(['New + booked & amended same day', sp.todayCount])
+    c.line(['  Created', created1], { labelColor: P.brand })
+    c.line(['  Created & updated same day', sp.todayCount - created1], { labelColor: P.blue })
     c.line(['Old amendments (order confirmations edited)', sp.oldCount], { labelColor: P.amber })
   }
   if (d.created.missingRefs.length) c.line(['Confirmed upstream, not filed here', d.created.missingRefs.length], { labelColor: P.red, color: P.red })
@@ -336,6 +349,9 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
       empty: 'The accounts ledger shows no new or amended bookings in this period.',
     })
   }
+  // Created / created & updated / old booking updated, by creation method —
+  // the same summary tab the weekly and monthly workbooks carry.
+  addActivitySheets(plan, d, { periodWord: 'day', perStage: false })
   const created = d.created.allBookings ?? d.created.bookings
   plan.table({
     name: sp.available ? 'AS Confirmed' : 'New Bookings', tab: sp.available ? P.indigo : P.brand,

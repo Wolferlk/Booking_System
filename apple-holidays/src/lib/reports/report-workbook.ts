@@ -34,6 +34,8 @@
  */
 import type { ReportData } from './report-data'
 import type { PeriodInsights } from './period-insights'
+import { addActivitySheets } from './activity-workbook'
+import { activityBreakdown } from './activity-breakdown'
 import { PERIOD_LABEL, formatReportDate } from './report-window'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 import {
@@ -194,6 +196,11 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     rows: scores,
     empty: 'Period analytics were unavailable for this run.',
   })
+
+  // ── Booking activity ───────────────────────────────────────────────────────
+  // Created / created & updated / old booking updated, by creation method,
+  // with the invoice before and after each update — same cut as the daily file.
+  addActivitySheets(plan, d, { periodWord, perStage: true })
 
   // ── Actions ────────────────────────────────────────────────────────────────
   if (i?.actions.length) {
@@ -964,6 +971,17 @@ export async function renderReportWorkbook(d: ReportData): Promise<{ buffer: Buf
     }
   } else {
     c.note('Period analytics were unavailable for this run, so the dashboard is limited to the tabs below.', P.warnInk)
+    c.gap()
+  }
+
+  if (d.split.available) {
+    const [cr, cu, ou] = activityBreakdown(d.split).stages
+    c.title('Booking activity', `From the accounts invoice ledger — detail on "Booking Activity", "Created", "Created & Updated" and "Old Updated".`)
+    c.header(['Stage', 'Bookings', 'Went up', 'Went down', 'Unchanged'], [undefined, P.deep, P.green, P.red, P.muted])
+    c.line(['Created this ' + periodWord, cr.count, null, null, null], { labelColor: P.brand })
+    c.line(['Created & updated this ' + periodWord, cu.count, cu.up, cu.down, cu.same], { labelColor: P.blue })
+    c.line(['Old booking updated this ' + periodWord, ou.count, ou.up, ou.down, ou.same], { labelColor: P.amber })
+    c.line(['Total', cr.count + cu.count + ou.count, cu.up + ou.up, cu.down + ou.down, cu.same + ou.same], { bold: true, bg: P.brandWash })
     c.gap()
   }
 

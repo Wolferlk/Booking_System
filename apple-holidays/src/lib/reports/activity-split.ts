@@ -113,6 +113,21 @@ export interface SplitLine {
   /** Revisions the booking carries to date. */
   revisions: number
   raisedAt: string
+  /**
+   * The invoice this line's document replaced, for an updated booking:
+   *  - an old booking re-opened → its latest invoice raised *before* the window
+   *    (what the books said going into the period);
+   *  - a booking opened and updated inside the window → its first invoice
+   *    (what it was booked at).
+   * Null for a plain new booking, or when no earlier document can be read.
+   */
+  previousInvoice: string | null
+  previousAmount: number | null
+  previousCurrency: string | null
+  /** `amount − previousAmount`; null when there is no baseline or the currency changed. */
+  amountChange: number | null
+  /** Documents this booking had raised inside the window (R13, R14, R15 the same day → 3). */
+  issuesInWindow: number
 }
 
 export interface ActivitySplitSide {
@@ -302,6 +317,28 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
 
     const todayByBooking = new Map<string, { row: DocRow; line: SplitLine }>()
     const oldByBooking = new Map<string, { row: DocRow; line: SplitLine }>()
+    /** Documents raised in the window per booking, cancellations left out. */
+    const issued = new Map<string, number>()
+
+    /**
+     * The invoice an updated booking is measured against — see
+     * `SplitLine.previousInvoice`. Cancellations are never a baseline: a CXL
+     * document's total is not what the booking was sold at.
+     */
+    const baselineOf = (chain: DocRow[], row: DocRow, carried: boolean): DocRow | null => {
+      const live = chain.filter(r => !Number(r.is_cancellation ?? 0) && Number(r.id) !== Number(row.id))
+      if (!carried) return live[0] ?? null
+      const startMs = window.start.getTime()
+      let best: DocRow | null = null
+      for (const r of live) {
+        const t = at(r.created_at).getTime()
+        if (!(t < startMs)) continue
+        if (!best) { best = r; continue }
+        const bt = at(best.created_at).getTime()
+        if (t > bt || (t === bt && Number(r.id) > Number(best.id))) best = r
+      }
+      return best
+    }
 
     for (const row of raised) {
       const chain = chains.get(chainKeyOf(row)) ?? [row]
@@ -326,6 +363,12 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
       // `documentRow()`'s booking_ref — what both accounts tables group on.
       const ref = invoiceBaseNumber(row)
 
+      const amount = Math.round(money(row) * 100) / 100
+      const currency = String(row.currency ?? '').trim() || 'N/A'
+      const before = updated ? baselineOf(chain, row, carried) : null
+      const previousAmount = before ? Math.round(money(before) * 100) / 100 : null
+      const previousCurrency = before ? (String(before.currency ?? '').trim() || 'N/A') : null
+
       const line: SplitLine = {
         key: bookingKey(ref),
         ref: ref || '—',
@@ -333,12 +376,19 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
         type: updated ? 'Updated' : 'New',
         agent: String(row.customer_name ?? '').trim() || '—',
         guest: String(row.guest_name ?? '').trim() || '—',
-        currency: String(row.currency ?? '').trim() || 'N/A',
-        amount: Math.round(money(row) * 100) / 100,
+        currency,
+        amount,
         firstOn: originDay,
         ageDays: originDay ? daysBetween(originDay, raisedDay) : null,
         revisions: chain.length,
         raisedAt: raisedAt.toISOString(),
+        previousInvoice: before ? String(before.invoice_number ?? '—') : null,
+        previousAmount,
+        previousCurrency,
+        amountChange: previousAmount !== null && previousCurrency === currency
+          ? Math.round((amount - previousAmount) * 100) / 100
+          : null,
+        issuesInWindow: 1,
       }
 
       // Only a revision re-opens an older confirmation; an R0 raised today on
@@ -349,11 +399,15 @@ export async function collectActivitySplit(window: ReportWindow): Promise<Activi
       // sides, as `todayBusiness()` and `oldAmendments()` do.
       const bucket = carried ? oldByBooking : todayByBooking
       const group = ref.toUpperCase()
+      issued.set(`${carried ? 'O' : 'T'}:${group}`, (issued.get(`${carried ? 'O' : 'T'}:${group}`) ?? 0) + 1)
       const held = bucket.get(group)
       if (!held || Number(row.id) > Number(held.row.id)) {
         bucket.set(group, { row, line })
       }
     }
+
+    todayByBooking.forEach((v, group) => { v.line.issuesInWindow = issued.get(`T:${group}`) ?? 1 })
+    oldByBooking.forEach((v, group) => { v.line.issuesInWindow = issued.get(`O:${group}`) ?? 1 })
 
     const todayLines = Array.from(todayByBooking.values())
       .map(v => v.line)
