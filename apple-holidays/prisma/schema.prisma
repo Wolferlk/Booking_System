@@ -683,6 +683,106 @@ model VnSheetEvent {
   @@map("vn_sheet_checklist_events")
 }
 
+/// VN Vendor Sync — one run (every 15 min, "Fetch now", or a stale read).
+/// Tables from prisma/sql/2026-11-10-vn-vendor-sync.sql.
+model VnVendorSyncRun {
+  id          String    @id @default(cuid())
+  trigger     String    @db.VarChar(16)
+  scope       String    @default("ALL") @db.VarChar(64)
+  mode        String    @default("AUTO") @db.VarChar(16)
+  status      String    @default("RUNNING") @db.VarChar(16)
+  startedAt   DateTime  @default(now()) @db.DateTime(3)
+  finishedAt  DateTime? @db.DateTime(3)
+  durationMs  Int?
+  sheetStatus String?   @db.VarChar(16)
+  sheetNote   String?   @db.VarChar(500)
+  bookings    Int       @default(0)
+  movements   Int       @default(0)
+  matched     Int       @default(0)
+  applied     Int       @default(0)
+  updated     Int       @default(0)
+  suggested   Int       @default(0)
+  keptManual  Int       @default(0)
+  inSync      Int       @default(0)
+  noMatch     Int       @default(0)
+  error       String?   @db.Text
+  triggeredBy String?   @db.VarChar(191)
+  undoneAt    DateTime? @db.DateTime(3)
+  undoneBy    String?   @db.VarChar(191)
+
+  @@index([startedAt], map: "vn_vendor_sync_runs_started_idx")
+  @@index([status], map: "vn_vendor_sync_runs_status_idx")
+  @@map("vn_vendor_sync_runs")
+}
+
+/// VN Vendor Sync — what the sync thinks about one movement, and what it wrote
+/// (with the value before its first write, so it can be undone). Keyed by
+/// booking + movement key because chart saves re-create agenda item ids.
+model VnVendorSyncLink {
+  id              String    @id @default(cuid())
+  bookingRef      String    @db.VarChar(64)
+  movementKey     String    @db.VarChar(255)
+  agendaItemId    String?   @db.VarChar(191)
+  movementDate    DateTime? @db.Date
+  movementLabel   String?   @db.VarChar(500)
+  movementKind    String?   @db.VarChar(24)
+  tourCode        String?   @db.VarChar(191)
+  sheetRow        Int?
+  lineDetails     String?   @db.Text
+  lineCode        String?   @db.VarChar(64)
+  sheetVendor     String?   @db.VarChar(191)
+  score           Decimal?  @db.Decimal(5, 2)
+  confidence      String?   @db.VarChar(8)
+  reason          String?   @db.VarChar(500)
+  alsoJson        String?   @db.Text
+  directorySource String?   @db.VarChar(16)
+  vendorId        String?   @db.VarChar(191)
+  vendorName      String?   @db.VarChar(191)
+  vendorPhone     String?   @db.VarChar(64)
+  status          String    @db.VarChar(16)
+  note            String?   @db.VarChar(500)
+  appliedName     String?   @db.VarChar(191)
+  appliedId       String?   @db.VarChar(191)
+  appliedPhone    String?   @db.VarChar(64)
+  prevName        String?   @db.VarChar(191)
+  prevId          String?   @db.VarChar(191)
+  prevPhone       String?   @db.VarChar(64)
+  appliedAt       DateTime? @db.DateTime(3)
+  appliedBy       String?   @db.VarChar(191)
+  appliedRunId    String?   @db.VarChar(191)
+  lastRunId       String?   @db.VarChar(191)
+  lastSeenAt      DateTime  @default(now()) @db.DateTime(3)
+  createdAt       DateTime  @default(now()) @db.DateTime(3)
+  updatedAt       DateTime  @updatedAt @db.DateTime(3)
+
+  @@unique([bookingRef, movementKey], map: "vn_vendor_sync_links_ref_key")
+  @@index([agendaItemId], map: "vn_vendor_sync_links_item_idx")
+  @@index([status], map: "vn_vendor_sync_links_status_idx")
+  @@index([appliedRunId], map: "vn_vendor_sync_links_run_idx")
+  @@map("vn_vendor_sync_links")
+}
+
+/// VN Vendor Sync — the log: applied / updated / suggested / kept manual / undone.
+model VnVendorSyncEvent {
+  id            String   @id @default(cuid())
+  runId         String?  @db.VarChar(191)
+  bookingRef    String   @db.VarChar(64)
+  movementKey   String?  @db.VarChar(255)
+  movementLabel String?  @db.VarChar(500)
+  action        String   @db.VarChar(16)
+  fromValue     String?  @db.VarChar(191)
+  toValue       String?  @db.VarChar(191)
+  score         Decimal? @db.Decimal(5, 2)
+  detail        String?  @db.VarChar(500)
+  actor         String?  @db.VarChar(191)
+  createdAt     DateTime @default(now()) @db.DateTime(3)
+
+  @@index([bookingRef, createdAt], map: "vn_vendor_sync_events_ref_idx")
+  @@index([runId], map: "vn_vendor_sync_events_run_idx")
+  @@index([createdAt], map: "vn_vendor_sync_events_created_idx")
+  @@map("vn_vendor_sync_events")
+}
+
 model Assignment {
   id              String         @id @default(cuid())
   agendaItemId    String         @unique

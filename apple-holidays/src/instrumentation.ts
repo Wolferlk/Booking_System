@@ -45,6 +45,12 @@ export async function register() {
       // vn_sheet_checklist_* tables exist.
       const { startVnChecklistSheetScheduler } = await import('@/lib/vn-checklist-sheet/scheduler')
       startVnChecklistSheetScheduler()
+
+      // VN Vendor Sync — every 15 minutes (a setting), fills each upcoming VN
+      // movement's Tour Vendor from the same Excel checklist. Only empty tour
+      // vendors (or ones it filled itself); a no-op until its tables exist.
+      const { startVnVendorSyncScheduler } = await import('@/lib/vn-vendor-sync/scheduler')
+      startVnVendorSyncScheduler()
     }
   }
 }

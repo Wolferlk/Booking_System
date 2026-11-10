@@ -37,6 +37,7 @@ import { flightLine, linkFlight, removeTransferDescription, transferDescription,
 import { DEFAULT_FLIGHT_PICKUP_RULES, type FlightPickupRules } from '@/lib/flight-pickup-rules'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
 import MovementWhatsAppModal, { MovementWhatsAppButton, type MovementSendSummary } from '@/components/agenda/movement-whatsapp-modal'
+import VnVendorSyncPanel, { type VendorSyncUpdate } from '@/components/agenda/vn-vendor-sync-panel'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
@@ -189,7 +190,7 @@ interface AgendaItem {
  * allocation in both the edit and read views, so who is running the movement
  * reads as one line rather than being buried in the assign dialog.
  */
-function PartnerChips({ assignment }: { assignment: AgendaItem['assignment'] }) {
+function PartnerChips({ assignment, vendorFromSheet = false }: { assignment: AgendaItem['assignment']; vendorFromSheet?: boolean }) {
   if (!assignment?.guideName && !assignment?.tourVendorName) return null
 
   const chips = [
@@ -208,10 +209,11 @@ function PartnerChips({ assignment }: { assignment: AgendaItem['assignment'] }) 
       name: assignment.tourVendorName,
       phone: assignment.tourVendorPhone,
       className: 'bg-teal-50 border-teal-100 text-teal-700',
+      fromSheet: vendorFromSheet,
     },
   ].filter(Boolean) as {
     key: string; icon: React.ReactNode; label: string
-    name: string; phone?: string | null; className: string
+    name: string; phone?: string | null; className: string; fromSheet?: boolean
   }[]
 
   return (
@@ -225,6 +227,10 @@ function PartnerChips({ assignment }: { assignment: AgendaItem['assignment'] }) 
             <span className="text-slate-500 flex items-center gap-1">
               <Phone className="w-3 h-3" />{chip.phone}
             </span>
+          )}
+          {chip.fromSheet && (
+            <span title="Filled from the VN desk's Excel checklist by VN Vendor Sync"
+              className="rounded bg-emerald-100 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-700">Excel</span>
           )}
         </div>
       ))}
@@ -571,6 +577,24 @@ export default function AgendaPage() {
       setLoading(false)
     }
   }, [ref])
+
+  // VN Vendor Sync wrote (or undid) a tour vendor on the server: carry it into
+  // the chart's own state, so it shows at once and the next Save keeps it.
+  // Only the three tour-vendor fields are touched, and only on movements that
+  // already have an id; everything else on the movement stays as edited.
+  const [sheetVendorIds, setSheetVendorIds] = useState<Set<string>>(new Set())
+  const applyVendorSync = useCallback((updates: VendorSyncUpdate[]) => {
+    const byId = new Map(updates.map(u => [u.agendaItemId, u]))
+    setSheetVendorIds(new Set(updates.filter(u => u.fromSheet).map(u => u.agendaItemId)))
+    setItems(is => is.map(x => {
+      const u = x.id ? byId.get(x.id) : undefined
+      if (!u) return x
+      const a = x.assignment ?? {}
+      if ((a.tourVendorName ?? null) === u.tourVendorName && (a.tourVendorId ?? null) === u.tourVendorId
+        && (a.tourVendorPhone ?? null) === u.tourVendorPhone) return x
+      return { ...x, assignment: { ...a, tourVendorId: u.tourVendorId, tourVendorName: u.tourVendorName, tourVendorPhone: u.tourVendorPhone } }
+    }))
+  }, [])
 
   const loadWaSummary = useCallback(async () => {
     try {
@@ -1619,6 +1643,11 @@ export default function AgendaPage() {
           />
         )}
 
+        {/* ── VN: tour vendors from the desk's Excel checklist (every 15 min) ── */}
+        {!generating && booking?.operationCountry === 'VIETNAM' && items.length > 0 && (
+          <VnVendorSyncPanel bookingRef={ref} onVendorsChanged={applyVendorSync} />
+        )}
+
         {/* ── MOVEMENT ITEMS ── */}
         {!generating && items.map((item, i) => {
           // A custom (typed-in) type has no entry of its own — show it as a plain badge.
@@ -1998,7 +2027,7 @@ export default function AgendaPage() {
                           ) : (
                             <span className="text-xs text-slate-400 italic">No driver assigned</span>
                           )}
-                          {needsDriver(item) && <PartnerChips assignment={item.assignment} />}
+                          {needsDriver(item) && <PartnerChips assignment={item.assignment} vendorFromSheet={Boolean(item.id && sheetVendorIds.has(item.id))} />}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             {waEnabled && (
@@ -2175,7 +2204,7 @@ export default function AgendaPage() {
 
                         {needsDriver(item) && (item.assignment?.guideName || item.assignment?.tourVendorName) && (
                           <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <PartnerChips assignment={item.assignment} />
+                            <PartnerChips assignment={item.assignment} vendorFromSheet={Boolean(item.id && sheetVendorIds.has(item.id))} />
                           </div>
                         )}
                       </div>

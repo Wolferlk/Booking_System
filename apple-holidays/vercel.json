@@ -81,6 +81,10 @@
       "schedule": "0 */2 * * *"
     },
     {
+      "path": "/api/cron/vn-vendor-sync",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/driver-auto-send",
       "schedule": "5 * * * *"
     },
