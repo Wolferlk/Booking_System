@@ -11,12 +11,23 @@ export const TICKET_PORTAL_KEY = 'ticket_portal_config'
 export const OTP_TTL_MINUTES = 5
 
 export const DEFAULT_OTP_TEMPLATE = 'aahaas_ticket_issue_otp'
-export const DEFAULT_DETAILS_TEMPLATE = 'aahaas_ticket_issue_request'
+export const DEFAULT_DETAILS_TEMPLATE = 'aahaas_ticket_approval_details'
+/**
+ * The first details template. Meta REJECTED it (2026-11-09): it named "a code"
+ * inside a UTILITY template, which Meta reads as authentication content, and it
+ * was six variables in very few words. A saved setting still naming it moves to
+ * the new one, so nobody has to edit Settings by hand.
+ */
+export const REJECTED_DETAILS_TEMPLATES = ['aahaas_ticket_issue_request']
 
-/** Sent just before the code. Meta will not allow details inside a code template. */
+/**
+ * Sent to each approver just before the code. A UTILITY template: no mention of
+ * a code, password or OTP (Meta rejects that outside AUTHENTICATION), plenty of
+ * fixed words around the six variables, and it neither starts nor ends on one.
+ */
 export const DETAILS_BODY =
-  'Aahaas ticket approval needed: {{1}}.\n\nBooking: {{2}}\nTicket: {{3}}\nPortal: {{4}}\nAmount: {{5}}\nRequested by: {{6}}\n\nA code follows in the next message. Share it only if you approve this.'
-export const DETAILS_EXAMPLES = ['Issue ticket', 'SG49518', 'Singapore Cable Car', 'Cebu', 'SGD 484.50', 'Sasindu']
+  'Hello, a ticket purchase on the Aahaas operations desk is waiting for your approval.\n\nAction: {{1}}\nBooking reference: {{2}}\nTicket: {{3}}\nSupplier portal: {{4}}\nAmount: {{5}}\nRequested by: {{6}}\n\nPlease check these details before you approve. If you do not recognise this request, do not approve it and tell the operations manager.'
+export const DETAILS_EXAMPLES = ['Issue ticket', 'SG49518', 'Singapore Cable Car Sky Pass', 'Cebu', 'SGD 484.50', 'Sasindu']
 
 export interface OtpRecipient { name: string; phone: string }
 
@@ -46,7 +57,10 @@ export function normaliseConfig(raw: Partial<PortalConfig> | null | undefined): 
     providers: { globaltix: raw?.providers?.globaltix !== false, cebu: raw?.providers?.cebu !== false },
     recipients: recipients.slice(0, 10),
     otpTemplate: cleanTemplate(raw?.otpTemplate, DEFAULT_OTP_TEMPLATE),
-    detailsTemplate: cleanTemplate(raw?.detailsTemplate, DEFAULT_DETAILS_TEMPLATE),
+    detailsTemplate: (() => {
+      const name = cleanTemplate(raw?.detailsTemplate, DEFAULT_DETAILS_TEMPLATE)
+      return REJECTED_DETAILS_TEMPLATES.includes(name) ? DEFAULT_DETAILS_TEMPLATE : name
+    })(),
     language: String(raw?.language ?? 'en').trim() || 'en',
   }
 }

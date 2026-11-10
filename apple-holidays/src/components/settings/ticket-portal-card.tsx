@@ -15,6 +15,7 @@ interface Config {
   language: string
 }
 interface Templates { otp: string; details: string; error: string | null }
+interface Tables { ready: boolean; missing: string[]; error: string | null }
 
 const STATUS_TONE: Record<string, string> = {
   APPROVED: 'bg-emerald-50 text-emerald-700', PENDING: 'bg-amber-50 text-amber-700', IN_APPEAL: 'bg-amber-50 text-amber-700',
@@ -33,11 +34,12 @@ const send = <T,>(method: string, body: unknown) => call<T>({ method, headers: {
 export default function TicketPortalCard() {
   const [config, setConfig] = useState<Config | null>(null)
   const [templates, setTemplates] = useState<Templates | null>(null)
+  const [tables, setTables] = useState<Tables | null>(null)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
-    call<{ config: Config; templates: Templates }>().then(r => { setConfig(r.data.config); setTemplates(r.data.templates) }).catch(e => toast.error(e.message))
+    call<{ config: Config; templates: Templates; tables?: Tables }>().then(r => { setConfig(r.data.config); setTemplates(r.data.templates); setTables(r.data.tables ?? null) }).catch(e => toast.error(e.message))
   }, [])
 
   if (!config) return <Card><CardBody><div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div></CardBody></Card>
@@ -60,6 +62,14 @@ export default function TicketPortalCard() {
       setTemplates(data.templates)
       toast.info(`Code template: ${data.results.otp} · Details template: ${data.results.details}`)
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Not sent to Meta') } finally { setBusy(null) }
+  }
+  async function createTables() {
+    setBusy('tables')
+    try {
+      const { data, message } = await send<{ tables: Tables }>('POST', { action: 'create-tables', password })
+      setTables(data.tables); setPassword('')
+      toast.success(message ?? 'Tables created')
+    } catch (e) { toast.error(e instanceof Error ? e.message : 'Tables not created') } finally { setBusy(null) }
   }
   async function test() {
     setBusy('test')
@@ -88,6 +98,25 @@ export default function TicketPortalCard() {
       <CardBody>
         <div className="space-y-5">
           <p className="text-xs text-slate-500">Compare GlobalTix, Cebu and Manual on the Tickets page. Paying or cancelling on a portal needs a WhatsApp code from an approver below.</p>
+
+          {tables && !tables.ready && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-800">
+              <p className="font-semibold">The desk cannot run on this database yet</p>
+              <p className="mt-1">
+                {tables.missing.length
+                  ? <>Missing tables: <span className="font-mono">{tables.missing.join(', ')}</span>. Until they exist the Tickets page shows no Issue button, even with the desk ON.</>
+                  : <>The desk tables could not be checked: {tables.error}</>}
+              </p>
+              {tables.missing.length > 0 && (
+                <p className="mt-1 text-red-700">Creating them adds three new, empty tables. Nothing that already exists is changed. Enter the Critical Services Password below, then press the button.</p>
+              )}
+              {tables.missing.length > 0 && (
+                <button type="button" onClick={createTables} disabled={busy !== null || !password.trim()} className="btn btn-sm mt-2 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                  {busy === 'tables' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null} Create desk tables
+                </button>
+              )}
+            </div>
+          )}
 
           <div className={`flex items-center justify-between rounded-xl border p-4 ${config.enabled ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}>
             <div>
@@ -132,6 +161,11 @@ export default function TicketPortalCard() {
           </div>
           {templates?.error && <p className="text-xs text-red-600">{templates.error}</p>}
           <p className="text-xs text-slate-500">Meta only lets a code template carry the code, so the booking, ticket and amount go in the details message just before it.</p>
+          {templates && (templates.details === 'MISSING' || templates.details === 'REJECTED') && (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              The details template is {templates.details === 'MISSING' ? 'not registered yet' : 'rejected by Meta'}. Press <b>Register templates with Meta</b> to send the reworded one for approval. Until Meta approves it, approvers still get the code, just without the booking details.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={register} disabled={busy !== null} className="btn btn-secondary btn-sm">{busy === 'register' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />} Register templates with Meta</button>
             <button type="button" onClick={test} disabled={busy !== null} className="btn btn-secondary btn-sm">{busy === 'test' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} Send test code</button>

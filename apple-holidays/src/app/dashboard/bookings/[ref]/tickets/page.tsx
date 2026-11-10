@@ -318,11 +318,13 @@ export default function TicketsPage() {
 
   // ── Tickets from the AppleSystem API ──────────────────────────────────────
   const [apiAvailable, setApiAvailable] = useState(false)
+  // 'b2c' = an Aahaas store order: the button reads the store order instead of AppleSystem.
+  const [apiSource, setApiSource] = useState<'applesystem' | 'b2c'>('applesystem')
   const [apiCreating,  setApiCreating]  = useState(false)
 
   // ── Ticket Issue Desk (GlobalTix / Cebu) ──────────────────────────────────
   // Stays empty until Settings turns the desk on, so the page is unchanged.
-  const [portalDesk, setPortalDesk] = useState<{ enabled: boolean; byTicket: Record<string, { provider: string; reference: string | null; status: string }> }>({ enabled: false, byTicket: {} })
+  const [portalDesk, setPortalDesk] = useState<{ enabled: boolean; problem?: string | null; byTicket: Record<string, { provider: string; reference: string | null; status: string }> }>({ enabled: false, problem: null, byTicket: {} })
   const [deskTicket, setDeskTicket] = useState<Ticket | null>(null)
   const loadPortalDesk = () =>
     fetch(`/api/bookings/${ref}/ticket-portal`)
@@ -488,7 +490,10 @@ export default function TicketsPage() {
     if (!ref || !canCreate) return
     fetch(`/api/bookings/${ref}/as-tickets`)
       .then(res => res.json())
-      .then(json => setApiAvailable(Boolean(json.success && json.data?.available)))
+      .then(json => {
+        setApiAvailable(Boolean(json.success && json.data?.available))
+        if (json.data?.source === 'b2c') setApiSource('b2c')
+      })
       .catch(() => { /* the button just stays hidden; Add Ticket still works */ })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, canCreate])
@@ -505,12 +510,19 @@ export default function TicketsPage() {
       // A crashed route answers with an empty body; res.json() would then throw
       // "Unexpected end of JSON input", which says nothing about what failed.
       const text = await res.text()
-      let json: { success?: boolean; error?: string; message?: string; data?: { created: number; skipped: number } }
+      let json: { success?: boolean; error?: string; message?: string; data?: { created: number; skipped: number; placed?: number } }
       try { json = text ? JSON.parse(text) : {} }
       catch { throw new Error(`Ticket creation failed on the server (HTTP ${res.status}).`) }
       if (!json.success || !json.data) throw new Error(json.error || `Failed to create tickets (HTTP ${res.status})`)
 
       const { created, skipped } = json.data
+      if (apiSource === 'b2c') {
+        // The store order also fills Flights, Accommodation and Passengers; the
+        // server's message says what went where.
+        if (created > 0 || (json.data.placed ?? 0) > 0) { toast.success(json.message ?? 'Store order placed'); load() }
+        else toast.info(json.message ?? 'Everything on the store order is already on this booking')
+        return
+      }
       if (created > 0) {
         toast.success(json.message ?? `${created} ticket${created !== 1 ? 's' : ''} created from the API`)
         load()
@@ -962,12 +974,14 @@ export default function TicketsPage() {
                 onClick={createFromApi}
                 disabled={apiCreating}
                 className="btn btn-sm flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
-                title="Read this booking's quote from the AppleSystem API and create tickets for every costing line that doesn't have one yet"
+                title={apiSource === 'b2c'
+                  ? "Read this booking's Aahaas store order: tickets for attractions and activities, hotels into Accommodation, flights into Flights. Only adds what is missing — nothing is changed or removed."
+                  : "Read this booking's quote from the AppleSystem API and create tickets for every costing line that doesn't have one yet"}
               >
                 {apiCreating
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   : <Zap className="w-3.5 h-3.5" />}
-                Create Tickets from API
+                {apiSource === 'b2c' ? 'Create Tickets from Store Order' : 'Create Tickets from API'}
               </button>
             )}
             {purchased > 0 && (
@@ -1273,6 +1287,17 @@ export default function TicketsPage() {
             </div>
           </div>
         </div>
+
+        {/* The desk is ON but cannot run here — say why instead of hiding it. */}
+        {portalDesk.problem && (
+          <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
+            <div className="text-sm">
+              <p className="font-semibold text-red-800">Ticket Issue Desk is ON but its Issue buttons are hidden</p>
+              <p className="text-red-700 mt-0.5">{portalDesk.problem}</p>
+            </div>
+          </div>
+        )}
 
         {/* ── Meal Tickets ───────────────────────────────────────────────── */}
         {mealTickets.length > 0 && (
@@ -1580,7 +1605,9 @@ export default function TicketsPage() {
         {tickets.length === 0 && !noTickets.noTickets && (
           <Card className="p-12 text-center">
             <ShoppingCart className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-400 text-sm">No tickets yet — they will appear here after P&L is uploaded</p>
+            <p className="text-slate-400 text-sm">{apiSource === 'b2c'
+              ? 'No tickets yet — press “Create Tickets from Store Order” to bring in the attractions from the Aahaas order'
+              : 'No tickets yet — they will appear here after P&L is uploaded'}</p>
             {noTickets.canSet && (
               <button
                 onClick={() => { setNoTicketsNote(''); setNoTicketsModal(true) }}

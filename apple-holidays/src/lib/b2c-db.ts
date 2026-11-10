@@ -856,6 +856,30 @@ export async function fetchOrderLeadSources(orderIds: number[]): Promise<B2cLead
  * Anything non-integer is a programming error and throws rather than being
  * coerced — this is the one place SQL could otherwise be injected.
  */
+/**
+ * The booked stay behind each hotel line: `tbl_checkouts.related_order_id` →
+ * `hotel_prebooking.bookingdataset` (dates, rooms, board, hotel), the same read
+ * AahaasFlow's supplier voucher makes (n8n-project flow.ledger.js hotelStays).
+ * Keyed by the `tbl_checkouts.id` a `checkouts_more_data.checkout_id` points at.
+ * Read-only; at most 50 lines.
+ */
+export interface B2cHotelStayRow extends mysql.RowDataPacket {
+  line_id: number
+  provider: string | null
+  bookingdataset: string | null
+}
+
+export async function fetchHotelStayBlobs(checkoutLineIds: number[]): Promise<B2cHotelStayRow[]> {
+  const unique = Array.from(new Set(checkoutLineIds)).filter((n) => Number.isInteger(n) && n > 0).slice(0, 50)
+  if (unique.length === 0) return []
+  return b2cQuery<B2cHotelStayRow>(
+    `SELECT ch.id AS line_id, hp.provider, hp.bookingdataset
+       FROM tbl_checkouts ch
+       JOIN hotel_prebooking hp ON hp.prebooking_id = ch.related_order_id
+      WHERE ch.id IN (${sanitizeIds(unique)}) AND ch.main_category_id = 4`,
+  )
+}
+
 function sanitizeIds(ids: number[]): string {
   const clean = ids.map((id) => {
     if (!Number.isInteger(id) || id <= 0) throw new Error(`Invalid B2C order id: ${String(id)}`)

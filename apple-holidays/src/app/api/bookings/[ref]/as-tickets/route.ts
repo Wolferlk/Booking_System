@@ -10,6 +10,7 @@ import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
 import { findQuoteRow } from '@/lib/as-quote-lookup'
 import { createTicketsFromQuote } from '@/lib/as-auto-tickets'
 import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
+import { B2cPlacementError, describePlacement, placeB2cOrder } from '@/lib/b2c-placement'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -26,6 +27,10 @@ export const maxDuration = 60
  * touches an existing ticket, attractions and other services only.
  *
  * Returns { created, skipped, notRequested }.
+ *
+ * An Aahaas B2C booking has no AppleSystem quote: for it the same button reads
+ * the store order instead (b2c-placement.ts) — tickets for the attractions,
+ * hotels into Accommodation, flights into Flights. Equally create-only.
  */
 
 async function loadBooking(ref: string) {
@@ -43,8 +48,8 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   const booking = await loadBooking(params.ref)
   if (!booking) return buildApiError('Booking not found', 404)
 
-  const available = booking.status !== 'CANCELLED' && !(await isB2cOriginBooking(booking.id, booking.agent))
-  return buildApiSuccess({ available })
+  const b2c = await isB2cOriginBooking(booking.id, booking.agent)
+  return buildApiSuccess({ available: booking.status !== 'CANCELLED', source: b2c ? 'b2c' : 'applesystem' })
 }
 
 export async function POST(_req: NextRequest, { params }: { params: { ref: string } }) {
@@ -68,7 +73,21 @@ export async function POST(_req: NextRequest, { params }: { params: { ref: strin
     return buildApiError('This booking is cancelled — no tickets were created.', 409)
   }
   if (await isB2cOriginBooking(booking.id, booking.agent)) {
-    return buildApiError('This is an Aahaas B2C booking — it has no AppleSystem quote to create tickets from.', 409)
+    try {
+      const r = await placeB2cOrder(booking.bookingRef)
+      return buildApiSuccess(
+        {
+          source: 'b2c', created: r.tickets.created, skipped: r.tickets.skipped, notRequested: 0,
+          placed: r.hotels.created + r.flights.created + r.passengers.created, report: r,
+        },
+        describePlacement(r) + (r.warnings.length ? ` ${r.warnings.join(' ')}` : ''),
+      )
+    } catch (err) {
+      if (err instanceof B2cPlacementError) return buildApiError(err.message, err.status)
+      console.error('[as-tickets] B2C placement failed for', params.ref, err)
+      const detail = err instanceof Error ? err.message.split('\n').pop()?.trim() : null
+      return buildApiError(`Could not finish reading the Aahaas store order.${detail ? ` ${detail}` : ''} Anything already added stays; press the button again to finish.`, 502)
+    }
   }
 
   const lookupRef = (booking.isNumber || '').trim() || booking.bookingRef

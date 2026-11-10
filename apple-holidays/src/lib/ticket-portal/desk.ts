@@ -21,7 +21,7 @@ import { prisma } from '@/lib/prisma'
 import { putUpload } from '@/lib/storage'
 import { logActivity } from '@/lib/activity'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
-import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
+import { STORE_BOOKED_PREFIX } from '@/lib/b2c-placement'
 import { listPortals, portalCountriesFor, portalPurchaseBlocker, slugFor } from '@/lib/portals'
 import { clearApprovalPurchased, markApprovalPurchased, purchaseBlocker } from '@/lib/ticket-approvals'
 import { directIssueEnabled } from '@/lib/ticket-direct-issue'
@@ -74,11 +74,24 @@ async function loadTicket(ticketId: string, user: DeskUser) {
 }
 type LoadedTicket = Awaited<ReturnType<typeof loadTicket>>
 
-/** Why this ticket cannot use the desk at all, in words. Null when it can. */
+/** A fact written into a ticket's notes ("Visit: 2026-11-20 · Pax: ad 2 ch 1 · …"). */
+function noteFact(notes: string | null | undefined, label: string): string | null {
+  const part = (notes ?? '').split(' · ').map(p => p.trim()).find(p => p.startsWith(label))
+  return part ? part.slice(label.length).trim() || null : null
+}
+
+/**
+ * Why this ticket cannot use the desk at all, in words. Null when it can.
+ *
+ * Aahaas B2C bookings use the desk too since 2026-11-10. The one B2C case that
+ * stays refused is a line the store itself already bought through a portal
+ * (b2c-placement marks it) — buying it here would pay twice.
+ */
 async function deskBlocker(t: LoadedTicket, config: PortalConfig): Promise<string | null> {
   if (!config.enabled) return 'The Ticket Issue Desk is switched off in Settings.'
   if (t.booking.status === 'CANCELLED') return 'This booking is cancelled.'
-  if (await isB2cOriginBooking(t.booking.id, t.booking.agent)) return 'Aahaas store bookings are issued on AahaasFlow, so they cannot be bought twice.'
+  const storeBooked = noteFact(t.notes, STORE_BOOKED_PREFIX)
+  if (storeBooked) return `The Aahaas store already booked this ticket through ${storeBooked}. Check it on AahaasFlow — it must not be bought twice.`
   return null
 }
 
@@ -154,10 +167,31 @@ export async function deskState(ticketId: string, user: DeskUser) {
 /* ── compare ────────────────────────────────────────────────────────── */
 
 function countryCodes(t: LoadedTicket): string[] {
+  // A B2C ticket names its product's own country; the booking's may be unset.
+  const own = noteFact(t.notes, 'Country:')?.toUpperCase()
+  if (own && /^[A-Z]{2}$/.test(own)) return [own]
   const list = portalCountriesFor(t.booking.operationCountry as OperationCountry | null)
   if (list.length && list.length <= 2) return list
   const prefix = t.booking.bookingRef.slice(0, 2).toUpperCase()
-  return [prefix === 'IS' ? 'LK' : prefix]
+  if (/^[A-Z]{2}$/.test(prefix)) return [prefix === 'IS' ? 'LK' : prefix]
+  // A numeric B2C ref says nothing; Singapore is where both portals sell.
+  return ['SG']
+}
+
+/** The day of the visit: the agenda's, else the date the order named, else arrival. */
+function visitDateOf(t: LoadedTicket): string {
+  if (t.agendaItem?.date) return t.agendaItem.date.toISOString().slice(0, 10)
+  const named = noteFact(t.notes, 'Visit:')
+  if (named && /^\d{4}-\d{2}-\d{2}$/.test(named)) return named
+  return t.booking.arrivalDate.toISOString().slice(0, 10)
+}
+
+/** Who the ticket is for: the order line's own counts (B2C), else the booking's party. */
+function paxOf(t: LoadedTicket): { adults: number; children: number } {
+  const m = /^ad (\d+) ch (\d+)$/.exec(noteFact(t.notes, 'Pax:') ?? '')
+  if (m && Number(m[1]) + Number(m[2]) > 0) return { adults: Number(m[1]), children: Number(m[2]) }
+  const total = t.booking.paxAdults + t.booking.paxChildren
+  return total > 0 ? { adults: t.booking.paxAdults, children: t.booking.paxChildren } : { adults: Math.max(1, t.qty), children: 0 }
 }
 
 const cleanName = (name: string) => name.replace(/\s*[-–]\s*(entrance|entry|admission|ticket)s?\s*$/i, '').trim()
@@ -225,9 +259,8 @@ export async function compare(ticketId: string, user: DeskUser, opts: { q?: stri
     bookingRef: t.booking.bookingRef,
   })
   const aiByKey = new Map((ai ?? []).map(m => [m.key, m]))
-  const paxTotal = t.booking.paxAdults + t.booking.paxChildren
-  const pax = paxTotal > 0 ? { adults: t.booking.paxAdults, children: t.booking.paxChildren } : { adults: Math.max(1, t.qty), children: 0 }
-  const visitDate = (t.agendaItem?.date ?? t.booking.arrivalDate).toISOString().slice(0, 10)
+  const pax = paxOf(t)
+  const visitDate = visitDateOf(t)
 
   await Promise.all(providers.map(async provider => {
     const mine = shortlist.filter(p => p.provider === provider)

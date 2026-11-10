@@ -32,6 +32,7 @@ import {
 } from '@/lib/b2c-booking-sync'
 import { applyAccountsB2c, previewAccountsB2c } from '@/lib/accounts-b2c-client'
 import { listAmendmentNotices } from '@/lib/b2c-amendments'
+import { describePlacement, placeB2cOrder } from '@/lib/b2c-placement'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -157,7 +158,17 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
       : accounts.status === 'ok'
         ? ` Accounts: ${accounts.message ?? 'updated'}`
         : ` Accounts NOT updated — ${accounts.message}`
-    return buildApiSuccess({ ...result, syncId, accounts }, `${opsPart}${accountsPart}`)
+    // Anything the store order gained since import — a new attraction, hotel or
+    // flight — also lands in Tickets / Accommodation / Flights. Create-only, and
+    // a failure here never undoes the update above.
+    let placementPart = ''
+    try {
+      const placed = await placeB2cOrder(booking!.bookingRef)
+      if (placed.tickets.created || placed.hotels.created || placed.flights.created || placed.passengers.created) placementPart = ` ${describePlacement(placed)}`
+    } catch (err) {
+      console.warn('[b2c-sync] placement skipped:', err instanceof Error ? err.message : err)
+    }
+    return buildApiSuccess({ ...result, syncId, accounts }, `${opsPart}${accountsPart}${placementPart}`)
   } catch (err) {
     if (err instanceof B2cSyncError) return buildApiError(err.message, err.status)
     return buildApiError(err instanceof Error ? err.message : 'Update failed', 500)

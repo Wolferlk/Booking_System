@@ -8,6 +8,7 @@ import {
   DETAILS_BODY, DETAILS_EXAMPLES, OTP_TTL_MINUTES, getPortalConfig, savePortalConfig, type PortalConfig,
 } from '@/lib/ticket-portal/config'
 import { sendTestCode } from '@/lib/ticket-portal/otp'
+import { createDeskTables, deskTables } from '@/lib/ticket-portal/tables'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +32,8 @@ async function templateStatus(config: PortalConfig) {
 export async function GET() {
   if (!(await admin())) return buildApiError('Forbidden', 403)
   const config = await getPortalConfig()
-  return buildApiSuccess({ config, templates: await templateStatus(config), detailsBody: DETAILS_BODY })
+  const [templates, tables] = await Promise.all([templateStatus(config), deskTables()])
+  return buildApiSuccess({ config, templates, tables, detailsBody: DETAILS_BODY })
 }
 
 /** Saving decides who can approve spending, so it takes the critical-services password. */
@@ -49,11 +51,33 @@ export async function PUT(req: NextRequest) {
   return buildApiSuccess({ config: saved, templates: await templateStatus(saved) }, 'Ticket Issue Desk settings saved')
 }
 
-/** { action: 'register' } submits both templates to Meta; { action: 'test' } sends a sample code. */
+/**
+ * { action: 'register' } submits both templates to Meta; { action: 'test' } sends
+ * a sample code; { action: 'create-tables', password } creates the desk's three
+ * tables when this database lacks them (additive, IF NOT EXISTS).
+ */
 export async function POST(req: NextRequest) {
-  if (!(await admin())) return buildApiError('Forbidden', 403)
-  const { action } = (await req.json().catch(() => ({}))) as { action?: string }
+  const user = await admin()
+  if (!user) return buildApiError('Forbidden', 403)
+  const { action, password } = (await req.json().catch(() => ({}))) as { action?: string; password?: string }
   const config = await getPortalConfig()
+
+  if (action === 'create-tables') {
+    const critical = process.env.CRITICAL_SERVICES_PASSWORD ?? process.env.CRITICAL_OPS_PASSWORD
+    if (!critical) return buildApiError('Critical services password is not configured on the server', 500)
+    if (!password || password !== critical) return buildApiError('Incorrect critical services password', 403)
+    const before = await deskTables()
+    if (before.ready) return buildApiSuccess({ tables: before }, 'The desk tables are already there')
+    try {
+      const tables = await createDeskTables()
+      await logActivity({ userId: user.id, action: 'TICKET_PORTAL_TABLES', entityType: 'SystemSetting', entityId: 'ticket_portal_config', details: { created: before.missing } })
+      return tables.ready
+        ? buildApiSuccess({ tables }, 'Desk tables created — the Issue buttons now show on the Tickets page')
+        : buildApiError(`Still missing: ${tables.missing.join(', ') || tables.error}`, 500)
+    } catch (err) {
+      return buildApiError(`Tables not created: ${err instanceof Error ? err.message.split('\n').pop()?.trim() : String(err)}`, 500)
+    }
+  }
 
   if (action === 'test') {
     if (!config.recipients.length) return buildApiError('Save at least one approver number first.')

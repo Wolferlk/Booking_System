@@ -34,6 +34,10 @@ import { engageB2cGuests } from './b2c-guest-engage'
 import { fetchOrderChainFacts, isLaterDay, type B2cOrderFact } from './b2c-order-chain'
 import { handleAmendment, sweepRecentAmendments, type AmendmentOutcome } from './b2c-amendment-sweep'
 import { syncRecentVersionLinks } from './b2c-version-links'
+import { placeOnceForImport } from './b2c-placement'
+
+/** Store orders placed into tickets/hotels/flights per run (each is ~3 store reads). */
+const MAX_PLACEMENTS_PER_RUN = 10
 
 export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
@@ -305,6 +309,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   const automationUserId = await getAutomationUserId()
   const engageCandidates: { bookingRef: string; guestPhone: string | null; storeStatus: string | null }[] = []
 
+  let placements = 0
   for (const header of headers) {
     const orderId = Number(header.order_id)
     try {
@@ -351,6 +356,13 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
       }
 
       const outcome = await persistB2cBooking(result.booking, automationUserId)
+      // Tickets, hotels and flights into their own places — once per booking,
+      // bounded per run so a backlog cannot stretch a run. Never throws.
+      if ((outcome === 'created' || outcome === 'exists') && placements < MAX_PLACEMENTS_PER_RUN) {
+        const placed = await placeOnceForImport(result.booking.bookingRef)
+        if (placed.done) placements++
+        if (placed.message && !placed.done) summary.warnings!.push(placed.message)
+      }
       if (outcome === 'created') summary.created.push(result.booking.bookingRef)
       else if (outcome === 'exists') {
         summary.alreadyImported.push(result.booking.bookingRef)
