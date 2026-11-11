@@ -29,7 +29,7 @@ import { prisma } from '@/lib/prisma'
 import { isMissingTable } from '@/lib/vn-includes/includes'
 import { runSheetSync, getSheetConfig as getSheetMirrorConfig } from '@/lib/vn-checklist-sheet/sync'
 import {
-  buildIdf, matchBooking, matchDirectory, fold,
+  buildIdf, matchBooking, fold,
   type DirectoryEntry, type MatchLine, type MatchMovement, type MovementDecision,
 } from './match'
 import {
@@ -39,6 +39,7 @@ import {
   type VendorSyncConfig, type VendorSyncEventInfo, type VendorSyncLinkInfo, type VendorSyncMode,
   type VendorSyncRunInfo,
 } from './shared'
+import { loadVendorDirectory, resolveVendorName, type VendorDirectory } from './registry'
 
 export { isMissingTable }
 
@@ -168,26 +169,14 @@ async function dropIfEmpty(agendaItemId: string): Promise<void> {
 }
 
 async function loadDirectory(): Promise<DirectoryEntry[]> {
-  const [tour, vehicle] = await Promise.all([
-    prisma.tourVendor.findMany({
-      where: { isActive: true, OR: [{ country: 'VIETNAM' }, { country: null }] },
-      select: { id: true, name: true, phone: true, whatsappPhone: true },
-    }),
-    prisma.vehicleVendor.findMany({
-      where: { isActive: true, OR: [{ country: 'VIETNAM' }, { country: null }] },
-      select: { id: true, name: true, phone: true, whatsappPhone: true },
-    }),
-  ])
-  return [
-    ...tour.map(v => ({ id: v.id, name: v.name, phone: v.whatsappPhone || v.phone || null, source: 'TOUR_VENDOR' as const })),
-    ...vehicle.map(v => ({ id: v.id, name: v.name, phone: v.whatsappPhone || v.phone || null, source: 'VEHICLE_VENDOR' as const })),
-  ]
+  return (await loadVendorDirectory()).entries
 }
 
-function resolveTarget(sheetVendor: string, directory: DirectoryEntry[]): Target & { note: string | null } {
-  const m = matchDirectory(sheetVendor, directory)
-  if (!m) return { id: null, name: sheetVendor.trim(), phone: null, source: 'NONE', note: 'Not in the Tour Vendor directory — name only' }
-  if (m.ambiguous) return { id: null, name: sheetVendor.trim(), phone: null, source: 'NONE', note: `"${sheetVendor}" fits more than one directory entry — name only` }
+/** Excel name → directory vendor. A spelling linked in the Vendor Register wins over fuzzy matching. */
+function resolveTarget(sheetVendor: string, directory: VendorDirectory): Target & { note: string | null } {
+  const m = resolveVendorName(sheetVendor, directory)
+  if (!m) return { id: null, name: sheetVendor.trim(), phone: null, source: 'NONE', note: 'Not in the Vendor Register — name only' }
+  if (m.ambiguous) return { id: null, name: sheetVendor.trim(), phone: null, source: 'NONE', note: `"${sheetVendor}" fits more than one registered vendor — name only` }
   return {
     // Only a Tour Vendor id can go in tourVendorId; a transport vendor lends its name and phone.
     id: m.entry.source === 'TOUR_VENDOR' ? m.entry.id : null,
@@ -353,7 +342,7 @@ async function doRun(opts: { trigger: VendorSyncTrigger; scope: string; triggere
       for (const r of Array.from(refs)) toursByRef.set(r, [...(toursByRef.get(r) ?? []), t.tourCode])
     }
 
-    const directory = await loadDirectory()
+    const directory = await loadVendorDirectory()
     const refs = bookings.map(b => b.bookingRef)
     const links = refs.length ? await prisma.vnVendorSyncLink.findMany({ where: { bookingRef: { in: refs } } }) : []
     const linkByKey = new Map(links.map(l => [`${l.bookingRef}::${l.movementKey}`, l]))
@@ -437,7 +426,7 @@ async function decide(p: {
   decision: MovementDecision | null
   link: VnVendorSyncLink | null
   current: Current
-  directory: DirectoryEntry[]
+  directory: VendorDirectory
   canWrite: boolean
   actor: string | null
 }): Promise<{ wrote: boolean; count: Counted | null; events: Prisma.VnVendorSyncEventCreateManyInput[] }> {
@@ -513,6 +502,14 @@ async function decide(p: {
     if (ours && p.mode === 'AUTO' && p.canWrite && (current.tourVendorId !== target.id || (!current.tourVendorPhone && target.phone))) {
       wrote = await writeTourVendor(p.item.id, current.raw, { id: target.id, name: target.name, phone: target.phone ?? current.tourVendorPhone })
       if (wrote) ev('UPDATED', { fromValue: current.tourVendorName, toValue: clip(target.name, 191), score: best.score, detail: 'Linked to the vendor directory' })
+    } else if (!ours && p.mode === 'AUTO' && p.canWrite && target.phone && !/\d{6,}/.test((current.tourVendorPhone ?? '').replace(/[^\d]/g, ''))) {
+      // The right vendor, set by hand, without a number: add the register's number. The name stays as typed.
+      const res = await prisma.assignment.updateMany({
+        where: { agendaItemId: p.item.id, tourVendorName: current.raw, tourVendorPhone: current.tourVendorPhone },
+        data: { tourVendorPhone: target.phone, ...(current.tourVendorId || !target.id ? {} : { tourVendorId: target.id }) },
+      })
+      wrote = res.count > 0
+      if (wrote) ev('UPDATED', { fromValue: current.tourVendorName, toValue: current.tourVendorName, score: best.score, detail: `Number ${target.phone} added from the Vendor Register` })
     }
     await save(ours ? 'APPLIED' : 'IN_SYNC', { ...directoryData, note: target.note })
     return { wrote, count: 'inSync', events }

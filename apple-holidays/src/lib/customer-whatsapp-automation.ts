@@ -27,6 +27,7 @@ import { B2C_AGENT_NAME } from '@/lib/booking-source'
 import { listVersionLinks } from '@/lib/b2c-version-links'
 import { getCustomerBranding } from '@/lib/customer-branding-server'
 import { shouldHideBrand, type BrandAudience } from '@/lib/customer-branding'
+import { resolveVendorPhones } from '@/lib/vn-vendor-sync/registry'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -337,6 +338,14 @@ export async function sendDailyBriefingForBooking(
   const ticketLabel = (t: (typeof dayTickets)[number]) =>
     t.category?.trim() || t.type || 'Ticket'
 
+  // The Excel gives Vietnam movements a vendor NAME only; the Vendor Register holds the number.
+  const vendorPhones = b.operationCountry === 'VIETNAM'
+    ? await resolveVendorPhones(agendaItems
+        .filter(i => !contactPhone(i.assignment?.tourVendorPhone, i.assignment?.tourVendor?.whatsappPhone, i.assignment?.tourVendor?.phone))
+        .map(i => i.assignment?.tourVendorName ?? i.assignment?.tourVendor?.name))
+        .catch(() => new Map<string, string>())
+    : new Map<string, string>()
+
   const movements = agendaItems.map(item => ({
     location:     item.location,
     fromPoint:    item.fromPoint,
@@ -355,7 +364,8 @@ export async function sendDailyBriefingForBooking(
                     item.assignment?.guide?.whatsappPhone, item.assignment?.guide?.phone),
     tourVendorName:  item.assignment?.tourVendorName ?? item.assignment?.tourVendor?.name ?? null,
     tourVendorPhone: contactPhone(item.assignment?.tourVendorPhone,
-                    item.assignment?.tourVendor?.whatsappPhone, item.assignment?.tourVendor?.phone),
+                    item.assignment?.tourVendor?.whatsappPhone, item.assignment?.tourVendor?.phone,
+                    vendorPhones.get((item.assignment?.tourVendorName ?? item.assignment?.tourVendor?.name ?? '').trim())),
     tickets: dayTickets
       .filter(t => t.agendaItemId === item.id)
       .map(t => ({

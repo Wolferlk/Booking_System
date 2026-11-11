@@ -1120,8 +1120,11 @@ export function formatCustomerDailyBriefingMessage(params: {
       if (m.guideName) {
         lines.push(`   🧑‍🏫 Guide: *${m.guideName}*${m.guidePhone ? ` (${m.guidePhone})` : ''}`)
       }
-      if (m.tourVendorName) {
-        lines.push(`   🏢 Tour vendor: *${m.tourVendorName}*${m.tourVendorPhone ? ` (${m.tourVendorPhone})` : ''}`)
+      // Guests need a number to call, not a supplier name; the name is only the fallback.
+      if (m.tourVendorPhone) {
+        lines.push(`   📞 Tour contact: *${m.tourVendorPhone}*`)
+      } else if (m.tourVendorName) {
+        lines.push(`   🏢 Tour vendor: *${m.tourVendorName}*`)
       }
       for (const t of m.tickets) {
         const status = t.confirmed ? '✅ Confirmed' : '🕓 Reserved'
