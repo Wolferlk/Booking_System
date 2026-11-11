@@ -26,8 +26,6 @@
  */
 import { Prisma, type VnVendorSyncEvent, type VnVendorSyncLink, type VnVendorSyncRun } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { resolveIsLeisure } from '@/lib/leisure-day'
-import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { isMissingTable } from '@/lib/vn-includes/includes'
 import { runSheetSync, getSheetConfig as getSheetMirrorConfig } from '@/lib/vn-checklist-sheet/sync'
 import {
@@ -50,6 +48,22 @@ const STALE_LOCK_MS = 10 * 60_000
 /** "Fetch now" does not re-read the Excel if it was read this recently. */
 const SHEET_FRESH_MANUAL_MS = 60_000
 const CLOSED_STATUSES = ['CANCELLED', 'PENDING_CANCELLATION'] as const
+
+/**
+ * A vendor can still be required when the row does not need one of our
+ * drivers.  In particular, the agenda represents "No Driver Needed" as both
+ * `isLeisure` and `isHotelOnly` being true; filtering those flags out here
+ * silently loses the Excel transfer for that row.
+ *
+ * Only rows that cannot carry a tour/transport vendor are excluded.  All
+ * transfer and tour service types remain eligible, including vendor-covered
+ * rows with the no-driver flags set.
+ */
+function isVendorSyncItem(item: { serviceType: string | null }): boolean {
+  const type = String(item.serviceType ?? '').trim().toUpperCase()
+  if (type === 'ACCOMMODATION' || type === 'OWN_ARRANGEMENT' || type === 'FLIGHT') return false
+  return true
+}
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -350,9 +364,7 @@ async function doRun(opts: { trigger: VendorSyncTrigger; scope: string; triggere
     for (const b of bookings) {
       const codes = toursByRef.get(b.bookingRef) ?? []
       const bookingLines = codes.flatMap(c => linesByTour.get(c) ?? [])
-      const items = (b.tourAgenda?.items ?? []).filter(i => !resolveIsHotelOnly(i) && !resolveIsLeisure({
-        isLeisure: i.isLeisure, serviceType: i.serviceType, location: i.location, toPoint: i.toPoint, details: i.details,
-      }))
+      const items = (b.tourAgenda?.items ?? []).filter(isVendorSyncItem)
       if (!items.length) continue
 
       // Movement keys, made unique within the booking.
