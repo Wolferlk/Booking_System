@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Search, Loader2, CheckCircle2, Car, Building2, Phone, AlertTriangle,
-  Palmtree, Hotel, UserX,
+  Palmtree, Hotel, UserX, Route,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
@@ -60,6 +60,18 @@ export interface NoDriverMark {
 }
 
 type NoDriverKind = 'leisure' | 'none' | 'hotel'
+
+/**
+ * Another movement on the same booking the chosen driver can be copied to —
+ * Sri Lanka round tours run one driver for the whole file, so the MC Report
+ * hands these in to offer "one driver, whole tour".
+ */
+export interface TourSibling {
+  /** `AgendaItem.id` */
+  id:   string
+  /** `yyyy-mm-dd` — only used for the little day chips. */
+  date: string
+}
 
 const NO_DRIVER_OPTIONS: {
   kind: NoDriverKind
@@ -125,7 +137,7 @@ const CURRENCIES = ['USD', 'VND', 'SGD', 'MYR', 'LKR', 'AUD', 'GBP']
 
 export default function AssignMovementModal({
   open, onClose, bookingRef, agendaItemId, date, country, assignment, onSaved,
-  onMarkedNoDriver,
+  onMarkedNoDriver, tourSiblings, onSavedTour,
 }: {
   open: boolean
   onClose: () => void
@@ -147,6 +159,14 @@ export default function AssignMovementModal({
    * saved (which releases any held driver), so the caller can update its row.
    */
   onMarkedNoDriver?: (mark: NoDriverMark) => void
+  /**
+   * The booking's other still-assignable movements. When given (Sri Lanka round
+   * tours), the dialog offers to copy the saved assignment onto every one of
+   * them in the same go — one driver for the whole file.
+   */
+  tourSiblings?: TourSibling[]
+  /** Fires with the sibling ids that were successfully given the assignment. */
+  onSavedTour?: (ids: string[], next: MovementAssignment) => void
 }) {
   const [mode,           setMode]           = useState<'driver' | 'vendor'>('driver')
   const [drivers,        setDrivers]        = useState<Driver[]>([])
@@ -173,6 +193,11 @@ export default function AssignMovementModal({
   // button is what saves, because the mark releases any driver already held.
   const [noDriverKind, setNoDriverKind] = useState<NoDriverKind | null>(null)
   const [savingMark,   setSavingMark]   = useState(false)
+
+  // "One driver, whole tour" — copy the saved assignment onto every other
+  // movement of the booking. Progress is shown while the copies run.
+  const [applyWholeTour, setApplyWholeTour] = useState(false)
+  const [tourProgress,   setTourProgress]   = useState(0)
 
   const guidesEnabled      = isPartnerEnabledForCountry(partnerCountries.guide,      country)
   const tourVendorsEnabled = isPartnerEnabledForCountry(partnerCountries.tourVendor, country)
@@ -241,6 +266,7 @@ export default function AssignMovementModal({
     setTourVendorSel({ id: a.tourVendorId ?? null, name: a.tourVendorName ?? '', phone: a.tourVendorPhone ?? '' })
     setDriverSearch(''); setVendorSearch('')
     setNoDriverKind(null)
+    setApplyWholeTour(false); setTourProgress(0)
     void loadDrivers()
     void loadVendors()
     if (a.vendorId) void loadVendorDrivers(a.vendorId)
@@ -277,13 +303,43 @@ export default function AssignMovementModal({
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success(json.message || 'Assignment saved')
       onSaved(next)
+
+      // Copy the assignment onto the rest of the tour. Sequential on purpose:
+      // each save re-runs the SL allocation sync and the driver WhatsApp
+      // dedupe, which must see one write at a time. A failed day is reported
+      // and skipped — the days already copied stand.
+      if (next && applyWholeTour && tourSiblings?.length && onSavedTour) {
+        const okIds: string[] = []
+        let failed = 0
+        for (let i = 0; i < tourSiblings.length; i++) {
+          const sibling = tourSiblings[i]
+          setTourProgress(i + 1)
+          try {
+            const r = await fetch(`/api/bookings/${bookingRef}/agenda`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ itemId: sibling.id, assignment: next }),
+            })
+            const j = await r.json()
+            if (!j.success) throw new Error(j.error)
+            okIds.push(sibling.id)
+          } catch { failed += 1 }
+        }
+        if (okIds.length) onSavedTour(okIds, next)
+        if (failed) {
+          toast.error(`${failed} movement${failed === 1 ? '' : 's'} could not take the driver — assign ${failed === 1 ? 'it' : 'them'} individually`)
+        }
+        toast.success(`Driver assigned to ${okIds.length + 1} movement${okIds.length ? 's' : ''} of ${bookingRef}`)
+      } else {
+        toast.success(json.message || 'Assignment saved')
+      }
       onClose()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to save assignment')
     } finally {
       setSaving(false)
+      setTourProgress(0)
     }
   }
 
@@ -403,7 +459,13 @@ export default function AssignMovementModal({
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
             <Button size="sm" loading={saving} disabled={noDriverKind !== null} onClick={handleSave}>
-              {saving ? 'Saving…' : 'Save Assignment'}
+              {saving
+                ? (applyWholeTour && tourProgress > 0
+                    ? `Day ${tourProgress + 1} of ${(tourSiblings?.length ?? 0) + 1}…`
+                    : 'Saving…')
+                : applyWholeTour && (tourSiblings?.length ?? 0) > 0
+                    ? 'Assign Whole Tour'
+                    : 'Save Assignment'}
             </Button>
           </div>
         </div>
@@ -700,8 +762,81 @@ export default function AssignMovementModal({
             </div>
           </div>
         )}
+
+        {/* ── One driver, whole tour — Sri Lanka round tours ─────────────── */}
+        {(tourSiblings?.length ?? 0) > 0 && onSavedTour && (
+          <div
+            className={`rounded-2xl border p-3 transition-all ${
+              applyWholeTour
+                ? 'border-indigo-300 bg-gradient-to-r from-indigo-50 via-violet-50 to-indigo-50 ring-1 ring-indigo-200'
+                : 'border-slate-200 bg-slate-50'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setApplyWholeTour(v => !v)}
+              className="w-full flex items-center gap-3 text-left"
+            >
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${
+                applyWholeTour ? 'bg-indigo-500 text-white shadow-md shadow-indigo-200' : 'bg-white text-indigo-500 border border-indigo-200'
+              }`}>
+                <Route className="w-[18px] h-[18px]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-800">One driver, whole tour</p>
+                <p className="text-xs text-slate-500 truncate">
+                  Also give this driver the booking&apos;s other {tourSiblings!.length} movement{tourSiblings!.length === 1 ? '' : 's'}
+                </p>
+              </div>
+              {/* Switch */}
+              <span className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${
+                applyWholeTour ? 'bg-indigo-500' : 'bg-slate-300'
+              }`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+                  applyWholeTour ? 'left-[18px]' : 'left-0.5'
+                }`} />
+              </span>
+            </button>
+
+            {applyWholeTour && (
+              <div className="mt-2.5 animate-slide-up">
+                {/* The journey, day by day — the opened movement leads it. */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {[{ id: agendaItemId, date }, ...tourSiblings!]
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map((s, i, arr) => (
+                      <span key={s.id} className="inline-flex items-center gap-1">
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md whitespace-nowrap ${
+                          s.id === agendaItemId
+                            ? 'bg-indigo-500 text-white'
+                            : 'bg-white text-indigo-700 border border-indigo-200'
+                        }`}>
+                          {shortDay(s.date)}
+                        </span>
+                        {i < arr.length - 1 && <span className="w-2 h-px bg-indigo-300" />}
+                      </span>
+                    ))}
+                </div>
+                {saving && tourProgress > 0 && (
+                  <div className="mt-2 h-1 rounded-full bg-indigo-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                      style={{ width: `${Math.round((tourProgress / tourSiblings!.length) * 100)}%` }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         </div>
       </div>
     </Modal>
   )
+}
+
+/** `yyyy-mm-dd` → "12 Nov" for the whole-tour day chips. */
+function shortDay(d: string): string {
+  const dt = new Date(d)
+  return isNaN(dt.getTime()) ? d : dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }

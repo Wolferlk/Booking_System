@@ -3339,6 +3339,17 @@ export default function MCReportPage() {
             tourVendorPhone: assignRow.tourVendorPhone,
           }}
           onSaved={next => applyAssignment(assignRow.id, next)}
+          // Sri Lanka round tours run one driver for the whole file — offer to
+          // copy the assignment onto the booking's other drivable movements.
+          // Built from the full loaded chart, not the filtered view, so a date
+          // filter never silently shrinks "whole tour".
+          tourSiblings={isSriLanka(assignRow.operationCountry)
+            ? rows
+                .filter(r => r.vnCode === assignRow.vnCode && r.id !== assignRow.id
+                  && isAssignable(r) && !isCancelledRow(r))
+                .map(r => ({ id: r.id, date: r.date }))
+            : undefined}
+          onSavedTour={(ids, next) => ids.forEach(id => applyAssignment(id, next))}
           onMarkedNoDriver={mark => {
             // The server released any held driver along with the mark — fold
             // both into the row so it flips to its badge in place.
