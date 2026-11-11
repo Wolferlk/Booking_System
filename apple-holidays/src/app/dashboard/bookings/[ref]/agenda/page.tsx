@@ -1434,12 +1434,6 @@ export default function AgendaPage() {
 
       <div className="p-8 space-y-4">
 
-        {/* ── THE CHART AS A MAP ──
-            The rows below say what happens; this says where. Same data, read
-            geographically — it catches the mistakes a table cannot show, like a
-            drop-off point that is three hours from the next morning's pickup. */}
-        <JourneyMap bookingRef={ref} source="agenda" />
-
         {/* ── BOOKING INFO PANELS ── */}
         {booking && (
           <div className="space-y-2">
@@ -2328,6 +2322,11 @@ export default function AgendaPage() {
             Add Movement Item
           </Button>
         )}
+
+        {/* ── THE CHART AS A MAP ──
+            Keep the geographic overview after the agenda rows so the movement
+            details are the first thing operators work through. */}
+        <JourneyMap bookingRef={ref} source="agenda" />
       </div>
 
       {/* ── WHATSAPP ONE MOVEMENT ── */}
