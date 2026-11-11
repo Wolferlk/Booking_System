@@ -105,7 +105,7 @@ type MCRow = {
   mcDetails?: McDetails | null
   /** Vehicle to show when the movement has none of its own (driver's / allocation board). */
   vehicleTypeHint?: { value: string; source: 'driver' | 'allocation' } | null
-  /** Sri Lanka: the file's arrival / departure flights plus any on this row's date. */
+  /** The file's arrival / departure flights plus any on this row's date — all destinations. */
   flights?: McFlight[]
   arrivalDate?:   string | null
   departureDate?: string | null
@@ -528,22 +528,73 @@ function isDoneableRow(row: MCRow): boolean {
 
 type DoneFilter = 'all' | 'pending' | 'done'
 
-// ─── MC columns: flights, vehicle, desk figures, requests, meal preferences ───
+// ─── MC columns: the viewer's own layout ──────────────────────────────────────
 
-/** Optional columns the viewer can hide; remembered per browser. */
-const OPTIONAL_COLS = [
-  { key: 'flights',        label: 'Flight Details',  scope: 'Sri Lanka' },
-  { key: 'vehicle',        label: 'Vehicle Type',    scope: 'Sri Lanka' },
-  { key: 'budgetKm',       label: 'Budget KM',       scope: 'Sri Lanka' },
-  { key: 'actualKm',       label: 'Actual KM',       scope: 'Sri Lanka' },
-  { key: 'packageCost',    label: 'Package Cost',    scope: 'Sri Lanka' },
-  { key: 'budgetTransfer', label: 'Budget Transfer', scope: 'Singapore / Malaysia' },
-  { key: 'mealPref',       label: 'Meal Preference', scope: 'All destinations' },
-  { key: 'specialRequest', label: 'Special Request', scope: 'All destinations' },
-  { key: 'supplier',       label: 'Supplier',        scope: 'All destinations' },
-] as const
-type OptionalCol = typeof OPTIONAL_COLS[number]['key']
+/**
+ * Every column a viewer may switch off, grouped the way the desk thinks about
+ * them. Date, the booking ref and the done tick always stay — without them a
+ * row cannot be identified. The chosen layout is saved per user (not per
+ * browser), so it follows the person between the office desktop and a phone.
+ */
+type OptionalCol =
+  | 'leadGuest' | 'agent' | 'location' | 'pax' | 'route' | 'details' | 'meetTime' | 'service'
+  | 'driverVendor' | 'guide' | 'tourVendor' | 'supplier' | 'flights' | 'vehicle' | 'ticketsControl'
+  | 'budgetKm' | 'actualKm' | 'packageCost' | 'budgetTransfer'
+  | 'meal' | 'mealPref' | 'specialRequest'
+type ColDef = { key: OptionalCol; label: string; hint: string }
+
+const COL_GROUPS: { title: string; cols: ColDef[] }[] = [
+  { title: 'Trip basics', cols: [
+    { key: 'leadGuest', label: 'Lead Guest',     hint: 'Name + guest number' },
+    { key: 'agent',     label: 'Agent',          hint: 'Who sold the file' },
+    { key: 'location',  label: 'Location',       hint: '' },
+    { key: 'pax',       label: 'Adults / Child', hint: 'Both pax columns' },
+    { key: 'route',     label: 'From / To',      hint: 'Both route columns' },
+    { key: 'details',   label: 'Details',        hint: '' },
+    { key: 'meetTime',  label: 'Meet Time',      hint: '' },
+    { key: 'service',   label: 'Service',        hint: 'Transfer / SIC badges' },
+  ]},
+  { title: 'Operations', cols: [
+    { key: 'driverVendor',   label: 'Driver / Vendor', hint: '' },
+    { key: 'guide',          label: 'Guide',           hint: 'Where guides are used' },
+    { key: 'tourVendor',     label: 'Tour Vendor',     hint: 'Where tour vendors are used' },
+    { key: 'supplier',       label: 'Supplier',        hint: 'Accounts supplier' },
+    { key: 'flights',        label: 'Flight Details',  hint: 'Arrival / departure + the day’s flights' },
+    { key: 'vehicle',        label: 'Vehicle Type',    hint: 'Sri Lanka' },
+    { key: 'ticketsControl', label: 'Tickets Control', hint: 'Vietnam' },
+  ]},
+  { title: 'Desk figures', cols: [
+    { key: 'budgetKm',       label: 'Budget KM',       hint: 'Sri Lanka' },
+    { key: 'actualKm',       label: 'Actual KM',       hint: 'Sri Lanka' },
+    { key: 'packageCost',    label: 'Package Cost',    hint: 'Sri Lanka · LKR' },
+    { key: 'budgetTransfer', label: 'Budget Transfer', hint: 'Singapore / Malaysia' },
+  ]},
+  { title: 'Guest care', cols: [
+    { key: 'meal',           label: 'Meal Plan',       hint: 'BB / HB / FB badge' },
+    { key: 'mealPref',       label: 'Meal Preference', hint: 'Veg / Jain / allergies' },
+    { key: 'specialRequest', label: 'Special Request', hint: '' },
+  ]},
+]
+const ALL_COLS: ColDef[] = COL_GROUPS.flatMap(g => g.cols)
+const COL_KEYS = new Set<string>(ALL_COLS.map(c => c.key))
+// Same key the old picker used — a layout saved before this picker still loads.
 const HIDDEN_COLS_KEY = 'mc-report.hidden-cols'
+
+/** Only keys that are still real columns survive a load. */
+function sanitiseCols(v: unknown): Set<OptionalCol> {
+  return new Set((Array.isArray(v) ? v : []).filter((k): k is OptionalCol => COL_KEYS.has(String(k))))
+}
+
+/** One-click layouts. "Compact" keeps what a phone-width desk check needs. */
+const COL_PRESETS: { name: string; hint: string; hidden: OptionalCol[] }[] = [
+  { name: 'Everything', hint: 'Every column on', hidden: [] },
+  { name: 'Compact', hint: 'The movement at a glance',
+    hidden: ['route', 'details', 'meal', 'mealPref', 'specialRequest', 'supplier',
+             'flights', 'budgetKm', 'actualKm', 'packageCost', 'budgetTransfer'] },
+  { name: 'Desk figures', hint: 'KM & cost entry',
+    hidden: ['agent', 'route', 'details', 'meal', 'mealPref', 'specialRequest',
+             'guide', 'tourVendor', 'ticketsControl', 'flights'] },
+]
 
 function fmtNum(n: number, digits = 2) {
   return n.toLocaleString('en-US', { maximumFractionDigits: digits })
@@ -1036,25 +1087,53 @@ export default function MCReportPage() {
   // guide / tour-vendor columns only appear where they are actually used.
   const [partnerCountries, setPartnerCountries] = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
   const exportMenuRef = useRef<HTMLDivElement>(null)
-  // Optional MC columns the viewer switched off — a per-browser convenience.
+  // Columns the viewer switched off. The browser copy paints instantly; the
+  // per-user server copy wins when it arrives, so the layout follows the person.
   const [hiddenCols, setHiddenCols] = useState<Set<OptionalCol>>(new Set())
   const [showColMenu, setShowColMenu] = useState(false)
+  const [colQuery, setColQuery] = useState('')
+  const [colSave, setColSave] = useState<'idle' | 'saving' | 'saved' | 'offline'>('idle')
   const colMenuRef = useRef<HTMLDivElement>(null)
+  const colSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(HIDDEN_COLS_KEY) ?? '[]')
-      if (Array.isArray(saved)) setHiddenCols(new Set(saved as OptionalCol[]))
+      setHiddenCols(sanitiseCols(JSON.parse(localStorage.getItem(HIDDEN_COLS_KEY) ?? '[]')))
     } catch { /* private window / blocked storage — show everything */ }
+    let gone = false
+    fetch('/api/mc-report/columns')
+      .then(r => r.json())
+      .then(json => {
+        if (gone || !json?.success) return
+        const server = sanitiseCols(json.data?.hidden)
+        setHiddenCols(server)
+        try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify(Array.from(server))) } catch { /* ignore */ }
+      })
+      .catch(() => { /* the browser copy stands until the account is reachable */ })
+    return () => { gone = true }
+  }, [])
+
+  /** Apply + remember a layout: browser copy at once, account copy debounced. */
+  const setCols = useCallback((next: Set<OptionalCol>) => {
+    setHiddenCols(next)
+    try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify(Array.from(next))) } catch { /* ignore */ }
+    if (colSaveTimer.current) clearTimeout(colSaveTimer.current)
+    setColSave('saving')
+    colSaveTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/mc-report/columns', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hidden: Array.from(next) }),
+        })
+        setColSave(res.ok ? 'saved' : 'offline')
+      } catch { setColSave('offline') }
+    }, 600)
   }, [])
 
   function toggleCol(key: OptionalCol) {
-    setHiddenCols(prev => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key); else next.add(key)
-      try { localStorage.setItem(HIDDEN_COLS_KEY, JSON.stringify(Array.from(next))) } catch { /* ignore */ }
-      return next
-    })
+    const next = new Set(hiddenCols)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    setCols(next)
   }
 
   const reloadTemplates = useCallback(async () => {
@@ -1312,17 +1391,17 @@ export default function MCReportPage() {
   // The columns are only worth their width when something in view can use them:
   // a chart of Vietnam movements does not carry a tour-vendor column when
   // Vietnam does not book tour vendors.
-  const showGuideCol      = useMemo(
+  const guideColAvailable      = useMemo(
     () => displayedRows.some(r => guideEnabledFor(r) || r.guideName),
     [displayedRows, guideEnabledFor],
   )
-  const showTourVendorCol = useMemo(
+  const tourVendorColAvailable = useMemo(
     () => displayedRows.some(r => tourVendorEnabledFor(r) || r.tourVendorName),
     [displayedRows, tourVendorEnabledFor],
   )
 
   // Tickets Control is a Vietnam-only column: shown when a Vietnam movement is in view.
-  const showTicketsControlCol = useMemo(
+  const ticketsControlColAvailable = useMemo(
     () => displayedRows.some(r => r.operationCountry === 'VIETNAM' && !r.isHotelOnlyBooking),
     [displayedRows],
   )
@@ -1333,8 +1412,25 @@ export default function MCReportPage() {
   // (a Hotel Only stay is not a movement), and not switched off in Columns.
   const hasSlRows   = useMemo(() => displayedRows.some(r => isSriLanka(r.operationCountry) && !r.isHotelOnlyBooking), [displayedRows])
   const hasSgMyRows = useMemo(() => displayedRows.some(r => isSgMy(r.operationCountry) && !r.isHotelOnlyBooking), [displayedRows])
+  // Flights ride on the booking whatever the destination — the column appears
+  // wherever a file in view actually carries one.
+  const flightsColAvailable = useMemo(() => displayedRows.some(r => (r.flights?.length ?? 0) > 0), [displayedRows])
   const colOn = (key: OptionalCol) => !hiddenCols.has(key)
-  const showFlightsCol     = hasSlRows && colOn('flights')
+  // A column shows when the viewer wants it AND something in view can fill it.
+  const showLeadGuestCol    = colOn('leadGuest')
+  const showAgentCol        = colOn('agent')
+  const showLocationCol     = colOn('location')
+  const showPaxCol          = colOn('pax')
+  const showRouteCol        = colOn('route')
+  const showDetailsCol      = colOn('details')
+  const showMealCol         = colOn('meal')
+  const showMeetTimeCol     = colOn('meetTime')
+  const showServiceCol      = colOn('service')
+  const showDriverVendorCol = colOn('driverVendor')
+  const showGuideCol          = guideColAvailable && colOn('guide')
+  const showTourVendorCol     = tourVendorColAvailable && colOn('tourVendor')
+  const showTicketsControlCol = ticketsControlColAvailable && colOn('ticketsControl')
+  const showFlightsCol     = flightsColAvailable && colOn('flights')
   const showVehicleCol     = hasSlRows && colOn('vehicle')
   const showBudgetKmCol    = hasSlRows && colOn('budgetKm')
   const showActualKmCol    = hasSlRows && colOn('actualKm')
@@ -1344,10 +1440,25 @@ export default function MCReportPage() {
   const showSpecialReqCol  = colOn('specialRequest')
   const showSupplierCol    = colOn('supplier')
   const showDoneCol = hasSlRows || doneFilter !== 'all'
-  const columnCount = 14
-    + [showDoneCol, showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
+  const columnCount = 2 // Date + VN Code always render
+    + (showPaxCol ? 2 : 0) + (showRouteCol ? 2 : 0)
+    + [showDoneCol, showLeadGuestCol, showAgentCol, showLocationCol, showDetailsCol, showMealCol,
+       showMeetTimeCol, showServiceCol, showDriverVendorCol,
+       showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
        showBudgetKmCol, showActualKmCol, showPackageCostCol, showBudgetTransferCol,
        showMealPrefCol, showSpecialReqCol, showSupplierCol].filter(Boolean).length
+
+  // What the Columns picker reports: a column whose country is not in view is
+  // "not in view here" rather than silently absent.
+  const colAvailable: Record<OptionalCol, boolean> = {
+    leadGuest: true, agent: true, location: true, pax: true, route: true, details: true,
+    meal: true, meetTime: true, service: true, driverVendor: true, supplier: true,
+    mealPref: true, specialRequest: true,
+    guide: guideColAvailable, tourVendor: tourVendorColAvailable, ticketsControl: ticketsControlColAvailable,
+    flights: flightsColAvailable, vehicle: hasSlRows, budgetKm: hasSlRows, actualKm: hasSlRows,
+    packageCost: hasSlRows, budgetTransfer: hasSgMyRows,
+  }
+  const hiddenCount = ALL_COLS.filter(c => hiddenCols.has(c.key)).length
 
   // ── Supplier ─────────────────────────────────────────────────────────────────
 
@@ -2180,31 +2291,132 @@ export default function MCReportPage() {
                   <button
                     onClick={() => setShowColMenu(v => !v)}
                     className={cn(
-                      'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                      hiddenCols.size ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+                      'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                      hiddenCount
+                        ? 'border-brand-300 bg-brand-50 text-brand-700 shadow-sm'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+                      showColMenu && 'ring-2 ring-brand-100',
                     )}
                   >
                     <Columns3 className="w-3.5 h-3.5" />
-                    Columns{hiddenCols.size ? ` · ${hiddenCols.size} hidden` : ''}
+                    Columns
+                    {hiddenCount > 0 && (
+                      <span className="rounded-full bg-brand-600 px-1.5 py-px text-[9px] font-bold text-white tabular-nums">
+                        {hiddenCount} off
+                      </span>
+                    )}
                   </button>
                   {showColMenu && (
-                    <div className="absolute right-0 top-8 z-30 w-64 rounded-xl border border-slate-200 bg-white py-2 shadow-lg">
-                      <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">MC columns</p>
-                      {OPTIONAL_COLS.map(c => (
-                        <button key={c.key} onClick={() => toggleCol(c.key)}
-                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-50">
-                          <span className={cn(
-                            'flex h-4 w-4 items-center justify-center rounded border',
-                            colOn(c.key) ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300',
-                          )}>
-                            {colOn(c.key) && <Check className="h-3 w-3" />}
+                    <div className="absolute right-0 top-9 z-30 w-[340px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl">
+                      {/* Header — whose layout this is, and whether it has landed */}
+                      <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-gradient-to-r from-brand-50/60 via-white to-white px-4 py-3">
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">Your columns</p>
+                          <p className="text-[10px] text-slate-400">
+                            {ALL_COLS.length - hiddenCount} of {ALL_COLS.length} showing · saved to your account
+                          </p>
+                        </div>
+                        {colSave === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+                        {colSave === 'saved' && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            <Check className="h-3 w-3" /> Saved
                           </span>
-                          <span className="flex-1 font-medium">{c.label}</span>
-                          <span className="text-[10px] text-slate-400">{c.scope}</span>
-                        </button>
-                      ))}
-                      <p className="px-3 pt-1.5 text-[10px] leading-snug text-slate-400">
-                        Country columns only appear when that country&apos;s movements are in view.
+                        )}
+                        {colSave === 'offline' && (
+                          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                            title="The account copy could not be written — this layout is remembered on this device only until the next change goes through">
+                            This device only
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Search + one-click layouts */}
+                      <div className="px-3 pt-2.5">
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-300" />
+                          <input
+                            value={colQuery}
+                            onChange={e => setColQuery(e.target.value)}
+                            placeholder="Find a column…"
+                            className="w-full rounded-lg border border-slate-200 bg-slate-50/60 py-1.5 pl-8 pr-2 text-xs text-slate-700 placeholder:text-slate-300 focus:border-brand-300 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-100"
+                          />
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {COL_PRESETS.map(p => {
+                            const active = p.hidden.length === hiddenCols.size && p.hidden.every(k => hiddenCols.has(k))
+                            return (
+                              <button
+                                key={p.name}
+                                onClick={() => setCols(new Set(p.hidden))}
+                                title={p.hint}
+                                className={cn(
+                                  'rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors',
+                                  active
+                                    ? 'border-brand-500 bg-brand-600 text-white shadow-sm'
+                                    : 'border-slate-200 text-slate-500 hover:border-brand-200 hover:bg-brand-50 hover:text-brand-700',
+                                )}
+                              >
+                                {p.name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Grouped switches */}
+                      <div className="mt-1 max-h-[320px] overflow-y-auto px-1.5 pb-2">
+                        {(() => {
+                          const cq = colQuery.trim().toLowerCase()
+                          const groups = COL_GROUPS
+                            .map(g => ({
+                              title: g.title,
+                              cols: g.cols.filter(c => !cq || c.label.toLowerCase().includes(cq) || c.hint.toLowerCase().includes(cq)),
+                            }))
+                            .filter(g => g.cols.length > 0)
+                          if (groups.length === 0) {
+                            return <p className="px-3 py-4 text-center text-[11px] text-slate-400">No column matches &ldquo;{colQuery}&rdquo;</p>
+                          }
+                          return groups.map(g => (
+                            <div key={g.title}>
+                              <p className="px-2.5 pb-0.5 pt-2 text-[9px] font-bold uppercase tracking-widest text-slate-400">{g.title}</p>
+                              {g.cols.map(c => {
+                                const on = colOn(c.key)
+                                return (
+                                  <button
+                                    key={c.key}
+                                    onClick={() => toggleCol(c.key)}
+                                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-slate-50"
+                                  >
+                                    <span className={cn(
+                                      'relative inline-flex h-4 w-7 flex-shrink-0 rounded-full transition-colors duration-200',
+                                      on ? 'bg-brand-500' : 'bg-slate-200',
+                                    )}>
+                                      <span className={cn(
+                                        'absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform duration-200',
+                                        on ? 'translate-x-3.5' : 'translate-x-0.5',
+                                      )} />
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className={cn('block text-xs font-medium', on ? 'text-slate-800' : 'text-slate-400')}>{c.label}</span>
+                                      {c.hint && <span className="block truncate text-[10px] text-slate-400">{c.hint}</span>}
+                                    </span>
+                                    {!colAvailable[c.key] && (
+                                      <span
+                                        className="flex-shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400"
+                                        title="No movement in view carries this column — it appears when one does"
+                                      >
+                                        not in view
+                                      </span>
+                                    )}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ))
+                        })()}
+                      </div>
+                      <p className="border-t border-slate-100 bg-slate-50/60 px-4 py-2 text-[10px] leading-snug text-slate-400">
+                        Date, VN Code and the done tick always stay. Country columns appear when that country&apos;s movements are in view.
                       </p>
                     </div>
                   )}
@@ -2321,19 +2533,27 @@ export default function MCReportPage() {
                       )}
                       <SortTh field="date"        label="Date"      sort={sort} onSort={handleSort} />
                       <SortTh field="vnCode"      label="VN Code"   sort={sort} onSort={handleSort} />
-                      <SortTh field="leadGuest"   label="Lead Guest" sort={sort} onSort={handleSort} />
-                      <SortTh field="agent"       label="Agent"     sort={sort} onSort={handleSort} />
-                      <SortTh field="location"    label="Location"  sort={sort} onSort={handleSort} />
+                      {showLeadGuestCol && <SortTh field="leadGuest" label="Lead Guest" sort={sort} onSort={handleSort} />}
+                      {showAgentCol    && <SortTh field="agent"     label="Agent"     sort={sort} onSort={handleSort} />}
+                      {showLocationCol && <SortTh field="location"  label="Location"  sort={sort} onSort={handleSort} />}
                       {showFlightsCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Flight Details</th>}
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Adults</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Child</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">From</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">To</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Details</th>
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal</th>
+                      {showPaxCol && (
+                        <>
+                          <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Adults</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Child</th>
+                        </>
+                      )}
+                      {showRouteCol && (
+                        <>
+                          <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">From</th>
+                          <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">To</th>
+                        </>
+                      )}
+                      {showDetailsCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Details</th>}
+                      {showMealCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal</th>}
                       {showMealPrefCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal Pref</th>}
-                      <SortTh field="meetingTime" label="Meet Time" sort={sort} onSort={handleSort} />
-                      <SortTh field="serviceType" label="Service"   sort={sort} onSort={handleSort} />
+                      {showMeetTimeCol && <SortTh field="meetingTime" label="Meet Time" sort={sort} onSort={handleSort} />}
+                      {showServiceCol  && <SortTh field="serviceType" label="Service"   sort={sort} onSort={handleSort} />}
                       {showGuideCol && (
                         <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">
                           {PARTNER_CONFIG.guide.label}
@@ -2344,7 +2564,7 @@ export default function MCReportPage() {
                           {PARTNER_CONFIG.tourVendor.label}
                         </th>
                       )}
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
+                      {showDriverVendorCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>}
                       {showSupplierCol && (
                         <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap"
                           title="The Accounts supplier (Suppliers Manage) this movement is paid to">Supplier</th>
@@ -2517,6 +2737,7 @@ export default function MCReportPage() {
                             </td>
 
                             {/* Lead guest — the name the driver and desk ask for */}
+                            {showLeadGuestCol && (
                             <td className="px-3 py-2.5 max-w-[160px]">
                               {row.leadGuest ? (
                                 <div className="min-w-0">
@@ -2531,7 +2752,7 @@ export default function MCReportPage() {
                                       title={`Call guest · ${row.leadGuestPhone}`}
                                     >
                                       <Phone className="h-2.5 w-2.5 flex-shrink-0 text-sky-500 group-hover/phone:text-sky-700" />
-                                      <span className="truncate">Guest number · {row.leadGuestPhone}</span>
+                                      <span className="truncate">{row.leadGuestPhone}</span>
                                     </a>
                                   ) : (
                                     <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-300" title="No guest number on this booking">
@@ -2541,8 +2762,10 @@ export default function MCReportPage() {
                                 </div>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
+                            )}
 
                             {/* Agent — who sold the file; operations reads it beside the ref */}
+                            {showAgentCol && (
                             <td className="px-3 py-2.5 max-w-[140px]">
                               {row.agent ? (
                                 <span className="block truncate font-medium text-slate-700" title={row.agent}>
@@ -2550,8 +2773,10 @@ export default function MCReportPage() {
                                 </span>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
+                            )}
 
                             {/* Location */}
+                            {showLocationCol && (
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-1.5 whitespace-nowrap">
                                 <MapPin className="w-3 h-3 text-slate-400 flex-shrink-0" />
@@ -2560,15 +2785,20 @@ export default function MCReportPage() {
                                 </span>
                               </div>
                             </td>
+                            )}
 
                             {/* Flight Details — Sri Lanka */}
                             {showFlightsCol && (
                               <td className="px-3 py-2">
-                                {slRow ? <FlightCell row={row} /> : <span className="text-slate-300 text-[10px]">—</span>}
+                                {row.isHotelOnlyBooking
+                                  ? <span className="text-slate-300 text-[10px]">—</span>
+                                  : <FlightCell row={row} />}
                               </td>
                             )}
 
                             {/* Adults / Children */}
+                            {showPaxCol && (
+                            <>
                             <td className="px-3 py-2.5 text-center">
                               <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 font-bold text-[11px]">
                                 {row.paxAdults}
@@ -2582,8 +2812,12 @@ export default function MCReportPage() {
                                 {row.paxChildren}
                               </span>
                             </td>
+                            </>
+                            )}
 
-                            {/* From */}
+                            {/* From / To */}
+                            {showRouteCol && (
+                            <>
                             <td className="px-3 py-2.5 text-slate-600 max-w-[120px]">
                               {fromText ? (
                                 <span className="block truncate" title={fromText}>
@@ -2593,8 +2827,6 @@ export default function MCReportPage() {
                                 </span>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
-
-                            {/* To */}
                             <td className="px-3 py-2.5 text-slate-600 max-w-[120px]">
                               {toText ? (
                                 <span className="block truncate" title={toText}>
@@ -2604,8 +2836,11 @@ export default function MCReportPage() {
                                 </span>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
+                            </>
+                            )}
 
                             {/* Details — show snippet around match when deep-searching */}
+                            {showDetailsCol && (
                             <td className="px-3 py-2.5 text-slate-500 max-w-[200px]">
                               {detailsText ? (
                                 showDetailSnippet ? (
@@ -2619,13 +2854,16 @@ export default function MCReportPage() {
                                 )
                               ) : <span className="text-slate-300">—</span>}
                             </td>
+                            )}
 
                             {/* Meal Plan */}
+                            {showMealCol && (
                             <td className="px-3 py-2.5">
                               {row.mealPlan
                                 ? <MealBadge plan={row.mealPlan} />
                                 : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
+                            )}
 
                             {/* Meal Preference — every destination */}
                             {showMealPrefCol && (
@@ -2633,6 +2871,7 @@ export default function MCReportPage() {
                             )}
 
                             {/* Meeting Time */}
+                            {showMeetTimeCol && (
                             <td className="px-3 py-2.5">
                               {row.meetingTime ? (
                                 <div className="flex items-center gap-1 whitespace-nowrap text-slate-700 font-medium">
@@ -2641,8 +2880,10 @@ export default function MCReportPage() {
                                 </div>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
+                            )}
 
                             {/* Service Type */}
+                            {showServiceCol && (
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 {/* The booking-level mark replaces the movement
@@ -2660,6 +2901,7 @@ export default function MCReportPage() {
                                 )}
                               </div>
                             </td>
+                            )}
 
                             {/* Guide — assignable straight from the chart */}
                             {showGuideCol && (
@@ -2696,6 +2938,7 @@ export default function MCReportPage() {
                             )}
 
                             {/* Driver / Vendor */}
+                            {showDriverVendorCol && (
                             <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
                               {row.isHotelOnlyBooking ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 whitespace-nowrap"
@@ -2757,6 +3000,7 @@ export default function MCReportPage() {
                                 </button>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
+                            )}
 
                             {/* Supplier — from Accounts → Suppliers Manage */}
                             {showSupplierCol && (

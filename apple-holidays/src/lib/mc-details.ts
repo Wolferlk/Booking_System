@@ -132,7 +132,7 @@ export async function carryMcDetails(bookingRef: string, pairs: [string, string]
 // ── Booking context ───────────────────────────────────────────────────────────
 
 export type McBookingContext = {
-  /** Sri Lanka only. Every flight on the file, in date order. */
+  /** Every flight on the file, in date order — all destinations. */
   flights: McFlight[]
   arrivalDate: string
   departureDate: string
@@ -168,13 +168,13 @@ export async function loadBookingContext(
       where: { id: { in: ids } },
       select: { id: true, bookingRef: true, arrivalDate: true, departureDate: true, clientRequest: true, specialOccasions: true },
     }),
-    slIds.length
-      ? prisma.flight.findMany({
-          where: { bookingId: { in: slIds } },
-          select: { bookingId: true, flightNo: true, date: true, fromApt: true, toApt: true, depTime: true, arrTime: true, airline: true },
-          orderBy: [{ date: 'asc' }, { depTime: 'asc' }],
-        })
-      : Promise.resolve([]),
+    // Every destination, not only Sri Lanka: a Hanoi day line needs its
+    // arrival flight on the chart just as a Colombo one does.
+    prisma.flight.findMany({
+      where: { bookingId: { in: ids } },
+      select: { bookingId: true, flightNo: true, date: true, fromApt: true, toApt: true, depTime: true, arrTime: true, airline: true },
+      orderBy: [{ date: 'asc' }, { depTime: 'asc' }],
+    }),
     prisma.passenger.findMany({
       where: { bookingId: { in: ids }, mealPreference: { not: null } },
       select: { bookingId: true, name: true, mealPreference: true },
