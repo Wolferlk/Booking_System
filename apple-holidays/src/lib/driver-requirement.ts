@@ -36,6 +36,26 @@ export function resolveIsHotelOnly(item: DriverRequirementItem): boolean {
   return item.isHotelOnly === true
 }
 
+/**
+ * **No driver needed** — the ground team does not drive this movement (a tour
+ * vendor, the hotel or a partner covers it), but it is neither a leisure day nor
+ * hotel only, so the guest still has a normal day out.
+ *
+ * Stored as BOTH `isLeisure` and `isHotelOnly` set to true. The two marks are
+ * otherwise mutually exclusive, so the pair is unambiguous, and it needs no new
+ * column: every screen that already skips a leisure or hotel-only row when it
+ * counts drivers skips this one too. Only labels need to ask this first, so the
+ * row is not called a leisure day or hotel only.
+ */
+export const NO_DRIVER_NEEDED_LABEL = 'No Driver Needed'
+
+export function resolveNoDriverNeeded(item: {
+  isLeisure?: boolean | null
+  isHotelOnly?: boolean | null
+}): boolean {
+  return item.isLeisure === true && item.isHotelOnly === true
+}
+
 /** True when a driver still has to be allocated to this movement. */
 export function movementNeedsDriver(item: DriverRequirementItem): boolean {
   return !resolveIsHotelOnly(item) && !resolveIsLeisure(item)

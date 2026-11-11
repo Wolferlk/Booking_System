@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { HOTEL_ONLY_VEHICLE, movementNeedsDriver } from '@/lib/driver-requirement'
+import { HOTEL_ONLY_VEHICLE, movementNeedsDriver, resolveNoDriverNeeded } from '@/lib/driver-requirement'
 
 /**
  * Keeps the Sri Lanka booking-level driver allocation in step with the per-movement
@@ -160,7 +160,8 @@ export async function syncHotelOnlyFromAgenda(bookingId: string): Promise<boolea
   if (items.length === 0) return false
 
   const current      = booking.slDriverAllocation?.vehicleType ?? null
-  const allHotelOnly = items.every(i => i.isHotelOnly === true)
+  // No Driver Needed rows carry both flags; they are not hotel-only stays.
+  const allHotelOnly = items.every(i => i.isHotelOnly === true && !resolveNoDriverNeeded(i))
 
   // A whole chart of hotel-only rows is a hotel-only file.
   if (allHotelOnly && current !== HOTEL_ONLY_VEHICLE) {

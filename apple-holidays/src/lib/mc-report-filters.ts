@@ -37,6 +37,8 @@ export interface McFilterRow {
   meetingTime: string | null
   isLeisure:   boolean
   isHotelOnly: boolean
+  /** No Driver Needed rows also carry isHotelOnly — see driver-requirement.ts. */
+  noDriverNeeded?: boolean
   isHotelOnlyBooking: boolean
   driverId:    string | null
   driverName:  string | null
@@ -273,7 +275,7 @@ function hasFlag(row: McFilterRow, flag: FlagKey): boolean {
     case 'mealPref':   return !!row.mealPrefs?.length
     case 'specialReq': return !!row.bookingRequests?.length || !!row.mcDetails?.specialRequest
     case 'leisure':    return row.isLeisure
-    case 'hotelOnly':  return row.isHotelOnly || row.isHotelOnlyBooking
+    case 'hotelOnly':  return (row.isHotelOnly && !row.noDriverNeeded) || row.isHotelOnlyBooking
   }
 }
 

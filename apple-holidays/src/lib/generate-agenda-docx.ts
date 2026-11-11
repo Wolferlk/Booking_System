@@ -452,9 +452,12 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
 
             // Leisure and hotel-only days carry no driver by design — say so
             // rather than printing "Not assigned", which reads as an operational gap.
-            const isLeisure   = resolveIsLeisure(item)
-            const isHotelOnly = resolveIsHotelOnly(item)
-            const noDriver    = isLeisure || isHotelOnly
+            // Both flags on = No Driver Needed: a normal movement the ground team
+            // does not drive, so it keeps its service type label.
+            const noDriverNeeded = resolveNoDriverNeeded(item)
+            const isLeisure   = resolveIsLeisure(item) && !noDriverNeeded
+            const isHotelOnly = resolveIsHotelOnly(item) && !noDriverNeeded
+            const noDriver    = isLeisure || isHotelOnly || noDriverNeeded
 
             // Everyone running the movement, one line each — vehicle vendor,
             // driver + vehicle, tour vendor, guide. Any of them is an allocation.

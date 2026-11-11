@@ -32,6 +32,8 @@ type MCRow = {
   isLeisure:      boolean
   /** Hotel only — accommodation or own transport, so likewise no driver. */
   isHotelOnly:    boolean
+  /** No Driver Needed — the ground team does not drive it; isHotelOnly is also true. */
+  noDriverNeeded?: boolean
   vendor:         string | null
   driverName:     string | null
   guideName:       string | null
@@ -145,7 +147,7 @@ function PrintContent() {
   const sicCount      = liveRows.filter(r => isSicType(r.serviceType)).length
   const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = liveRows.filter(r => r.isLeisure).length
-  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length
+  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly && !r.noDriverNeeded).length
   // The printout is width-bound, so the partner column only takes space on the
   // days that actually have a guide or tour vendor on the ground.
   const showPartners = rows.some(r => r.guideName || r.tourVendorName)
@@ -374,7 +376,7 @@ function PrintContent() {
                         Leisure Day
                       </span>
                     )}
-                    {row.isHotelOnly && (
+                    {row.isHotelOnly && !row.noDriverNeeded && (
                       <span style={{
                         display: 'block', marginTop: 2, padding: '1px 5px', borderRadius: 3,
                         fontSize: 9, fontWeight: 700, background: '#fce7f3', color: '#be185d',
@@ -416,7 +418,7 @@ function PrintContent() {
                     {row.isLeisure || row.isHotelOnly ? (
                       <span style={{
                         fontSize: 9, fontWeight: 700, whiteSpace: 'nowrap',
-                        color: row.isHotelOnly ? '#be185d' : '#b45309',
+                        color: row.noDriverNeeded ? '#475569' : row.isHotelOnly ? '#be185d' : '#b45309',
                       }}>
                         No driver needed
                       </span>

@@ -296,8 +296,11 @@ export async function POST(req: NextRequest) {
     const wasHotelOnly  = previous?.vehicleType === HOTEL_ONLY_VEHICLE
     if (agenda?.items.length && isHotelOnly !== wasHotelOnly) {
       const itemIds = agenda.items.map(i => i.id)
+      // Leisure rows are left alone: a row with BOTH flags on means "No Driver
+      // Needed" (see resolveNoDriverNeeded), so the board must neither create
+      // that pair on a leisure day nor strip it off one when lifting Hotel Only.
       await prisma.agendaItem.updateMany({
-        where: { id: { in: itemIds } },
+        where: { id: { in: itemIds }, OR: [{ isLeisure: null }, { isLeisure: false }] },
         data:  { isHotelOnly },
       })
       if (isHotelOnly) {

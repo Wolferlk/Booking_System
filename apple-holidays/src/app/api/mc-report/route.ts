@@ -6,7 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import { resolveIsLeisure } from '@/lib/leisure-day'
-import { resolveIsHotelOnly } from '@/lib/driver-requirement'
+import { resolveIsHotelOnly, resolveNoDriverNeeded } from '@/lib/driver-requirement'
 import { loadTicketsControl } from '@/lib/tickets-control'
 import { loadMcDetails, loadBookingContext, type McBookingContext } from '@/lib/mc-details'
 import { loadMcDone } from '@/lib/mc-done'
@@ -364,9 +364,12 @@ export async function GET(req: NextRequest) {
     meetingTime:    item.meetingTime ?? null,
     serviceType:    item.serviceType,
     // Free day — shown as a "Leisure Day" marker instead of an empty driver cell.
-    isLeisure:      resolveIsLeisure(item),
+    // Both flags on = No Driver Needed (a vendor covers it): not a leisure day,
+    // but it keeps isHotelOnly so every "needs a driver" check skips it.
+    isLeisure:      resolveIsLeisure(item) && !resolveNoDriverNeeded(item),
     // Accommodation / own transport — same "no driver needed" marker.
     isHotelOnly:    resolveIsHotelOnly(item),
+    noDriverNeeded: resolveNoDriverNeeded(item),
     vendor:         item.assignment?.vendor?.name
                       ?? item.assignment?.vendorName
                       ?? item.assignment?.driver?.vehicle?.vendor?.name

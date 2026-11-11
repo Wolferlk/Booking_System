@@ -274,8 +274,11 @@ function crewLine(input: MovementBriefInput, role: MovementRole, shareCrew: bool
 
 function detailsText(input: MovementBriefInput, note: string | null): string {
   const bits: string[] = []
-  if (input.isLeisure) bits.push('Leisure day — no transport required.')
-  if (input.isHotelOnly) bits.push('Hotel only — no transport required.')
+  // Both flags = No Driver Needed: the movement still runs (a vendor covers it),
+  // so say nothing about transport rather than calling it a leisure day.
+  const noDriverNeeded = input.isLeisure && input.isHotelOnly
+  if (input.isLeisure && !noDriverNeeded) bits.push('Leisure day — no transport required.')
+  if (input.isHotelOnly && !noDriverNeeded) bits.push('Hotel only — no transport required.')
   if (flat(input.details)) bits.push(flat(input.details))
   if (flat(input.mealPlan)) bits.push(`Meals: ${flat(input.mealPlan)}.`)
   if (flat(note)) bits.push(`Note from operations: ${flat(note)}`)

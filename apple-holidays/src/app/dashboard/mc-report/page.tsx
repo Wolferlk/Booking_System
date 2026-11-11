@@ -66,6 +66,8 @@ type MCRow = {
   isLeisure:      boolean
   /** Hotel only — accommodation or own transport, so likewise no driver. */
   isHotelOnly:    boolean
+  /** No Driver Needed — the ground team does not drive it; isHotelOnly is also true. */
+  noDriverNeeded?: boolean
   /**
    * The whole booking is Hotel Only — accommodation and nothing else. These
    * files carry no agenda at all, so the row is a *stay* the server built from
@@ -579,7 +581,7 @@ function toPdfRow(r: MCRow): McPdfRow {
     airport: flow.airport,
     flights: (r.flights ?? []).filter(f => !flow.flight || f.date === r.date.slice(0, 10) || f === flow.flight)
       .map(f => `${f.flightNo} · ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`.trim()),
-    leisure: r.isLeisure, hotelOnly: r.isHotelOnly || r.isHotelOnlyBooking,
+    leisure: r.isLeisure, hotelOnly: (r.isHotelOnly && !r.noDriverNeeded) || r.isHotelOnlyBooking,
     noDriver: r.isLeisure || r.isHotelOnly || r.isHotelOnlyBooking,
     vendor: r.vendor, driver: r.driverName, driverPhone: r.driverPhone,
     vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? null, plate: r.vehiclePlate,
@@ -1495,7 +1497,7 @@ export default function MCReportPage() {
   const sicCount      = liveRows.filter(r => isSicType(r.serviceType)).length
   const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = liveRows.filter(r => r.isLeisure).length
-  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length
+  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly && !r.noDriverNeeded).length
   // Distinct *bookings*, not rows: a five-night file across two properties is
   // one Hotel Only booking on this chart, however many stays it contributes.
   const hotelOnlyBookingCount = useMemo(
@@ -1610,7 +1612,7 @@ export default function MCReportPage() {
       r.cancelFeeTotal ?? '',
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
       r.isLeisure ? 'Yes' : '',
-      r.isHotelOnly ? 'Yes' : '',
+      r.isHotelOnly && !r.noDriverNeeded ? 'Yes' : r.noDriverNeeded ? 'No driver needed' : '',
       r.isHotelOnlyBooking ? 'Yes' : '',
       r.nights ?? '', r.checkOut ?? '',
       r.vendor ?? '', r.driverName ?? '', r.vehicleType ?? '', r.vehiclePlate ?? '',
@@ -1658,7 +1660,7 @@ export default function MCReportPage() {
           service: SERVICE_LABELS[r.serviceType] ?? r.serviceType,
           serviceGroup: isPrivateTransferType(r.serviceType) ? 'Private' : isSicType(r.serviceType) ? 'SIC'
             : r.serviceType === 'OWN_ARRANGEMENT' ? 'Own arrangement' : r.serviceType === 'ACCOMMODATION' ? 'Accommodation' : 'Other',
-          leisure: r.isLeisure, hotelOnly: r.isHotelOnly, hotelOnlyBooking: r.isHotelOnlyBooking,
+          leisure: r.isLeisure, hotelOnly: r.isHotelOnly && !r.noDriverNeeded, hotelOnlyBooking: r.isHotelOnlyBooking,
           nights: r.nights, checkOut: r.checkOut ?? '',
           vendor: r.vendor ?? '', driver: r.driverName ?? '',
           vehicle: r.vehicleType ?? r.vehicleTypeHint?.value ?? '', plate: r.vehiclePlate ?? '',
@@ -2633,7 +2635,7 @@ export default function MCReportPage() {
                                     <ServiceBadge type={row.serviceType} />
                                     <FlowBadge {...movementFlow(row)} />
                                     {row.isLeisure && <LeisureBadge />}
-                                    {row.isHotelOnly && <HotelOnlyBadge />}
+                                    {row.isHotelOnly && !row.noDriverNeeded && <HotelOnlyBadge />}
                                   </>
                                 )}
                               </div>
@@ -2682,7 +2684,7 @@ export default function MCReportPage() {
                                   Accommodation only
                                 </span>
                               ) : row.isHotelOnly ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-pink-700 whitespace-nowrap">
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-semibold whitespace-nowrap ${row.noDriverNeeded ? 'text-slate-600' : 'text-pink-700'}`}>
                                   <Hotel className="w-3 h-3 text-pink-500" />
                                   No driver needed
                                 </span>

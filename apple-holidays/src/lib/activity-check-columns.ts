@@ -57,8 +57,9 @@ function flagsOf(row: ActivityRow): string {
   const flags: string[] = []
   if (row.cancelled) flags.push('CANCELLED')
   if (row.hotelOnly) flags.push('Hotel only file')
-  if (row.isLeisure) flags.push('Leisure day')
-  if (row.isHotelOnly) flags.push('Own transport')
+  if (row.isLeisure && row.isHotelOnly) flags.push('No driver needed')
+  else if (row.isLeisure) flags.push('Leisure day')
+  else if (row.isHotelOnly) flags.push('Own transport')
   if (row.source === 'AGENDA' && !row.assigned && !row.isLeisure && !row.isHotelOnly) {
     flags.push('No driver')
   }

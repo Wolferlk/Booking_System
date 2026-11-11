@@ -649,6 +649,15 @@ export async function PUT(
     }
   }
 
+  // No Driver Needed (the ground team does not drive it) is stored as BOTH
+  // flags on — see resolveNoDriverNeeded in driver-requirement.ts. Turning it
+  // off clears both.
+  if (typeof body.noDriverNeeded === 'boolean') {
+    body.isLeisure   = body.noDriverNeeded
+    body.isHotelOnly = body.noDriverNeeded
+  }
+  const bothMarks = body.isLeisure === true && body.isHotelOnly === true
+
   const markedNoDriver = body.isLeisure === true || body.isHotelOnly === true
   if (markedNoDriver) {
     await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
@@ -661,8 +670,8 @@ export async function PUT(
     data: {
       ...(body.isLeisure   !== undefined && { isLeisure:   body.isLeisure }),
       ...(body.isHotelOnly !== undefined && { isHotelOnly: body.isHotelOnly }),
-      ...(body.isLeisure   === true && { isHotelOnly: false }),
-      ...(body.isHotelOnly === true && { isLeisure:   false }),
+      ...(!bothMarks && body.isLeisure   === true && { isHotelOnly: false }),
+      ...(!bothMarks && body.isHotelOnly === true && { isLeisure:   false }),
       ...(editedDate && { date: editedDate }),
       ...(body.location !== undefined && { location: body.location }),
       ...(body.fromPoint !== undefined && { fromPoint: body.fromPoint }),
