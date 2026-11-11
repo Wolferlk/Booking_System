@@ -288,7 +288,10 @@ export async function vendorRegister(canEdit: boolean): Promise<VendorRegisterPa
   const aliasBy = new Map<string, string[]>()
   for (const a of aliases) aliasBy.set(a.vendorId, [...(aliasBy.get(a.vendorId) ?? []), a.alias])
   const vendors: RegisteredVendorRow[] = vendorRows.map(v => ({
-    id: v.id, name: v.name, phone: v.phone?.trim() || null, whatsappPhone: v.whatsappPhone?.trim() || null,
+    id: v.id, name: v.name,
+    phone: v.phone?.trim() || dir.byId.get(v.id)?.phone || null,
+    whatsappPhone: v.whatsappPhone?.trim() || dir.byId.get(v.id)?.phone || null,
+    phoneSource: v.whatsappPhone?.trim() || v.phone?.trim() ? 'REGISTERED' : dir.byId.get(v.id)?.phone ? 'MESSAGE_HISTORY' : 'NONE',
     aliases: aliasBy.get(v.id) ?? [], movements: movByVendor.get(v.id)?.n ?? 0, movementsWithPhone: movByVendor.get(v.id)?.withPhone ?? 0,
     services: v.services, updatedAt: v.updatedAt.toISOString(),
   }))

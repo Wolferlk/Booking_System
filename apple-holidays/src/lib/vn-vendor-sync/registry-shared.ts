@@ -65,6 +65,7 @@ export interface RegisteredVendorRow {
   name: string
   phone: string | null
   whatsappPhone: string | null
+  phoneSource: 'REGISTERED' | 'MESSAGE_HISTORY' | 'NONE'
   aliases: string[]
   /** Upcoming movements that resolve to this vendor. */
   movements: number
