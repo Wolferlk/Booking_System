@@ -9,7 +9,7 @@ import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { getAsExtras } from '@/lib/as-booking-extras'
 import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
-import { isInCountryScope } from '@/lib/country-detection'
+import { detectCountryFromBookingIdentifiers, isInCountryScope } from '@/lib/country-detection'
 import {
   PACKAGE_NOTE_FIELDS,
   recordFieldEdits,
@@ -64,6 +64,17 @@ export async function GET(
   })
 
   if (!booking) return buildApiError('Booking not found', 404)
+
+  // Repair legacy rows where the country was inferred from the wrong field.
+  // AppleSystem's IS number is authoritative: VN… always belongs to Vietnam.
+  const detectedCountry = detectCountryFromBookingIdentifiers(booking.bookingRef, booking.isNumber)
+  if (detectedCountry && booking.operationCountry !== detectedCountry) {
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { operationCountry: detectedCountry },
+    })
+    booking.operationCountry = detectedCountry
+  }
 
   const userCountry = session.user.country as string | undefined
   if (role !== 'CLIENT' && !canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL') {

@@ -34,7 +34,7 @@
  *   flights           ← [] (not present in the AppleSystem payload)
  */
 
-import { detectCountryFromRef, type OperationCountry } from './country-detection'
+import { detectCountryFromBookingIdentifiers, type OperationCountry } from './country-detection'
 
 // ── Safe accessors ───────────────────────────────────────────────────────────
 function get(obj: unknown, ...path: (string | number)[]): unknown {
@@ -358,7 +358,7 @@ export function mapQuoteToBooking(
     dayRoutes: days
       .filter((d) => d.route)
       .map((d) => ({ dayNo: d.dayNo, date: d.date, route: d.route.slice(0, 500) })),
-    operationCountry: detectCountryFromRef(bookingRef),
+    operationCountry: detectCountryFromBookingIdentifiers(bookingRef, bookingRef),
     agent: usable(agentName) ? agentName : null,
     agentEmail: usable(agentEmail) ? agentEmail : null,
     fileHandler: str(voucher.file_handler_name).trim() || null,

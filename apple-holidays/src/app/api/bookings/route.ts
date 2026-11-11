@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
-import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope } from '@/lib/country-detection'
+import { detectCountryFromBookingIdentifiers, countryScope, userCountryScope, isInCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
@@ -507,6 +507,7 @@ export async function POST(req: NextRequest) {
 
   const {
     bookingRef,
+    isNumber,
     agentBookingId,
     cntlNumber,
     agent,
@@ -555,16 +556,17 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
 
-  // Country resolution: explicit body value → ref prefix → session country
+  // Country resolution: IS number prefix → explicit body value → ref prefix → session country.
+  // The IS number is the country-bearing identifier when it is available.
   const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA']
   const validatedBodyCountry = VALID_COUNTRIES.includes(bodyCountry as OperationCountry)
     ? (bodyCountry as OperationCountry)
     : null
-  const detectedCountry = detectCountryFromRef(bookingRef)
+  const detectedCountry = detectCountryFromBookingIdentifiers(bookingRef, isNumber)
   const sessionCountry = session.user.country as OperationCountry | undefined
   const operationCountry =
-    validatedBodyCountry ??
     detectedCountry ??
+    validatedBodyCountry ??
     (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
   if (!operationCountry) {
     return buildApiError('Please select a destination country before creating the booking')

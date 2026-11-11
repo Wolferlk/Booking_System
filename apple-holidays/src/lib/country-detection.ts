@@ -71,6 +71,21 @@ export function detectCountryFromRef(bookingRef: string): OperationCountry | nul
 }
 
 /**
+ * Detect a booking's country from its identifiers.
+ *
+ * AppleSystem can supply an internal booking reference separately from the
+ * IS number. The IS number is the country-bearing identifier, so it must win
+ * when it is present (for example, an internal ref plus isNumber `VN43206`).
+ */
+export function detectCountryFromBookingIdentifiers(
+  bookingRef: string | null | undefined,
+  isNumber: string | null | undefined,
+): OperationCountry | null {
+  return (isNumber ? detectCountryFromRef(isNumber) : null) ??
+    (bookingRef ? detectCountryFromRef(bookingRef) : null)
+}
+
+/**
  * The set of operationCountry values a user/filter assigned `c` should match.
  * Returns null when no country filter should be applied (ALL / unassigned).
  * Singapore, Malaysia and the legacy combined value all resolve to one group.
