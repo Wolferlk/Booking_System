@@ -11,7 +11,7 @@ import {
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
   ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, UserX, Store, Utensils,
-  FileType, Settings2,
+  FileType, Settings2, RefreshCw,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -355,6 +355,8 @@ export default function AgendaPage() {
   const [expandedDetails, setExpandedDetails] = useState<Set<number>>(new Set())
   // Per-item AI describe loading
   const [describingIdx,  setDescribingIdx]  = useState<number | null>(null)
+  // Per-item AppleSystem source-description refresh loading
+  const [sourceDescribingIdx, setSourceDescribingIdx] = useState<number | null>(null)
   // Drag-to-reorder state
   const [dragIndex,      setDragIndex]      = useState<number | null>(null)
   const [dragOverIndex,  setDragOverIndex]  = useState<number | null>(null)
@@ -1004,6 +1006,47 @@ export default function AgendaPage() {
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'AI describe failed')
     } finally { setDescribingIdx(null) }
+  }
+
+  /**
+   * Pull the latest official itinerary prose from AppleSystem into this draft.
+   * It deliberately updates React state only; no database write happens until
+   * the operator chooses Save changes. Matching uses date first and then the
+   * complete activity title, with a day-number fallback for older charts.
+   */
+  async function refreshSourceDescription(idx: number) {
+    const item = items[idx]
+    if (!item) return
+    setSourceDescribingIdx(idx)
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(ref)}/agenda/source-description`)
+      const json = await res.json()
+      if (!res.ok || !json.success) throw new Error(json.error || 'Failed to fetch API description')
+
+      const sourceItems = Array.isArray(json.data?.items) ? json.data.items as {
+        dayNo?: number; date?: string; title?: string; description?: string
+      }[] : []
+      const normalise = (value: unknown) => String(value ?? '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+      const itemTitle = normalise(item.toPoint)
+      const sameDate = sourceItems.filter(source => String(source.date ?? '').slice(0, 10) === item.date)
+      const exact = sameDate.find(source => normalise(source.title) === itemTitle)
+      const contains = sameDate.find(source => {
+        const title = normalise(source.title)
+        return title && itemTitle && (title.includes(itemTitle) || itemTitle.includes(title))
+      })
+      const byDay = sourceItems.find(source => Number(source.dayNo) === idx + 1)
+      const match = exact ?? contains ?? byDay
+      const description = String(match?.description ?? '').trim()
+      if (!description) throw new Error('AppleSystem returned no description for this movement')
+
+      setItems(current => current.map((x, j) => j === idx ? { ...x, details: description } : x))
+      toast.success('Official API description loaded into this draft')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'API description refresh failed')
+    } finally {
+      setSourceDescribingIdx(null)
+    }
   }
 
   function fillFromItinerary() {
@@ -1887,17 +1930,31 @@ export default function AgendaPage() {
                         <div className="col-span-2 sm:col-span-3 lg:col-span-4">
                           <div className="flex items-center justify-between mb-1">
                             <label className="form-label text-xs mb-0">Details / Timings (Pickup &amp; Drop)</label>
-                            <button
-                              type="button"
-                              onClick={() => aiDescribeItem(i)}
-                              disabled={describingIdx === i}
-                              className="flex items-center gap-1 text-[11px] font-medium text-violet-600 hover:text-violet-800 disabled:opacity-50"
-                            >
-                              {describingIdx === i
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <Sparkles className="w-3 h-3" />}
-                              AI Describe
-                            </button>
+                            <div className="flex items-center gap-3">
+                              <button
+                                type="button"
+                                onClick={() => refreshSourceDescription(i)}
+                                disabled={sourceDescribingIdx === i}
+                                title="Fetch the latest official description from AppleSystem. This only changes the unsaved draft."
+                                className="flex items-center gap-1 text-[11px] font-medium text-sky-600 hover:text-sky-800 disabled:opacity-50"
+                              >
+                                {sourceDescribingIdx === i
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <RefreshCw className="w-3 h-3" />}
+                                Refresh API
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => aiDescribeItem(i)}
+                                disabled={describingIdx === i}
+                                className="flex items-center gap-1 text-[11px] font-medium text-violet-600 hover:text-violet-800 disabled:opacity-50"
+                              >
+                                {describingIdx === i
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <Sparkles className="w-3 h-3" />}
+                                AI Describe
+                              </button>
+                            </div>
                           </div>
                           <textarea
                             className="form-textarea text-sm py-1.5 resize h-auto"

@@ -1131,7 +1131,7 @@ export default function MCReportPage() {
   useEffect(() => {
     if (dateFrom && dateTo) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, svcFilter, resetNonce])
+  }, [dateFrom, dateTo, svcFilter, localCountry, countryFilter, resetNonce])
 
   // ── Quick range ──────────────────────────────────────────────────────────────
 

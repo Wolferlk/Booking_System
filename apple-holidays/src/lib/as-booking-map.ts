@@ -163,8 +163,22 @@ function expandDay(day: {
   description: string
   activities: { name: string; description: string }[]
 }): MappedItineraryItem[] {
+  // AppleSystem keeps the useful prose in two places: the day's narrative
+  // (route context, sights and destination overview) and each sold activity's
+  // own description. Keep both when creating the local itinerary item so the
+  // movement chart can reproduce the confirmation/mail wording instead of
+  // silently dropping the day narrative whenever activities[] is present.
+  const mergeDescriptions = (dayDescription: string, activityDescription: string) =>
+    [dayDescription.trim(), activityDescription.trim()]
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join('\n\n')
+
   const acts = day.activities
-    .map((a) => ({ title: resolveActivityTitle(a.name, a.description), description: a.description.trim() }))
+    .map((a) => ({
+      title: resolveActivityTitle(a.name, a.description),
+      description: mergeDescriptions(day.description, a.description),
+    }))
     .filter((a) => a.title || a.description)
 
   if (acts.length === 0) {
@@ -180,7 +194,7 @@ function expandDay(day: {
     dayNo: day.dayNo,
     date: day.date,
     title: (a.title || day.route || `Day ${day.dayNo}`).slice(0, 1000),
-    description: a.description,
+      description: a.description,
   }))
 }
 

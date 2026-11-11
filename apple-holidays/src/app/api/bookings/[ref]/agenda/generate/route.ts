@@ -496,6 +496,33 @@ ${tqDocumentText
   // ── Drop movements the AI listed twice (structured transfer + TQ line) ────
   const deduped: GeneratedItem[] = dedupeAgendaItems(mapped)
 
+  // Keep the official AppleSystem wording in the saved movement details. The
+  // model may improve grammar or summarise despite the prompt; that is useful
+  // for the operational paragraph, but the source description must remain
+  // auditable and must match the confirmation/mail output. This is additive and
+  // does not replace pickup or driver instructions produced by the model.
+  const sourceDescriptionRows = structuredData.itineraryItems
+    .map(source => ({
+      ...source,
+      titleKey: String(source.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
+      description: String(source.description ?? '').trim(),
+    }))
+    .filter(source => source.description)
+  const sourceAware = deduped.map(item => {
+    const date = String(item.date ?? '').slice(0, 10)
+    const titleKey = String(item.toPoint ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const sameDate = sourceDescriptionRows.filter(source => source.date === date)
+    const source = sameDate.find(row => row.titleKey === titleKey)
+      ?? sameDate.find(row => row.titleKey && titleKey && (row.titleKey.includes(titleKey) || titleKey.includes(row.titleKey)))
+    if (!source) return item
+
+    const current = String(item.details ?? '').trim()
+    const sourceKey = source.description.toLowerCase().replace(/\s+/g, ' ').trim()
+    const currentKey = current.toLowerCase().replace(/\s+/g, ' ').trim()
+    if (currentKey.includes(sourceKey)) return item
+    return { ...item, details: [source.description, current].filter(Boolean).join('\n\n') }
+  })
+
   // ── Coverage safety net ───────────────────────────────────────────────────
   // The model silently drops or merges services, and it does it most often on a
   // day that already has one — which is exactly the "same day tours are missing"
@@ -503,7 +530,7 @@ ${tqDocumentText
   // the model left out is appended here rather than lost. The same guarantee the
   // email pipeline has always had (see `lib/incoming-mail-automation.ts`).
   const normText = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const covered = deduped.map(it => normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
+  const covered = sourceAware.map(it => normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
 
   const missing = structuredData.itineraryItems.filter(src => {
     const key = normText(src.title)
@@ -524,7 +551,7 @@ ${tqDocumentText
   }
 
   const items: GeneratedItem[] = [
-    ...deduped,
+    ...sourceAware,
     ...missing.map(src => {
       const title = String(src.title)
       const sic   = SIC_RE.test(title)
