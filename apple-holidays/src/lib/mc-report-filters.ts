@@ -257,7 +257,7 @@ export function tripStages(row: McFilterRow): TripStage[] {
   return out.length ? out : ['mid']
 }
 
-export type FlagKey = 'children' | 'mealPref' | 'specialReq' | 'hotelOnly' | 'leisure' | 'bigGroup'
+export type FlagKey = 'children' | 'mealPref' | 'specialReq' | 'hotelOnly' | 'leisure' | 'noDriver' | 'bigGroup'
 
 export const FLAGS: { key: FlagKey; label: string }[] = [
   { key: 'children',   label: 'Children on board' },
@@ -265,6 +265,7 @@ export const FLAGS: { key: FlagKey; label: string }[] = [
   { key: 'mealPref',   label: 'Meal preference' },
   { key: 'specialReq', label: 'Special request' },
   { key: 'leisure',    label: 'Leisure day' },
+  { key: 'noDriver',   label: 'No driver needed' },
   { key: 'hotelOnly',  label: 'Hotel only' },
 ]
 
@@ -275,6 +276,7 @@ function hasFlag(row: McFilterRow, flag: FlagKey): boolean {
     case 'mealPref':   return !!row.mealPrefs?.length
     case 'specialReq': return !!row.bookingRequests?.length || !!row.mcDetails?.specialRequest
     case 'leisure':    return row.isLeisure
+    case 'noDriver':   return row.noDriverNeeded === true
     case 'hotelOnly':  return (row.isHotelOnly && !row.noDriverNeeded) || row.isHotelOnlyBooking
   }
 }
@@ -443,6 +445,10 @@ export const QUICK_VIEWS: { key: string; label: string; hint: string; filters: P
     filters: { times: ['none'], driver: ['needs', 'assigned'], cancelled: 'hide' } },
   { key: 'kids', label: 'Kids on board', hint: 'Child seats and family pacing',
     filters: { flags: ['children'], cancelled: 'hide' } },
+  { key: 'leisure', label: 'Leisure days', hint: 'Show only movements marked as leisure days',
+    filters: { flags: ['leisure'] } },
+  { key: 'no-driver', label: 'No driver needed', hint: 'Show only movements covered by a vendor or otherwise needing no driver',
+    filters: { flags: ['noDriver'] } },
 ]
 
 export function quickViewFilters(key: string): AdvancedFilters | null {
