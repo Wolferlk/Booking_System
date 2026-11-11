@@ -336,6 +336,9 @@ export default function AgendaPage() {
   const [vendors,        setVendors]        = useState<Vendor[]>([])
   const [loading,        setLoading]        = useState(true)
   const [saving,         setSaving]         = useState(false)
+  // Saved charts open as a calm, read-only document. Editors explicitly opt in
+  // so a casual click cannot change the movement chart accidentally.
+  const [editMode,       setEditMode]       = useState(false)
   const [generating,     setGenerating]     = useState(false)
   const [showUpload,     setShowUpload]     = useState(false)
   const [assigningIdx,   setAssigningIdx]   = useState<number | null>(null)
@@ -408,6 +411,7 @@ export default function AgendaPage() {
   }, [])
 
   const canEdit   = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const isEditing  = canEdit && (editMode || items.length === 0 || items.some(item => !item.id))
   // Settings is admin-only, so only they get the link from a flight chip to its timings.
   const isAdmin   = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
@@ -806,7 +810,7 @@ export default function AgendaPage() {
     setSaving(true)
     try {
       await persistItems(items)
-      router.push(`/dashboard/bookings/${ref}`)
+      setEditMode(false)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSaving(false) }
@@ -1246,7 +1250,7 @@ export default function AgendaPage() {
   // that expands on hover to reveal an "Insert stop" pill — click to slot a new item
   // exactly at that position.
   function renderInsertZone(index: number) {
-    if (!canEdit || generating) return null
+    if (!isEditing || generating) return null
     return (
       <div className="group relative -my-1 flex items-center justify-center py-1.5 transition-all">
         <div className="absolute inset-x-10 top-1/2 h-px bg-transparent group-hover:bg-brand-200 transition-colors" />
@@ -1373,45 +1377,55 @@ export default function AgendaPage() {
 
             {canEdit && (
               <>
-                <button
-                  onClick={fillFromItinerary}
-                  className="btn btn-secondary btn-sm flex items-center gap-1.5"
-                  title="Fill movement descriptions from itinerary raw data"
-                >
-                  <ClipboardList className="w-4 h-4" />
-                  Get Raw Data
-                </button>
-                <div className="relative">
-                  <Button variant="secondary" size="sm" loading={generating}
-                    icon={<Wand2 className="w-4 h-4" />}
-                    onClick={() => setShowUpload(v => !v)}>
-                    AI Generate
-                  </Button>
-                  {showUpload && (
-                    <div className="absolute right-0 top-10 z-20 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4">
-                      <p className="text-sm font-semibold text-slate-800 mb-1">Generate Movement Chart with AI</p>
-                      <p className="text-xs text-slate-500 mb-3">
-                        Upload a Travel Quotation or TC document — day topics, descriptions, and flight details are auto-extracted.
-                      </p>
-                      <input ref={fileInputRef} type="file" accept=".docx,.txt" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) generateFromFile(f); e.target.value = '' }} />
-                      <div className="space-y-2">
-                        <button onClick={() => fileInputRef.current?.click()}
-                          className="w-full flex items-center gap-2 p-3 rounded-lg border-2 border-dashed border-brand-200 hover:border-brand-400 hover:bg-brand-50 transition-colors text-sm font-medium text-brand-600">
-                          <Upload className="w-4 h-4" />
-                          <span>Upload Travel Quotation / TC (.docx)</span>
-                        </button>
-                        <button onClick={() => { setShowUpload(false); generateFromBooking() }}
-                          className="w-full flex items-center gap-2 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors text-sm text-slate-600">
-                          <Wand2 className="w-4 h-4" /> Generate from Booking Data (uses stored TQ itinerary)
-                        </button>
-                      </div>
+                {isEditing && (
+                  <>
+                    <button
+                      onClick={fillFromItinerary}
+                      className="btn btn-secondary btn-sm flex items-center gap-1.5"
+                      title="Fill movement descriptions from itinerary raw data"
+                    >
+                      <ClipboardList className="w-4 h-4" />
+                      Get Raw Data
+                    </button>
+                    <div className="relative">
+                      <Button variant="secondary" size="sm" loading={generating}
+                        icon={<Wand2 className="w-4 h-4" />}
+                        onClick={() => setShowUpload(v => !v)}>
+                        AI Generate
+                      </Button>
+                      {showUpload && (
+                        <div className="absolute right-0 top-10 z-20 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4">
+                          <p className="text-sm font-semibold text-slate-800 mb-1">Generate Movement Chart with AI</p>
+                          <p className="text-xs text-slate-500 mb-3">
+                            Upload a Travel Quotation or TC document — day topics, descriptions, and flight details are auto-extracted.
+                          </p>
+                          <input ref={fileInputRef} type="file" accept=".docx,.txt" className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) generateFromFile(f); e.target.value = '' }} />
+                          <div className="space-y-2">
+                            <button onClick={() => fileInputRef.current?.click()}
+                              className="w-full flex items-center gap-2 p-3 rounded-lg border-2 border-dashed border-brand-200 hover:border-brand-400 hover:bg-brand-50 transition-colors text-sm font-medium text-brand-600">
+                              <Upload className="w-4 h-4" />
+                              <span>Upload Travel Quotation / TC (.docx)</span>
+                            </button>
+                            <button onClick={() => { setShowUpload(false); generateFromBooking() }}
+                              className="w-full flex items-center gap-2 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors text-sm text-slate-600">
+                              <Wand2 className="w-4 h-4" /> Generate from Booking Data (uses stored TQ itinerary)
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
-                  Save
-                </Button>
+                  </>
+                )}
+                {isEditing ? (
+                  <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
+                    Save changes
+                  </Button>
+                ) : (
+                  <Button size="sm" icon={<Pencil className="w-4 h-4" />} onClick={() => setEditMode(true)}>
+                    Edit agenda
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -1488,7 +1502,7 @@ export default function AgendaPage() {
                       {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}{booking.paxInfants > 0 ? ` · ${booking.paxInfants} infant${booking.paxInfants !== 1 ? 's' : ''}` : ''}
                     </span>
                   </button>
-                  {canEdit && (
+                  {isEditing && (
                     <button
                       type="button"
                       onClick={openPassengerCountEditor}
@@ -1681,7 +1695,7 @@ export default function AgendaPage() {
           <Card className="p-12 text-center">
             <MapPin className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-500 font-medium mb-2">No movement items yet</p>
-            {canEdit && <p className="text-slate-400 text-sm">Use &quot;AI Generate&quot; above to regenerate, or add items manually</p>}
+            {isEditing && <p className="text-slate-400 text-sm">Use &quot;AI Generate&quot; above to regenerate, or add items manually</p>}
           </Card>
         )}
 
@@ -1689,7 +1703,7 @@ export default function AgendaPage() {
         {!generating && unplacedIncludes.length > 0 && (
           <UnplacedIncludesNotice
             items={unplacedIncludes.filter(u => !u.id || !discardIncludeIds.has(u.id))}
-            onDiscard={canEdit ? id => setDiscardIncludeIds(prev => new Set(prev).add(id)) : undefined}
+            onDiscard={isEditing ? id => setDiscardIncludeIds(prev => new Set(prev).add(id)) : undefined}
           />
         )}
 
@@ -1722,14 +1736,14 @@ export default function AgendaPage() {
             >
               <div
                 className="flex"
-                onDragOver={canEdit ? (e) => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i) } : undefined}
-                onDrop={canEdit ? (e) => {
+                onDragOver={isEditing ? (e) => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i) } : undefined}
+                onDrop={isEditing ? (e) => {
                   e.preventDefault()
                   if (dragIndex !== null) moveItem(dragIndex, i)
                   setDragIndex(null); setDragOverIndex(null)
                 } : undefined}
               >
-                {canEdit && (
+                {isEditing && (
                   <div
                     draggable
                     onDragStart={(e) => { setDragIndex(i); e.dataTransfer.effectAllowed = 'move' }}
@@ -1752,7 +1766,7 @@ export default function AgendaPage() {
                 })()}
 
                 <div className="flex-1 p-5">
-                  {canEdit ? (
+                  {isEditing ? (
                     <>
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                         <div>
@@ -2285,7 +2299,7 @@ export default function AgendaPage() {
                               onClick={() => setWaItemIdx(i)}
                             />
                           )}
-                          <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />
+                          {isEditing && <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />}
                           {needsDriver(item) && (
                             <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
                               onClick={() => openAssignPanel(i)}>
@@ -2304,7 +2318,7 @@ export default function AgendaPage() {
           )
         })}
 
-        {canEdit && !generating && (
+        {isEditing && !generating && (
           <Button variant="secondary" icon={<Plus className="w-4 h-4" />}
             onClick={() => setItems(is => [...is, {
               date: '', location: '', fromPoint: '', toPoint: '',
