@@ -9,7 +9,7 @@ import {
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
   PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
-  Columns3, Check, CheckCircle2, Circle, Undo2, Building2,
+  Columns3, Check, CheckCircle2, Circle, Undo2, Building2, Eye, Send, MessageCircle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -541,6 +541,7 @@ type OptionalCol =
   | 'driverVendor' | 'guide' | 'tourVendor' | 'supplier' | 'flights' | 'vehicle' | 'ticketsControl'
   | 'budgetKm' | 'actualKm' | 'packageCost' | 'budgetTransfer'
   | 'meal' | 'mealPref' | 'specialRequest'
+  | 'whatsappDaily'
 type ColDef = { key: OptionalCol; label: string; hint: string }
 
 const COL_GROUPS: { title: string; cols: ColDef[] }[] = [
@@ -573,6 +574,7 @@ const COL_GROUPS: { title: string; cols: ColDef[] }[] = [
     { key: 'meal',           label: 'Meal Plan',       hint: 'BB / HB / FB badge' },
     { key: 'mealPref',       label: 'Meal Preference', hint: 'Veg / Jain / allergies' },
     { key: 'specialRequest', label: 'Special Request', hint: '' },
+    { key: 'whatsappDaily', label: 'Daily WhatsApp', hint: 'Preview or send this movement’s guest plan' },
   ]},
 ]
 const ALL_COLS: ColDef[] = COL_GROUPS.flatMap(g => g.cols)
@@ -1066,6 +1068,9 @@ export default function MCReportPage() {
   // Sri Lanka "done" ticks: which rows are selected for a bulk mark, and which
   // slice of the chart to show.
   const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [selectedDaily, setSelectedDaily] = useState<Set<string>>(new Set())
+  const [dailyPreview, setDailyPreview] = useState<{ row: MCRow; text: string; attachments: number } | null>(null)
+  const [dailyBusy, setDailyBusy] = useState(false)
   const [doneFilter, setDoneFilter] = useState<DoneFilter>('all')
   // Arrivals / departures, time of day, allocation, airport… — see mc-report-filters.ts.
   const [adv, setAdv] = useState<AdvancedFilters>(EMPTY_FILTERS)
@@ -1214,6 +1219,41 @@ export default function MCReportPage() {
     if (dateFrom && dateTo) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFrom, dateTo, svcFilter, localCountry, countryFilter, resetNonce])
+
+  async function previewDaily(row: MCRow) {
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(row.vnCode)}/whatsapp-customer?message=briefing&date=${row.date}`)
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Could not build daily plan')
+      setDailyPreview({ row, text: json.data.current, attachments: json.data.attachments ?? 0 })
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Could not build daily plan') }
+  }
+
+  async function sendDaily(row: MCRow) {
+    setDailyBusy(true)
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(row.vnCode)}/whatsapp-customer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'briefing', date: row.date }) })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Daily plan was not sent')
+      toast.success(`Daily plan sent for ${row.vnCode}`)
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Daily plan was not sent') }
+    finally { setDailyBusy(false) }
+  }
+
+  async function sendSelectedDaily() {
+    const picked = Array.from(new Map(displayedRows.filter(r => selectedDaily.has(r.id)).map(r => [`${r.vnCode}|${r.date}`, { bookingRef: r.vnCode, date: r.date }])).values())
+    if (!picked.length || dailyBusy) return
+    if (!window.confirm(`Send daily WhatsApp plans for ${picked.length} selected movement${picked.length === 1 ? '' : 's'}?`)) return
+    setDailyBusy(true)
+    try {
+      const res = await fetch('/api/mc-report/whatsapp-daily', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: picked }) })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Bulk send failed')
+      toast.success(`${json.data.sent} daily plan${json.data.sent === 1 ? '' : 's'} sent${json.data.failed ? ` · ${json.data.failed} failed` : ''}`)
+      setSelectedDaily(new Set())
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Bulk send failed') }
+    finally { setDailyBusy(false) }
+  }
 
   // ── Quick range ──────────────────────────────────────────────────────────────
 
@@ -1438,6 +1478,7 @@ export default function MCReportPage() {
   const showBudgetTransferCol = hasSgMyRows && colOn('budgetTransfer')
   const showMealPrefCol    = colOn('mealPref')
   const showSpecialReqCol  = colOn('specialRequest')
+  const showWhatsappDailyCol = colOn('whatsappDaily')
   const showSupplierCol    = colOn('supplier')
   const showDoneCol = hasSlRows || doneFilter !== 'all'
   const columnCount = 2 // Date + VN Code always render
@@ -1446,7 +1487,7 @@ export default function MCReportPage() {
        showMeetTimeCol, showServiceCol, showDriverVendorCol,
        showGuideCol, showTourVendorCol, showTicketsControlCol, showFlightsCol, showVehicleCol,
        showBudgetKmCol, showActualKmCol, showPackageCostCol, showBudgetTransferCol,
-       showMealPrefCol, showSpecialReqCol, showSupplierCol].filter(Boolean).length
+       showMealPrefCol, showSpecialReqCol, showSupplierCol, showWhatsappDailyCol].filter(Boolean).length
 
   // What the Columns picker reports: a column whose country is not in view is
   // "not in view here" rather than silently absent.
@@ -1457,6 +1498,7 @@ export default function MCReportPage() {
     guide: guideColAvailable, tourVendor: tourVendorColAvailable, ticketsControl: ticketsControlColAvailable,
     flights: flightsColAvailable, vehicle: hasSlRows, budgetKm: hasSlRows, actualKm: hasSlRows,
     packageCost: hasSlRows, budgetTransfer: hasSgMyRows,
+    whatsappDaily: true,
   }
   const hiddenCount = ALL_COLS.filter(c => hiddenCols.has(c.key)).length
 
@@ -2575,6 +2617,7 @@ export default function MCReportPage() {
                       {showPackageCostCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Package Cost <span className="normal-case text-slate-400">(LKR)</span></th>}
                       {showBudgetTransferCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Budget Transfer</th>}
                       {showSpecialReqCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Special Request</th>}
+                      {showWhatsappDailyCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Daily WhatsApp</th>}
                       {showTicketsControlCol && (
                         <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Tickets Control</th>
                       )}
@@ -3017,6 +3060,23 @@ export default function MCReportPage() {
                               </td>
                             )}
 
+                            {/* Guest daily-plan preview/send controls */}
+                            {showWhatsappDailyCol && (
+                              <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`Select daily WhatsApp plan for ${row.vnCode} on ${row.date}`}
+                                    checked={selectedDaily.has(row.id)}
+                                    onChange={() => setSelectedDaily(prev => { const next = new Set(prev); next.has(row.id) ? next.delete(row.id) : next.add(row.id); return next })}
+                                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                                  />
+                                  <button type="button" onClick={() => void previewDaily(row)} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700" title="Preview the daily plan"><Eye className="h-3 w-3" />View</button>
+                                  <button type="button" disabled={dailyBusy} onClick={() => void sendDaily(row)} className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2 py-1.5 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-40" title="Send daily plan to guest"><Send className="h-3 w-3" />Send</button>
+                                </div>
+                              </td>
+                            )}
+
                             {/* Vehicle Type — Sri Lanka */}
                             {showVehicleCol && (
                               <td className="px-3 py-2.5 text-slate-600">
@@ -3408,6 +3468,26 @@ export default function MCReportPage() {
           </div>
         )
       })()}
+
+      {selectedDaily.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-32px)] max-w-xl -translate-x-1/2">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/95 px-4 py-3 text-white shadow-2xl ring-1 ring-emerald-400/30 backdrop-blur-md">
+            <span className="mr-auto flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-emerald-500 px-2 text-xs font-bold">{selectedDaily.size}</span>daily plans selected</span>
+            <button type="button" disabled={dailyBusy} onClick={() => void sendSelectedDaily()} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold hover:bg-emerald-400 disabled:opacity-40"><Send className="h-3.5 w-3.5" />Send selected</button>
+            <button type="button" onClick={() => setSelectedDaily(new Set())} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
+          </div>
+        </div>
+      )}
+
+      {dailyPreview && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm" onClick={() => setDailyPreview(null)}>
+          <div className="max-h-[86vh] w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-700"><MessageCircle className="h-5 w-5" /></span><div><p className="text-sm font-bold text-slate-900">Daily plan preview</p><p className="text-xs text-slate-500">{dailyPreview.row.vnCode} · {formatDate(dailyPreview.row.date)} · {dailyPreview.row.leadGuest ?? 'Guest'}</p></div></div><button type="button" onClick={() => setDailyPreview(null)} className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-4 w-4" /></button></div>
+            <div className="max-h-[58vh] overflow-y-auto bg-slate-50/70 p-5"><pre className="whitespace-pre-wrap font-sans text-sm leading-6 text-slate-700">{dailyPreview.text}</pre></div>
+            <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4"><p className="text-xs text-slate-400">{dailyPreview.attachments ? `${dailyPreview.attachments} ticket attachment${dailyPreview.attachments === 1 ? '' : 's'} included` : 'Text plan only'}</p><button type="button" disabled={dailyBusy} onClick={() => { void sendDaily(dailyPreview.row); setDailyPreview(null) }} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50"><Send className="h-3.5 w-3.5" />Send to guest</button></div>
+          </div>
+        </div>
+      )}
 
       <ReportStudio
         open={showStudio}
