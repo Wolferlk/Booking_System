@@ -44,7 +44,7 @@ const CANCELLATION_SELECT = {
 /** Lead guest first; a file with no lead marked falls back to its first passenger. */
 const LEAD_GUEST_SELECT = {
   passengers: {
-    select:  { name: true },
+    select:  { name: true, contact: true },
     orderBy: [{ isLead: 'desc' as const }, { id: 'asc' as const }],
     take:    1,
   },
@@ -101,6 +101,8 @@ function buildBookingWhere(
       { agentBookingId: { contains: search } },
       { agent:          { contains: search } },
       { passengers:     { some: { name: { contains: search } } } },
+      { passengers:     { some: { contact: { contains: search } } } },
+      { contactPhone:   { contains: search } },
     ],
   })
   if (conditions.length === 0) return undefined
@@ -147,7 +149,7 @@ async function hotelOnlyRows(
         select: {
           id: true,
           bookingRef: true, isNumber: true, agentBookingId: true,
-          paxAdults: true, paxChildren: true, agent: true, status: true,
+          paxAdults: true, paxChildren: true, agent: true, contactPhone: true, status: true,
           ...CANCELLATION_SELECT,
           ...LEAD_GUEST_SELECT,
         },
@@ -223,6 +225,7 @@ async function hotelOnlyRows(
       flights:        [],
       tourFigures:    null,
       leadGuest:      s.booking.passengers[0]?.name ?? null,
+      leadGuestPhone: s.booking.passengers[0]?.contact?.trim() || s.booking.contactPhone?.trim() || null,
       agent:          s.booking.agent ?? null,
       bookingStatus:  s.booking.status,
       ...cancellationFields(s.booking),
@@ -303,6 +306,7 @@ export async function GET(req: NextRequest) {
               paxAdults:      true,
               paxChildren:    true,
               agent:          true,
+              contactPhone:   true,
               status:         true,
               // Decides which partner columns the chart shows for this row.
               operationCountry: true,
@@ -419,6 +423,7 @@ export async function GET(req: NextRequest) {
                          : null,
     ...contextFields(context.get(item.agenda.booking.id), item.date.toISOString().slice(0, 10)),
     leadGuest:      item.agenda.booking.passengers[0]?.name ?? null,
+    leadGuestPhone: item.agenda.booking.passengers[0]?.contact?.trim() || item.agenda.booking.contactPhone?.trim() || null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
     ...cancellationFields(item.agenda.booking),

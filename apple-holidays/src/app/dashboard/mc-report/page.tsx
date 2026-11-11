@@ -121,6 +121,8 @@ type MCRow = {
   supplier?:      (PickedSupplier & { by: string | null; at: string }) | null
   /** Lead passenger's name — the file's lead, else its first passenger. */
   leadGuest:      string | null
+  /** Lead passenger contact, falling back to the booking's guest phone. */
+  leadGuestPhone: string | null
   agent:          string | null
   bookingStatus:  string
   /** Cancellation-approval trail — set once a cancellation has been requested. */
@@ -287,7 +289,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
     row.guideName, row.tourVendorName,
-    row.vehicleType, row.vehiclePlate, row.leadGuest, row.agent,
+    row.vehicleType, row.vehiclePlate, row.leadGuest, row.leadGuestPhone, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
     row.vehicleTypeHint?.value,
     (row.flights ?? []).map(f => `${f.flightNo} ${f.fromApt} ${f.toApt} ${f.airline ?? ''}`).join(' ') || null,
@@ -331,6 +333,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Vehicle',   value: row.vehicleType },
     { label: 'Plate',     value: row.vehiclePlate },
     { label: 'Lead Guest', value: row.leadGuest },
+    { label: 'Guest Number', value: row.leadGuestPhone },
     { label: 'Agent',     value: row.agent },
     { label: 'Tour Ref',  value: row.vnCode },
     { label: 'IS No',     value: row.isNumber },
@@ -2516,9 +2519,26 @@ export default function MCReportPage() {
                             {/* Lead guest — the name the driver and desk ask for */}
                             <td className="px-3 py-2.5 max-w-[160px]">
                               {row.leadGuest ? (
-                                <span className="block truncate font-medium text-slate-800" title={row.leadGuest}>
-                                  {q ? <Highlight text={row.leadGuest} query={deepSearch} /> : row.leadGuest}
-                                </span>
+                                <div className="min-w-0">
+                                  <span className="block truncate font-medium text-slate-800" title={row.leadGuest}>
+                                    {q ? <Highlight text={row.leadGuest} query={deepSearch} /> : row.leadGuest}
+                                  </span>
+                                  {row.leadGuestPhone ? (
+                                    <a
+                                      href={`tel:${row.leadGuestPhone}`}
+                                      onClick={e => e.stopPropagation()}
+                                      className="group/phone mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 ring-1 ring-sky-100 transition-colors hover:bg-sky-100 hover:text-sky-900"
+                                      title={`Call guest · ${row.leadGuestPhone}`}
+                                    >
+                                      <Phone className="h-2.5 w-2.5 flex-shrink-0 text-sky-500 group-hover/phone:text-sky-700" />
+                                      <span className="truncate">Guest number · {row.leadGuestPhone}</span>
+                                    </a>
+                                  ) : (
+                                    <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-300" title="No guest number on this booking">
+                                      <Phone className="h-2.5 w-2.5" /> No number
+                                    </span>
+                                  )}
+                                </div>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
 
