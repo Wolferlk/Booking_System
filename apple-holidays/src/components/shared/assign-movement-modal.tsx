@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Search, Loader2, CheckCircle2, Car, Building2, Phone, AlertTriangle,
+  Palmtree, Hotel, UserX,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
@@ -45,6 +46,56 @@ export interface MovementAssignment {
   tourVendorName?:  string | null
   tourVendorPhone?: string | null
 }
+
+/**
+ * A movement marked as needing no driver at all — the resolved flags the server
+ * stored, handed back so the caller can fold them into its own row. Mirrors the
+ * agenda chart's three marks (see driver-requirement.ts): No Driver Needed is
+ * BOTH flags on.
+ */
+export interface NoDriverMark {
+  isLeisure:      boolean
+  isHotelOnly:    boolean
+  noDriverNeeded: boolean
+}
+
+type NoDriverKind = 'leisure' | 'none' | 'hotel'
+
+const NO_DRIVER_OPTIONS: {
+  kind: NoDriverKind
+  label: string
+  Icon: typeof Palmtree
+  blurb: string
+  chip:     string // idle chip classes
+  chipOn:   string // selected chip classes
+  panel:    string // confirm strip classes
+  confirm:  string // confirm button classes
+}[] = [
+  {
+    kind: 'none', label: 'No Driver Needed', Icon: UserX,
+    blurb: 'The ground team does not drive this movement — a tour vendor, the hotel or a partner covers it. It leaves the driver allocation count.',
+    chip:    'hover:border-slate-400 hover:bg-slate-50 text-slate-600',
+    chipOn:  'border-slate-700 bg-slate-700 text-white shadow-md shadow-slate-300',
+    panel:   'border-slate-200 bg-slate-50',
+    confirm: 'bg-slate-700 hover:bg-slate-800',
+  },
+  {
+    kind: 'leisure', label: "It's Leisure Day", Icon: Palmtree,
+    blurb: 'A free / at-leisure day — the guests are on their own and no driver will be allocated.',
+    chip:    'hover:border-amber-400 hover:bg-amber-50 text-amber-700',
+    chipOn:  'border-amber-500 bg-amber-500 text-white shadow-md shadow-amber-200',
+    panel:   'border-amber-200 bg-amber-50',
+    confirm: 'bg-amber-500 hover:bg-amber-600',
+  },
+  {
+    kind: 'hotel', label: 'Hotel Only', Icon: Hotel,
+    blurb: 'Accommodation only, or the guests arrange their own transport — nothing to drive.',
+    chip:    'hover:border-pink-400 hover:bg-pink-50 text-pink-700',
+    chipOn:  'border-pink-500 bg-pink-500 text-white shadow-md shadow-pink-200',
+    panel:   'border-pink-200 bg-pink-50',
+    confirm: 'bg-pink-500 hover:bg-pink-600',
+  },
+]
 
 interface Driver {
   id: string
@@ -74,6 +125,7 @@ const CURRENCIES = ['USD', 'VND', 'SGD', 'MYR', 'LKR', 'AUD', 'GBP']
 
 export default function AssignMovementModal({
   open, onClose, bookingRef, agendaItemId, date, country, assignment, onSaved,
+  onMarkedNoDriver,
 }: {
   open: boolean
   onClose: () => void
@@ -89,6 +141,12 @@ export default function AssignMovementModal({
   assignment: MovementAssignment | null
   /** Fires with what was saved (null when the assignment was removed). */
   onSaved: (next: MovementAssignment | null) => void
+  /**
+   * When given, the dialog also offers the three "no driver" day marks —
+   * Leisure Day, Hotel Only and No Driver Needed. Fires after the mark is
+   * saved (which releases any held driver), so the caller can update its row.
+   */
+  onMarkedNoDriver?: (mark: NoDriverMark) => void
 }) {
   const [mode,           setMode]           = useState<'driver' | 'vendor'>('driver')
   const [drivers,        setDrivers]        = useState<Driver[]>([])
@@ -110,6 +168,11 @@ export default function AssignMovementModal({
   const [partnerCountries, setPartnerCountries] = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
   const [guideSel,      setGuideSel]      = useState<PartnerSelection>(EMPTY_SELECTION)
   const [tourVendorSel, setTourVendorSel] = useState<PartnerSelection>(EMPTY_SELECTION)
+
+  // "No driver" day mark — picking a chip only arms it; the inline Confirm
+  // button is what saves, because the mark releases any driver already held.
+  const [noDriverKind, setNoDriverKind] = useState<NoDriverKind | null>(null)
+  const [savingMark,   setSavingMark]   = useState(false)
 
   const guidesEnabled      = isPartnerEnabledForCountry(partnerCountries.guide,      country)
   const tourVendorsEnabled = isPartnerEnabledForCountry(partnerCountries.tourVendor, country)
@@ -177,6 +240,7 @@ export default function AssignMovementModal({
     setGuideSel({ id: a.guideId ?? null, name: a.guideName ?? '', phone: a.guidePhone ?? '' })
     setTourVendorSel({ id: a.tourVendorId ?? null, name: a.tourVendorName ?? '', phone: a.tourVendorPhone ?? '' })
     setDriverSearch(''); setVendorSearch('')
+    setNoDriverKind(null)
     void loadDrivers()
     void loadVendors()
     if (a.vendorId) void loadVendorDrivers(a.vendorId)
@@ -220,6 +284,44 @@ export default function AssignMovementModal({
       toast.error(err instanceof Error ? err.message : 'Failed to save assignment')
     } finally {
       setSaving(false)
+    }
+  }
+
+  /**
+   * Save the armed "no driver" mark through the same agenda endpoint the chart
+   * uses — the server releases any assignment and keeps the SL allocation
+   * board in step. No Driver Needed is sent as its own key; the server stores
+   * it as both flags (see driver-requirement.ts).
+   */
+  async function saveNoDriverMark() {
+    if (!noDriverKind || !agendaItemId) return
+    setSavingMark(true)
+    try {
+      const body =
+        noDriverKind === 'none'    ? { itemId: agendaItemId, noDriverNeeded: true } :
+        noDriverKind === 'leisure' ? { itemId: agendaItemId, isLeisure: true }
+                                   : { itemId: agendaItemId, isHotelOnly: true }
+      const res  = await fetch(`/api/bookings/${bookingRef}/agenda`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(
+        noDriverKind === 'none'    ? 'Marked as no driver needed — left out of the driver count' :
+        noDriverKind === 'leisure' ? 'Marked as leisure day — no driver required'
+                                   : 'Marked as hotel only — no driver required')
+      onMarkedNoDriver?.({
+        isLeisure:      noDriverKind !== 'hotel',
+        isHotelOnly:    noDriverKind !== 'leisure',
+        noDriverNeeded: noDriverKind === 'none',
+      })
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to mark the movement')
+    } finally {
+      setSavingMark(false)
     }
   }
 
@@ -300,7 +402,7 @@ export default function AssignMovementModal({
           </div>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-            <Button size="sm" loading={saving} onClick={handleSave}>
+            <Button size="sm" loading={saving} disabled={noDriverKind !== null} onClick={handleSave}>
               {saving ? 'Saving…' : 'Save Assignment'}
             </Button>
           </div>
@@ -312,6 +414,72 @@ export default function AssignMovementModal({
           {bookingRef}
           {date && <> · availability check for <strong className="text-slate-600">{formatDate(date)}</strong></>}
         </p>
+
+        {/* ── "No driver" day marks — same three as the movement chart ─────── */}
+        {onMarkedNoDriver && (
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-slate-50 p-3">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Nothing to drive this day?
+              </p>
+              <span className="text-[10px] text-slate-400">marks the movement instead of assigning</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {NO_DRIVER_OPTIONS.map(({ kind, label, Icon, chip, chipOn }) => {
+                const armed = noDriverKind === kind
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => setNoDriverKind(armed ? null : kind)}
+                    className={`flex items-center justify-center gap-1.5 rounded-xl border px-2 py-2 text-xs font-semibold transition-all ${
+                      armed ? chipOn : `border-slate-200 bg-white ${chip}`
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{label}</span>
+                  </button>
+                )
+              })}
+            </div>
+            {noDriverKind && (() => {
+              const opt = NO_DRIVER_OPTIONS.find(o => o.kind === noDriverKind)!
+              const holdsDriver = Boolean(assignment?.driverId || assignment?.vendorId || assignment?.driverName)
+              return (
+                <div className={`mt-2 rounded-xl border p-3 animate-slide-up ${opt.panel}`}>
+                  <p className="text-xs text-slate-600">{opt.blurb}</p>
+                  {holdsDriver && (
+                    <p className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-red-600">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                      {assignment?.driverName || assignment?.vendorName || 'The assigned driver'} will be released from this movement.
+                    </p>
+                  )}
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button type="button" onClick={() => setNoDriverKind(null)}
+                      className="text-xs font-medium text-slate-500 hover:text-slate-700 px-2 py-1">
+                      Keep assigning
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingMark}
+                      onClick={() => void saveNoDriverMark()}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors disabled:opacity-60 ${opt.confirm}`}
+                    >
+                      {savingMark
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <CheckCircle2 className="w-3 h-3" />}
+                      Mark as {opt.label.replace(/^It's /, '')}
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+        )}
+
+        {/* While a mark is armed, assigning is off the table — the body dims so
+            the confirm strip above is unmistakably the live control. */}
+        <div className={noDriverKind ? 'opacity-40 pointer-events-none select-none space-y-4' : 'space-y-4'}>
 
         {/* ── Guide / tour vendor — only for countries that operate with them ── */}
         {(guidesEnabled || tourVendorsEnabled) && (
@@ -532,6 +700,7 @@ export default function AssignMovementModal({
             </div>
           </div>
         )}
+        </div>
       </div>
     </Modal>
   )

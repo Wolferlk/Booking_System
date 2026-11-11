@@ -3339,6 +3339,15 @@ export default function MCReportPage() {
             tourVendorPhone: assignRow.tourVendorPhone,
           }}
           onSaved={next => applyAssignment(assignRow.id, next)}
+          onMarkedNoDriver={mark => {
+            // The server released any held driver along with the mark — fold
+            // both into the row so it flips to its badge in place.
+            const id = assignRow.id
+            applyAssignment(id, null)
+            setRows(rs => rs.map(r => r.id === id
+              ? { ...r, isLeisure: mark.isLeisure, isHotelOnly: mark.isHotelOnly, noDriverNeeded: mark.noDriverNeeded }
+              : r))
+          }}
         />
       )}
 
