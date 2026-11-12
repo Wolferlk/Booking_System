@@ -21,7 +21,7 @@ import {
   ticketFileKind, categoryIcon, categoryLabel, paxLabel,
 } from '@/lib/ticket-notes'
 import { resolveIsLeisure } from '@/lib/leisure-day'
-import { resolveIsHotelOnly } from '@/lib/driver-requirement'
+import { resolveIsHotelOnly, resolveNoDriverNeeded } from '@/lib/driver-requirement'
 import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 import { range12h, to12h } from '@/lib/clock-time'

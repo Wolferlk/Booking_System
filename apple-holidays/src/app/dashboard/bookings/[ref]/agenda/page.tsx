@@ -558,7 +558,11 @@ export default function AgendaPage() {
     setDownloadingWord(true)
     try {
       const res = await fetch(`/api/bookings/${ref}/agenda/word`)
-      if (!res.ok) throw new Error('Failed to generate Word file')
+      if (!res.ok) {
+        let detail = ''
+        try { const j = await res.json(); detail = j?.error || j?.message || '' } catch { /* non-JSON body */ }
+        throw new Error(detail ? `Failed to generate Word file: ${detail}` : `Failed to generate Word file (${res.status})`)
+      }
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
