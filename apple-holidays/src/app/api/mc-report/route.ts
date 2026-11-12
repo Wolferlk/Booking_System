@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { isTestText } from '@/lib/test-file'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -39,6 +40,14 @@ const CANCELLATION_SELECT = {
   cancellationFeeTotal: true,
   cancelPrevStatus:     true,
   currency:             true,
+  // Read only to flag test files (same rule as the Ops Board) — never sent on.
+  cancelDecisionNote:   true,
+  otherNote:            true,
+  importantNotes:       true,
+  clientRequest:        true,
+  policyNotes:          true,
+  tips:                 true,
+  amendmentNote:        true,
 } as const
 
 /** Lead guest first; a file with no lead marked falls back to its first passenger. */
@@ -76,8 +85,20 @@ function cancellationFields(b: {
   cancellationFeeTotal: unknown
   cancelPrevStatus:     string | null
   currency:             string | null
+  cancelDecisionNote?:  string | null
+  otherNote?:           string | null
+  importantNotes?:      string | null
+  clientRequest?:       string | null
+  policyNotes?:         string | null
+  tips?:                string | null
+  amendmentNote?:       string | null
+  passengers?:          { name: string | null }[]
 }) {
   return {
+    testFile: isTestText(
+      b.passengers?.[0]?.name, b.cancellationReason, b.cancelDecisionNote, b.otherNote,
+      b.importantNotes, b.clientRequest, b.policyNotes, b.tips, b.amendmentNote,
+    ),
     cancelRequestedAt: b.cancelRequestedAt ? b.cancelRequestedAt.toISOString() : null,
     cancelRequestedBy: b.cancelledByName ?? null,
     cancelReason:      b.cancellationReason ?? null,

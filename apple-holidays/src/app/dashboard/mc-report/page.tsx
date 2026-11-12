@@ -1315,8 +1315,14 @@ export default function MCReportPage() {
 
   // Advanced filters run last, and their chip counts are taken over the rows
   // every other filter left — so a count always says what a click would show.
-  const displayedRows = useMemo(() => applyAdvancedFilters(preAdvancedRows, adv), [preAdvancedRows, adv])
-  const advCounts     = useMemo(() => facetCounts(preAdvancedRows, adv), [preAdvancedRows, adv])
+  // "Show only these movements" on the cancel queue must win over the default
+  // hiding of cancelled files, or it would open on an empty chart.
+  const effectiveAdv  = useMemo<AdvancedFilters>(
+    () => (cancelOnly && adv.cancelled === 'hide' ? { ...adv, cancelled: 'show' } : adv),
+    [adv, cancelOnly],
+  )
+  const displayedRows = useMemo(() => applyAdvancedFilters(preAdvancedRows, effectiveAdv), [preAdvancedRows, effectiveAdv])
+  const advCounts     = useMemo(() => facetCounts(preAdvancedRows, effectiveAdv), [preAdvancedRows, effectiveAdv])
   const advActive     = activeFilterCount(adv)
   const isFiltered    = displayedRows.length !== rows.length
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   PlaneLanding, PlaneTakeoff, Plane, Route, Layers, SlidersHorizontal, ChevronDown,
   Clock, UserCheck, CalendarRange, Flag, Ban, Search, Check, X, Link2, Zap,
-  Sunrise, Sun, Sunset, Moon, CircleDashed,
+  Sunrise, Sun, Sunset, Moon, CircleDashed, FlaskConical,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -436,6 +436,23 @@ export default function AdvancedFilterPanel({ filters, onChange, counts, shown, 
                       'rounded-md px-3 py-1 transition-colors',
                       filters.cancelled === k
                         ? k === 'only' ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'
+                        : 'text-slate-500 hover:text-slate-800',
+                    )}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </Group>
+
+            <Group icon={FlaskConical} label="Test files">
+              <div className="inline-flex rounded-lg bg-white p-0.5 text-[11px] font-semibold ring-1 ring-slate-200"
+                title='Bookings with "test" in the lead guest name, cancellation reason or a booking note'>
+                {([['show', 'Show'], ['hide', 'Hide'], ['only', `Only (${counts.tests})`]] as [CancelMode, string][]).map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => set('tests', k)}
+                    className={cn(
+                      'rounded-md px-3 py-1 transition-colors',
+                      filters.tests === k
+                        ? k === 'only' ? 'bg-violet-600 text-white' : 'bg-slate-900 text-white'
                         : 'text-slate-500 hover:text-slate-800',
                     )}>
                     {l}

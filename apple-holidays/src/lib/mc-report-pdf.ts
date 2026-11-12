@@ -347,8 +347,11 @@ export function describeFilters(f: McTemplateFilters, serviceLabel?: (v: string)
   if (a.driver.length)    out.push(label(DRIVER_STATES, a.driver))
   if (a.stages.length)    out.push(label(TRIP_STAGES, a.stages))
   if (a.flags.length)     out.push(label(FLAGS, a.flags))
-  if (a.cancelled === 'hide') out.push('Cancelled files hidden')
+  // Hidden is the default now, so only a departure from it is worth a line.
+  if (a.cancelled === 'show') out.push('Cancelled files shown')
   if (a.cancelled === 'only') out.push('Cancelled files only')
+  if (a.tests === 'show') out.push('Test files shown')
+  if (a.tests === 'only') out.push('Test files only')
   if (f.search)      out.push(`Tour ref: “${f.search}”`)
   if (f.deepSearch)  out.push(`Search: “${f.deepSearch}”`)
   if (f.serviceType) out.push(`Service: ${serviceLabel ? serviceLabel(f.serviceType) : f.serviceType}`)
@@ -390,7 +393,7 @@ function cell(key: McPdfColumnKey, r: McPdfRow, idx: number): string {
     case 'date':      return `<span class="b nw">${esc(fmtDate(r.date))}</span>`
     case 'time':      return r.time ? `<span class="time">${esc(to12(r.time))}</span>` : dash
     case 'tourRef':   return `<span class="ref${r.cancelled ? ' strike' : ''}">${esc(r.vnCode)}</span>`
-      + (r.cancelled ? `<div class="tag tag-red">${r.cancelPending ? 'Cancelling' : 'Cancelled'}</div>` : '')
+      + (r.cancelled ? `<div class="tag tag-red">${r.cancelPending ? 'Requested to cancel' : 'Cancelled'}</div>` : '')
       + (r.isNumber && r.isNumber !== r.vnCode ? `<div class="sub blue">IS ${esc(r.isNumber)}</div>` : '')
       + (r.agentRef ? `<div class="sub violet">${esc(r.agentRef)}</div>` : '')
     case 'leadGuest': return r.leadGuest ? `<span class="b">${esc(r.leadGuest)}</span>` : dash

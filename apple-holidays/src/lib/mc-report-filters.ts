@@ -49,6 +49,8 @@ export interface McFilterRow {
   tourVendorName: string | null
   agent:       string | null
   bookingStatus: string
+  /** "test" in the lead guest or a booking note — same rule as the Ops Board. */
+  testFile?:     boolean
   flights?:      McFlight[]
   arrivalDate?:  string | null
   departureDate?: string | null
@@ -305,18 +307,27 @@ export interface AdvancedFilters {
   drivers:   string[]
   flags:     FlagKey[]
   cancelled: CancelMode
+  /** Test files — hidden unless asked for, like cancellations. */
+  tests:     CancelMode
 }
 
 export const EMPTY_FILTERS: AdvancedFilters = {
   flow: 'all', times: [], driver: [], stages: [], airports: [],
-  agents: [], locations: [], drivers: [], flags: [], cancelled: 'show',
+  agents: [], locations: [], drivers: [], flags: [], cancelled: 'hide', tests: 'hide',
 }
+
+/**
+ * Cancelled and test files are hidden by default — the chart is the list of work
+ * to run. Showing them is what counts as a filter, not hiding them.
+ */
+export const DEFAULT_HIDDEN: CancelMode = 'hide'
 
 export type FilterField = keyof AdvancedFilters
 
 /** How many separate filters are switched on — the badge on the panel toggle. */
 export function activeFilterCount(f: AdvancedFilters): number {
-  return (f.flow !== 'all' ? 1 : 0) + (f.cancelled !== 'show' ? 1 : 0)
+  return (f.flow !== 'all' ? 1 : 0)
+    + (f.cancelled !== DEFAULT_HIDDEN ? 1 : 0) + (f.tests !== DEFAULT_HIDDEN ? 1 : 0)
     + [f.times, f.driver, f.stages, f.airports, f.agents, f.locations, f.drivers, f.flags]
       .filter(a => a.length > 0).length
 }
@@ -350,11 +361,17 @@ function passes(row: McFilterRow, f: AdvancedFilters, skip?: FilterField): boole
     if (f.cancelled === 'hide' &&  isCancelled(row)) return false
     if (f.cancelled === 'only' && !isCancelled(row)) return false
   }
+  if (skip !== 'tests' && f.tests !== 'show') {
+    if (f.tests === 'hide' &&  row.testFile) return false
+    if (f.tests === 'only' && !row.testFile) return false
+  }
   return true
 }
 
 export function applyAdvancedFilters<R extends McFilterRow>(rows: R[], f: AdvancedFilters, skip?: FilterField): R[] {
-  if (!skip && activeFilterCount(f) === 0) return rows
+  // Nothing switched on still hides cancelled and test files, so only skip the
+  // pass when both are shown too.
+  if (!skip && activeFilterCount(f) === 0 && f.cancelled === 'show' && f.tests === 'show') return rows
   return rows.filter(r => passes(r, f, skip))
 }
 
@@ -376,6 +393,7 @@ export interface FacetCounts {
   drivers:   [string, number][]
   flags:     Record<FlagKey, number>
   cancelled: number
+  tests:     number
   /** Pax on the arrivals / departures currently passing every other filter. */
   arrivalPax:   number
   departurePax: number
@@ -425,6 +443,7 @@ export function facetCounts(rows: McFilterRow[], f: AdvancedFilters): FacetCount
     drivers:   ranked(without('drivers'),   allocatedName),
     flags:     Object.fromEntries(FLAGS.map(fl => [fl.key, flagRows.filter(r => hasFlag(r, fl.key)).length])) as Record<FlagKey, number>,
     cancelled: without('cancelled').filter(isCancelled).length,
+    tests:     without('tests').filter(r => r.testFile).length,
     arrivalPax, departurePax,
   }
 }
@@ -471,10 +490,11 @@ export function matchingQuickView(f: AdvancedFilters): string | null {
 const LIST_FIELDS = ['times', 'driver', 'stages', 'airports', 'agents', 'locations', 'drivers', 'flags'] as const
 
 export function filtersToParams(f: AdvancedFilters, into: URLSearchParams) {
-  into.delete('flow'); into.delete('cancelled')
+  into.delete('flow'); into.delete('cancelled'); into.delete('tests')
   for (const k of LIST_FIELDS) into.delete(k)
   if (f.flow !== 'all') into.set('flow', f.flow)
-  if (f.cancelled !== 'show') into.set('cancelled', f.cancelled)
+  if (f.cancelled !== DEFAULT_HIDDEN) into.set('cancelled', f.cancelled)
+  if (f.tests !== DEFAULT_HIDDEN) into.set('tests', f.tests)
   for (const k of LIST_FIELDS) if (f[k].length) into.set(k, (f[k] as string[]).join('|'))
 }
 
@@ -483,9 +503,11 @@ export function filtersFromParams(p: URLSearchParams): AdvancedFilters {
     (p.get(k)?.split('|').filter(Boolean) ?? []).filter(v => !allowed || allowed.includes(v as T)) as T[]
   const flow = p.get('flow') as FlowFilter | null
   const cancelled = p.get('cancelled') as CancelMode | null
+  const tests = p.get('tests') as CancelMode | null
   return {
     flow:      flow && FLOW_OPTIONS.some(o => o.key === flow) ? flow : 'all',
-    cancelled: cancelled === 'hide' || cancelled === 'only' ? cancelled : 'show',
+    cancelled: cancelled === 'show' || cancelled === 'only' ? cancelled : DEFAULT_HIDDEN,
+    tests:     tests === 'show' || tests === 'only' ? tests : DEFAULT_HIDDEN,
     times:     list('times',  TIME_BUCKETS.map(t => t.key)),
     driver:    list('driver', DRIVER_STATES.map(d => d.key)),
     stages:    list('stages', TRIP_STAGES.map(s => s.key)),
