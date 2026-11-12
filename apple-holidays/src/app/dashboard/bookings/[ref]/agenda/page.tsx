@@ -37,7 +37,7 @@ import { flightLine, linkFlight, removeTransferDescription, transferDescription,
 import { DEFAULT_FLIGHT_PICKUP_RULES, type FlightPickupRules } from '@/lib/flight-pickup-rules'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
 import MovementWhatsAppModal, { MovementWhatsAppButton, type MovementSendSummary } from '@/components/agenda/movement-whatsapp-modal'
-import VnVendorSyncPanel, { type VendorSyncUpdate } from '@/components/agenda/vn-vendor-sync-panel'
+import { type VendorSyncUpdate } from '@/components/agenda/vn-vendor-sync-panel'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
@@ -1744,10 +1744,7 @@ export default function AgendaPage() {
           />
         )}
 
-        {/* ── VN: tour vendors from the desk's Excel checklist (every 15 min) ── */}
-        {!generating && booking?.operationCountry === 'VIETNAM' && items.length > 0 && (
-          <VnVendorSyncPanel bookingRef={ref} onVendorsChanged={applyVendorSync} />
-        )}
+        {/* VN Vendor Sync panel (Excel checklist → Tour Vendor) retired 2026-11-12. */}
 
         {/* ── MOVEMENT ITEMS ── */}
         {!generating && items.map((item, i) => {

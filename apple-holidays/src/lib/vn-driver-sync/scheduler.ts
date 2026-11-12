@@ -34,5 +34,5 @@ export function startVnDriverSyncScheduler(): void {
   if (timer) return
   setTimeout(() => { void tick() }, 5 * 60_000)
   timer = setInterval(() => { void tick() }, TICK_MS)
-  console.log('[VN Driver Sync] Scheduler started — drivers from the VN Movement Chart Google Sheet, every 15 minutes (a setting)')
+  console.log('[VN Driver Sync] Scheduler started — drivers from the VN Movement Chart workbook (OneDrive), every 15 minutes (a setting)')
 }

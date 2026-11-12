@@ -3,7 +3,8 @@
  * Client-safe: no Prisma, no Node APIs.
  */
 
-export const DEFAULT_SHEET_ID = '1E_wc4G_9Ibk0WRNl0j7R2H91NDvyVK5m7YlAe1qNuaM'
+/** The VN team's Movement Chart — an Excel workbook on OneDrive, read with Microsoft Graph. */
+export const DEFAULT_SHEET_URL = 'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQDIkQw88E9UT4JOTpObXQoQAX_wrmXZwvyg-6op_n1HrEQ?e=6oW6fw'
 export const DEFAULT_INTERVAL_MIN = 15
 export const DEFAULT_DAYS_AHEAD = 120
 
@@ -15,6 +16,8 @@ export const DRIVER_SYNC_SETTINGS = {
   sheet: 'vn_driver_sync_sheet',
   /** JSON: { at, hash, source, rows, tabs } of the last good sheet read. */
   sheetState: 'vn_driver_sync_sheet_state',
+  /** JSON: { driveId, itemId, forUrl } — the OneDrive file the link last resolved to. */
+  sheetRef: 'vn_driver_sync_sheet_ref',
 } as const
 
 export type DriverSyncMode = 'AUTO' | 'SUGGEST' | 'OFF'
@@ -24,7 +27,7 @@ export interface DriverSyncConfig {
   intervalMin: number
   daysAhead: number
   useAi: boolean
-  /** The sheet link or id the desk pasted. */
+  /** The workbook link the desk pasted (OneDrive / SharePoint share link, or a Google Sheet link). */
   sheet: string
 }
 
@@ -135,7 +138,7 @@ export interface DriverSyncEventInfo {
 export interface SheetState {
   at: string
   hash: string
-  source: 'SERVICE_ACCOUNT' | 'PUBLIC_LINK'
+  source: 'MICROSOFT_GRAPH' | 'SERVICE_ACCOUNT' | 'PUBLIC_LINK'
   rows: number
   tabs: string[]
   title?: string | null
@@ -146,7 +149,7 @@ export interface DriverSyncOverview {
   canEdit: boolean
   isAdmin: boolean
   config: DriverSyncConfig
-  access: { serviceAccount: string | null; sheetUrl: string }
+  access: { kind: 'MICROSOFT' | 'GOOGLE'; serviceAccount: string | null; sheetUrl: string }
   sheet: SheetState | null
   totals: Record<string, number>
   runs: DriverSyncRunInfo[]
@@ -165,6 +168,11 @@ export function timeAgo(iso: string | null | undefined): string {
   const h = Math.round(m / 60)
   if (h < 36) return `${h} h ago`
   return `${Math.round(h / 24)} d ago`
+}
+
+/** A OneDrive / SharePoint link (read with Microsoft Graph). */
+export function isMicrosoftLink(input: string | null | undefined): boolean {
+  return /^https:\/\/([a-z0-9-]+\.)?(sharepoint\.com|1drv\.ms|onedrive\.live\.com)\//i.test(String(input ?? '').trim())
 }
 
 /** "https://docs.google.com/spreadsheets/d/<id>/edit…" or a bare id → the id. */

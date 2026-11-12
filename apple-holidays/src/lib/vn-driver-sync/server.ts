@@ -2,7 +2,7 @@
  * VN Driver Sync — server side.
  *
  * Every 15 minutes (a setting):
- *   1. download the "(VN TEAM) Movement Chart" Google Sheet (./sheet.ts) — READ only;
+ *   1. download the "(VN TEAM) Movement Chart" workbook from OneDrive via Microsoft Graph (./sheet.ts) — READ only;
  *   2. for every upcoming Vietnam booking, match its sheet rows to its system
  *      movements (./match.ts: rules, then OpenAI for the unsure ones);
  *   3. write the sheet's Vendors text onto the movement as its driver:
@@ -32,7 +32,7 @@ import { serviceTypeShortLabel } from '@/lib/service-types'
 import { readMovementSheet, serviceAccount, SheetAccessError, type SheetRow } from './sheet'
 import { matchBooking, type AiCacheEntry, type Movement, type Pick as MatchPick } from './match'
 import {
-  DEFAULT_DAYS_AHEAD, DEFAULT_INTERVAL_MIN, DEFAULT_SHEET_ID, DRIVER_SYNC_SETTINGS, sheetIdOf, sheetUrlOf,
+  DEFAULT_DAYS_AHEAD, DEFAULT_INTERVAL_MIN, DEFAULT_SHEET_URL, DRIVER_SYNC_SETTINGS, isMicrosoftLink, sheetIdOf, sheetUrlOf,
   type DriverSyncConfig, type DriverSyncEventInfo, type DriverSyncLinkInfo, type DriverSyncMode, type DriverSyncOverview,
   type DriverSyncRunInfo, type EventAction, type LinkStatus, type SheetState, type UnmatchedRow,
 } from './shared'
@@ -62,7 +62,7 @@ export async function getDriverSyncConfig(): Promise<DriverSyncConfig> {
     intervalMin: Number.isFinite(interval) && interval >= 5 && interval <= 240 ? interval : DEFAULT_INTERVAL_MIN,
     daysAhead: Number.isFinite(days) && days >= 1 && days <= 400 ? days : DEFAULT_DAYS_AHEAD,
     useAi: map.get(DRIVER_SYNC_SETTINGS.useAi) !== 'false',
-    sheet: map.get(DRIVER_SYNC_SETTINGS.sheet) || sheetUrlOf(DEFAULT_SHEET_ID),
+    sheet: map.get(DRIVER_SYNC_SETTINGS.sheet) || DEFAULT_SHEET_URL,
   }
 }
 
@@ -83,9 +83,16 @@ export async function saveDriverSyncConfig(input: Partial<DriverSyncConfig>): Pr
   }
   if (input.useAi !== undefined) await setSetting(DRIVER_SYNC_SETTINGS.useAi, input.useAi ? 'true' : 'false')
   if (input.sheet !== undefined) {
-    const id = sheetIdOf(input.sheet)
-    if (!id) throw new Error('Paste the Google Sheet link (https://docs.google.com/spreadsheets/d/…)')
-    await setSetting(DRIVER_SYNC_SETTINGS.sheet, sheetUrlOf(id))
+    const link = String(input.sheet ?? '').trim()
+    if (isMicrosoftLink(link)) {
+      const current = (await getDriverSyncConfig()).sheet
+      await setSetting(DRIVER_SYNC_SETTINGS.sheet, link)
+      if (link !== current) await setSetting(DRIVER_SYNC_SETTINGS.sheetRef, '')
+    } else {
+      const id = sheetIdOf(link)
+      if (!id) throw new Error('Paste the OneDrive / SharePoint share link to the Excel file (https://aahaas-my.sharepoint.com/…)')
+      await setSetting(DRIVER_SYNC_SETTINGS.sheet, sheetUrlOf(id))
+    }
   }
   return getDriverSyncConfig()
 }
@@ -234,10 +241,9 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
 
   try {
     // 1 — The sheet.
-    const sheetId = sheetIdOf(config.sheet) ?? DEFAULT_SHEET_ID
     let sheet: Awaited<ReturnType<typeof readMovementSheet>>
     try {
-      sheet = await readMovementSheet(sheetId)
+      sheet = await readMovementSheet(config.sheet)
     } catch (err) {
       const msg = err instanceof SheetAccessError ? err.message : `Could not read the sheet: ${err instanceof Error ? err.message : String(err)}`
       return await finish({ status: 'FAILED', error: clip(msg, 4000), sheetNote: clip(msg, 500) })
@@ -249,7 +255,7 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
     counts.sheetRows = sheet.rows.length
     const sheetNote = [
       `${sheet.rows.length} rows from ${sheet.tabs.length} tab(s)`,
-      sheet.source === 'SERVICE_ACCOUNT' ? 'via service account' : 'via shared link',
+      sheet.source === 'MICROSOFT_GRAPH' ? `OneDrive${sheet.title ? ` "${sheet.title}"` : ''}` : sheet.source === 'SERVICE_ACCOUNT' ? 'Google, service account' : 'Google, shared link',
       prevState?.hash === sheet.hash ? 'unchanged' : prevState ? 'changed since last read' : null,
       ...sheet.warnings,
     ].filter(Boolean).join(' · ')
@@ -621,7 +627,7 @@ export async function driverSyncOverview(q: {
 }): Promise<DriverSyncOverview> {
   const config = await getDriverSyncConfig()
   const sa = serviceAccount()
-  const access = { serviceAccount: sa?.email ?? null, sheetUrl: config.sheet }
+  const access = { kind: isMicrosoftLink(config.sheet) ? 'MICROSOFT' as const : 'GOOGLE' as const, serviceAccount: sa?.email ?? null, sheetUrl: config.sheet }
   const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [] }
   try {
     const today = vnToday()

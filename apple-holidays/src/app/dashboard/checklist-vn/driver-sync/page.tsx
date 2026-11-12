@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * VN Driver Sync — the VN team's Movement Chart Google Sheet → each movement's driver.
+ * VN Driver Sync — the VN team's Movement Chart workbook (OneDrive, via Microsoft Graph) → each movement's driver.
  * Sweeps, every movement the sync has an opinion on (with Apply / Ignore / Undo),
  * sheet rows it could not place, the log and the settings.
  */
@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   RefreshCw, Loader2, Car, FileSpreadsheet, ArrowRight, Undo2, Search, Settings2, Database, CheckCircle2, AlertTriangle,
-  Clock, ShieldCheck, ChevronLeft, ChevronRight, ExternalLink, Sparkles, Ban, RotateCcw, Check, Phone, Store, Eye,
+  Clock, ShieldCheck, ChevronLeft, ChevronRight, ExternalLink, Sparkles, Ban, RotateCcw, Check, Phone, Eye,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn } from '@/lib/utils'
@@ -221,11 +221,12 @@ export default function DriverSyncPage() {
   const totals = data?.totals ?? {}
   const lastRun = data?.runs.find(r => r.scope === 'ALL')
   const lastGood = data?.runs.find(r => r.scope === 'ALL' && r.status === 'SUCCESS')
-  const accessProblem = lastRun?.status === 'FAILED' && /private|shared|share|sign-in|401|403/i.test(lastRun.error ?? '')
+  const accessProblem = lastRun?.status === 'FAILED' && /private|shared|share|sign-in|graph|onedrive|folder|workbook|401|403|404/i.test(lastRun.error ?? '')
+  const isMicrosoft = data?.access.kind !== 'GOOGLE'
 
   return (
     <>
-      <Header title="VN Driver Sync" subtitle="Drivers on every Vietnam movement, from the VN team's Movement Chart Google Sheet — every 15 minutes" />
+      <Header title="VN Driver Sync" subtitle="Drivers on every Vietnam movement, from the VN team's Movement Chart workbook — every 15 minutes" />
       <div className="space-y-5 px-4 py-5 sm:px-8 sm:py-6">
 
         {/* Hero */}
@@ -246,9 +247,6 @@ export default function DriverSyncPage() {
                   <ExternalLink className="h-3.5 w-3.5" /> Open sheet
                 </a>
               )}
-              <Link href="/dashboard/checklist-vn/vendor-sync" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium ring-1 ring-white/20 hover:bg-white/20">
-                <Store className="h-3.5 w-3.5" /> Vendor sync
-              </Link>
               {data?.canEdit && data.installed && (
                 <button type="button" onClick={runAll} disabled={running}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-400 px-3.5 py-2 text-xs font-semibold text-slate-900 hover:bg-indigo-300 disabled:opacity-60">
@@ -285,10 +283,17 @@ export default function DriverSyncPage() {
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
             <p className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4" />The Movement Chart cannot be read</p>
             <p className="mt-1 text-[12.5px]">{lastRun?.error}</p>
-            <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[12px] text-rose-700">
-              <li>Open the sheet → <b>Share</b> → General access → <b>Anyone with the link</b> → <b>Viewer</b>, then press Sync all now.</li>
-              <li>Or keep it private and share it as Viewer with {data?.access.serviceAccount ? <b className="font-mono">{data.access.serviceAccount}</b> : <>a Google service account (set <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> on the server first)</>}.</li>
-            </ol>
+            {isMicrosoft ? (
+              <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[12px] text-rose-700">
+                <li>In OneDrive, open the Excel file → <b>Share</b> → <b>Copy link</b> (people in Aahaas with the link can view) and paste that link in Settings below.</li>
+                <li>The link must point to the workbook itself, not to a folder, and sit in the aahaas.com Microsoft 365 — OPS reads it with its own Microsoft login, so nobody needs to be added.</li>
+              </ol>
+            ) : (
+              <ol className="mt-2 list-decimal space-y-0.5 pl-5 text-[12px] text-rose-700">
+                <li>Easiest: move the chart to OneDrive and paste its share link in Settings below.</li>
+                <li>Or share the Google Sheet as Viewer with {data?.access.serviceAccount ? <b className="font-mono">{data.access.serviceAccount}</b> : <>a Google service account (set <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> on the server first)</>}.</li>
+              </ol>
+            )}
           </div>
         )}
 
@@ -338,7 +343,7 @@ export default function DriverSyncPage() {
                   <input type="checkbox" disabled={!data?.isAdmin} checked={cfg.useAi} onChange={e => setCfg({ ...cfg, useAi: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                 </label>
                 <label className="block">
-                  <span className="font-medium text-slate-600">Google Sheet link</span>
+                  <span className="font-medium text-slate-600">Workbook link (OneDrive / SharePoint)</span>
                   <input disabled={!data?.isAdmin} value={cfg.sheet} onChange={e => setCfg({ ...cfg, sheet: e.target.value })}
                     className="mt-1 w-full truncate rounded-lg border border-slate-200 px-2.5 py-1.5 font-mono text-[10.5px]" />
                 </label>
@@ -355,7 +360,9 @@ export default function DriverSyncPage() {
                   </label>
                 </div>
                 <p className="text-[10.5px] text-slate-400">
-                  Reading via {data?.access.serviceAccount ? <>service account <span className="font-mono">{data.access.serviceAccount}</span> (falls back to the shared link)</> : 'the sheet\'s shared link'}.
+                  {isMicrosoft
+                    ? <>Read with OPS&apos;s Microsoft login (Graph) — download only, the workbook is never opened for editing.</>
+                    : <>Google Sheet — read via {data?.access.serviceAccount ? <>service account <span className="font-mono">{data.access.serviceAccount}</span></> : 'its shared link'}.</>}
                 </p>
                 {data?.isAdmin ? (
                   <button type="button" onClick={saveCfg} disabled={saving}

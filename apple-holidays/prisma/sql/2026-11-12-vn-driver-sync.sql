@@ -1,5 +1,5 @@
 -- VN Driver Sync — fills each Vietnam movement's DRIVER from the VN team's
--- Google Sheet "(VN TEAM) Movement Chart 2026 (Final)", every 15 minutes.
+-- workbook "(VN TEAM) Movement Chart 2026 (Final)" on OneDrive (read with Microsoft Graph), every 15 minutes.
 --
 -- The sheet is never written. Each sheet row (Date, Code, Tour Details, Meal
 -- Plan, Meeting Time, Service Type, Vendors) is matched to the system movement

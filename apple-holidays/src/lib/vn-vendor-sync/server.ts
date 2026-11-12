@@ -222,7 +222,17 @@ export const isVendorSyncRunning = (scope = 'ALL') => inflight.has(scope)
  * One run. `bookingRef` limits it to one booking ("Fetch now" on a booking).
  * Returns null when a run for the same scope is already going.
  */
+/**
+ * RETIRED 2026-11-12 — the desk does not want movement vendors filled from the
+ * Excel checklist. Movements now get their DRIVER from the VN team's Movement
+ * Chart (src/lib/vn-driver-sync). Nothing here runs any more: no sweep, no
+ * "Fetch now", no stale kick. The code and tables are kept only so past runs
+ * stay readable and could be undone.
+ */
+export const VENDOR_SYNC_RETIRED = true
+
 export function runVendorSync(opts: { trigger: VendorSyncTrigger; bookingRef?: string | null; triggeredBy?: string | null; refreshSheet?: boolean }): Promise<RunSummary | null> {
+  if (VENDOR_SYNC_RETIRED) return Promise.resolve(null)
   const scope = opts.bookingRef?.trim().toUpperCase() || 'ALL'
   const existing = inflight.get(scope)
   if (existing) return existing
@@ -681,6 +691,7 @@ export async function lastAllRun(): Promise<VendorSyncRunInfo | null> {
 
 /** Is the 15-minute sweep due? (a failure retries after 5 minutes) */
 export async function isVendorSyncDue(config?: VendorSyncConfig): Promise<boolean> {
+  if (VENDOR_SYNC_RETIRED) return false
   const cfg = config ?? await getVendorSyncConfig()
   if (cfg.mode === 'OFF') return false
   const last = await prisma.vnVendorSyncRun.findFirst({ where: { scope: 'ALL' }, orderBy: { startedAt: 'desc' }, select: { status: true, startedAt: true } })

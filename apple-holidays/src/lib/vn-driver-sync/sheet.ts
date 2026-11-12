@@ -1,8 +1,14 @@
 /**
  * VN Driver Sync — reading the "(VN TEAM) Movement Chart" Google Sheet.
  *
- * Two ways in, tried in this order; the sheet is only ever READ:
+ * The sheet is only ever READ. How it is fetched depends on the link:
  *
+ *   OneDrive / SharePoint link (the default) — Microsoft Graph, with the same
+ *   app login OPS already uses for mailboxes and the Checklist VN 2.1 mirror.
+ *   The link resolves through /shares/{link}/driveItem, then a plain /content
+ *   download; no workbook session is opened, nothing is written.
+ *
+ *   Google Sheet link (kept as a fallback), tried in this order:
  *   1. A Google service account (GOOGLE_SERVICE_ACCOUNT_JSON, or
  *      GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY).
  *      Share the sheet with that e-mail as Viewer — the sheet can stay private.
@@ -16,7 +22,10 @@
  */
 import { createHash, createSign } from 'crypto'
 import * as XLSX from 'xlsx'
-import { normaliseServiceType } from '@/lib/service-types'
+import { prisma } from '@/lib/prisma'
+import { downloadDriveItem, graphFetch } from '@/lib/graph-client'
+import { DRIVER_SYNC_SETTINGS, isMicrosoftLink, sheetIdOf } from './shared'
+import { normaliseServiceType, SERVICE_TYPE_SHORT_LABELS, isBuiltInServiceType } from '@/lib/service-types'
 import { extractPhones } from '@/lib/guest-driver'
 
 export interface SheetRow {
@@ -43,7 +52,7 @@ export interface SheetRead {
   tabs: string[]
   skippedTabs: string[]
   hash: string
-  source: 'SERVICE_ACCOUNT' | 'PUBLIC_LINK'
+  source: 'MICROSOFT_GRAPH' | 'SERVICE_ACCOUNT' | 'PUBLIC_LINK'
   title: string | null
   warnings: string[]
 }
@@ -122,7 +131,61 @@ async function downloadPublic(sheetId: string): Promise<Buffer> {
   return Buffer.from(await res.arrayBuffer())
 }
 
-export async function readMovementSheet(sheetId: string): Promise<SheetRead> {
+// ── Microsoft Graph (OneDrive / SharePoint) ─────────────────────────────────
+
+function encodeShareUrl(url: string): string {
+  return 'u!' + Buffer.from(url, 'utf8').toString('base64').replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-')
+}
+
+/**
+ * Resolve the share link to the file and download it. The resolved ids are
+ * remembered, so if the share link is later revoked or re-issued the file it
+ * pointed at is still reached (the app login can read it without the link).
+ */
+async function downloadWithGraph(url: string): Promise<{ buf: Buffer; title: string | null; cTag: string | null }> {
+  type Item = { id: string; name: string; cTag?: string; eTag?: string; file?: unknown; parentReference?: { driveId?: string } }
+  const select = '$select=id,name,cTag,eTag,file,parentReference'
+  let item: Item
+  try {
+    item = await graphFetch<Item>(`/shares/${encodeShareUrl(url)}/driveItem?${select}`)
+  } catch (err) {
+    const cached = await prisma.systemSetting.findUnique({ where: { key: DRIVER_SYNC_SETTINGS.sheetRef } }).catch(() => null)
+    let ref: { driveId?: string; itemId?: string; forUrl?: string } | null = null
+    try { ref = cached?.value ? JSON.parse(cached.value) : null } catch { ref = null }
+    if (!ref?.driveId || !ref.itemId || ref.forUrl !== url) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/40[134]|accessDenied|itemNotFound|invalidRequest/i.test(msg)) {
+        throw new SheetAccessError(`Microsoft Graph could not open the OneDrive link (${msg.slice(0, 160)}). Check the link is a share link to the Excel file itself, inside the aahaas.com tenant.`, 'NOT_SHARED')
+      }
+      throw err
+    }
+    item = await graphFetch<Item>(`/drives/${ref.driveId}/items/${ref.itemId}?${select}`)
+    item.parentReference = { driveId: ref.driveId }
+  }
+  const driveId = item.parentReference?.driveId
+  if (!driveId || !item.file) throw new SheetAccessError('The OneDrive link points to a folder, not the Excel file — share the workbook itself', 'FORMAT')
+  if (!/\.xls[xm]?$/i.test(item.name)) throw new SheetAccessError(`"${item.name}" is not an Excel workbook`, 'FORMAT')
+  await prisma.systemSetting.upsert({
+    where: { key: DRIVER_SYNC_SETTINGS.sheetRef },
+    create: { key: DRIVER_SYNC_SETTINGS.sheetRef, value: JSON.stringify({ driveId, itemId: item.id, forUrl: url }) },
+    update: { value: JSON.stringify({ driveId, itemId: item.id, forUrl: url }) },
+  }).catch(() => undefined)
+  return { buf: await downloadDriveItem(driveId, item.id), title: item.name, cTag: item.cTag ?? item.eTag ?? null }
+}
+
+/** Read the Movement Chart behind a link: OneDrive / SharePoint via Graph, else a Google Sheet. */
+export async function readMovementSheet(link: string): Promise<SheetRead> {
+  if (isMicrosoftLink(link)) {
+    const d = await downloadWithGraph(link.trim())
+    const parsed = parseMovementWorkbook(d.buf)
+    return { ...parsed, source: 'MICROSOFT_GRAPH', title: d.title, hash: createHash('sha256').update(d.buf).digest('hex').slice(0, 32) }
+  }
+  const sheetId = sheetIdOf(link)
+  if (!sheetId) throw new SheetAccessError('The workbook link is not a OneDrive / SharePoint or Google Sheets link', 'NOT_FOUND')
+  return readGoogleSheet(sheetId)
+}
+
+async function readGoogleSheet(sheetId: string): Promise<SheetRead> {
   const sa = serviceAccount()
   let buf: Buffer
   let title: string | null = null
@@ -219,12 +282,26 @@ export function normTime(v: Cell | string | undefined | null): string | null {
 
 const REF_RE = /\bVN\s?-?\d{4,6}\b/gi
 
+/** The desk writes "PVT Transfer", "Own Arr.", "Ticket" — map them to the system's service codes. */
+export function sheetServiceCode(raw: string | null): string | null {
+  if (!raw) return null
+  const direct = normaliseServiceType(raw)
+  if (direct && isBuiltInServiceType(direct)) return direct
+  const t = raw.replace(/\s+/g, ' ').trim().toLowerCase()
+  for (const [code, label] of Object.entries(SERVICE_TYPE_SHORT_LABELS)) if (label.toLowerCase() === t) return code
+  const expanded = normaliseServiceType(raw.replace(/\bpvt\b/gi, 'Private').replace(/\bown arr\.?(?=\s|$)/gi, 'Own Arrangement or Booked with another vendor'))
+  return expanded ?? direct
+}
+
 export function parseMovementWorkbook(buf: Buffer): Omit<SheetRead, 'hash' | 'source' | 'title'> {
   const wb = XLSX.read(buf, { type: 'buffer', cellDates: false })
   const rows: SheetRow[] = []
   const tabs: string[] = []
   const skippedTabs: string[] = []
   const warnings: string[] = []
+  // The desk copies rows; an exact copy of a row is one service, not two.
+  const seen = new Set<string>()
+  let dupes = 0
 
   for (const tab of wb.SheetNames) {
     const ws = wb.Sheets[tab]
@@ -263,16 +340,20 @@ export function parseMovementWorkbook(buf: Buffer): Omit<SheetRead, 'hash' | 'so
 
       const service = text(at(cols.service))
       const contact = driver ?? vendor
+      const dupKey = [refs.join(), date, details, normTime(at(cols.time)), service, contact].join('\u0001')
+      if (seen.has(dupKey)) { dupes++; continue }
+      seen.add(dupKey)
       rows.push({
         id: `${tab}!${r + 1}`, tab, row: r + 1, refs, date,
         details, meal: text(at(cols.meal)), time: normTime(at(cols.time)),
-        service, serviceCode: normaliseServiceType(service),
+        service, serviceCode: sheetServiceCode(service),
         route: cols.route.map(i => text(at(i))).filter(Boolean).join(' · ') || null,
         text: vendor, driverText: driver,
         phones: extractPhones(contact),
       })
     }
   }
+  if (dupes) warnings.push(`${dupes} exact duplicate row(s) counted once`)
   if (!tabs.length) warnings.push(`No tab has a header row with Date, Code and Vendors (tabs: ${wb.SheetNames.join(', ')})`)
   return { rows, tabs, skippedTabs, warnings }
 }

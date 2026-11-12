@@ -46,14 +46,11 @@ export async function register() {
       const { startVnChecklistSheetScheduler } = await import('@/lib/vn-checklist-sheet/scheduler')
       startVnChecklistSheetScheduler()
 
-      // VN Vendor Sync — every 15 minutes (a setting), fills each upcoming VN
-      // movement's Tour Vendor from the same Excel checklist. Only empty tour
-      // vendors (or ones it filled itself); a no-op until its tables exist.
-      const { startVnVendorSyncScheduler } = await import('@/lib/vn-vendor-sync/scheduler')
-      startVnVendorSyncScheduler()
+      // VN Vendor Sync (Excel checklist → Tour Vendor) was retired on
+      // 2026-11-12 — VN Driver Sync below replaces it.
 
       // VN Driver Sync — every 15 minutes (a setting), fills each upcoming VN
-      // movement's driver from the VN team's Movement Chart Google Sheet. Only
+      // movement's driver from the VN team's Movement Chart workbook (OneDrive). Only
       // empty drivers (or ones it filled itself); a no-op until its tables exist.
       const { startVnDriverSyncScheduler } = await import('@/lib/vn-driver-sync/scheduler')
       startVnDriverSyncScheduler()
