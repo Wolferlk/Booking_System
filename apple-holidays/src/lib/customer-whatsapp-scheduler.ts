@@ -72,6 +72,11 @@ async function tick(): Promise<void> {
       console.error('[CustomerWhatsAppScheduler] daily-briefing error:', err instanceof Error ? err.message : err))
     await maybeRunFeedback().catch(err =>
       console.error('[CustomerWhatsAppScheduler] feedback-request error:', err instanceof Error ? err.message : err))
+    // Issued tickets → guest WhatsApp, once a day at 14:30 Colombo (Tickets Sent).
+    await import('./ticket-sends')
+      .then(m => m.runDueTicketSends())
+      .catch(err =>
+        console.error('[CustomerWhatsAppScheduler] ticket-sends error:', err instanceof Error ? err.message : err))
     await runGroupAutomations().catch(err =>
       console.error('[CustomerWhatsAppScheduler] group automation error:', err instanceof Error ? err.message : err))
   } finally {

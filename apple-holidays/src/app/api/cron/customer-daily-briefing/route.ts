@@ -6,8 +6,10 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { runDueCustomerDailyBriefings } from '@/lib/customer-whatsapp-automation'
+import { runDueTicketSends } from '@/lib/ticket-sends'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   // Uses its own secret (CRON_SECRET_2) so customer messaging can be rotated
@@ -19,5 +21,10 @@ export async function GET(req: NextRequest) {
   }
 
   const result = await runDueCustomerDailyBriefings()
-  return NextResponse.json({ ok: true, ...result })
+  // The daily ticket WhatsApp rides on this route: it runs once a day from
+  // 14:30 Colombo and every other call is a cheap skip — no extra cron needed.
+  const tickets = await runDueTicketSends().catch((err) => ({
+    ran: false, reason: err instanceof Error ? err.message : String(err), bookings: 0, tickets: 0, errors: [],
+  }))
+  return NextResponse.json({ ok: true, ...result, tickets })
 }

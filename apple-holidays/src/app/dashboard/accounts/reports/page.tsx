@@ -43,6 +43,10 @@ import {
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
 import OpsDrilldown from './ops-drilldown'
+import {
+  TicketSentCell, DriverBriefCell, CallsCell, GuestCommsStrip, GuestCommsPanel,
+  useNow, useTicketSendsConfig,
+} from './guest-comms-cells'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
 
@@ -262,6 +266,9 @@ export default function OperationsBoardPage() {
   const [rangeTo, setRangeTo] = useState(() => shift(todayLocal(), 7))
   const [search, setSearch] = useState('')
   const [board, setBoard] = useState<OpsDayBoard | null>(null)
+  // Guest comms: a 30-second clock for the countdowns, and the daily ticket send settings.
+  const nowTick = useNow()
+  const [sendsCfg, setSendsCfg] = useTicketSendsConfig()
   const [loading, setLoading] = useState(true)
   const [segment, setSegment] = useState<Segment>('ARRIVALS')
   const [onlyOutstanding, setOnlyOutstanding] = useState(false)
@@ -560,7 +567,9 @@ export default function OperationsBoardPage() {
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
-      'Driver / Vendor Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
+      'Driver / Vendor Allocation', 'Tickets',
+      'Tickets Sent', 'Driver Details', 'Driver Details At', 'CS Call D1', 'CS Call D2', 'CS Call D3',
+      'QC Stage', 'QC1', 'QC2', 'Outstanding',
       'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By', 'Days Awaiting Approval',
       'Cancel Reason', 'Cancellation Fee',
       'D-10 Due', 'D-10 Status', 'Days Late', 'Delay Reason', 'Delay Detail', 'Reason Recorded By', 'Reason Recorded On',
@@ -582,7 +591,15 @@ export default function OperationsBoardPage() {
       r.call.approvedAt?.slice(0, 10) ?? '',
       r.call.scheduledAt?.slice(0, 10) ?? '',
       r.call.scheduleStatus ?? '',
-      r.driver.short, r.tickets.short, r.qc.short,
+      r.driver.short, r.tickets.short,
+      r.ticketSends.issued ? `${r.ticketSends.sent}/${r.ticketSends.issued}` : '',
+      r.driverBrief.state === 'na' ? '' : r.driverBrief.state,
+      r.driverBrief.at ? new Date(r.driverBrief.at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '',
+      ...[0, 1, 2].map(i => {
+        const d = r.guestCalls.days[i]
+        return !d || d.state === 'na' ? '' : d.state
+      }),
+      r.qc.short,
       qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending',
       qcTick(r, 2) === 'DONE' ? 'Pass' : 'Pending',
       r.outstanding.join('; ') || 'None',
@@ -1333,6 +1350,10 @@ export default function OperationsBoardPage() {
         )}
 
         {/* ── The list ────────────────────────────────────────────────────── */}
+        {board && (
+          <GuestCommsStrip cfg={sendsCfg} onCfg={setSendsCfg} rows={visible} now={nowTick} />
+        )}
+
         <Card className="overflow-hidden">
           <CardHeader
             action={
@@ -1510,7 +1531,8 @@ export default function OperationsBoardPage() {
                     <tr className="bg-slate-50 border-b border-slate-200">
                       {[
                         'Booking', 'Lead Pax', 'Day', 'Pax', 'Movement',
-                        'Reconfirm', 'Call Request', 'Driver / Vendor', 'Tickets', 'QC1', 'QC2', '',
+                        'Reconfirm', 'Call Request', 'Driver / Vendor', 'Tickets',
+                        'Tickets Sent', 'Driver Details', 'CS Calls D1·D2·D3', 'QC1', 'QC2', '',
                       ].map(h => (
                         <th
                           key={h}
@@ -1669,6 +1691,15 @@ export default function OperationsBoardPage() {
                               <StatePill state={r.tickets.state} text={r.tickets.short} title={r.tickets.detail} />
                             </td>
                             <td className="px-3 py-2.5">
+                              <TicketSentCell r={r} nextAt={sendsCfg?.enabled ? sendsCfg.nextAt : null} now={nowTick} />
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <DriverBriefCell r={r} now={nowTick} />
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <CallsCell r={r} />
+                            </td>
+                            <td className="px-3 py-2.5">
                               <StatePill
                                 state={qcTick(r, 1)}
                                 text={qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending'}
@@ -1696,7 +1727,7 @@ export default function OperationsBoardPage() {
                           <AnimatePresence initial={false}>
                             {open && (
                               <tr key={`${r.bookingRef}-detail`}>
-                                <td colSpan={12} className="p-0">
+                                <td colSpan={15} className="p-0">
                                   <motion.div
                                     initial={reduce ? undefined : { height: 0, opacity: 0 }}
                                     animate={reduce ? undefined : { height: 'auto', opacity: 1 }}
@@ -1831,6 +1862,9 @@ export default function OperationsBoardPage() {
                                           )}
                                         </div>
                                       )}
+                                      <div className="lg:col-span-3" onClick={e => e.stopPropagation()}>
+                                        <GuestCommsPanel r={r} onSent={() => { void load({ silent: true }) }} />
+                                      </div>
                                     </div>
                                   </motion.div>
                                 </td>

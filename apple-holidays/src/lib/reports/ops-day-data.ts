@@ -56,6 +56,8 @@ import {
   DEFAULT_REPORT_TZ, dateInTz, formatReportDate, shiftDate, zonedDayStart,
 } from './report-window'
 import type { BookingStatus, Prisma } from '@prisma/client'
+import { loadTicketSendStatus, type TicketSendStatus } from '@/lib/ticket-sends'
+import { loadGuestComms, type DriverBrief, type GuestCalls } from './ops-guest-comms'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -208,6 +210,12 @@ export interface OpsDayRow {
   /** True when driver, tickets, QC2 and both reconfirmation signals are clear. */
   ready: boolean
   outstanding: string[]
+  /** Issued tickets and how many have gone to the guest on WhatsApp. */
+  ticketSends: TicketSendStatus
+  /** The daily plan (driver details) for the next trip day — sent, scheduled, missed. */
+  driverBrief: DriverBrief
+  /** Client-service calls on tour days 1–3. */
+  guestCalls: GuestCalls
 }
 
 export interface OpsCountRow {
@@ -662,6 +670,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     orderBy: [{ arrivalDate: 'asc' }, { bookingRef: 'asc' }],
     take: MAX_ROWS,
     select: {
+      id: true, contactWhatsapp: true, contactPhone: true,
       bookingRef: true, agent: true, fileHandler: true, status: true,
       operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, paxInfants: true,
@@ -679,10 +688,11 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
         select: {
           items: {
             select: {
+              date: true,
               serviceType: true,
               isLeisure: true,
               isHotelOnly: true,
-              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true } },
+              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true, driverName: true, vendorName: true } },
             },
           },
         },
@@ -703,6 +713,28 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   // query; an environment without the table degrades to an empty map, which
   // reads as "nobody has explained these" — the honest answer either way.
   const delays = await loadReconfirmDelays(refs)
+
+  // Guest communications: tickets sent, the daily plan with driver details,
+  // and the D1–D3 client-service calls. Each degrades to "unknown", never throws.
+  const [ticketSends, comms] = await Promise.all([
+    loadTicketSendStatus(bookings.map(b => ({ id: b.id, bookingRef: b.bookingRef }))),
+    loadGuestComms(bookings.map(b => ({
+      id: b.id,
+      bookingRef: b.bookingRef,
+      operationCountry: b.operationCountry,
+      arrivalDate: isoDate(b.arrivalDate),
+      departureDate: isoDate(b.departureDate),
+      hasContact: !!(b.contactWhatsapp?.trim() || b.contactPhone?.trim()),
+      cancelled: DEAD_STATUSES.includes(b.status),
+      hotelOnly: b.hotelOnly,
+      items: (b.tourAgenda?.items ?? []).map(i => ({
+        date: i.date.toISOString().slice(0, 10),
+        needsDriver: !i.isLeisure && !i.isHotelOnly && i.serviceType !== 'OWN_ARRANGEMENT',
+        hasDriver: !!(i.assignment?.driverId || i.assignment?.vendorId || i.assignment?.tourVendorId
+          || i.assignment?.driverName?.trim() || i.assignment?.vendorName?.trim()),
+      })),
+    })), from, today),
+  ])
 
   const allRows: OpsDayRow[] = bookings.map(b => {
     const cancelled = DEAD_STATUSES.includes(b.status)
@@ -805,6 +837,11 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       reconfirmBreached: reconfirmStanding.breached,
       ready: outstanding.length === 0,
       outstanding,
+      ticketSends: ticketSends.get(b.bookingRef)
+        ?? { issued: 0, sent: 0, notIssued: 0, lastSentAt: null, linksOnly: false },
+      driverBrief: comms.get(b.bookingRef)?.brief
+        ?? { state: 'na', target: null, at: null, time: null, tz: null, movements: 0, withDriver: 0, hint: null },
+      guestCalls: comms.get(b.bookingRef)?.calls ?? { available: false, days: [], done: 0, due: 0 },
     }
   })
 
