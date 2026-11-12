@@ -1403,6 +1403,42 @@ export default function MCReportPage() {
     setSelected(allVisibleSelected ? new Set() : new Set(visibleDoneable.map(r => r.id)))
   }
 
+  // ── Daily WhatsApp plan picks ──────────────────────────────────────────────
+  // Only rows in view and not cancelled can be picked — a guest on a cancelled
+  // file must never get a plan from a bulk "select all".
+  const dailyPickable = useMemo(() => displayedRows.filter(r => !isCancelledRow(r)), [displayedRows])
+  const dailyPickedInView = useMemo(() => dailyPickable.filter(r => selectedDaily.has(r.id)).length, [dailyPickable, selectedDaily])
+  const dailyAllPicked  = dailyPickable.length > 0 && dailyPickedInView === dailyPickable.length
+  const dailySomePicked = dailyPickedInView > 0 && !dailyAllPicked
+  // A send goes out once per guest per day, so show how many messages it really is.
+  const dailyMessageCount = useMemo(
+    () => new Set(dailyPickable.filter(r => selectedDaily.has(r.id)).map(r => `${r.vnCode}|${r.date}`)).size,
+    [dailyPickable, selectedDaily],
+  )
+
+  useEffect(() => {
+    setSelectedDaily(prev => {
+      const visible = new Set(dailyPickable.map(r => r.id))
+      const next = new Set(Array.from(prev).filter(id => visible.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [dailyPickable])
+
+  function pickDaily(mode: 'all' | 'none' | 'invert' | { date: string } | { location: string }) {
+    if (mode === 'all')  return setSelectedDaily(new Set(dailyPickable.map(r => r.id)))
+    if (mode === 'none') return setSelectedDaily(new Set())
+    if (mode === 'invert') return setSelectedDaily(prev => new Set(dailyPickable.filter(r => !prev.has(r.id)).map(r => r.id)))
+    const match = 'date' in mode
+      ? (r: MCRow) => r.date === mode.date
+      : (r: MCRow) => (r.location || '—') === mode.location
+    // Additive: tapping "Tomorrow" then "Hanoi" builds up a set instead of replacing it.
+    setSelectedDaily(prev => {
+      const next = new Set(prev)
+      for (const r of dailyPickable) if (match(r)) next.add(r.id)
+      return next
+    })
+  }
+
   async function markDone(ids: string[], done: boolean) {
     if (!ids.length || savingDone) return
     setSavingDone(true)
@@ -2631,7 +2667,17 @@ export default function MCReportPage() {
                       {showPackageCostCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Package Cost <span className="normal-case text-slate-400">(LKR)</span></th>}
                       {showBudgetTransferCol && <th className="text-right px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Budget Transfer</th>}
                       {showSpecialReqCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Special Request</th>}
-                      {showWhatsappDailyCol && <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Daily WhatsApp</th>}
+                      {showWhatsappDailyCol && (
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">
+                          <DailyPickHeader
+                            rows={dailyPickable}
+                            selected={selectedDaily}
+                            all={dailyAllPicked}
+                            some={dailySomePicked}
+                            onPick={pickDaily}
+                          />
+                        </th>
+                      )}
                       {showTicketsControlCol && (
                         <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Tickets Control</th>
                       )}
@@ -3502,11 +3548,23 @@ export default function MCReportPage() {
       })()}
 
       {selectedDaily.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-32px)] max-w-xl -translate-x-1/2">
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/95 px-4 py-3 text-white shadow-2xl ring-1 ring-emerald-400/30 backdrop-blur-md">
-            <span className="mr-auto flex items-center gap-2 text-sm font-semibold"><span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-emerald-500 px-2 text-xs font-bold">{selectedDaily.size}</span>daily plans selected</span>
-            <button type="button" disabled={dailyBusy} onClick={() => void sendSelectedDaily()} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold hover:bg-emerald-400 disabled:opacity-40"><Send className="h-3.5 w-3.5" />Send selected</button>
-            <button type="button" onClick={() => setSelectedDaily(new Set())} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
+        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-32px)] max-w-2xl -translate-x-1/2">
+          <div className="animate-slide-up flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/95 px-4 py-3 text-white shadow-2xl ring-1 ring-emerald-400/30 backdrop-blur-md">
+            <span className="mr-auto flex items-center gap-2.5 text-sm font-semibold">
+              <ProgressRing value={dailyPickedInView} total={dailyPickable.length} />
+              <span className="leading-tight">
+                <span className="block">{dailyPickedInView} of {dailyPickable.length} picked</span>
+                <span className="block text-[10px] font-normal text-slate-400">{dailyMessageCount} WhatsApp message{dailyMessageCount === 1 ? '' : 's'} · one per guest per day</span>
+              </span>
+            </span>
+            {dailyAllPicked ? (
+              <button type="button" onClick={() => pickDaily('none')} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Deselect all</button>
+            ) : (
+              <button type="button" onClick={() => pickDaily('all')} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Select all {dailyPickable.length}</button>
+            )}
+            <button type="button" onClick={() => pickDaily('invert')} title="Swap picked and unpicked rows" className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Invert</button>
+            <button type="button" disabled={dailyBusy} onClick={() => void sendSelectedDaily()} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold hover:bg-emerald-400 disabled:opacity-40">{dailyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}Send {dailyMessageCount}</button>
+            <button type="button" aria-label="Clear selection" onClick={() => setSelectedDaily(new Set())} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
           </div>
         </div>
       )}
@@ -3540,6 +3598,206 @@ export default function MCReportPage() {
         templates={templates}
         reloadTemplates={reloadTemplates}
       />
+    </div>
+  )
+}
+
+// ── Daily WhatsApp: select-all header + smart picks ─────────────────────────
+
+type DailyPickMode = 'all' | 'none' | 'invert' | { date: string } | { location: string }
+
+/** Small ring that fills as rows are picked — sits in the floating send bar. */
+function ProgressRing({ value, total }: { value: number; total: number }) {
+  const r = 13
+  const c = 2 * Math.PI * r
+  const pct = total ? Math.min(1, value / total) : 0
+  return (
+    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center">
+      <svg viewBox="0 0 32 32" className="absolute inset-0 -rotate-90">
+        <circle cx="16" cy="16" r={r} fill="none" stroke="currentColor" strokeWidth="3" className="text-white/10" />
+        <circle
+          cx="16" cy="16" r={r} fill="none" strokeWidth="3" strokeLinecap="round"
+          stroke="currentColor" className="text-emerald-400 transition-[stroke-dashoffset] duration-300"
+          strokeDasharray={c} strokeDashoffset={c * (1 - pct)}
+        />
+      </svg>
+      <span className="text-[10px] font-bold tabular-nums">{value}</span>
+    </span>
+  )
+}
+
+function DailyPickHeader({ rows, selected, all, some, onPick }: {
+  rows: MCRow[]
+  selected: Set<string>
+  all: boolean
+  some: boolean
+  onPick: (mode: DailyPickMode) => void
+}) {
+  const boxRef  = useRef<HTMLInputElement>(null)
+  const btnRef  = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  useEffect(() => { if (boxRef.current) boxRef.current.indeterminate = some }, [some])
+
+  // The table sits in an overflow box, so the menu is fixed to the viewport.
+  useEffect(() => {
+    if (!pos) return
+    const close = (e: Event) => {
+      const t = e.target as Node
+      if (menuRef.current?.contains(t) || btnRef.current?.contains(t)) return
+      setPos(null)
+    }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setPos(null) }
+    document.addEventListener('mousedown', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('keydown', esc)
+    }
+  }, [pos])
+
+  function openMenu() {
+    if (pos) return setPos(null)
+    const b = btnRef.current?.getBoundingClientRect()
+    if (!b) return
+    const width = 288
+    setPos({ top: b.bottom + 6, left: Math.max(12, Math.min(b.right - width, window.innerWidth - width - 12)) })
+  }
+
+  const today    = todayISO()
+  const tomorrow = offsetISO(1)
+
+  // Group counts: [label, total, picked]
+  const tally = (key: (r: MCRow) => string) => {
+    const m = new Map<string, { total: number; picked: number }>()
+    for (const r of rows) {
+      const k = key(r)
+      const v = m.get(k) ?? { total: 0, picked: 0 }
+      v.total++
+      if (selected.has(r.id)) v.picked++
+      m.set(k, v)
+    }
+    return m
+  }
+  const byDate     = tally(r => r.date)
+  const byLocation = Array.from(tally(r => r.location || '—')).sort((a, b) => b[1].total - a[1].total)
+  const otherDates = Array.from(byDate.keys()).filter(d => d !== today && d !== tomorrow).sort()
+
+  const pickedTotal = rows.filter(r => selected.has(r.id)).length
+
+  const Chip = ({ label, total, picked, onClick, accent }: {
+    label: string; total: number; picked: number; onClick: () => void; accent?: boolean
+  }) => {
+    const full = total > 0 && picked === total
+    return (
+      <button
+        type="button"
+        disabled={total === 0 || full}
+        onClick={onClick}
+        className={cn(
+          'group inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold normal-case tracking-normal transition-all',
+          full
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : accent
+              ? 'border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300 hover:bg-sky-100'
+              : 'border-slate-200 bg-white text-slate-600 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700',
+          'disabled:cursor-default disabled:opacity-100',
+          total === 0 && 'opacity-40',
+        )}
+      >
+        {full ? <Check className="h-3 w-3" /> : <span className="text-[10px] opacity-60 group-hover:opacity-100">+</span>}
+        {label}
+        <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', full ? 'bg-emerald-100' : 'bg-slate-100 text-slate-500')}>
+          {picked > 0 && !full ? `${picked}/` : ''}{total}
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        ref={boxRef}
+        type="checkbox"
+        aria-label={all ? 'Deselect every daily plan in view' : 'Select every daily plan in view'}
+        title={all ? 'Deselect all' : `Select all ${rows.length} in view`}
+        checked={all}
+        disabled={rows.length === 0}
+        onChange={() => onPick(all || some ? 'none' : 'all')}
+        className="h-3.5 w-3.5 cursor-pointer rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 disabled:opacity-40"
+      />
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={openMenu}
+        disabled={rows.length === 0}
+        aria-haspopup="menu"
+        aria-expanded={!!pos}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 uppercase tracking-wide transition-colors',
+          pos ? 'bg-emerald-50 text-emerald-700' : 'hover:bg-slate-100 hover:text-slate-700',
+        )}
+      >
+        Daily WhatsApp
+        {pickedTotal > 0 && (
+          <span className="rounded-full bg-emerald-500 px-1.5 text-[9px] font-bold text-white tabular-nums">{pickedTotal}</span>
+        )}
+        <ChevronDown className={cn('h-3 w-3 transition-transform', pos && 'rotate-180')} />
+      </button>
+
+      {pos && (
+        <div
+          ref={menuRef}
+          role="menu"
+          style={{ top: pos.top, left: pos.left, width: 288 }}
+          className="animate-slide-up fixed z-[60] overflow-hidden rounded-2xl border border-slate-200 bg-white text-left font-normal normal-case tracking-normal text-slate-700 shadow-2xl ring-1 ring-black/5"
+        >
+          <div className="flex items-center gap-2 border-b border-slate-100 bg-gradient-to-r from-emerald-50 to-white px-3.5 py-2.5">
+            <Sparkles className="h-4 w-4 text-emerald-600" />
+            <div className="mr-auto">
+              <p className="text-xs font-bold text-slate-900">Smart pick</p>
+              <p className="text-[10px] text-slate-500">{pickedTotal} of {rows.length} in view · cancelled files skipped</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1.5 p-3">
+            <button type="button" disabled={all} onClick={() => onPick('all')} className="flex flex-col items-center gap-0.5 rounded-xl border border-slate-200 py-2 text-[11px] font-semibold hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 disabled:opacity-40">
+              <CheckCircle2 className="h-4 w-4" />All
+            </button>
+            <button type="button" onClick={() => onPick('invert')} className="flex flex-col items-center gap-0.5 rounded-xl border border-slate-200 py-2 text-[11px] font-semibold hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700">
+              <RefreshCw className="h-4 w-4" />Invert
+            </button>
+            <button type="button" disabled={pickedTotal === 0} onClick={() => onPick('none')} className="flex flex-col items-center gap-0.5 rounded-xl border border-slate-200 py-2 text-[11px] font-semibold hover:border-rose-300 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40">
+              <Circle className="h-4 w-4" />None
+            </button>
+          </div>
+
+          <div className="max-h-[50vh] overflow-y-auto px-3 pb-3">
+            <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Calendar className="h-3 w-3" />By day <span className="font-normal normal-case">— adds to your picks</span></p>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              <Chip accent label="Today"    total={byDate.get(today)?.total ?? 0}    picked={byDate.get(today)?.picked ?? 0}    onClick={() => onPick({ date: today })} />
+              <Chip accent label="Tomorrow" total={byDate.get(tomorrow)?.total ?? 0} picked={byDate.get(tomorrow)?.picked ?? 0} onClick={() => onPick({ date: tomorrow })} />
+              {otherDates.map(d => (
+                <Chip key={d} label={formatDate(d)} total={byDate.get(d)!.total} picked={byDate.get(d)!.picked} onClick={() => onPick({ date: d })} />
+              ))}
+            </div>
+
+            {byLocation.length > 1 && (
+              <>
+                <p className="mb-1.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400"><MapPin className="h-3 w-3" />By location</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {byLocation.map(([loc, v]) => (
+                    <Chip key={loc} label={loc} total={v.total} picked={v.picked} onClick={() => onPick({ location: loc })} />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
