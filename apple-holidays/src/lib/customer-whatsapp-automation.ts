@@ -211,6 +211,7 @@ async function alreadySentToday(bookingRef: string, tag: string): Promise<boolea
 // have always found them at this address.
 export { feedbackLinkToken, verifyFeedbackLinkToken } from './feedback-link'
 import { feedbackLinkToken } from './feedback-link'
+import { guestDriver } from '@/lib/guest-driver'
 
 /**
  * Free-form text only reaches a guest inside their 24h window; outside it Meta
@@ -355,8 +356,9 @@ export async function sendDailyBriefingForBooking(
     timeTo:       item.timeTo,
     mealPlan:     item.mealPlan,
     serviceType:  item.serviceType,
-    driverName:   item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
-    driverPhone:  item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null,
+    // Guests see a sheet-style "Vendor - manager: +84… / +84…" driver as its numbers only.
+    driverName:   guestDriver(item.assignment?.driverName ?? item.assignment?.driver?.name ?? null, item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null).name,
+    driverPhone:  guestDriver(item.assignment?.driverName ?? item.assignment?.driver?.name ?? null, item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null).phone,
     vehicleType:  item.assignment?.vehicleType ?? null,
     vehiclePlate: item.assignment?.vehiclePlate ?? null,
     guideName:    item.assignment?.guideName ?? item.assignment?.guide?.name ?? null,

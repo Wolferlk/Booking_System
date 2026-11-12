@@ -28,6 +28,7 @@ import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { customerEmailForDisplay } from '@/lib/booking-source'
+import { guestDriver } from '@/lib/guest-driver'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -430,8 +431,7 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             const svc = item.serviceType
 
             const displayVendorName   = a?.vendorName   ?? a?.vendor?.name   ?? null
-            const displayDriverName   = a?.driverName   ?? a?.driver?.name   ?? null
-            const displayDriverPhone  = a?.driverPhone  ?? a?.driver?.phone  ?? null
+            const { name: displayDriverName, phone: displayDriverPhone } = guestDriver(a?.driverName ?? a?.driver?.name ?? null, a?.driverPhone ?? a?.driver?.phone ?? null)
             const displayVehicleType  = a?.vehicleType  ?? a?.driver?.vehicle?.type    ?? null
             const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
@@ -576,8 +576,9 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
           new TableRow({ children: ['Driver', 'Contact', 'Vendor', 'Vehicle', 'Photo'].map(h => hCell(h)) }),
           ...roster.map((a, i) => {
             const shade = i % 2 === 0 ? CLR.white : CLR.rowAlt
-            const name         = a.driverName ?? a.driver?.name ?? '—'
-            const phone        = a.driverPhone ?? a.driver?.phone ?? '—'
+            const gd           = guestDriver(a.driverName ?? a.driver?.name ?? null, a.driverPhone ?? a.driver?.phone ?? null)
+            const name         = gd.name ?? '—'
+            const phone        = gd.phone ?? '—'
             const vendor       = a.vendorName ?? a.vendor?.name ?? '—'
             const vehicleType  = a.vehicleType ?? a.driver?.vehicle?.type ?? ''
             const vehiclePlate = a.vehiclePlate ?? a.driver?.vehicle?.plateNo ?? ''

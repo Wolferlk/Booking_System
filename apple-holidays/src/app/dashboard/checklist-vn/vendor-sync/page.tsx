@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   RefreshCw, Loader2, Store, FileSpreadsheet, ArrowRight, Undo2, Search, Settings2, Database, CheckCircle2,
-  AlertTriangle, Clock, Filter as FilterIcon, ShieldCheck, ChevronLeft, ChevronRight,
+  AlertTriangle, Clock, Filter as FilterIcon, ShieldCheck, ChevronLeft, ChevronRight, Car,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import VendorCompareBoard from '@/components/vn-vendor-sync/vendor-compare-board'
@@ -161,6 +161,9 @@ export default function VendorSyncLogPage() {
             <div className="ml-auto flex items-center gap-2">
               <Link href="/dashboard/checklist-vn/sheet" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium ring-1 ring-white/20 hover:bg-white/20">
                 <FileSpreadsheet className="h-3.5 w-3.5" /> Checklist board
+              </Link>
+              <Link href="/dashboard/checklist-vn/driver-sync" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium ring-1 ring-white/20 hover:bg-white/20">
+                <Car className="h-3.5 w-3.5" /> Driver sync
               </Link>
               <Link href="/dashboard/checklist-vn/vendor-sync/register" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium ring-1 ring-white/20 hover:bg-white/20">
                 <Store className="h-3.5 w-3.5" /> Vendor register

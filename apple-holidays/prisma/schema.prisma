@@ -783,6 +783,110 @@ model VnVendorSyncEvent {
   @@map("vn_vendor_sync_events")
 }
 
+/// VN Driver Sync — one run (every 15 min / "Sync now"): the Movement Chart
+/// Google Sheet read, what matched, what was written. Created by
+/// prisma/sql/2026-11-12-vn-driver-sync.sql — never `db push`.
+model VnDriverSyncRun {
+  id            String    @id @default(cuid())
+  trigger       String    @db.VarChar(16)
+  scope         String    @default("ALL") @db.VarChar(64)
+  mode          String    @default("AUTO") @db.VarChar(16)
+  status        String    @default("RUNNING") @db.VarChar(16)
+  startedAt     DateTime  @default(now()) @db.DateTime(3)
+  finishedAt    DateTime? @db.DateTime(3)
+  durationMs    Int?
+  sheetNote     String?   @db.VarChar(500)
+  sheetRows     Int       @default(0)
+  bookings      Int       @default(0)
+  movements     Int       @default(0)
+  matched       Int       @default(0)
+  applied       Int       @default(0)
+  updated       Int       @default(0)
+  suggested     Int       @default(0)
+  keptManual    Int       @default(0)
+  inSync        Int       @default(0)
+  noNumber      Int       @default(0)
+  noMatch       Int       @default(0)
+  aiCalls       Int       @default(0)
+  unmatchedJson String?   @db.MediumText
+  error         String?   @db.Text
+  triggeredBy   String?   @db.VarChar(191)
+  undoneAt      DateTime? @db.DateTime(3)
+  undoneBy      String?   @db.VarChar(191)
+
+  @@index([startedAt], map: "vn_driver_sync_runs_started_idx")
+  @@index([status], map: "vn_driver_sync_runs_status_idx")
+  @@map("vn_driver_sync_runs")
+}
+
+/// VN Driver Sync — what the sync thinks about one movement (which sheet row,
+/// how sure) and what it wrote, with the value before its first write so it
+/// can be undone. Keyed by booking + movement key: chart saves re-create ids.
+model VnDriverSyncLink {
+  id            String    @id @default(cuid())
+  bookingRef    String    @db.VarChar(64)
+  movementKey   String    @db.VarChar(255)
+  agendaItemId  String?   @db.VarChar(191)
+  movementDate  DateTime? @db.Date
+  movementLabel String?   @db.VarChar(500)
+  movementText  String?   @db.Text
+  sheetTab      String?   @db.VarChar(191)
+  sheetRow      Int?
+  sheetDate     DateTime? @db.Date
+  sheetDetails  String?   @db.Text
+  sheetTime     String?   @db.VarChar(32)
+  sheetService  String?   @db.VarChar(191)
+  sheetText     String?   @db.Text
+  phones        String?   @db.VarChar(191)
+  score         Decimal?  @db.Decimal(5, 2)
+  confidence    String?   @db.VarChar(8)
+  method        String?   @db.VarChar(8)
+  reason        String?   @db.VarChar(500)
+  aiHash        String?   @db.VarChar(64)
+  aiJson        String?   @db.Text
+  status        String    @db.VarChar(16)
+  note          String?   @db.VarChar(500)
+  appliedName   String?   @db.VarChar(191)
+  appliedPhone  String?   @db.VarChar(191)
+  prevName      String?   @db.VarChar(191)
+  prevPhone     String?   @db.VarChar(191)
+  appliedAt     DateTime? @db.DateTime(3)
+  appliedBy     String?   @db.VarChar(191)
+  appliedRunId  String?   @db.VarChar(191)
+  lastRunId     String?   @db.VarChar(191)
+  lastSeenAt    DateTime  @default(now()) @db.DateTime(3)
+  createdAt     DateTime  @default(now()) @db.DateTime(3)
+  updatedAt     DateTime  @updatedAt @db.DateTime(3)
+
+  @@unique([bookingRef, movementKey], map: "vn_driver_sync_links_ref_key")
+  @@index([agendaItemId], map: "vn_driver_sync_links_item_idx")
+  @@index([status], map: "vn_driver_sync_links_status_idx")
+  @@index([appliedRunId], map: "vn_driver_sync_links_run_idx")
+  @@index([movementDate], map: "vn_driver_sync_links_date_idx")
+  @@map("vn_driver_sync_links")
+}
+
+/// VN Driver Sync — the log: applied / updated / suggested / kept / undone.
+model VnDriverSyncEvent {
+  id            String   @id @default(cuid())
+  runId         String?  @db.VarChar(191)
+  bookingRef    String   @db.VarChar(64)
+  movementKey   String?  @db.VarChar(255)
+  movementLabel String?  @db.VarChar(500)
+  action        String   @db.VarChar(16)
+  fromValue     String?  @db.VarChar(191)
+  toValue       String?  @db.VarChar(191)
+  score         Decimal? @db.Decimal(5, 2)
+  detail        String?  @db.VarChar(500)
+  actor         String?  @db.VarChar(191)
+  createdAt     DateTime @default(now()) @db.DateTime(3)
+
+  @@index([bookingRef, createdAt], map: "vn_driver_sync_events_ref_idx")
+  @@index([runId], map: "vn_driver_sync_events_run_idx")
+  @@index([createdAt], map: "vn_driver_sync_events_created_idx")
+  @@map("vn_driver_sync_events")
+}
+
 model Assignment {
   id              String         @id @default(cuid())
   agendaItemId    String         @unique

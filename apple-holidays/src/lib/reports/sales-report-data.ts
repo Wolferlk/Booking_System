@@ -1,11 +1,15 @@
 /**
  * The Daily Sales Report — everything the mail and the workbook print.
  *
- * B2C only. B2B (Apple System confirmations, the accounts invoice ledger,
+ * B2C first. B2B (Apple System confirmations, the accounts invoice ledger,
  * partners) belongs to the Ops and accounts mails and is not read here.
  *
- *  - **Aahaas B2C store (read-only)** — storefront orders placed in the window:
- *    the headline sales figure.
+ *  - **Aahaas store (read-only)** — storefront orders placed in the window,
+ *    split by the channel badge AahaasFlow shows on each order (user 2026-11-12):
+ *    **Aahaas B2B** = B2B portal + AI Chat (Travel Quote GPT) + B2B console;
+ *    **Aahaas B2C** = every other channel (AI Mobile, AI WhatsApp, AI Web,
+ *    AI Voice, social, not recorded). The B2C side is the headline sales
+ *    figure; the B2B side is reported beside it, never added in.
  *  - **Booking system (this DB)** — the B2C orders filed here as bookings in
  *    the window (agent "Aahaas B2C"), for guests, markets and lead time.
  *  - **Travel Quote GPT (read-only)** — quotations, confirmations, calls,
@@ -30,6 +34,22 @@ import { countryWhere, daysBetween, labelFor, type BookingLine, type MoneyByCurr
 import { collectSalesPipeline, emptyCounts, type PipelineCounts, type PipelineSection } from './sales-pipeline-data'
 import { loadTestBookings, testBookingKey, testBookingWhere } from '@/lib/test-bookings'
 import { bookingSourceWhere } from '@/lib/booking-source'
+import { readStoreOrderSegments, STORE_CHANNEL_LABEL } from '@/lib/store-order-segment'
+
+/** Report side for an order. */
+export type SalesSide = 'b2b' | 'b2c'
+
+/**
+ * The badges that make an order Aahaas B2B in this report (user, 2026-11-12:
+ * "B2B portal and AI Chat is Aahaas B2B, all others Aahaas B2C"). B2B console
+ * orders are confirmations of Travel Quote GPT quotes, so they go with AI Chat.
+ */
+export const B2B_CHANNELS = new Set(['b2b_portal', 'travel_quote_gpt', 'confirmation'])
+export const sideOfChannel = (channel: string | null): SalesSide => (channel && B2B_CHANNELS.has(channel) ? 'b2b' : 'b2c')
+export const channelLabel = (channel: string | null) => (channel ? STORE_CHANNEL_LABEL[channel] ?? channel : 'Not recorded')
+
+/** Orders and value per channel badge on one side of the store. */
+export interface ChannelRow { channel: string | null; label: string; orders: number; value: MoneyByCurrency[] }
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
@@ -134,6 +154,22 @@ export interface B2cStoreOrder {
   products: string
   currency: string
   value: number | null
+  /** Aahaas B2C or Aahaas B2B — null when the split could not be read. */
+  segment: SalesSide | null
+  /** The AahaasFlow badge key (app, whatsapp, travel_quote_gpt, b2b_portal…); null = not recorded. */
+  channel: string | null
+  channelLabel: string
+}
+
+/** The Aahaas B2B half of the store: agency orders, kept out of every B2C figure. */
+export interface B2bStoreSide {
+  orders: number
+  previousOrders: number | null
+  lines: number
+  value: MoneyByCurrency[]
+  /** B2B portal / AI Chat / B2B console, biggest first. */
+  byChannel: ChannelRow[]
+  list: B2cStoreOrder[]
 }
 
 export interface B2cTestOrder extends B2cStoreOrder {
@@ -145,13 +181,22 @@ export interface B2cTestOrder extends B2cStoreOrder {
 export interface B2cStoreSection {
   available: boolean
   error: string | null
-  /** Real orders only — test orders are counted in `tests`, never here. */
+  /**
+   * False when the B2B/B2C split could not be read: every real order is then in
+   * the figures below as before, and a warning says so.
+   */
+  split: boolean
+  /** Real Aahaas B2C orders only — test orders are in `tests`, B2B orders in `b2b`. */
   orders: number
   previousOrders: number | null
   lines: number
   value: MoneyByCurrency[]
   byCategory: { category: string; orders: number; lines: number; value: MoneyByCurrency[] }[]
+  /** B2C orders per channel badge (AI Mobile, AI WhatsApp…), biggest first. */
+  byChannel: ChannelRow[]
   list: B2cStoreOrder[]
+  /** Aahaas B2B orders placed on the same store in the window. */
+  b2b: B2bStoreSide
   /** Orders in the window marked as tests in the shared test-booking register. */
   tests: {
     /** False when the register could not be read: test orders may then sit in the figures above. */
@@ -258,9 +303,10 @@ function marketsFrom(lines: BookingLine[]): MarketRow[] {
 // ─── B2C storefront ───────────────────────────────────────────────────────────
 
 async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSection> {
+  const emptyB2b: B2bStoreSide = { orders: 0, previousOrders: null, lines: 0, value: [], byChannel: [], list: [] }
   const empty: B2cStoreSection = {
-    available: false, error: null, orders: 0, previousOrders: null, lines: 0, value: [], byCategory: [], list: [],
-    tests: { checked: false, orders: 0, value: [], list: [] },
+    available: false, error: null, split: false, orders: 0, previousOrders: null, lines: 0, value: [], byCategory: [], byChannel: [], list: [],
+    b2b: emptyB2b, tests: { checked: false, orders: 0, value: [], list: [] },
   }
   if (!isB2cConfigured()) return { ...empty, error: 'The Aahaas B2C store database is not configured.' }
   try {
@@ -272,12 +318,29 @@ async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSe
     // The register files a store order as AHS-<order id> (testBookingReference()).
     const markOf = (orderId: number | string) => register.marks.get(testBookingKey(`AHS-${orderId}`)) ?? null
 
+    // Each order's channel badge, read the way AahaasFlow reads it. A failed
+    // read is shown as a warning and the orders stay unsplit — never silently all-B2C.
+    let segments: Map<number, { channel: string | null }> | null = null
+    let splitError: string | null = null
+    try {
+      const ids = [...all, ...(prevAll ?? [])].map(o => Number(o.order_id))
+      segments = ids.length ? await readStoreOrderSegments(ids) : new Map()
+    } catch (err) {
+      splitError = err instanceof Error ? err.message : String(err)
+      console.warn('[SalesReport] B2B/B2C split failed:', splitError)
+    }
+    const chOf = (orderId: number | string) => segments?.get(Number(orderId))?.channel ?? null
+    const isB2b = (orderId: number | string) => !!segments && sideOfChannel(chOf(orderId)) === 'b2b'
+
     const products = all.length ? await fetchOrderProducts(all.map(o => Number(o.order_id))) : []
     const byOrder = new Map<number, typeof products>()
     products.forEach(p => { const l = byOrder.get(Number(p.order_id)) ?? []; l.push(p); byOrder.set(Number(p.order_id), l) })
 
     const total = moneyMap()
     const testTotal = moneyMap()
+    const b2bTotal = moneyMap()
+    const b2bRows: B2cStoreOrder[] = []
+    let b2bLines = 0
     let realLines = 0
     const cats = new Map<string, { orders: Set<number>; lines: number; value: Map<string, number> }>()
     const rows: B2cStoreOrder[] = []
@@ -297,11 +360,20 @@ async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSe
         products: lines.map(p => (p.product_name ?? '').trim()).filter(Boolean).slice(0, 4).join(' · '),
         currency,
         value: value > 0 ? Math.round(value * 100) / 100 : null,
+        segment: segments ? sideOfChannel(chOf(o.order_id)) : null,
+        channel: chOf(o.order_id),
+        channelLabel: channelLabel(chOf(o.order_id)),
       }
       const mark = markOf(o.order_id)
       if (mark) {
         if (value > 0) add(testTotal, currency, value)
         tests.push({ ...row, reason: mark.reason, markedBy: mark.markedBy, markedAt: mark.markedAt })
+        continue
+      }
+      if (row.segment === 'b2b') {
+        if (value > 0) add(b2bTotal, currency, value)
+        b2bLines += lines.length
+        b2bRows.push(row)
         continue
       }
       if (value > 0) add(total, currency, value)
@@ -316,17 +388,28 @@ async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSe
       }
       rows.push(row)
     }
+    const prevReal = prevAll ? prevAll.filter(o => !markOf(o.order_id)) : null
     return {
       available: true,
-      error: null,
+      error: splitError ? `The B2B / B2C split could not be read (${splitError}), so B2B portal and AI Chat orders may be counted as B2C.` : null,
+      split: !splitError,
       orders: rows.length,
-      previousOrders: prevAll ? prevAll.filter(o => !markOf(o.order_id)).length : null,
+      previousOrders: prevReal ? prevReal.filter(o => !isB2b(o.order_id)).length : null,
       lines: realLines,
       value: list(total),
       byCategory: Array.from(cats.entries())
         .map(([category, c]) => ({ category, orders: c.orders.size, lines: c.lines, value: list(c.value) }))
         .sort((a, b) => b.orders - a.orders),
+      byChannel: channelRows(rows),
       list: rows.sort((a, b) => b.orderId - a.orderId).slice(0, Math.max(maxRows, 500)),
+      b2b: {
+        orders: b2bRows.length,
+        previousOrders: prevReal && !splitError ? prevReal.filter(o => isB2b(o.order_id)).length : null,
+        lines: b2bLines,
+        value: list(b2bTotal),
+        byChannel: channelRows(b2bRows),
+        list: b2bRows.sort((a, b) => b.orderId - a.orderId).slice(0, Math.max(maxRows, 500)),
+      },
       tests: { checked: register.checked, orders: tests.length, value: list(testTotal), list: tests.sort((a, b) => b.orderId - a.orderId) },
     }
   } catch (err) {
@@ -334,6 +417,21 @@ async function collectStore(w: SalesWindow, maxRows: number): Promise<B2cStoreSe
     console.warn('[SalesReport] B2C store read failed:', msg)
     return { ...empty, error: `The Aahaas B2C store could not be read (${msg}).` }
   }
+}
+
+/** Orders and value per channel badge, biggest first. */
+function channelRows(rows: B2cStoreOrder[]): ChannelRow[] {
+  const map = new Map<string, { channel: string | null; orders: number; value: Map<string, number> }>()
+  for (const r of rows) {
+    const k = r.channel ?? ''
+    const c = map.get(k) ?? { channel: r.channel, orders: 0, value: moneyMap() }
+    c.orders++
+    add(c.value, r.currency, r.value)
+    map.set(k, c)
+  }
+  return Array.from(map.values())
+    .map(c => ({ channel: c.channel, label: channelLabel(c.channel), orders: c.orders, value: list(c.value) }))
+    .sort((a, b) => b.orders - a.orders || a.label.localeCompare(b.label))
 }
 
 // ─── Highlights ───────────────────────────────────────────────────────────────
@@ -484,6 +582,6 @@ export async function collectSalesReportData(opts: SalesCollectOptions): Promise
 /** True when the window holds nothing worth anyone's inbox. */
 export function isEmptySalesReport(d: SalesReportData): boolean {
   const c: PipelineCounts = d.pipeline.available ? d.pipeline.counts : emptyCounts()
-  return d.bookings.total === 0 && d.store.orders === 0 && c.newQuotes === 0 && c.amendments === 0 && c.confirmations === 0
+  return d.bookings.total === 0 && d.store.orders === 0 && d.store.b2b.orders === 0 && c.newQuotes === 0 && c.amendments === 0 && c.confirmations === 0
     && c.calls.total === 0 && c.signups.total === 0 && c.adoption.prompts === 0
 }

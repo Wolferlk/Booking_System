@@ -7,6 +7,7 @@
  */
 
 import { withoutRetiredContacts } from './emergency-contacts'
+import { guestDriverFields } from '@/lib/guest-driver'
 
 export interface BookingHtmlOptions {
   includeTickets?: boolean
@@ -346,7 +347,7 @@ function getDrivers(agendaItems: any[]): any[] {
   const map = new Map()
   agendaItems.forEach(item => {
     if (item.assignment?.driverName && !map.has(item.assignment.driverName)) {
-      map.set(item.assignment.driverName, item.assignment)
+      map.set(item.assignment.driverName, guestDriverFields(item.assignment))
     }
   })
   return Array.from(map.values())

@@ -211,6 +211,9 @@ export async function GET(req: NextRequest) {
           store: {
             available: d.store.available, orders: d.store.orders, previousOrders: d.store.previousOrders, lines: d.store.lines, value: d.store.value,
             tests: { checked: d.store.tests.checked, orders: d.store.tests.orders, value: d.store.tests.value },
+            split: d.store.split,
+            b2b: { orders: d.store.b2b.orders, previousOrders: d.store.b2b.previousOrders, value: d.store.b2b.value, byChannel: d.store.b2b.byChannel.map(c => ({ label: c.label, orders: c.orders })) },
+            byChannel: d.store.byChannel.map(c => ({ label: c.label, orders: c.orders })),
           },
           pipeline: { available: d.pipeline.available, team: d.pipeline.team, counts: d.pipeline.counts, previous: d.pipeline.previous },
           highlights: d.highlights,

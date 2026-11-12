@@ -35,6 +35,7 @@ import {
   type MovementRole,
   type MovementWaConfig,
 } from '@/lib/movement-whatsapp-shared'
+import { guestDriver, isContactText } from '@/lib/guest-driver'
 
 const DEFAULT_TEST_WHATSAPP = '94778231121'
 
@@ -165,8 +166,9 @@ export async function loadMovement(bookingRef: string, itemId: string, config: M
     paxInfants:       b.paxInfants,
     guestContact:     b.contactWhatsapp || b.contactPhone || null,
     crew: {
-      driverName:      a?.driverName ?? a?.driver?.name ?? null,
-      driverPhone:     a?.driverPhone ?? a?.driver?.phone ?? null,
+      // A sheet-style "Vendor - manager: +84… / +84…" driver reads as its numbers only.
+      driverName:      guestDriver(a?.driverName ?? a?.driver?.name ?? null, a?.driverPhone ?? a?.driver?.phone ?? null).name,
+      driverPhone:     guestDriver(a?.driverName ?? a?.driver?.name ?? null, a?.driverPhone ?? a?.driver?.phone ?? null).phone,
       vehicleType:     a?.vehicleType ?? null,
       vehiclePlate:    a?.vehiclePlate ?? null,
       vendorName:      a?.vendorName ?? a?.vendor?.name ?? null,
@@ -189,7 +191,9 @@ export async function loadMovement(bookingRef: string, itemId: string, config: M
     })
   }
   if (a) {
-    add('driver', input.crew.driverName, input.crew.driverPhone, a.driverPhone ? 'Movement assignment' : 'Driver directory')
+    // Recipient: the stored number(s) — normalisePhone takes the first. Contact text is not a name to greet.
+    const driverLabel = a.driverName ?? a.driver?.name ?? null
+    add('driver', isContactText(driverLabel) ? null : driverLabel, a.driverPhone ?? a.driver?.phone ?? null, a.driverPhone ? 'Movement assignment' : 'Driver directory')
     if (a.vendorId || a.vendorName) {
       const vPhone = a.vendor?.whatsappPhone || a.vendor?.phone
       add('vendor', input.crew.vendorName, vPhone, a.vendor?.whatsappPhone ? 'Vendor WhatsApp' : 'Vendor directory')

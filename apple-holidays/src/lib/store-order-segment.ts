@@ -35,6 +35,26 @@ export interface StoreOrderSegment {
   /** False when no live product remains — every line cancelled or refunded. */
   live: boolean
   board: StoreBoard
+  /**
+   * The badge AahaasFlow shows on the order: `tbl_checkout_ids.channel` when it
+   * is a known one (app, whatsapp, travel_quote_gpt, b2b_portal…), otherwise
+   * how the order came in (`b2b_portal` / `confirmation`), otherwise null.
+   * Mirrors OrderCard.jsx `[o.channel, …, o.source].find(k => CHANNEL[k])`.
+   */
+  channel: string | null
+}
+
+/** Every badge AahaasFlow knows (OrderCard.jsx CHANNEL), key → label. */
+export const STORE_CHANNEL_LABEL: Record<string, string> = {
+  call: 'AI Voice', whatsapp: 'AI WhatsApp', travel_quote_gpt: 'AI Chat', web: 'AI Web', app: 'AI Mobile',
+  facebook: 'Facebook', instagram: 'Instagram', b2b_portal: 'B2B portal', confirmation: 'B2B console',
+}
+
+/** The badge for one order, exactly as AahaasFlow picks it. */
+export function channelOf(rawChannel: string | null | undefined, source: StoreSource): string | null {
+  const ch = String(rawChannel ?? '').trim().toLowerCase()
+  if (STORE_CHANNEL_LABEL[ch]) return ch
+  return source === 'direct' ? null : source
 }
 
 /** Who the order belongs to. Pure — mirrors `segmentOf()` in flow.segment.js. */
@@ -70,7 +90,7 @@ export function boardOf(segment: StoreSegment, kind: StoreKind, live: boolean): 
 
 interface RegisterRow extends RowDataPacket { order_id: number; ctype: string | null }
 interface AccountRow extends RowDataPacket {
-  order_id: number; pay_category: string | null
+  order_id: number; pay_category: string | null; channel: string | null
   user_role: string | null; user_type: string | null; user_platform: string | null
 }
 interface CatsRow extends RowDataPacket { order_id: number; cats: string | null }
@@ -99,7 +119,7 @@ export async function readStoreOrderSegments(orderIds: number[]): Promise<Map<nu
         chunk,
       ),
       b2cQuery<AccountRow>(
-        `SELECT o.id AS order_id, o.pay_category, u.user_role, u.user_type, u.user_platform
+        `SELECT o.id AS order_id, o.pay_category, o.channel, u.user_role, u.user_type, u.user_platform
            FROM tbl_checkout_ids o LEFT JOIN users u ON u.id = o.user_id
           WHERE o.id IN (${marks(chunk.length)})`,
         chunk,
@@ -126,7 +146,7 @@ export async function readStoreOrderSegments(orderIds: number[]): Promise<Map<nu
         userRole: a?.user_role, userType: a?.user_type, userPlatform: a?.user_platform, payCategory: a?.pay_category,
       })
       const { kind, live } = kindOf(cat.get(id) ?? [])
-      out.set(id, { segment, source, kind, live, board: boardOf(segment, kind, live) })
+      out.set(id, { segment, source, kind, live, board: boardOf(segment, kind, live), channel: channelOf(a?.channel, source) })
     }
   }
   return out

@@ -163,7 +163,7 @@ export default function SalesReportPage() {
     <div className="min-h-screen bg-slate-50">
       <Header
         title={<span className="inline-flex items-center gap-2"><TrendingUp className="w-5 h-5 text-indigo-600" />Sales Report</span>}
-        subtitle="B2C store orders, B2C bookings, quotations, calls, signups and the team — any day or any range"
+        subtitle="Aahaas B2C and B2B store orders, B2C bookings, quotations, calls, signups and the team — any day or any range"
         actions={
           <Link
             href="/dashboard/reports/auto"
@@ -261,7 +261,7 @@ export default function SalesReportPage() {
             </button>
           </div>
           <p className="mt-3 text-[11px] text-slate-400">
-            Read-only, B2C only: orders from the Aahaas store (test orders excluded), B2C bookings from this system, and
+            Read-only: Aahaas store orders split into Aahaas B2B (B2B portal + AI Chat) and Aahaas B2C (every other channel; test orders excluded), B2C bookings from this system, and
             quotations, calls and signups from Travel Quote GPT. A range is compared with the same number of days just before it.
           </p>
         </div>

@@ -8,6 +8,7 @@ import { contentTypeFor } from '@/lib/storage'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 import { brandGuard } from '@/lib/customer-branding-server'
 import type { BrandAudience } from '@/lib/customer-branding'
+import { guestDriver } from '@/lib/guest-driver'
 
 const WHATSAPP_API     = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -21,7 +22,13 @@ function getMetaCreds() {
 
 /** Normalise a phone number to E.164 (strip leading + and spaces). */
 export function normalisePhone(raw: string): string {
-  return raw.replace(/\s+/g, '').replace(/^\+/, '').replace(/[^0-9]/g, '')
+  // A field can hold several numbers ("+84899802839 / +84368933597" — VN Driver
+  // Sync writes the Movement Chart's contacts that way). Gluing their digits
+  // together gives a number that does not exist, so a message goes to the FIRST.
+  // A single number behaves exactly as before.
+  const parts = String(raw ?? '').split(/\s*(?:\/|,|;|\||\s-\s|\bor\b)\s*/i).filter(p => p.replace(/\D/g, '').length >= 7)
+  const one = parts.length > 1 ? parts[0] : String(raw ?? '')
+  return one.replace(/\s+/g, '').replace(/^\+/, '').replace(/[^0-9]/g, '')
 }
 
 /**
@@ -1113,9 +1120,10 @@ export function formatCustomerDailyBriefingMessage(params: {
       const svc = SERVICE_LABEL[m.serviceType]
       if (svc && m.serviceType !== 'OWN_ARRANGEMENT') lines.push(`   🚐 ${svc}`)
       if (m.mealPlan) lines.push(`   🍽 Meals: ${m.mealPlan}`)
-      if (m.driverName) {
+      const gd = guestDriver(m.driverName, m.driverPhone)
+      if (gd.name) {
         const vehicle = [m.vehicleType, m.vehiclePlate].filter(Boolean).join(' · ')
-        lines.push(`   🚗 Driver: *${m.driverName}*${m.driverPhone ? ` (${m.driverPhone})` : ''}${vehicle ? ` — ${vehicle}` : ''}`)
+        lines.push(`   🚗 Driver: *${gd.name}*${gd.phone ? ` (${gd.phone})` : ''}${vehicle ? ` — ${vehicle}` : ''}`)
       }
       if (m.guideName) {
         lines.push(`   🧑‍🏫 Guide: *${m.guideName}*${m.guidePhone ? ` (${m.guidePhone})` : ''}`)

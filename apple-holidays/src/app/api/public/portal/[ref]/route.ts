@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { verifyPortalLinkToken } from '@/lib/portal-link'
 import { withoutRetiredContacts } from '@/lib/emergency-contacts'
+import { guestDriver } from '@/lib/guest-driver'
 
 export const dynamic = 'force-dynamic'
 
@@ -104,8 +105,8 @@ export async function GET(
             serviceType: item.serviceType,
             assignment: item.assignment
               ? {
-                  driverName: item.assignment.driverName,
-                  driverPhone: item.assignment.driverPhone,
+                  driverName: guestDriver(item.assignment.driverName, item.assignment.driverPhone).name,
+                  driverPhone: guestDriver(item.assignment.driverName, item.assignment.driverPhone).phone,
                   vehicleType: item.assignment.vehicleType,
                   vehiclePlate: item.assignment.vehiclePlate,
                 }

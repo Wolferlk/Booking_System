@@ -19,6 +19,7 @@ import {
 import { guestEmergencyContactsFor } from './guest-emergency-contacts'
 import { serviceTypeShortLabel } from './service-types'
 import { filledPackageNotes } from './booking-package-notes'
+import { guestDriver } from '@/lib/guest-driver'
 
 // ── Colours (same palette as the PDF) ────────────────────────────────────────
 const CLR = {
@@ -372,8 +373,8 @@ async function buildDocx(booking: any, includeDriversAndTickets: boolean): Promi
       .map(item => ({
         date:            item.date,
         location:        item.location,
-        driverName:      item.assignment.driverName ?? item.assignment.driver?.name,
-        driverPhone:     item.assignment.driverPhone ?? item.assignment.driver?.phone,
+        driverName:      guestDriver(item.assignment.driverName ?? item.assignment.driver?.name, item.assignment.driverPhone ?? item.assignment.driver?.phone).name,
+        driverPhone:     guestDriver(item.assignment.driverName ?? item.assignment.driver?.name, item.assignment.driverPhone ?? item.assignment.driver?.phone).phone,
         vehicleType:     item.assignment.vehicleType ?? item.assignment.driver?.vehicle?.type,
         vehiclePlate:    item.assignment.vehiclePlate,
         notes:           item.assignment.notes,

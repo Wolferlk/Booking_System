@@ -5,6 +5,7 @@ import { filledPackageNotes } from './booking-package-notes'
 import { guestEmergencyContactsFor } from './guest-emergency-contacts'
 import type { ResolvedEmergencyContact } from './emergency-contacts'
 import { loadVoucherFiles, readStoredUpload, publicFileUrl, sniffFile, type VoucherFile } from './voucher-files'
+import { guestDriver } from '@/lib/guest-driver'
 
 /**
  * The two customer documents sent from "Send via WhatsApp":
@@ -143,7 +144,8 @@ async function buildCrewByDay(agendaItems: any[]): Promise<Map<string, CrewCard[
   for (const item of agendaItems) {
     const a = item.assignment
     if (!a) continue
-    const driverName     = a.driverName ?? a.driver?.name ?? null
+    const gd             = guestDriver(a.driverName ?? a.driver?.name ?? null, a.driverPhone ?? a.driver?.phone ?? null)
+    const driverName     = gd.name
     const vehiclePlate   = a.vehiclePlate ?? a.driver?.vehicle?.plateNo ?? null
     const vehicleType    = a.vehicleType ?? a.driver?.vehicle?.type ?? null
     const vendorName     = a.vendorName ?? a.vendor?.name ?? null
@@ -168,7 +170,7 @@ async function buildCrewByDay(agendaItems: any[]): Promise<Map<string, CrewCard[
       locations: loc ? [loc] : [],
       meetingTime: item.meetingTime ?? null,
       driverName,
-      driverPhone:     a.driverPhone ?? a.driver?.phone ?? null,
+      driverPhone:     gd.phone,
       vehicle:         [vehicleType, vehiclePlate].filter(Boolean).join('  ·  ') || null,
       vendorName,
       vendorPhone:     a.vendor?.phone ?? null,

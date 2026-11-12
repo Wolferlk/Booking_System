@@ -49,7 +49,8 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
     `${d.window.label} · compared with ${d.window.previous.label} · ${scope} · times in ${d.window.timezone}`)
 
   cv.tiles([
-    { label: 'B2C store orders', value: d.store.available ? d.store.orders : '—', note: moneyText(d.store.value, 2), color: P.pink },
+    { label: 'Aahaas B2C orders', value: d.store.available ? d.store.orders : '—', note: moneyText(d.store.value, 2), color: P.pink },
+    { label: 'Aahaas B2B orders', value: d.store.available && d.store.split ? d.store.b2b.orders : '—', note: d.store.split ? `${moneyText(d.store.b2b.value, 2)} · portal + AI Chat` : 'split unavailable', color: P.b2b },
     { label: 'B2C bookings filed', value: d.bookings.total, note: `${d.bookings.pax} guests`, color: P.b2b },
     { label: 'Quotations', value: p ? c.newQuotes : '—', note: p ? `${c.amendments} amendments` : 'unavailable', color: P.indigo },
     { label: 'Confirmed quotes', value: p ? c.confirmations : '—', note: p && c.conversion !== null ? `${Math.round(c.conversion * 100)}% of quoted` : '', color: P.blue },
@@ -61,7 +62,8 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
   cv.header(['Measure', 'Now', 'Before', 'Change', 'Source'])
   const line = (label: string, now: number | null, before: number | null | undefined, source: string) =>
     cv.line([label, now, before ?? null, now !== null && before !== null && before !== undefined ? now - before : null, source], { deltaCols: [4] })
-  line('B2C store orders', d.store.available ? d.store.orders : null, d.store.previousOrders, 'Aahaas store')
+  line('Aahaas B2C orders', d.store.available ? d.store.orders : null, d.store.previousOrders, 'Aahaas store')
+  line('Aahaas B2B orders', d.store.available && d.store.split ? d.store.b2b.orders : null, d.store.b2b.previousOrders, 'Aahaas store · B2B portal + AI Chat')
   line('B2C bookings filed', d.bookings.available ? d.bookings.total : null, d.bookings.previousTotal, 'Booking system')
   if (p) {
     line('New quotations', c.newQuotes, pv?.newQuotes, 'Travel Quote GPT')
@@ -79,6 +81,14 @@ function overview(wb: ReturnType<typeof newWorkbook>, d: SalesReportData, index:
   cv.title('Money, by currency', 'Never added across currencies.')
   cv.header(['What', 'Value'])
   cv.line(['Aahaas B2C store sales', moneyText(d.store.value)])
+  if (d.store.split) cv.line(['Aahaas B2B store sales (not in B2C)', moneyText(d.store.b2b.value)])
+  if (d.store.split) {
+    cv.gap()
+    cv.title('Store orders by channel', 'Aahaas B2B = B2B portal + AI Chat (+ B2B console). Aahaas B2C = every other channel.')
+    cv.header(['Side · channel', 'Orders', 'Value'])
+    for (const c of d.store.b2b.byChannel) cv.line([`Aahaas B2B · ${c.label}`, c.orders, moneyText(c.value)])
+    for (const c of d.store.byChannel) cv.line([`Aahaas B2C · ${c.label}`, c.orders, moneyText(c.value)])
+  }
   cv.line(['Value of B2C bookings filed', moneyText(d.bookings.value)])
   if (p) {
     cv.line(['Quoted on new quotations', moneyText(c.quotedValue)])
@@ -248,13 +258,14 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
   type SO = SalesReportData['store']['list'][number]
   plan.table<SO>({
     name: 'B2C Store', tab: P.pink,
-    title: 'Aahaas B2C storefront orders',
+    title: 'Aahaas B2C storefront orders (B2B orders on "B2B Store")',
     description: 'Orders placed (booked_date) in the window, travel categories only. Value is net_total_amount in the base currency — the importer\'s rule.',
     totals: `${d.store.orders} orders · ${moneyText(d.store.value)}`,
     what: 'Storefront orders with categories, products and value',
     cols: [
       { header: 'Order', width: 10, value: o => o.orderId },
       { header: 'Booked', width: 12, kind: 'date', value: o => o.bookedDate },
+      { header: 'Channel', width: 13, value: o => o.channelLabel },
       { header: 'First service', width: 12, kind: 'date', value: o => o.serviceDate },
       { header: 'Lines', width: 7, kind: 'int', value: o => o.lines, total: 'sum' },
       { header: 'Categories', width: 22, value: o => o.categories },
@@ -264,6 +275,29 @@ export async function renderSalesWorkbook(d: SalesReportData): Promise<{ buffer:
     ],
     rows: d.store.list,
     empty: d.store.available ? 'No storefront orders in this window.' : d.store.error ?? 'Unavailable.',
+  })
+
+  plan.table<SO>({
+    name: 'B2B Store', tab: P.b2b,
+    title: 'Aahaas B2B storefront orders',
+    description: d.store.split
+      ? 'Store orders whose AahaasFlow channel badge is B2B portal or AI Chat (Travel Quote GPT), plus B2B console confirmations. Not counted in any B2C figure.'
+      : 'The B2B / B2C split could not be read, so every order is on "B2C Store".',
+    totals: `${d.store.b2b.orders} orders · ${d.store.b2b.byChannel.map(c => `${c.orders} ${c.label}`).join(' · ') || 'none'} · ${moneyText(d.store.b2b.value)}`,
+    what: 'B2B portal and AI Chat orders on the store, with their channel',
+    cols: [
+      { header: 'Order', width: 10, value: o => o.orderId },
+      { header: 'Booked', width: 12, kind: 'date', value: o => o.bookedDate },
+      { header: 'Channel', width: 13, value: o => o.channelLabel },
+      { header: 'First service', width: 12, kind: 'date', value: o => o.serviceDate },
+      { header: 'Lines', width: 7, kind: 'int', value: o => o.lines, total: 'sum' },
+      { header: 'Categories', width: 22, value: o => o.categories },
+      { header: 'Products', width: 48, wrap: true, value: o => o.products },
+      { header: 'Currency', width: 9, value: o => o.currency },
+      { header: 'Value', width: 13, kind: 'money', value: o => o.value, total: 'sum', bar: P.b2b },
+    ],
+    rows: d.store.b2b.list,
+    empty: !d.store.available ? d.store.error ?? 'Unavailable.' : d.store.split ? 'No Aahaas B2B orders in this window.' : 'Unavailable — the B2B / B2C split could not be read.',
   })
 
   type TO = SalesReportData['store']['tests']['list'][number]

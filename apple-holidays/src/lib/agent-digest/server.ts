@@ -36,6 +36,7 @@ import {
 } from './scope'
 import { buildTicketPayload } from './tickets-server'
 import { digestMailFiles, digestPdfFile } from './attachments'
+import { guestDriver } from '@/lib/guest-driver'
 
 // ── Setup / errors ───────────────────────────────────────────────────────────
 
@@ -184,7 +185,9 @@ function toItem(b: LoadedBooking, it: NonNullable<LoadedBooking['tourAgenda']>['
   const needsDriver = !b.hotelOnly && movementNeedsDriver(it) && it.serviceType !== 'FLIGHT'
   // Sri Lanka allocates one driver per booking; a line without its own
   // assignment inherits it.
-  const driver = party(a?.driver?.name ?? a?.driverName, a?.driver?.phone ?? a?.driverPhone)
+  // Agents get a sheet-style "Vendor - manager: +84… / +84…" driver as its numbers only.
+  const gd = guestDriver(a?.driver?.name ?? a?.driverName, a?.driver?.phone ?? a?.driverPhone)
+  const driver = party(gd.name, gd.phone)
     ?? (needsDriver && sl?.driver ? party(sl.driver.name, sl.driver.phone) : null)
   const vehicle = vehicleText(a?.vehicleType, a?.vehiclePlate)
     ?? (needsDriver && sl ? vehicleText(sl.driver?.vehicle?.type ?? sl.vehicleType, sl.driver?.vehicle?.plateNo) : null)

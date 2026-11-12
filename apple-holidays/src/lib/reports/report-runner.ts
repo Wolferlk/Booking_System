@@ -681,6 +681,8 @@ async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
     comparedWith: `${d.window.previous.fromDate} to ${d.window.previous.toDate}`,
     team: d.pipeline.team?.label ?? 'every office team',
     b2cStore: d.store.available ? { orders: d.store.orders, before: d.store.previousOrders, valueByCurrency: d.store.value, topCategories: d.store.byCategory.slice(0, 3).map(c => ({ category: c.category, orders: c.orders })) } : null,
+    // Agency orders on the same store — reported apart, never part of the B2C figures.
+    b2bStore: d.store.available && d.store.split ? { orders: d.store.b2b.orders, before: d.store.b2b.previousOrders, valueByCurrency: d.store.b2b.value, byChannel: d.store.b2b.byChannel.map(c => ({ channel: c.label, orders: c.orders })) } : null,
     b2cBookingsFiled: { now: d.bookings.total, before: d.bookings.previousTotal, guests: d.bookings.pax, topMarkets: d.bookings.markets.slice(0, 3).map(m => ({ market: m.label, bookings: m.bookings })) },
     quotations: d.pipeline.available ? {
       newQuotes: c.newQuotes, before: pv?.newQuotes ?? null, amendments: c.amendments,
@@ -701,8 +703,8 @@ async function buildSalesNarrative(d: SalesReportData): Promise<string | null> {
           role: 'system',
           content: 'You write the opening summary of a travel sales report for the directors. '
             + 'Exactly three sentences, plain English, no markdown, no bullet points, no greeting. '
-            + 'This report is B2C only: never mention B2B, partners or invoices. '
-            + 'Sentence 1: what the Aahaas B2C store sold (orders and value) and how it compares with the previous period — give both numbers. '
+            + 'This report is B2C first: never mention partners or invoices. B2B portal and AI Chat orders on the same store are given apart as b2bStore — never add them into the B2C figures. '
+            + 'Sentence 1: what the Aahaas B2C store sold (orders and value) and how it compares with the previous period — give both numbers; if b2bStore has orders, add them in the same sentence as "plus N Aahaas B2B orders". '
             + 'Sentence 2: the quotation pipeline — quotes, confirmations and calls — and which category or market drove the day. '
             + 'Sentence 3: the single most important thing to act on, restated from the highlights already in the report — never invent a new one. '
             + 'Only use the numbers given. Never invent a figure, a partner or a cause. Money is never added across currencies.',

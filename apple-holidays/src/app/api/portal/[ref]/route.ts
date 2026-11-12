@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, isClientPortalUnlocked } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
+import { guestDriver } from '@/lib/guest-driver'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -75,8 +76,8 @@ export async function GET(
             serviceType: item.serviceType,
             assignment: item.assignment
               ? {
-                  driverName: item.assignment.driverName,
-                  driverPhone: item.assignment.driverPhone,
+                  driverName: guestDriver(item.assignment.driverName, item.assignment.driverPhone).name,
+                  driverPhone: guestDriver(item.assignment.driverName, item.assignment.driverPhone).phone,
                   vehicleType: item.assignment.vehicleType,
                   vehiclePlate: item.assignment.vehiclePlate,
                 }

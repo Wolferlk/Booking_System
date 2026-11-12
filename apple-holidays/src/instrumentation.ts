@@ -51,6 +51,12 @@ export async function register() {
       // vendors (or ones it filled itself); a no-op until its tables exist.
       const { startVnVendorSyncScheduler } = await import('@/lib/vn-vendor-sync/scheduler')
       startVnVendorSyncScheduler()
+
+      // VN Driver Sync — every 15 minutes (a setting), fills each upcoming VN
+      // movement's driver from the VN team's Movement Chart Google Sheet. Only
+      // empty drivers (or ones it filled itself); a no-op until its tables exist.
+      const { startVnDriverSyncScheduler } = await import('@/lib/vn-driver-sync/scheduler')
+      startVnDriverSyncScheduler()
     }
   }
 }

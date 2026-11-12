@@ -148,6 +148,10 @@ export interface SalesPreviewData {
   store: {
     available: boolean; orders: number; previousOrders: number | null; lines: number; value: Money[]
     tests: { checked: boolean; orders: number; value: Money[] }
+    /** Absent on a server not yet redeployed with the B2B / B2C split. */
+    split?: boolean
+    b2b?: { orders: number; previousOrders: number | null; value: Money[]; byChannel?: { label: string; orders: number }[] }
+    byChannel?: { label: string; orders: number }[]
   }
   pipeline: {
     available: boolean
@@ -178,7 +182,8 @@ export function salesStats(d: SalesPreviewData): StatTile[] {
   const p = d.pipeline.available
   const pct = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`)
   return [
-    { label: 'B2C orders', value: d.store.orders, sub: d.store.available ? `${moneyShort(d.store.value)}${d.store.previousOrders !== null ? ` · ${d.store.previousOrders} before` : ''}` : 'store unavailable' },
+    { label: 'Aahaas B2C orders', value: d.store.orders, sub: d.store.available ? `${moneyShort(d.store.value)}${d.store.previousOrders !== null ? ` · ${d.store.previousOrders} before` : ''}` : 'store unavailable' },
+    ...(d.store.b2b ? [{ label: 'Aahaas B2B orders', value: d.store.b2b.orders, sub: d.store.split === false ? 'split unavailable' : `${moneyShort(d.store.b2b.value)}${d.store.b2b.byChannel?.length ? ` · ${d.store.b2b.byChannel.map(c => `${c.orders} ${c.label}`).join(' · ')}` : ''}` }] : []),
     { label: 'Test orders', value: d.store.tests?.orders ?? 0, sub: d.store.tests?.checked === false ? 'register unreadable' : 'excluded from figures' },
     { label: 'B2C bookings', value: d.bookings.total, sub: `${d.bookings.pax} guests${d.bookings.previousTotal !== null ? ` · ${d.bookings.previousTotal} before` : ''}` },
     { label: 'Quotations', value: p ? c.newQuotes : 0, sub: p ? `${c.amendments} amendments` : 'unavailable' },

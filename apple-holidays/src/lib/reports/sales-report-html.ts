@@ -6,8 +6,9 @@
  * mails land in the same inbox reading as one product. What is different is
  * the shape of the story: a sales mail leads with *where to look*, then walks
  * the funnel from the first AI prompt to the B2C order, and only then breaks
- * the day down by store category, market, consultant and hour. B2C only — no
- * B2B bookings, partners or invoices.
+ * the day down by store category, market, consultant and hour. Store orders
+ * are split Aahaas B2C / Aahaas B2B (2026-11-12); the B2B side is shown beside
+ * the B2C figures, never added in. No Apple System bookings, partners or invoices.
  *
  * Every number on it comes from `sales-report-data.ts`; this file adds,
  * divides and infers nothing beyond formatting and the bar widths.
@@ -18,7 +19,7 @@ import {
 } from './email-kit'
 import { formatReportDate, PERIOD_LABEL } from './report-window'
 import type { MoneyByCurrency } from './booking-lines'
-import type { Highlight, SalesReportData } from './sales-report-data'
+import type { ChannelRow, Highlight, SalesReportData } from './sales-report-data'
 import type { PipelineCounts } from './sales-pipeline-data'
 import { teamLabel } from './sales-teams'
 
@@ -147,7 +148,8 @@ function funnelBlock(d: SalesReportData): string {
     { label: 'AI prompts', value: p ? c.adoption.prompts : null, note: `${p ? num(c.adoption.aiUsers) : '—'} people · Travel Quote GPT`, color: '#7c3aed' },
     { label: 'Quotations issued', value: p ? c.newQuotes : null, note: `${p ? num(c.amendments) : '—'} amendments · Travel Quote GPT`, color: '#4f46e5' },
     { label: 'Quotes confirmed', value: p ? c.confirmations : null, note: `dated by confirmation · Travel Quote GPT`, color: '#2563eb' },
-    { label: 'B2C store orders', value: d.store.available ? d.store.orders : null, note: `${moneyLine(d.store.value, 2)} · Aahaas store`, color: '#db2777' },
+    { label: 'Aahaas B2C orders', value: d.store.available ? d.store.orders : null, note: `${moneyLine(d.store.value, 2)} · Aahaas store`, color: '#db2777' },
+    ...(d.store.available && d.store.split ? [{ label: 'Aahaas B2B orders', value: d.store.b2b.orders, note: `${moneyLine(d.store.b2b.value, 2)} · B2B portal + AI Chat · not in B2C`, color: B2B_COLOR }] : []),
     { label: 'B2C bookings filed', value: d.bookings.available ? d.bookings.total : null, note: `${num(d.bookings.pax)} guests · Booking system`, color: '#0284c7' },
   ]
   const max = Math.max(1, ...stages.map(s => s.value ?? 0))
@@ -192,6 +194,9 @@ function revenueSection(d: SalesReportData, maxRows: number): string {
   let body = ''
   if (s.available) {
     const sv = moneyHeadline(s.value)
+    if (s.split) body += splitTable(d)
+    else body += `<div class="sub" style="padding-bottom:10px;color:#b45309;">${esc(s.error ?? 'The B2B / B2C split could not be read.')}</div>`
+    body += `<div class="h3" style="color:${B2C_COLOR};">Aahaas B2C</div>`
     body += kpiRow([
       { label: 'Orders placed', value: num(s.orders), note: `${cmp(s.orders, s.previousOrders)} ${s.previousOrders !== null ? `${num(s.previousOrders)} before` : ''}`, color: '#db2777' },
       { label: 'Products sold', value: num(s.lines), note: 'travel lines' },
@@ -200,10 +205,65 @@ function revenueSection(d: SalesReportData, maxRows: number): string {
     body += s.byCategory.length
       ? `${tableOpen([{ text: 'Category' }, { text: 'Orders', align: 'right' }, { text: 'Lines', align: 'right' }, { text: 'Value', align: 'right' }])}
         ${s.byCategory.map(c => `<tr>${td(esc(c.category), { bold: true })}${td(num(c.orders), { align: 'right' })}${td(num(c.lines), { align: 'right' })}${td(moneyLine(c.value, 2), { align: 'right', nowrap: true })}</tr>`).join('')}${TABLE_CLOSE}`
-      : emptyNote('No storefront orders in this window.')
+      : emptyNote('No Aahaas B2C orders in this window.')
+    if (s.split) body += b2bBlock(d, maxRows)
   } else body += emptyNote(s.error ?? 'The Aahaas B2C store could not be read.')
 
-  return section('Aahaas B2C store', 'Orders placed on the storefront — test orders excluded', '#db2777', body)
+  return section('Aahaas store — B2C and B2B', 'Orders placed on the storefront, split by who placed them — test orders excluded', '#db2777', body)
+}
+
+const B2B_COLOR = '#0369a1'
+const B2C_COLOR = '#db2777'
+
+/** One chip per channel badge — "AI WhatsApp 3 · LKR 157k" — in the side's colour. */
+function channelChips(rows: ChannelRow[], color: string, bg: string): string {
+  if (!rows.length) return '<span class="sub">no orders</span>'
+  return rows.map(r => `<span style="display:inline-block;margin:0 6px 6px 0;padding:3px 9px;border-radius:999px;background:${bg};color:${color};font:700 11px/1.5 ${FONT};white-space:nowrap;">${esc(r.label)} <span style="font-weight:800;">${num(r.orders)}</span><span style="font-weight:400;opacity:.8;"> · ${moneyLine(r.value, 1)}</span></span>`).join('')
+}
+
+/**
+ * Aahaas B2B against Aahaas B2C: a two-tone share bar of the day's orders, then
+ * one card per side with its count, change, value and channel chips. The two
+ * are never added into one money figure.
+ */
+function splitTable(d: SalesReportData): string {
+  const s = d.store
+  const total = s.orders + s.b2b.orders
+  const b2bPct = total ? Math.round((s.b2b.orders / total) * 100) : 0
+  const share = total
+    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:2px 0 6px;"><tr>
+        ${s.b2b.orders ? `<td width="${b2bPct}%" bgcolor="${B2B_COLOR}" style="background:${B2B_COLOR};height:10px;font-size:0;line-height:0;border-radius:${s.orders ? '5px 0 0 5px' : '5px'};">&nbsp;</td>` : ''}
+        ${s.orders ? `<td width="${100 - b2bPct}%" bgcolor="${B2C_COLOR}" style="background:${B2C_COLOR};height:10px;font-size:0;line-height:0;border-radius:${s.b2b.orders ? '0 5px 5px 0' : '5px'};">&nbsp;</td>` : ''}
+      </tr></table>
+      <div class="sub" style="padding-bottom:12px;"><b style="color:${B2B_COLOR};">${num(s.b2b.orders)} Aahaas B2B · ${b2bPct}%</b> &nbsp;·&nbsp; <b style="color:${B2C_COLOR};">${num(s.orders)} Aahaas B2C · ${100 - b2bPct}%</b> &nbsp;·&nbsp; ${num(total)} store orders</div>`
+    : ''
+  const card = (title: string, who: string, color: string, wash: string, orders: number, before: number | null, value: MoneyByCurrency[], chips: ChannelRow[]) => `
+    <td width="50%" valign="top" style="padding:0 6px 10px 0;">
+      <div style="border:1px solid ${C.line};border-top:3px solid ${color};border-radius:10px;padding:12px 14px;background:#ffffff;">
+        <div style="font:800 12px/1.4 ${FONT};color:${color};text-transform:uppercase;letter-spacing:.06em;">${esc(title)}</div>
+        <div class="sub" style="padding-bottom:6px;">${esc(who)}</div>
+        <div style="font:800 26px/1.2 ${FONT};color:${C.ink};">${num(orders)} <span style="font:600 12px ${FONT};color:${C.body};">orders</span></div>
+        <div class="sub" style="padding:2px 0 4px;">${before !== null ? `${cmp(orders, before)} ${num(before)} before` : '&nbsp;'}</div>
+        <div style="font:800 14px/1.4 ${FONT};color:${color};padding-bottom:8px;">${moneyLine(value, 2)}</div>
+        <div>${channelChips(chips, color, wash)}</div>
+      </div>
+    </td>`
+  return `${share}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      ${card('Aahaas B2B', 'B2B portal · AI Chat · B2B console', B2B_COLOR, '#e0f2fe', s.b2b.orders, s.b2b.previousOrders, s.b2b.value, s.b2b.byChannel)}
+      ${card('Aahaas B2C', 'Every other channel — app, WhatsApp, web, calls, social', B2C_COLOR, '#fce7f3', s.orders, s.previousOrders, s.value, s.byChannel)}
+    </tr></table>
+    <div class="sub" style="padding:0 0 14px;">Split by the channel badge AahaasFlow shows on each order. Currencies are kept apart, and B2B orders are counted here only — every other B2C figure in this mail leaves them out.</div>`
+}
+
+/** The Aahaas B2B orders themselves, each with its channel badge. */
+function b2bBlock(d: SalesReportData, maxRows: number): string {
+  const b = d.store.b2b
+  const rows = b.list.slice(0, maxRows)
+  const head = `<div class="h3" style="padding-top:18px;color:${B2B_COLOR};">Aahaas B2B orders</div>`
+  if (!rows.length) return head + emptyNote('No Aahaas B2B orders in this window.')
+  return head + `${tableOpen([{ text: 'Order' }, { text: 'Booked' }, { text: 'Channel' }, { text: 'Products' }, { text: 'Value', align: 'right' }])}
+    ${rows.map(o => `<tr>${td(`#${o.orderId}`, { bold: true, nowrap: true })}${td(shortDate(o.bookedDate ?? ''), { nowrap: true })}${td(pill(o.channelLabel, B2B_COLOR, '#e0f2fe'), { nowrap: true })}${td(truncate(o.products || o.categories || '—', 34))}${td(o.value !== null ? money(o.value, o.currency) : '—', { align: 'right', nowrap: true })}</tr>`).join('')}${TABLE_CLOSE}
+    ${moreNote(rows.length, b.list.length, 'B2B orders')}`
 }
 
 /**
@@ -463,8 +523,8 @@ function ribbon(d: SalesReportData): string {
   const st = d.store
   const fig = moneyFigure(st.value)
   const big = [
-    { label: 'B2C store orders', value: st.available ? num(st.orders) : '—', sub: st.available ? `${num(st.lines)} products sold${st.tests.orders ? ` · ${num(st.tests.orders)} test excluded` : ''}` : 'unavailable', delta: st.available ? deltaChip(st.orders, st.previousOrders) : '' },
-    { label: 'Store sales value', value: st.available ? fig.value : '—', sub: st.available ? fig.extra : 'unavailable', delta: st.available && st.value.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
+    { label: 'Aahaas B2C orders', value: st.available ? num(st.orders) : '—', sub: st.available ? `${num(st.lines)} products sold${st.split ? ` · ${num(st.b2b.orders)} Aahaas B2B apart` : ''}${st.tests.orders ? ` · ${num(st.tests.orders)} test excluded` : ''}` : 'unavailable', delta: st.available ? deltaChip(st.orders, st.previousOrders) : '' },
+    { label: 'B2C sales value', value: st.available ? fig.value : '—', sub: st.available ? fig.extra : 'unavailable', delta: st.available && st.value.length > 1 ? `<span style="color:${ON_DARK.dim};">currencies kept apart, not converted</span>` : '' },
     { label: 'B2C bookings filed', value: d.bookings.available ? num(d.bookings.total) : '—', sub: d.bookings.available ? `${num(d.bookings.pax)} guests` : 'unavailable', delta: d.bookings.available ? deltaChip(d.bookings.total, d.bookings.previousTotal) : '' },
   ]
   const small = [
@@ -499,8 +559,9 @@ function ribbon(d: SalesReportData): string {
 function glossaryBlock(d: SalesReportData): string {
   const total = d.store.value.map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ') || '0'
   const items: [string, string][] = [
-    ['B2C store orders', 'Orders placed on the Aahaas storefront in the window, dated by when they were booked. Orders marked as tests are left out and listed under "Test orders". B2B bookings are not in this report.'],
-    ['Store sales value', `The net total of those orders' products, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
+    ['Aahaas B2C orders', 'Store orders from every channel except B2B portal and AI Chat — AI Mobile, AI WhatsApp, AI Web, AI Voice, social and not recorded — dated by when they were booked. Orders marked as tests are left out and listed under "Test orders".'],
+    ['Aahaas B2B orders', 'Store orders whose AahaasFlow channel badge is B2B portal or AI Chat (Travel Quote GPT), plus B2B console confirmations. Shown on their own and never added into the B2C figures.'],
+    ['B2C sales value', `The net total of the B2C orders' products, added up per currency: ${total}. Currencies are never converted or mixed, so each one is shown on its own.`],
     ['B2C bookings filed', 'Store orders filed as bookings in the booking system in the window, test bookings excluded. Guests, markets and lead time come from these.'],
     ['Quotations / Quotes confirmed', 'Quotes issued in Travel Quote GPT in the window, and quotes marked confirmed there in the window. This is the quote tool’s own status.'],
     ['Calls', 'Dials logged by the calling system. "Answered" means the call connected to a person.'],
@@ -555,7 +616,7 @@ export function renderSalesEmail(d: SalesReportData, opts: SalesRenderOptions = 
     d.countries.length ? `Bookings scoped to ${d.countries.map(c => c.replace(/_/g, ' ')).join(', ')}` : 'All operating countries',
     d.pipeline.team ? `Travel Quote GPT: ${d.pipeline.team.label}` : 'Travel Quote GPT: every team',
   ].join(' · ')
-  const pre = `${d.window.label} — ${num(d.store.orders)} B2C store orders, ${num(d.bookings.total)} B2C bookings, ${num(d.pipeline.counts.newQuotes)} quotations, ${num(d.pipeline.counts.confirmations)} confirmed, ${num(d.pipeline.counts.calls.total)} calls, ${num(d.pipeline.counts.signups.agencies)} new agencies.`
+  const pre = `${d.window.label} — ${num(d.store.orders)} Aahaas B2C orders, ${d.store.split ? `${num(d.store.b2b.orders)} Aahaas B2B orders, ` : ''}${num(d.bookings.total)} B2C bookings, ${num(d.pipeline.counts.newQuotes)} quotations, ${num(d.pipeline.counts.confirmations)} confirmed, ${num(d.pipeline.counts.calls.total)} calls, ${num(d.pipeline.counts.signups.agencies)} new agencies.`
 
   return compact(`<!DOCTYPE html>
 <html lang="en"><head>
@@ -604,6 +665,7 @@ export function renderSalesSubject(d: SalesReportData, opts: { prefix?: string; 
   const parts = [
     st.available ? `${st.orders} B2C order${st.orders === 1 ? '' : 's'}` : '',
     st.value.length ? `${st.value.slice(0, 2).map(m => `${m.currency} ${Math.round(m.total).toLocaleString('en-US')}`).join(' + ')}${st.value.length > 2 ? ' + more' : ''} sold` : '',
+    st.available && st.split && st.b2b.orders ? `${st.b2b.orders} B2B order${st.b2b.orders === 1 ? '' : 's'}` : '',
     d.pipeline.available ? `${c.newQuotes} quote${c.newQuotes === 1 ? '' : 's'}` : '',
     d.pipeline.available && c.confirmations ? `${c.confirmations} confirmed` : '',
     d.pipeline.available ? `${c.calls.total} calls` : '',
@@ -623,8 +685,10 @@ export function renderSalesCsv(d: SalesReportData): string {
     lines.forEach(l => rows.push(l.map(cell).join(',')))
     rows.push('')
   }
-  block('B2C store orders', ['Order', 'Booked', 'Service date', 'Lines', 'Categories', 'Products', 'Currency', 'Value'],
-    d.store.list.map(o => [o.orderId, o.bookedDate, o.serviceDate, o.lines, o.categories, o.products, o.currency, o.value]))
+  block('Aahaas B2C store orders', ['Order', 'Booked', 'Channel', 'Service date', 'Lines', 'Categories', 'Products', 'Currency', 'Value'],
+    d.store.list.map(o => [o.orderId, o.bookedDate, o.channelLabel, o.serviceDate, o.lines, o.categories, o.products, o.currency, o.value]))
+  block('Aahaas B2B store orders', ['Order', 'Booked', 'Channel', 'Service date', 'Lines', 'Categories', 'Products', 'Currency', 'Value'],
+    d.store.b2b.list.map(o => [o.orderId, o.bookedDate, o.channelLabel, o.serviceDate, o.lines, o.categories, o.products, o.currency, o.value]))
   block('B2C test orders (excluded)', ['Order', 'Booked', 'Products', 'Marked by', 'Reason', 'Currency', 'Value'],
     d.store.tests.list.map(o => [`AHS-${o.orderId}`, o.bookedDate, o.products, o.markedBy, o.reason, o.currency, o.value]))
   block('B2C bookings', ['Ref', 'Destination', 'Market', 'Arrival', 'Pax', 'Currency', 'Value', 'Created'],

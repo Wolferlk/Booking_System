@@ -19,6 +19,7 @@ import {
   categoryLabel, paxLabel, isPurchasedTicket,
 } from './ticket-notes'
 import { customerEmailForDisplay } from './booking-source'
+import { guestDriver } from '@/lib/guest-driver'
 
 // ── Palette (matches generate-booking-pdf.ts) ────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -563,8 +564,7 @@ export async function generateAgendaPdf(
               phone ? `${name}  ·  ${phone}` : name
             const vendorName  = a?.vendorName ?? a?.vendor?.name ?? null
             const vendorPhone = a?.vendor?.phone ?? null
-            const driverName  = a?.driverName ?? a?.driver?.name ?? null
-            const driverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
+            const { name: driverName, phone: driverPhone } = guestDriver(a?.driverName ?? a?.driver?.name ?? null, a?.driverPhone ?? a?.driver?.phone ?? null)
             const vehType     = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
             const vehPlate    = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
             const vehicle     = vehPlate ? `${vehType ? vehType + ' ' : ''}${vehPlate}` : null
