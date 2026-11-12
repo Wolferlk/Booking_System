@@ -58,8 +58,14 @@ const config: Config = {
         'urgent-glow': 'urgentGlow 1.5s ease-in-out infinite',
         'sheen': 'sheen 2.6s ease-in-out infinite',
         'breathe': 'breathe 2s ease-in-out infinite',
+        // All Bookings: NEW badge on a quote first confirmed today.
+        'confirm-shimmer': 'confirmShimmer 2.4s linear infinite',
       },
       keyframes: {
+        confirmShimmer: {
+          '0%':   { backgroundPosition: '0% 50%' },
+          '100%': { backgroundPosition: '200% 50%' },
+        },
         fadeIn: {
           '0%': { opacity: '0' },
           '100%': { opacity: '1' },

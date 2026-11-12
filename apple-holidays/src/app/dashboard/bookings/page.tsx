@@ -33,6 +33,10 @@ import AsFetchNow from '@/components/bookings/as-fetch-now'
 import PaymentStateCell from '@/components/bookings/payment-state-cell'
 import ReportCountChip from '@/components/bookings/report-count-chip'
 import AgentFilter from '@/components/bookings/agent-filter'
+import {
+  ConfirmOriginBadge, ConfirmOriginCreatedNote, ConfirmOriginStrip, useConfirmOrigins,
+  type ConfirmOriginFilter,
+} from '@/components/bookings/confirm-origin'
 import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
   BAR_QUICK_FILTER_LABELS, BAR_QUICK_FILTERS, isQuickFilter, QUICK_FILTER_LABELS,
@@ -617,6 +621,12 @@ function BookingsPageInner() {
 
   // ── Selection helpers ─────────────────────────────────────────────────────
   const allRefs      = bookings.map(b => b.bookingRef)
+  // NEW vs RE-CONFIRMED (Apple quote history) for recent rows on this page.
+  const { origins: confirmOrigins, loading: confirmLoading } = useConfirmOrigins(bookings)
+  const [originFilter, setOriginFilter] = useState<ConfirmOriginFilter>(null)
+  const visibleBookings = originFilter
+    ? bookings.filter(b => confirmOrigins[b.bookingRef]?.kind === originFilter)
+    : bookings
   const allSelected  = allRefs.length > 0 && allRefs.every(r => selected.has(r))
   const someSelected = allRefs.some(r => selected.has(r))
 
@@ -1395,6 +1405,13 @@ function BookingsPageInner() {
             )
           ) : (
             <>
+            <ConfirmOriginStrip
+              origins={confirmOrigins}
+              refs={allRefs}
+              loading={confirmLoading}
+              filter={originFilter}
+              onFilter={setOriginFilter}
+            />
             <div className="overflow-x-auto">
               <table className="data-table">
                 <thead>
@@ -1444,7 +1461,7 @@ function BookingsPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {bookings.map(b => {
+                  {visibleBookings.map(b => {
                     const lead       = b.passengers.find(p => p.isLead) ?? b.passengers[0]
                     const isSelected = selected.has(b.bookingRef)
                     const snippets   = getMatchSnippets(b, contentSearch)
@@ -1500,6 +1517,7 @@ function BookingsPageInner() {
                             {b.bookingRef}
                           </Link>
                           <div className="flex flex-wrap gap-1 mt-1">
+                            <ConfirmOriginBadge origin={confirmOrigins[b.bookingRef]} />
                             {replacedBy && (
                               <Link
                                 href={`/dashboard/bookings/${replacedBy}`}
@@ -1646,10 +1664,16 @@ function BookingsPageInner() {
 
                         {/* Created */}
                         <td>
+                          {confirmOrigins[b.bookingRef]?.kind === 'RECONFIRMED' && (
+                            <ConfirmOriginCreatedNote origin={confirmOrigins[b.bookingRef]} />
+                          )}
                           <div className="flex items-center gap-1 text-xs text-slate-500 whitespace-nowrap">
                             <Clock className="w-3 h-3 flex-shrink-0" />
                             {formatDateTime(b.createdAt)}
                           </div>
+                          {confirmOrigins[b.bookingRef]?.kind === 'NEW' && (
+                            <ConfirmOriginCreatedNote origin={confirmOrigins[b.bookingRef]} />
+                          )}
                         </td>
 
                         {/* Agenda — hidden during deep search */}
