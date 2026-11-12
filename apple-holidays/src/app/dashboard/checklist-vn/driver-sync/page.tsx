@@ -54,7 +54,7 @@ function RunRow({ r, isAdmin, picked, onPick, onUndo }: { r: DriverSyncRunInfo; 
       </p>
       {r.undoneAt ? (
         <span className="text-[10.5px] text-rose-500">Undone {timeAgo(r.undoneAt)} by {r.undoneBy}</span>
-      ) : isAdmin && r.applied + r.updated > 0 && (
+      ) : isAdmin && (r.applied + r.updated > 0 || /filled [1-9]|, [1-9]\d* guest/.test(r.sheetNote ?? '')) && (
         <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"><Undo2 className="h-3 w-3" /> Undo run</button>
       )}
     </li>
@@ -79,7 +79,9 @@ function LinkRow({ l, canEdit, busy, onAct }: { l: DriverSyncLinkInfo; canEdit: 
         {l.sheet.row ? (
           <>
             <p className="text-[10.5px] text-slate-400">{l.sheet.tab} · row {l.sheet.row}{l.sheet.date && l.sheet.date !== l.movementDate ? <span className="ml-1 text-amber-600">({fmtDate(l.sheet.date)})</span> : null}</p>
-            <p className="line-clamp-2 text-[11px] text-slate-600" title={l.sheet.details ?? ''}>{l.sheet.details}</p>
+            {(l.sheet.details ?? '').split(' ¶ ').map((part, i, all) => (
+              <p key={i} className={cn('line-clamp-2 text-[11px]', all.length > 1 && i === 0 ? 'font-medium text-slate-700' : 'text-slate-500')} title={part}>{part}</p>
+            ))}
             <p className="text-[10.5px] text-slate-400">{[l.sheet.time, l.sheet.service].filter(Boolean).join(' · ')}</p>
           </>
         ) : <span className="text-[11px] italic text-slate-300">no sheet row</span>}
@@ -341,6 +343,16 @@ export default function DriverSyncPage() {
                   <span><span className="flex items-center gap-1 font-medium text-slate-700"><Sparkles className="h-3.5 w-3.5 text-fuchsia-500" />AI for close calls</span>
                     <span className="text-[10.5px] text-slate-400">OpenAI decides only what the rules cannot; cached per booking</span></span>
                   <input type="checkbox" disabled={!data?.isAdmin} checked={cfg.useAi} onChange={e => setCfg({ ...cfg, useAi: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                </label>
+                <label className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
+                  <span><span className="flex items-center gap-1 font-medium text-slate-700"><Clock className="h-3.5 w-3.5 text-cyan-600" />Fill meeting time</span>
+                    <span className="text-[10.5px] text-slate-400">Sheet&apos;s Meeting Time onto a matched movement that has none</span></span>
+                  <input type="checkbox" disabled={!data?.isAdmin} checked={cfg.fillTime} onChange={e => setCfg({ ...cfg, fillTime: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                </label>
+                <label className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
+                  <span><span className="flex items-center gap-1 font-medium text-slate-700"><Phone className="h-3.5 w-3.5 text-pink-600" />Fill guest contact</span>
+                    <span className="text-[10.5px] text-slate-400">Guest phone from &quot;Name of guests&quot; when the booking has no contact at all — that booking then gets the guest WhatsApps</span></span>
+                  <input type="checkbox" disabled={!data?.isAdmin} checked={cfg.fillContact} onChange={e => setCfg({ ...cfg, fillContact: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                 </label>
                 <label className="block">
                   <span className="font-medium text-slate-600">Workbook link (OneDrive / SharePoint)</span>

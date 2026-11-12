@@ -29,6 +29,8 @@ import { prisma } from '@/lib/prisma'
 import { isMissingTable } from '@/lib/vn-includes/includes'
 import { fold } from '@/lib/vn-vendor-sync/match'
 import { serviceTypeShortLabel } from '@/lib/service-types'
+import { parse12h } from '@/lib/clock-time'
+import { extractPhones } from '@/lib/guest-driver'
 import { readMovementSheet, serviceAccount, SheetAccessError, type SheetRow } from './sheet'
 import { matchBooking, type AiCacheEntry, type Movement, type Pick as MatchPick } from './match'
 import {
@@ -62,6 +64,8 @@ export async function getDriverSyncConfig(): Promise<DriverSyncConfig> {
     intervalMin: Number.isFinite(interval) && interval >= 5 && interval <= 240 ? interval : DEFAULT_INTERVAL_MIN,
     daysAhead: Number.isFinite(days) && days >= 1 && days <= 400 ? days : DEFAULT_DAYS_AHEAD,
     useAi: map.get(DRIVER_SYNC_SETTINGS.useAi) !== 'false',
+    fillTime: map.get(DRIVER_SYNC_SETTINGS.fillTime) !== 'false',
+    fillContact: map.get(DRIVER_SYNC_SETTINGS.fillContact) !== 'false',
     sheet: map.get(DRIVER_SYNC_SETTINGS.sheet) || DEFAULT_SHEET_URL,
   }
 }
@@ -82,6 +86,8 @@ export async function saveDriverSyncConfig(input: Partial<DriverSyncConfig>): Pr
     await setSetting(DRIVER_SYNC_SETTINGS.daysAhead, String(Math.round(v)))
   }
   if (input.useAi !== undefined) await setSetting(DRIVER_SYNC_SETTINGS.useAi, input.useAi ? 'true' : 'false')
+  if (input.fillTime !== undefined) await setSetting(DRIVER_SYNC_SETTINGS.fillTime, input.fillTime ? 'true' : 'false')
+  if (input.fillContact !== undefined) await setSetting(DRIVER_SYNC_SETTINGS.fillContact, input.fillContact ? 'true' : 'false')
   if (input.sheet !== undefined) {
     const link = String(input.sheet ?? '').trim()
     if (isMicrosoftLink(link)) {
@@ -253,6 +259,7 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
       at: new Date().toISOString(), hash: sheet.hash, source: sheet.source, rows: sheet.rows.length, tabs: sheet.tabs, title: sheet.title,
     } satisfies SheetState))
     counts.sheetRows = sheet.rows.length
+    let sheetNoteExtra = ''
     const sheetNote = [
       `${sheet.rows.length} rows from ${sheet.tabs.length} tab(s)`,
       sheet.source === 'MICROSOFT_GRAPH' ? `OneDrive${sheet.title ? ` "${sheet.title}"` : ''}` : sheet.source === 'SERVICE_ACCOUNT' ? 'Google, service account' : 'Google, shared link',
@@ -278,7 +285,8 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
         tourAgenda: { items: { some: { date: { gte: today, lte: until } } } },
       },
       select: {
-        bookingRef: true,
+        bookingRef: true, contactWhatsapp: true, contactPhone: true,
+        passengers: { select: { name: true, isLead: true }, take: 20 },
         tourAgenda: {
           select: {
             items: {
@@ -318,6 +326,7 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
 
     const budget = { left: AI_CALLS_PER_RUN }
     let writes = 0
+    const extra = { times: 0, contacts: 0 }
     const events: Prisma.VnDriverSyncEventCreateManyInput[] = []
 
     for (const b of bookings) {
@@ -337,6 +346,13 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
       for (const u of result.unmatched) if (!u.row.date || u.row.date >= iso(today)) unmatched.push(unmatchedOf(b.bookingRef, u.row, u.why))
       const rowById = new Map(sheetRows.map(r => [r.id, r]))
 
+      // Guest contact: only for a booking with none at all, from rows that matched for sure.
+      if (mode === 'AUTO' && config.fillContact && sheetRows.length) {
+        const sureRows = Array.from(result.picks.values()).filter(p => p.confidence === 'HIGH').map(p => rowById.get(p.rowId)).filter((r): r is SheetRow => Boolean(r))
+        const ev = await fillGuestContact(run.id, b, sureRows)
+        if (ev) { extra.contacts++; events.push(ev); changes.push({ bookingRef: b.bookingRef, label: 'Guest contact', action: 'CONTACT_FILLED', to: ev.toValue ?? null }) }
+      }
+
       const keyCount = new Map<string, number>()
       for (const item of items) {
         const base = movementKeyOf(item)
@@ -353,6 +369,11 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
         })
         if (outcome.wrote) writes++
         if (outcome.count) counts[outcome.count]++
+        // Meeting time: only onto a movement that has none, only from a sure match.
+        if (pick && row && pick.confidence === 'HIGH' && mode === 'AUTO' && config.fillTime && writes < MAX_WRITES_PER_RUN) {
+          const ev = await fillMeetingTime(run.id, b.bookingRef, key, item, row)
+          if (ev) { writes++; extra.times++; events.push(ev); changes.push({ bookingRef: b.bookingRef, label: ev.movementLabel ?? '', action: 'TIME_FILLED', to: ev.toValue ?? null }) }
+        }
         for (const e of outcome.events) {
           events.push(e)
           if (['APPLIED', 'UPDATED', 'SUGGESTED', 'KEPT_MANUAL', 'SHEET_DROPPED'].includes(e.action)) {
@@ -363,10 +384,13 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
     }
 
     for (let i = 0; i < events.length; i += 500) await prisma.vnDriverSyncEvent.createMany({ data: events.slice(i, i + 500) })
+    if (extra.times || extra.contacts) {
+      sheetNoteExtra = ` · filled ${extra.times} meeting time(s), ${extra.contacts} guest contact(s)`
+    }
 
     unmatched.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || a.bookingRef.localeCompare(b.bookingRef))
     return await finish({
-      status: 'SUCCESS', sheetNote: clip(sheetNote, 500),
+      status: 'SUCCESS', sheetNote: clip(sheetNote + sheetNoteExtra, 500),
       unmatchedJson: JSON.stringify(unmatched.slice(0, 500)),
       error: writes >= MAX_WRITES_PER_RUN ? `Write limit of ${MAX_WRITES_PER_RUN} reached — the rest were left as suggestions` : null,
     })
@@ -382,6 +406,79 @@ function unmatchedOf(bookingRef: string, r: SheetRow, why: string): UnmatchedRow
     bookingRef, date: r.date, tab: r.tab, row: r.row, details: clip(r.details, 300), time: r.time, service: r.service,
     text: clip(r.driverText ?? r.text, 300) ?? '', why,
   }
+}
+
+// ── Gap filling: meeting time and guest contact ──────────────────────────────
+//
+// Both only fill what the system does NOT have — an empty meeting time, a
+// booking with no guest phone at all — and only from a sure match. Each fill is
+// one event (TIME_FILLED / CONTACT_FILLED) holding the value written, which is
+// what "Undo" uses to take it back if nobody changed it since.
+
+async function fillMeetingTime(runId: string, bookingRef: string, key: string, item: Item, row: SheetRow): Promise<Prisma.VnDriverSyncEventCreateManyInput | null> {
+  if (item.meetingTime?.trim()) return null
+  const time = row.time ? parse12h(row.time) : null
+  if (!time) return null
+  const res = await prisma.agendaItem.updateMany({ where: { id: item.id, OR: [{ meetingTime: null }, { meetingTime: '' }] }, data: { meetingTime: time } })
+  if (!res.count) return null
+  item.meetingTime = time
+  return {
+    runId, bookingRef, movementKey: key, movementLabel: labelOf(item), action: 'TIME_FILLED',
+    fromValue: null, toValue: time, detail: `Meeting time from the sheet (${row.tab} row ${row.row})`, actor: null,
+  }
+}
+
+const NAME_STOP = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'master', 'mstr', 'and', 'family', 'pax'])
+const nameTokens = (s: string | null | undefined) =>
+  fold(s).replace(/[^a-z\s]+/g, ' ').split(/\s+/).filter(t => t.length >= 3 && !NAME_STOP.has(t))
+
+async function fillGuestContact(
+  runId: string,
+  b: { bookingRef: string; contactWhatsapp: string | null; contactPhone: string | null; passengers: { name: string | null; isLead: boolean | null }[] },
+  sureRows: SheetRow[],
+): Promise<Prisma.VnDriverSyncEventCreateManyInput | null> {
+  if (b.contactWhatsapp?.trim() || b.contactPhone?.trim()) return null      // the system already has a contact
+  // The guest cell the booking's rows agree on most.
+  const tally = new Map<string, number>()
+  for (const r of sureRows) if (r.guest && extractPhones(r.guest).length) tally.set(r.guest, (tally.get(r.guest) ?? 0) + 1)
+  const guest = Array.from(tally.entries()).sort((x, y) => y[1] - x[1])[0]?.[0]
+  if (!guest) return null
+  const phones = extractPhones(guest)
+  // Same guest? When the booking has passenger names, the sheet's name must share one.
+  const sheetName = nameTokens(guest.replace(/\+?\(?\d[\d\s().\-]{6,}\d/g, ' '))
+  const known = b.passengers.flatMap(p => nameTokens(p.name))
+  if (known.length && sheetName.length && !sheetName.some(t => known.includes(t))) return null
+  const first = phones[0]
+  const whatsapp = first.trim().startsWith('+') ? `+${first.replace(/\D/g, '')}` : first.replace(/\D/g, '')
+  const phone = clip(phones.join(' / '), 191)
+  const res = await prisma.booking.updateMany({
+    where: {
+      bookingRef: b.bookingRef,
+      AND: [{ OR: [{ contactWhatsapp: null }, { contactWhatsapp: '' }] }, { OR: [{ contactPhone: null }, { contactPhone: '' }] }],
+    },
+    data: { contactWhatsapp: whatsapp, contactPhone: phone },
+  })
+  if (!res.count) return null
+  return {
+    runId, bookingRef: b.bookingRef, movementKey: null, movementLabel: 'Guest contact', action: 'CONTACT_FILLED',
+    fromValue: null, toValue: clip(`${whatsapp}${phone && phone !== whatsapp ? ` | ${phone}` : ''}`, 191),
+    detail: clip(`Guest contact from the sheet: ${guest}`, 500), actor: null,
+  }
+}
+
+/** Take back a meeting time / guest contact fill, if the value is still exactly what the sync wrote. */
+async function undoFill(e: { bookingRef: string; movementKey: string | null; action: string; toValue: string | null }, agendaItemId: string | null): Promise<boolean> {
+  if (e.action === 'TIME_FILLED' && agendaItemId && e.toValue) {
+    return (await prisma.agendaItem.updateMany({ where: { id: agendaItemId, meetingTime: e.toValue }, data: { meetingTime: null } })).count > 0
+  }
+  if (e.action === 'CONTACT_FILLED' && e.toValue) {
+    const [wa, ph] = e.toValue.split(' | ')
+    return (await prisma.booking.updateMany({
+      where: { bookingRef: e.bookingRef, contactWhatsapp: wa, ...(ph ? { contactPhone: ph } : { contactPhone: wa }) },
+      data: { contactWhatsapp: null, contactPhone: null },
+    })).count > 0
+  }
+  return false
 }
 
 // ── One movement ─────────────────────────────────────────────────────────────
@@ -417,7 +514,7 @@ async function decide(p: {
   }
   const facts: Partial<Prisma.VnDriverSyncLinkUncheckedCreateInput> = row && pick ? {
     sheetTab: clip(row.tab, 191), sheetRow: row.row, sheetDate: row.date ? new Date(`${row.date}T00:00:00Z`) : null,
-    sheetDetails: clip(row.details, 4000), sheetTime: clip(row.time, 32), sheetService: clip(row.service, 191),
+    sheetDetails: clip([row.route, row.details].filter(Boolean).join(' ¶ '), 4000), sheetTime: clip(row.time, 32), sheetService: clip(row.service, 191),
     sheetText: clip(row.driverText ?? row.text, 4000), phones: row.phones.length ? clip(row.phones.join(' / '), 191) : null,
     score: pick.score, confidence: pick.confidence, method: pick.method, reason: clip(pick.reason, 500),
   } : {}
@@ -567,6 +664,9 @@ async function undoOne(link: VnDriverSyncLink, actor: string, runId: string | nu
 export async function undoLink(linkId: string, actor: string): Promise<string> {
   const link = await prisma.vnDriverSyncLink.findUnique({ where: { id: linkId } })
   if (!link?.appliedName) throw new Error('The sync has nothing to undo on this movement')
+  // The meeting time it filled on this movement goes back too.
+  const filled = await prisma.vnDriverSyncEvent.findFirst({ where: { bookingRef: link.bookingRef, movementKey: link.movementKey, action: 'TIME_FILLED' }, orderBy: { createdAt: 'desc' } })
+  if (filled) await undoFill(filled, link.agendaItemId)
   if (!await undoOne(link, actor, null)) throw new Error('Someone changed the driver since — left as it is')
   return link.prevName || link.prevPhone ? `Put back: ${link.prevName ?? link.prevPhone}` : 'Driver cleared'
 }
@@ -576,10 +676,18 @@ export async function undoRun(runId: string, actor: string): Promise<string> {
   if (!run) throw new Error('Run not found')
   if (run.undoneAt) throw new Error('This run was already undone')
   const links = await prisma.vnDriverSyncLink.findMany({ where: { appliedRunId: runId } })
-  let done = 0, kept = 0
+  let done = 0, kept = 0, fills = 0
   for (const l of links) (await undoOne(l, actor, runId)) ? done++ : kept++
+  const fillEvents = await prisma.vnDriverSyncEvent.findMany({ where: { runId, action: { in: ['TIME_FILLED', 'CONTACT_FILLED'] } } })
+  for (const e of fillEvents) {
+    const link = e.movementKey ? await prisma.vnDriverSyncLink.findUnique({ where: { bookingRef_movementKey: { bookingRef: e.bookingRef, movementKey: e.movementKey } }, select: { agendaItemId: true } }) : null
+    if (await undoFill(e, link?.agendaItemId ?? null)) {
+      fills++
+      await prisma.vnDriverSyncEvent.create({ data: { runId, bookingRef: e.bookingRef, movementKey: e.movementKey, movementLabel: e.movementLabel, action: 'UNDONE', fromValue: e.toValue, toValue: null, detail: e.action === 'TIME_FILLED' ? 'Meeting time cleared' : 'Guest contact cleared', actor } })
+    }
+  }
   await prisma.vnDriverSyncRun.update({ where: { id: runId }, data: { undoneAt: new Date(), undoneBy: actor } })
-  return `${done} driver(s) put back${kept ? ` · ${kept} changed by a person since, left alone` : ''}`
+  return `${done} driver(s) put back${fills ? ` · ${fills} meeting time / guest contact fill(s) cleared` : ''}${kept ? ` · ${kept} changed by a person since, left alone` : ''}`
 }
 
 export async function ignoreLink(linkId: string, actor: string): Promise<string> {

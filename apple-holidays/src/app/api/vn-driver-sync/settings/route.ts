@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   if ('error' in auth) return buildApiError(auth.error, auth.status)
   try {
     const b = await req.json()
-    return buildApiSuccess(await saveDriverSyncConfig({ mode: b.mode, intervalMin: b.intervalMin, daysAhead: b.daysAhead, useAi: b.useAi, sheet: b.sheet }))
+    return buildApiSuccess(await saveDriverSyncConfig({ mode: b.mode, intervalMin: b.intervalMin, daysAhead: b.daysAhead, useAi: b.useAi, fillTime: b.fillTime, fillContact: b.fillContact, sheet: b.sheet }))
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'Could not save', 400)
   }

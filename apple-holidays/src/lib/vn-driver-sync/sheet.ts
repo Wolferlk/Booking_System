@@ -41,7 +41,11 @@ export interface SheetRow {
   time: string | null          // HH:MM when it parses, else as typed
   service: string | null       // as typed
   serviceCode: string | null   // normalised ServiceType code (or the typed text)
-  route: string | null         // from / to / location columns, when the sheet has them
+  location: string | null      // Location column (the city)
+  from: string | null          // From column
+  to: string | null            // To/Tours column
+  route: string | null         // "from → to", for display
+  guest: string | null         // Name of guests ("Tapati Ganguly +918240694973")
   text: string | null          // the Vendors cell, full
   driverText: string | null    // a Driver / Driver details column, when the sheet has one
   phones: string[]
@@ -221,12 +225,12 @@ const text = (v: Cell | undefined): string | null => {
 
 interface Columns {
   date: number; code: number; details: number; meal: number; time: number; service: number; vendor: number
-  driver: number; route: number[]
+  driver: number; from: number; to: number; location: number; guest: number
 }
 
 /** Header text (normalised) → field. The first column that fits wins. */
 function mapColumns(header: Cell[]): Columns | null {
-  const c: Columns = { date: -1, code: -1, details: -1, meal: -1, time: -1, service: -1, vendor: -1, driver: -1, route: [] }
+  const c: Columns = { date: -1, code: -1, details: -1, meal: -1, time: -1, service: -1, vendor: -1, driver: -1, from: -1, to: -1, location: -1, guest: -1 }
   header.forEach((h, i) => {
     const n = norm(h)
     if (!n) return
@@ -238,7 +242,10 @@ function mapColumns(header: Cell[]): Columns | null {
     else if (c.service < 0 && /^(servicetype|service|type)$/.test(n)) c.service = i
     else if (c.vendor < 0 && /^(vendors?|supplier|suppliers|transport|transportvendor)$/.test(n)) c.vendor = i
     else if (c.driver < 0 && /^(driver|drivers|driverdetails|drivername|driverinfo|drivercontact)$/.test(n)) c.driver = i
-    else if (/^(from|to|location|city|pickuppoint|dropoff|route)$/.test(n)) c.route.push(i)
+    else if (c.from < 0 && /^(from|pickup|pickuppoint|pickupfrom)$/.test(n)) c.from = i
+    else if (c.to < 0 && /^(to|totours?|totour|dropoff|destination|tours?)$/.test(n)) c.to = i
+    else if (c.location < 0 && /^(location|city)$/.test(n)) c.location = i
+    else if (c.guest < 0 && /^(nameofguests?|guestnames?|guests?|leadguest|paxname|clientname)$/.test(n)) c.guest = i
   })
   return c.date >= 0 && c.code >= 0 && (c.vendor >= 0 || c.driver >= 0) ? c : null
 }
@@ -347,7 +354,9 @@ export function parseMovementWorkbook(buf: Buffer): Omit<SheetRead, 'hash' | 'so
         id: `${tab}!${r + 1}`, tab, row: r + 1, refs, date,
         details, meal: text(at(cols.meal)), time: normTime(at(cols.time)),
         service, serviceCode: sheetServiceCode(service),
-        route: cols.route.map(i => text(at(i))).filter(Boolean).join(' · ') || null,
+        location: text(at(cols.location)), from: text(at(cols.from)), to: text(at(cols.to)),
+        route: [text(at(cols.from)), text(at(cols.to))].filter(Boolean).join(' → ') || null,
+        guest: text(at(cols.guest)),
         text: vendor, driverText: driver,
         phones: extractPhones(contact),
       })

@@ -13,6 +13,8 @@ export const DRIVER_SYNC_SETTINGS = {
   intervalMin: 'vn_driver_sync_interval_min',
   daysAhead: 'vn_driver_sync_days_ahead',
   useAi: 'vn_driver_sync_use_ai',
+  fillTime: 'vn_driver_sync_fill_time',
+  fillContact: 'vn_driver_sync_fill_contact',
   sheet: 'vn_driver_sync_sheet',
   /** JSON: { at, hash, source, rows, tabs } of the last good sheet read. */
   sheetState: 'vn_driver_sync_sheet_state',
@@ -27,6 +29,10 @@ export interface DriverSyncConfig {
   intervalMin: number
   daysAhead: number
   useAi: boolean
+  /** Copy the sheet's Meeting Time onto a matched movement that has none. */
+  fillTime: boolean
+  /** Copy the sheet's guest phone onto a booking that has no guest contact at all. */
+  fillContact: boolean
   /** The workbook link the desk pasted (OneDrive / SharePoint share link, or a Google Sheet link). */
   sheet: string
 }
@@ -44,6 +50,7 @@ export const LINK_STATUS: Record<LinkStatus, { label: string; hint: string; dot:
 }
 
 export type EventAction = 'APPLIED' | 'UPDATED' | 'APPROVED' | 'SUGGESTED' | 'KEPT_MANUAL' | 'SHEET_DROPPED' | 'UNDONE' | 'IGNORED' | 'RESTORED'
+  | 'TIME_FILLED' | 'CONTACT_FILLED'
 
 export const EVENT_ACTION: Record<EventAction, { label: string; tone: string }> = {
   APPLIED:       { label: 'Applied',       tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
@@ -55,6 +62,8 @@ export const EVENT_ACTION: Record<EventAction, { label: string; tone: string }> 
   UNDONE:        { label: 'Undone',        tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
   IGNORED:       { label: 'Ignored',       tone: 'bg-zinc-100 text-zinc-600 ring-zinc-200' },
   RESTORED:      { label: 'Restored',      tone: 'bg-slate-100 text-slate-600 ring-slate-200' },
+  TIME_FILLED:   { label: 'Meeting time',  tone: 'bg-cyan-50 text-cyan-700 ring-cyan-200' },
+  CONTACT_FILLED:{ label: 'Guest contact', tone: 'bg-pink-50 text-pink-700 ring-pink-200' },
 }
 
 export interface DriverSyncRunInfo {
