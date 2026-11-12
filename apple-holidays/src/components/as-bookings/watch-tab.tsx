@@ -11,7 +11,6 @@ import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { readApiResponse } from '@/lib/utils'
 import { fmtDateTime } from './shared'
-import CancelSweepCard from './cancel-sweep-card'
 import {
   relTime, REASON_LABEL, REASON_ACTION, isTransient, CANCEL_STATE_META,
   type WatchCheck, type WatchStatus, type WatchSettings,
@@ -447,8 +446,15 @@ export default function WatchTab() {
         <FailedPanel entries={status?.ledger?.failed ?? []} now={now} onDismiss={dismiss} />
       </div>
 
-      {/* ── Daily cancellation check + range check ────────────────────────── */}
-      <CancelSweepCard onRan={() => { void load(true) }} />
+      {/* ── Daily cancellation check lives on its own tab now ─────────────── */}
+      <Link href="/dashboard/new-as-booking?tab=cancel"
+        className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-gradient-to-r from-rose-50 to-orange-50 px-4 py-3 text-xs text-rose-900 hover:from-rose-100 hover:to-orange-100 transition-colors">
+        <span>
+          <strong>Daily cancellation check, range check and the full cancellation queue</strong> are on the{' '}
+          <strong>Cancellations</strong> tab.
+        </span>
+        <span className="shrink-0 font-semibold">Open →</span>
+      </Link>
 
       {/* ── Cancelled in AppleSystem ─────────────────────────────────────── */}
       <CancellationPanel
