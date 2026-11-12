@@ -263,7 +263,7 @@ export default function OperationsBoardPage() {
   const [search, setSearch] = useState('')
   const [board, setBoard] = useState<OpsDayBoard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [segment, setSegment] = useState<Segment>('ONGROUND')
+  const [segment, setSegment] = useState<Segment>('ARRIVALS')
   const [onlyOutstanding, setOnlyOutstanding] = useState(false)
   const [checkFilter, setCheckFilter] = useState<CheckFilter>('ALL')
   const [statusFilter, setStatusFilter] = useState('ALL')
