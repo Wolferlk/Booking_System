@@ -10,7 +10,8 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { WHATSAPP_STAFF_ROLES, whatsappInboxCountry } from '@/lib/whatsapp'
-import { syncInboundRecent, syncDeliveryReceiptsRecent } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundRecent, syncDeliveryReceiptsRecent, businessNumbersForInbound } from '@/lib/whatsapp-shared-inbox-sync'
+import { businessKeyForId, type BusinessNumberKey } from '@/lib/whatsapp-business-numbers'
 import {
   FIELD_RANK, digitsOf, findBookingsForSearch, looksLikePhone, messageExcerpt, phoneKey,
   type SearchMatch,
@@ -51,14 +52,26 @@ export async function GET(req: NextRequest) {
     take: 5000,
     select: {
       phone: true, bookingRef: true, direction: true, body: true, mediaType: true,
-      senderName: true, read: true, status: true, createdAt: true,
+      senderName: true, read: true, status: true, createdAt: true, waMessageId: true,
     },
   })
+
+  // Which business number each reply came in on (OPS's own sends are always
+  // Aahaas Operations). Lets the desk filter the inbox per number.
+  const { byWamid, byPhone: numberByPhone } = await businessNumbersForInbound(
+    rows.filter(r => r.direction === 'inbound' && r.waMessageId).map(r => r.waMessageId as string),
+    Array.from(new Set(rows.filter(r => r.direction === 'inbound').map(r => r.phone))),
+  )
+  const numberOfRow = (row: { direction: string; phone: string; waMessageId: string | null }): BusinessNumberKey => {
+    if (row.direction !== 'inbound') return 'ops'
+    const id = (row.waMessageId ? byWamid.get(row.waMessageId) : null) ?? numberByPhone.get(row.phone) ?? null
+    return businessKeyForId(id)
+  }
 
   type Row = (typeof rows)[number]
   const byPhone = new Map<string, {
     last: Row; unread: number; displayName: string | null; ref: string | null
-    refs: Set<string>; bodyHit: string | null
+    refs: Set<string>; bodyHit: string | null; numbers: BusinessNumberKey[]
   }>()
   // Message text is only searched for 3+ characters — "VN" would hit half the inbox.
   const bodyNeedle = search.length >= 3 && !looksLikePhone(rawSearch) ? search : ''
@@ -66,10 +79,12 @@ export async function GET(req: NextRequest) {
   for (const row of rows) {
     let entry = byPhone.get(row.phone)
     if (!entry) {
-      entry = { last: row, unread: 0, displayName: null, ref: null, refs: new Set(), bodyHit: null }
+      entry = { last: row, unread: 0, displayName: null, ref: null, refs: new Set(), bodyHit: null, numbers: [] }
       byPhone.set(row.phone, entry)
     }
     if (row.bookingRef) entry.refs.add(row.bookingRef)
+    const number = numberOfRow(row)
+    if (!entry.numbers.includes(number)) entry.numbers.push(number) // newest first
     if (bodyNeedle && !entry.bodyHit && row.body?.toLowerCase().includes(bodyNeedle)) {
       entry.bodyHit = messageExcerpt(row.body, rawSearch) // newest matching message
     }
@@ -180,6 +195,7 @@ export async function GET(req: NextRequest) {
       status: last.status,
       updatedAt: last.createdAt,
       unreadCount: entry.unread,
+      numbers: entry.numbers,
       booking: booking ? {
         bookingRef:       booking.bookingRef,
         isNumber:         booking.isNumber,

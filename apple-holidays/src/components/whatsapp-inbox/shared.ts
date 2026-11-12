@@ -1,4 +1,5 @@
 import type { BookingStatus, OperationCountry } from '@prisma/client'
+import type { BusinessNumberKey } from '@/lib/whatsapp-business-numbers'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,8 @@ export interface Conversation {
   status: string
   updatedAt: string
   unreadCount: number
+  /** Aahaas business numbers this chat is on, most recent first. */
+  numbers?: BusinessNumberKey[]
   booking: ConversationBooking | null
   /** Present only in search results. */
   match?: SearchMatch | null
@@ -55,6 +58,8 @@ export interface WaMessage {
   mediaType: string | null
   /** Meta's reason, in plain words, when status is "failed". */
   failureReason?: string | null
+  /** Aahaas business number the message is on (outbound is always 'ops'). */
+  number?: BusinessNumberKey
 }
 
 export interface ThreadBooking extends ConversationBooking {
@@ -221,7 +226,7 @@ export function messagesSignature(ms: WaMessage[]) {
 }
 
 export function conversationsSignature(cs: Conversation[]) {
-  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}:${c.booking?.isNumber ?? ''}:${c.match?.field ?? ''}:${c.match?.text ?? ''}`).join('|')
+  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}:${c.booking?.isNumber ?? ''}:${(c.numbers ?? []).join(',')}:${c.match?.field ?? ''}:${c.match?.text ?? ''}`).join('|')
 }
 
 export function readLocal<T>(key: string, fallback: T): T {

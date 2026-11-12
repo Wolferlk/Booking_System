@@ -11,7 +11,8 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
-import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor, businessNumbersForInbound } from '@/lib/whatsapp-shared-inbox-sync'
+import { businessKeyForId } from '@/lib/whatsapp-business-numbers'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -44,9 +45,20 @@ export async function GET(req: NextRequest) {
   const reasons = await failureReasonsFor(
     rows.filter(m => m.status === 'failed' && m.waMessageId).map(m => m.waMessageId!),
   )
-  const messages = rows.map(m => m.status === 'failed'
-    ? { ...m, failureReason: (m.waMessageId && reasons.get(m.waMessageId)) || null }
-    : m)
+  // Which Aahaas number each message is on — OPS sends only from Operations;
+  // replies can arrive on any Aahaas number (they all share n8n's webhook).
+  const { byWamid, byPhone } = await businessNumbersForInbound(
+    rows.filter(m => m.direction === 'inbound' && m.waMessageId).map(m => m.waMessageId!),
+    rows.some(m => m.direction === 'inbound') ? [phone] : [],
+  )
+  const messages = rows.map(m => {
+    const number = m.direction === 'inbound'
+      ? businessKeyForId((m.waMessageId ? byWamid.get(m.waMessageId) : null) ?? byPhone.get(phone) ?? null)
+      : 'ops'
+    return m.status === 'failed'
+      ? { ...m, number, failureReason: (m.waMessageId && reasons.get(m.waMessageId)) || null }
+      : { ...m, number }
+  })
 
   await prisma.whatsAppMessage.updateMany({
     where: { phone, direction: 'inbound', read: false },

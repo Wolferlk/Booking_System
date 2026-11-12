@@ -26,8 +26,17 @@ import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 import { GroupWorkspace, GroupsRail, useGroupDetail } from '@/components/whatsapp-inbox/groups'
 import { TripPanel } from '@/components/whatsapp-inbox/trip-panel'
+import {
+  BUSINESS_NUMBERS, DEFAULT_BUSINESS_NUMBER, businessNumber, type BusinessNumberKey,
+} from '@/lib/whatsapp-business-numbers'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country' | 'groups'
+type NumberFilter = BusinessNumberKey | 'all'
+
+/** Chats from an older API response carry no numbers — they were all Operations. */
+function chatNumbers(c: Conversation): BusinessNumberKey[] {
+  return c.numbers?.length ? c.numbers : ['ops']
+}
 
 /** How each search hit is labelled in the list. */
 const MATCH_META: Record<SearchField, { label: string; icon: typeof Hash; tone: string }> = {
@@ -115,6 +124,8 @@ function WhatsAppInboxInner() {
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<ListTab>('all')
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
+  // Which Aahaas business number's chats to show. Always opens on Operations.
+  const [numberFilter, setNumberFilter] = useState<NumberFilter>(DEFAULT_BUSINESS_NUMBER)
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupsVersion, setGroupsVersion] = useState(0)
   const groupState = useGroupDetail(tab === 'groups' ? groupId : null)
@@ -669,17 +680,38 @@ function WhatsAppInboxInner() {
     () => conversations.reduce((n, c) => n + (c.phone === selected ? 0 : c.unreadCount), 0),
     [conversations, selected],
   )
-  const unreadChats = conversations.filter(c => c.unreadCount > 0 && c.phone !== selected).length
+  // Chat + unread counts per business number, for the number switcher.
+  const numberBuckets = useMemo(() => {
+    const counts = new Map<BusinessNumberKey, { chats: number; unread: number }>()
+    for (const c of conversations) {
+      for (const key of chatNumbers(c)) {
+        const b = counts.get(key) ?? { chats: 0, unread: 0 }
+        b.chats += 1
+        if (c.unreadCount > 0 && c.phone !== selected) b.unread += 1
+        counts.set(key, b)
+      }
+    }
+    return counts
+  }, [conversations, selected])
+
+  // Chats on the chosen number (the open chat always stays in view).
+  const numberScoped = useMemo(
+    () => numberFilter === 'all'
+      ? conversations
+      : conversations.filter(c => c.phone === selected || chatNumbers(c).includes(numberFilter)),
+    [conversations, numberFilter, selected],
+  )
+  const unreadChats = numberScoped.filter(c => c.unreadCount > 0 && c.phone !== selected).length
 
   const visibleConversations = useMemo(() => {
-    let list = conversations
+    let list = numberScoped
     if (tab === 'unread') list = list.filter(c => c.unreadCount > 0 || c.phone === selected)
     if (tab === 'pinned') list = list.filter(c => pins.includes(c.phone))
     if (tab === 'country' && countryFilter) list = list.filter(c => countryGroupKey(c.booking?.operationCountry) === countryFilter)
     if (matchFilter) list = list.filter(c => c.match?.field === matchFilter)
     if (!pins.length) return list
     return [...list.filter(c => pins.includes(c.phone)), ...list.filter(c => !pins.includes(c.phone))]
-  }, [conversations, tab, countryFilter, pins, selected, matchFilter])
+  }, [numberScoped, tab, countryFilter, pins, selected, matchFilter])
 
   // "9 by IS no. · 3 by message" — what the search actually hit, as filters.
   const matchCounts = useMemo(() => {
@@ -942,7 +974,9 @@ function WhatsAppInboxInner() {
             )}
           </AnimatePresence>
 
-          <div className="mt-3 flex gap-1 rounded-xl bg-slate-100/80 p-1">
+          <NumberSwitcher value={numberFilter} onChange={setNumberFilter} buckets={numberBuckets} total={conversations.length} totalUnread={conversations.filter(c => c.unreadCount > 0 && c.phone !== selected).length} />
+
+          <div className="mt-2 flex gap-1 rounded-xl bg-slate-100/80 p-1">
             {tabs.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)} className="relative flex-1 rounded-lg py-1.5 text-[12px] font-bold transition">
                 {tab === t.key && (
@@ -1010,7 +1044,9 @@ function WhatsAppInboxInner() {
                 {search ? 'No matches' : tab === 'unread' ? 'All caught up 🎉' : tab === 'pinned' ? 'No pinned chats' : tab === 'country' ? 'No chats for this country' : 'No conversations yet'}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                {search ? 'Try an IS number (VN12345), booking ref, guest name, phone or message text.' : tab === 'pinned' ? 'Hover a chat and press the pin to keep it on top.' : 'Incoming WhatsApp messages will appear here.'}
+                {numberFilter !== 'all' && numberScoped.length < conversations.length
+                  ? `Showing ${businessNumber(numberFilter).label} only — ${conversations.length - numberScoped.length} more chat${conversations.length - numberScoped.length === 1 ? '' : 's'} on other numbers. Pick “All” above to see them.`
+                  : search ? 'Try an IS number (VN12345), booking ref, guest name, phone or message text.' : tab === 'pinned' ? 'Hover a chat and press the pin to keep it on top.' : 'Incoming WhatsApp messages will appear here.'}
               </p>
             </motion.div>
           ) : (
@@ -1178,6 +1214,23 @@ function WhatsAppInboxInner() {
                   <span className="rounded-full border border-dashed border-slate-200 px-2.5 py-0.5 text-[11px] text-slate-400">No booking linked</span>
                 )}
               </div>
+
+              {/* The guest wrote to another Aahaas number. OPS can only send from
+                  Operations, so say where the reply will land. */}
+              {(() => {
+                const others = (selectedConv ? chatNumbers(selectedConv) : []).filter(k => k !== 'ops')
+                if (!others.length) return null
+                const ops = businessNumber('ops')
+                return (
+                  <p className="mt-2 flex items-start gap-1.5 rounded-xl bg-sky-50 px-2.5 py-1.5 text-[11.5px] text-sky-800">
+                    <Phone className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span>
+                      Guest wrote to {others.map(k => businessNumber(k)).map(n => n.display ? `${n.label} (${n.display})` : 'an unrecorded number').join(' and ')}.
+                      {' '}Replies from here go out on <b>{ops.label} {ops.display}</b>, so they arrive in a different chat on the guest’s phone.
+                    </span>
+                  </p>
+                )
+              })()}
 
               {/* Other numbers on the same booking. Without this the thread looks
                   stale next to the booking page's mini chat, which merges every
@@ -1756,6 +1809,46 @@ function LookupResults({ lookups, query, listed, onOpen }: {
   )
 }
 
+/** Pick which Aahaas business number's chats the list shows. */
+function NumberSwitcher({ value, onChange, buckets, total, totalUnread }: {
+  value: NumberFilter
+  onChange: (v: NumberFilter) => void
+  buckets: Map<BusinessNumberKey, { chats: number; unread: number }>
+  total: number
+  totalUnread: number
+}) {
+  // Operations is always offered (it's the default); others only when they have chats.
+  const options = BUSINESS_NUMBERS.filter(n => n.key === 'ops' || n.key === value || (buckets.get(n.key)?.chats ?? 0) > 0)
+  const chip = (key: NumberFilter, label: string, chats: number, unread: number, title: string) => {
+    const on = value === key
+    return (
+      <button
+        key={key}
+        onClick={() => onChange(key)}
+        title={title}
+        className={`relative inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${
+          on ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+        }`}
+      >
+        {key !== 'all' && <Phone className="h-3 w-3" />}
+        {label} <span className="opacity-70">({chats})</span>
+        {unread > 0 && (
+          <span className={`ml-0.5 rounded-full px-1.5 text-[10px] ${on ? 'bg-white text-emerald-700' : 'bg-emerald-500 text-white'}`}>{unread}</span>
+        )}
+      </button>
+    )
+  }
+  return (
+    <div className="mt-3 flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]" role="tablist" aria-label="WhatsApp business number">
+      {options.map(n => {
+        const b = buckets.get(n.key) ?? { chats: 0, unread: 0 }
+        return chip(n.key, n.short, b.chats, b.unread, `${n.label}${n.display ? ` ${n.display}` : ''}`)
+      })}
+      {chip('all', 'All numbers', total, totalUnread, 'Every chat, on any Aahaas number')}
+    </div>
+  )
+}
+
 function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
   c: Conversation
   query: string
@@ -1821,6 +1914,23 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
                 <span className={`min-w-0 truncate ${c.match.field === 'message' ? 'italic' : 'font-semibold'}`}>
                   {c.match.field === 'message' ? '“' : ''}<MatchHighlight text={c.match.text} query={query} />{c.match.field === 'message' ? '”' : ''}
                 </span>
+              </span>
+            )
+          })()}
+          {(() => {
+            // Only worth a chip when the chat isn't simply an Operations chat.
+            const nums = chatNumbers(c)
+            if (nums.length === 1 && nums[0] === 'ops') return null
+            return (
+              <span className="mt-1 flex flex-wrap items-center gap-1">
+                {nums.map(k => {
+                  const n = businessNumber(k)
+                  return (
+                    <span key={k} title={`${n.label}${n.display ? ` ${n.display}` : ''}`} className={`inline-flex items-center gap-0.5 rounded px-1 py-px text-[9.5px] font-bold uppercase ${n.tone}`}>
+                      <Phone className="h-2.5 w-2.5" /> {n.short}
+                    </span>
+                  )
+                })}
               </span>
             )
           })()}
@@ -1925,6 +2035,14 @@ function MessageBubble({ m, first, last, query, isActiveMatch, onImage, onMediaL
         {m.senderName && first && (
           <p className={`mb-0.5 text-[11px] font-bold ${isOut ? 'text-emerald-700' : 'text-blue-600'}`}>{m.senderName}</p>
         )}
+        {!isOut && m.number && m.number !== 'ops' && (() => {
+          const n = businessNumber(m.number)
+          return (
+            <p className={`mb-1 inline-flex items-center gap-0.5 rounded px-1 py-px text-[9.5px] font-bold uppercase ${n.tone}`} title={n.display ? `Sent to ${n.label} ${n.display}` : 'Business number not recorded'}>
+              <Phone className="h-2.5 w-2.5" /> {n.display ? `to ${n.short}` : n.short}
+            </p>
+          )
+        })()}
         {m.mediaUrl && m.mediaType === 'image' && (
           <button onClick={() => onImage(m.mediaUrl!)} className="mb-1 block overflow-hidden rounded-xl">
             {/* eslint-disable-next-line @next/next/no-img-element */}

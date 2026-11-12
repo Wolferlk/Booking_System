@@ -190,6 +190,72 @@ export async function syncInboundRecent(opts: { sinceDays?: number } = {}): Prom
   }
 }
 
+/**
+ * Which Aahaas business number did these replies arrive on? Every Aahaas number
+ * shares n8n's webhook, so the inbox holds replies sent to any of them.
+ *
+ * - Per message: n8n's `meta.phoneNumberId` on the inbound row (recorded since
+ *   the n8n change of 2026-11-12; older rows have none).
+ * - Per guest fallback: `tbl_whatsapp_conversations.phone_number_id`, the
+ *   number n8n last saw that guest on.
+ *
+ * A message's number never changes, so wamid answers are cached for the life of
+ * the process; the per-guest fallback is cached briefly. Empty maps when the
+ * shared DB isn't configured or the query fails — never throws.
+ */
+const wamidNumberCache = new Map<string, string | null>()
+let phoneNumberCache: { at: number; map: Map<string, string | null> } = { at: 0, map: new Map() }
+const PHONE_NUMBER_TTL_MS = 60_000
+
+export async function businessNumbersForInbound(
+  wamids: string[],
+  phones: string[],
+): Promise<{ byWamid: Map<string, string | null>; byPhone: Map<string, string | null> }> {
+  const byWamid = new Map<string, string | null>()
+  const byPhone = new Map<string, string | null>()
+  const db = getPool()
+  if (!db) return { byWamid, byPhone }
+
+  try {
+    const missing = Array.from(new Set(wamids.filter(w => w && !wamidNumberCache.has(w))))
+    for (let i = 0; i < missing.length; i += 1000) {
+      const chunk = missing.slice(i, i + 1000)
+      const [rows] = await db.query<mysql.RowDataPacket[]>(
+        `SELECT wa_message_id, JSON_UNQUOTE(JSON_EXTRACT(meta, '$.phoneNumberId')) AS pn
+         FROM tbl_whatsapp_messages
+         WHERE wa_message_id IN (${chunk.map(() => '?').join(',')})`,
+        chunk,
+      )
+      const found = new Map((rows as { wa_message_id: string; pn: string | null }[])
+        .map(r => [r.wa_message_id, r.pn && r.pn !== 'null' ? r.pn : null]))
+      for (const w of chunk) wamidNumberCache.set(w, found.get(w) ?? null)
+    }
+    for (const w of wamids) if (w) byWamid.set(w, wamidNumberCache.get(w) ?? null)
+
+    if (Date.now() - phoneNumberCache.at > PHONE_NUMBER_TTL_MS) phoneNumberCache = { at: Date.now(), map: new Map() }
+    const cache = phoneNumberCache.map
+    const unknownPhones = Array.from(new Set(phones.map(normalisePhone).filter(p => p && !cache.has(p))))
+    for (let i = 0; i < unknownPhones.length; i += 1000) {
+      const chunk = unknownPhones.slice(i, i + 1000)
+      const [rows] = await db.query<mysql.RowDataPacket[]>(
+        `SELECT wa_id, phone_number_id FROM tbl_whatsapp_conversations
+         WHERE wa_id IN (${chunk.map(() => '?').join(',')})`,
+        chunk,
+      )
+      const found = new Map((rows as { wa_id: string; phone_number_id: string | null }[])
+        .map(r => [normalisePhone(r.wa_id), r.phone_number_id || null]))
+      for (const p of chunk) cache.set(p, found.get(p) ?? null)
+    }
+    for (const p of phones) {
+      const key = normalisePhone(p)
+      if (key) byPhone.set(p, cache.get(key) ?? null)
+    }
+  } catch (err) {
+    console.error('[WA SharedSync] business-number lookup failed:', err instanceof Error ? err.message : err)
+  }
+  return { byWamid, byPhone }
+}
+
 // Outbound statuses that can still climb. `read` and `failed` are the last word.
 const OPEN_OUTBOUND = ['pending', 'accepted', 'held', 'sent', 'delivered']
 
