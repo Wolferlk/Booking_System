@@ -10,7 +10,7 @@ import {
   Download, ChevronDown, Table2,
   Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
   Hotel, Receipt, Filter, ScrollText,
-  FlaskConical,
+  FlaskConical, PlaneLanding, FilePlus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -32,6 +32,7 @@ import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 import AsFetchNow from '@/components/bookings/as-fetch-now'
 import PaymentStateCell from '@/components/bookings/payment-state-cell'
 import ReportCountChip from '@/components/bookings/report-count-chip'
+import AgentFilter from '@/components/bookings/agent-filter'
 import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
   BAR_QUICK_FILTER_LABELS, BAR_QUICK_FILTERS, isQuickFilter, QUICK_FILTER_LABELS,
@@ -312,6 +313,7 @@ function BookingsPageInner() {
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [source, setSource]             = useState(searchParams.get('source') ?? '')
+  const [agents, setAgents]             = useState<string[]>(() => searchParams.getAll('agent'))
   // Two independent switches, each a plain on/off rather than a third dropdown:
   // they answer "show me only X", not "which kind of X".
   const [hotelOnlyFilter, setHotelOnlyFilter] = useState(searchParams.get('hotelOnly') === '1')
@@ -399,6 +401,7 @@ function BookingsPageInner() {
     if (contentSearch)                                  params.set('contentSearch', contentSearch)
     if (status)                                         params.set('status',        status)
     if (source)                                         params.set('source',        source)
+    for (const a of agents)                             params.append('agent',      a)
     if (hotelOnlyFilter)                                params.set('hotelOnly',     '1')
     if (detailedPnlFilter)                              params.set('detailedPnl',   '1')
     if (testsOnly)                                      params.set('tests',         'only')
@@ -438,7 +441,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, testsOnly, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
+  }, [search, refSearch, contentSearch, status, source, agents, hotelOnlyFilter, detailedPnlFilter, testsOnly, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
 
   // Card counts follow the scope filters only (country + channel) — never the
   // search box — so the row of numbers stays a steady operational readout.
@@ -669,6 +672,7 @@ function BookingsPageInner() {
     if (contentSearch)                            params.set('contentSearch', contentSearch)
     if (status)                                   params.set('status',        status)
     if (source)                                   params.set('source',        source)
+    for (const a of agents)                       params.append('agent',      a)
     if (hotelOnlyFilter)                          params.set('hotelOnly',     '1')
     if (detailedPnlFilter)                        params.set('detailedPnl',   '1')
     if (dateFilter)                               params.set('dateFilter',    dateFilter)
@@ -692,6 +696,7 @@ function BookingsPageInner() {
       if (contentSearch)                            params.set('contentSearch', contentSearch)
       if (status)                                   params.set('status',        status)
       if (source)                                   params.set('source',        source)
+      for (const a of agents)                       params.append('agent',      a)
       if (hotelOnlyFilter)                          params.set('hotelOnly',     '1')
       if (detailedPnlFilter)                        params.set('detailedPnl',   '1')
       if (dateFilter)                               params.set('dateFilter',    dateFilter)
@@ -933,7 +938,7 @@ function BookingsPageInner() {
             )}
           </div>
 
-          {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Created date range */}
+          {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Agent */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
@@ -955,33 +960,13 @@ function BookingsPageInner() {
               )}
             </div>
 
-            {/* Date range — applies to whichever column `dateBasis` selects */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className="text-xs text-slate-400 whitespace-nowrap">
-                {dateBasis === 'createdAt' ? 'Created' : 'Arrival'}
-              </span>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={e => { setDateFrom(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
-                className="form-input text-sm py-1.5 w-36"
-              />
-              <span className="text-xs text-slate-400">→</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={e => { setDateTo(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
-                className="form-input text-sm py-1.5 w-36"
-              />
-              {(dateFrom || dateTo) && (
-                <button
-                  onClick={clearDateRange}
-                  className="text-xs text-slate-400 hover:text-slate-600 px-1.5"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
+            {/* Agent — searchable multi-select, scoped like the list */}
+            <AgentFilter
+              value={agents}
+              onChange={next => { setAgents(next); setPage(1) }}
+              country={countryFilter}
+              source={source}
+            />
           </div>
 
           {/* Detailed P&L lives in another system. When it cannot be reached the
@@ -1016,7 +1001,10 @@ function BookingsPageInner() {
               it the only number on screen was the header's, which reads as the
               size of the whole book rather than the answer to this filter. */}
           <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-            <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
+            <span className="flex items-center gap-1 text-xs font-medium text-slate-500 whitespace-nowrap mr-0.5">
+              <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+              Quick views
+            </span>
             {BAR_QUICK_FILTERS.map(f => (
               <button
                 key={f}
@@ -1046,7 +1034,7 @@ function BookingsPageInner() {
                 preset={quick === 'created_today' ? 'today' : quick === 'created_yesterday' ? 'yesterday' : null}
                 from={!quick && dateBasis === 'createdAt' ? (dateFrom || null) : null}
                 to={!quick && dateBasis === 'createdAt' ? (dateTo || dateFrom || null) : null}
-                narrowed={!!(search || refSearch || contentSearch || status || source || hotelOnlyFilter || detailedPnlFilter || (countryFilter && countryFilter !== 'ALL'))}
+                narrowed={!!(search || refSearch || contentSearch || status || source || agents.length || hotelOnlyFilter || detailedPnlFilter || (countryFilter && countryFilter !== 'ALL'))}
                 cohortActive={!!cohort}
                 onViewCohort={(from, to) => {
                   setCohort(prev => (prev && prev.from === from && prev.to === to ? null : { from, to }))
@@ -1101,33 +1089,91 @@ function BookingsPageInner() {
 
           {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
-              {DATE_FILTER_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  onClick={() => { setDateFilter(opt.value); setQuick(null); setPage(1); if (opt.value) clearDateRange() }}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
-                    dateFilter === opt.value && !dateFrom && !dateTo
-                      ? 'bg-brand-600 text-white border-brand-600'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-
-              {/* Which date the period pills apply to */}
-              <span className="text-xs text-slate-400 ml-1.5 whitespace-nowrap">by</span>
-              <select
-                value={dateBasis}
-                onChange={e => { setDateBasis(e.target.value as 'arrivalDate' | 'createdAt'); setPage(1) }}
-                className="form-select text-xs py-1 pr-7"
-                title="Choose whether the period pills and the date range apply to the trip arrival date or the date the booking was added"
+            {/* One date control: pick WHICH date first, then the period or a
+                custom range. Before, the range sat on another row from the
+                Arrival/Created switch that silently decided what it meant. */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="flex items-center gap-1 text-xs font-medium text-slate-500 whitespace-nowrap">
+                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                Date
+              </span>
+              <div
+                role="radiogroup"
+                aria-label="Which date to filter on"
+                className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-0.5"
+                title="Arrival = when the guest lands. Created = when the booking was added to the system."
               >
-                <option value="arrivalDate">Arrival date</option>
-                <option value="createdAt">Created date</option>
-              </select>
+                {([['arrivalDate', 'Arrival', PlaneLanding], ['createdAt', 'Created', FilePlus]] as const).map(([val, lbl, Icon]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    role="radio"
+                    aria-checked={dateBasis === val}
+                    onClick={() => { setDateBasis(val); setQuick(null); setPage(1) }}
+                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold transition-all ${
+                      dateBasis === val ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+
+              <span className="h-5 w-px bg-slate-200" aria-hidden />
+
+              {DATE_FILTER_OPTIONS.map(opt => {
+                const active = !quick && dateFilter === opt.value && !dateFrom && !dateTo
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setDateFilter(opt.value); setQuick(null); setPage(1); clearDateRange() }}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                      active
+                        ? 'bg-brand-600 text-white border-brand-600'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {opt.value === '' ? 'Any time' : opt.label}
+                  </button>
+                )
+              })}
+
+              {/* Custom range — always on the same basis as the pills */}
+              <div className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 transition-colors ${
+                dateFrom || dateTo ? 'border-brand-300 bg-brand-50' : 'border-slate-200 bg-white'
+              }`}>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  aria-label={`${dateBasis === 'createdAt' ? 'Created' : 'Arrival'} from`}
+                  onChange={e => { setDateFrom(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
+                  className="bg-transparent text-xs text-slate-600 focus:outline-none w-[7.5rem]"
+                />
+                <span className="text-xs text-slate-400">→</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  aria-label={`${dateBasis === 'createdAt' ? 'Created' : 'Arrival'} to`}
+                  onChange={e => { setDateTo(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
+                  className="bg-transparent text-xs text-slate-600 focus:outline-none w-[7.5rem]"
+                />
+                {(dateFrom || dateTo) && (
+                  <button onClick={clearDateRange} aria-label="Clear date range" className="text-slate-400 hover:text-slate-600">
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+
+              {/* Plain-English readout of what the date filter is doing */}
+              {!quick && (dateFilter || dateFrom || dateTo) && (
+                <span className="text-[11px] text-slate-400 italic">
+                  {dateBasis === 'createdAt' ? 'added' : 'arriving'}{' '}
+                  {dateFrom || dateTo
+                    ? `${dateFrom || '…'} → ${dateTo || '…'}`
+                    : DATE_FILTER_OPTIONS.find(o => o.value === dateFilter)?.label.toLowerCase()}
+                </span>
+              )}
             </div>
 
             <div className="sm:ml-auto flex items-center gap-2 flex-wrap">

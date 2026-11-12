@@ -135,6 +135,11 @@ export async function GET(req: NextRequest) {
   const sourceClause = bookingSourceWhere(source)
   if (sourceClause) andClauses.push(sourceClause)
 
+  // Agent filter — repeatable (?agent=A&agent=B). Exact name; MySQL collation
+  // makes it case-insensitive, so "30 Sundays" and "30 SUNDAYS" are one agent.
+  const agents = searchParams.getAll('agent').map(a => a.trim()).filter(Boolean)
+  if (agents.length) andClauses.push({ agent: { in: agents } })
+
   // The status param accepts the two derived post-travel states alongside real
   // BookingStatus values — they are split out and translated into date/feedback
   // conditions, since they exist nowhere in the status column.

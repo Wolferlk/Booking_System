@@ -54,6 +54,7 @@ function PrintContent() {
       // The two narrowing switches, so a printout matches the screen it came from.
       'hotelOnly', 'detailedPnl']
     passthrough.forEach(k => { const v = sp.get(k); if (v) params.set(k, v) })
+    sp.getAll('agent').forEach(a => params.append('agent', a))
     params.set('limit', '500')
     params.set('page', '1')
 

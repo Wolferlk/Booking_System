@@ -60,6 +60,10 @@ export async function GET(req: NextRequest) {
   const sourceClause = bookingSourceWhere(source)
   if (sourceClause) andClauses.push(sourceClause)
 
+  // Agent filter — same rule as the list, so the export matches the screen.
+  const agents = searchParams.getAll('agent').map(a => a.trim()).filter(Boolean)
+  if (agents.length) andClauses.push({ agent: { in: agents } })
+
   if (status) {
     // Derived post-travel states are not stored in the status column — they are
     // translated to date/feedback conditions (see src/lib/trip-state.ts).
