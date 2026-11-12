@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { isAssignLocked, assignLockMessage } from '@/lib/booking-assign-lock'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getVendorSession } from '@/lib/vendor-auth'
 import { detectCountryFromRef } from '@/lib/country-detection'
@@ -26,12 +27,18 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const assignment = await prisma.assignment.findFirst({
     where: { id: params.id, vendorId: session.id },
     include: { agendaItem: { include: { agenda: { include: { booking: {
-      select: { bookingRef: true, operationCountry: true },
+      select: { bookingRef: true, operationCountry: true, status: true },
     } } } } } },
   })
   if (!assignment) return buildApiError('Not found', 404)
 
   const { driverId, vehicleId, notes } = await req.json()
+
+  // Requested to cancel: the vendor may take their driver off, not put a new one on.
+  const lockedBooking = assignment.agendaItem.agenda.booking
+  if (driverId && driverId !== assignment.driverId && isAssignLocked(lockedBooking.status)) {
+    return buildApiError(assignLockMessage(lockedBooking.status, lockedBooking.bookingRef), 409)
+  }
 
   let driverName:  string | null = null
   let driverPhone: string | null = null

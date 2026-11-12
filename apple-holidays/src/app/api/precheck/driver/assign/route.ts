@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isAssignLocked, assignLockMessage } from '@/lib/booking-assign-lock'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { guardPrecheck } from '@/lib/precheck-guard'
 import { buildDriverPrecheck } from '@/lib/driver-precheck'
@@ -74,11 +75,15 @@ export async function POST(req: NextRequest) {
   const booking = await prisma.booking.findUnique({
     where: { bookingRef },
     select: {
-      id: true, operationCountry: true,
+      id: true, operationCountry: true, status: true,
       tourAgenda: { select: { items: { select: { id: true, date: true, assignment: { select: { id: true, driverName: true, driverPhone: true, driverId: true } } } } } },
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
+  // Requested to cancel: clearing a driver is fine, allocating one is not.
+  if (!body.clear && isAssignLocked(booking.status)) {
+    return buildApiError(assignLockMessage(booking.status, bookingRef), 409)
+  }
   if (session.countries && !(booking.operationCountry && session.countries.includes(booking.operationCountry))) {
     return buildApiError('Forbidden — this booking is outside your country scope', 403)
   }

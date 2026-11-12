@@ -280,7 +280,7 @@ function PrintContent() {
                         fontSize: 8, fontWeight: 800, letterSpacing: 0.4, marginTop: 1,
                         color: '#9f1239', textTransform: 'uppercase',
                       }}>
-                        {row.bookingStatus === 'PENDING_CANCELLATION' ? 'Cancelling' : 'Cancelled'}
+                        {row.bookingStatus === 'PENDING_CANCELLATION' ? 'Requested to cancel' : 'Cancelled'}
                       </div>
                     )}
                     {row.isNumber && (

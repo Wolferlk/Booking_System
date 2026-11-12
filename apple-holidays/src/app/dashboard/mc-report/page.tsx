@@ -161,6 +161,11 @@ function isCancelPendingRow(row: { bookingStatus?: string | null }): boolean {
   return String(row.bookingStatus ?? '') === 'PENDING_CANCELLATION'
 }
 
+/** The request came from the AppleSystem cancellation check, not a person. */
+function isAppleSystemCancel(row: { cancelRequestedBy?: string | null }): boolean {
+  return String(row.cancelRequestedBy ?? '') === 'AppleSystem'
+}
+
 /** Whole days a request has been waiting on accounts. */
 function waitingDays(requestedAt: string | null): number | null {
   if (!requestedAt) return null
@@ -302,7 +307,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     // Same trick for the approval queue: "cancel pending" pulls up every file
     // waiting on accounts, and the reason text is searchable with it.
     isCancelPendingRow(row)
-      ? `cancel pending cancellation approval ${row.cancelReason ?? ''} ${row.cancelRequestedBy ?? ''}`
+      ? `requested to cancel cancel pending cancellation approval ${row.cancelReason ?? ''} ${row.cancelRequestedBy ?? ''}`
       : null,
   ].some(v => v?.toLowerCase().includes(q))
 }
@@ -1760,7 +1765,7 @@ export default function MCReportPage() {
       isCancelledRow(r) ? 'CANCELLED' : '',
       // Split out from 'Cancelled' above: a spreadsheet pivot has to be able to
       // tell a dead file from one still waiting on a decision.
-      isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
+      isCancelPendingRow(r) ? `REQUESTED TO CANCEL${isAppleSystemCancel(r) ? ' (AppleSystem)' : ''}` : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
       r.cancelRequestedAt?.slice(0, 10) ?? '',
       r.cancelRequestedBy ?? '',
       isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
@@ -2108,7 +2113,7 @@ export default function MCReportPage() {
                   </span>
                   <div>
                     <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
-                      Cancellation approvals pending
+                      Requested to cancel — awaiting accounts
                       <span className={cn(
                         'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold',
                         waitTone(cancelQueueOldest).chip,
@@ -2118,8 +2123,9 @@ export default function MCReportPage() {
                     </h3>
                     <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-600">
                       A cancellation has been requested on {cancelQueue.length === 1 ? 'this file' : 'these files'} and
-                      the accounts team has not decided yet. The movements below are still on the chart and still
-                      expected to run — hold off committing anything new until the decision comes back.
+                      the accounts team has not decided yet. The movements below are still on the chart until the
+                      decision comes back. <strong className="text-slate-800">New drivers and vendors are locked</strong> on
+                      these files; removing a driver and issuing tickets still work.
                     </p>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
                       <span className="inline-flex items-center gap-1">
@@ -2197,7 +2203,9 @@ export default function MCReportPage() {
                           </span>
                         </div>
                         <div className="truncate text-slate-400">
-                          Requested by {e.requestedBy || 'unknown'}
+                          {e.requestedBy === 'AppleSystem'
+                            ? <span className="font-semibold text-violet-700">Cancelled in AppleSystem</span>
+                            : <>Requested by {e.requestedBy || 'unknown'}</>}
                           {e.heldAt ? ` · held at ${e.heldAt.replace(/_/g, ' ').toLowerCase()}` : ''}
                         </div>
                       </div>
@@ -2754,7 +2762,7 @@ export default function MCReportPage() {
                                   }
                                 >
                                   <Ban className="w-2.5 h-2.5" />
-                                  Cancel Pending
+                                  Requested to cancel
                                   {waitingDays(row.cancelRequestedAt)
                                     ? ` · ${waitingDays(row.cancelRequestedAt)}d`
                                     : ''}
@@ -2765,6 +2773,14 @@ export default function MCReportPage() {
                                   title={`This booking is ${row.bookingStatus?.replace(/_/g, ' ').toLowerCase()} — do not run this movement. It is excluded from the pax and service totals.`}
                                 >
                                   Cancelled
+                                </span>
+                              )}
+                              {isCancelledRow(row) && isAppleSystemCancel(row) && (
+                                <span
+                                  className="inline-flex items-center mt-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-800 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded whitespace-nowrap"
+                                  title="Cancelled in AppleSystem (status 3) — raised automatically by the AppleSystem cancellation check"
+                                >
+                                  AppleSystem
                                 </span>
                               )}
                               {row.isNumber && (
@@ -2972,7 +2988,7 @@ export default function MCReportPage() {
                                     name={row.tourVendorName}
                                     phone={row.tourVendorPhone}
                                     enabled={tourVendorEnabledFor(row)}
-                                    canAssign={canAssign}
+                                    canAssign={canAssign && !isCancelledRow(row)}
                                     onAssign={() => setAssignRow(row)}
                                     query={deepSearch}
                                   />
@@ -3024,7 +3040,7 @@ export default function MCReportPage() {
                                 {/* Viewing and re-assigning are different jobs,
                                     so they are different buttons — clicking the
                                     driver still opens their details. */}
-                                {canAssign && (
+                                {canAssign && !isCancelledRow(row) && (
                                   <button
                                     onClick={e => { e.stopPropagation(); setAssignRow(row) }}
                                     title="Re-assign this movement"
@@ -3034,6 +3050,15 @@ export default function MCReportPage() {
                                   </button>
                                 )}
                                 </div>
+                              ) : canAssign && isCancelledRow(row) ? (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-orange-700 whitespace-nowrap"
+                                  title={isCancelPendingRow(row)
+                                    ? 'Requested to cancel — drivers and vendors cannot be assigned until accounts reject the cancellation. Tickets can still be issued.'
+                                    : 'Cancelled — drivers and vendors cannot be assigned.'}
+                                >
+                                  <Ban className="w-3 h-3" /> Assign locked
+                                </span>
                               ) : canAssign ? (
                                 <button
                                   onClick={e => { e.stopPropagation(); setAssignRow(row) }}
@@ -3269,7 +3294,8 @@ export default function MCReportPage() {
                                   )}>
                                     <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-orange-800">
                                       <Ban className="w-3 h-3" />
-                                      Cancellation requested — awaiting accounts approval
+                                      Requested to cancel — awaiting accounts approval
+                                      {isAppleSystemCancel(row) ? ' · cancelled in AppleSystem' : ''}
                                     </p>
                                     <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
                                       <div>

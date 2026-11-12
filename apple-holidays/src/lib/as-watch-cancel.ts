@@ -58,7 +58,7 @@
 
 import type { BookingStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import type { ASBookingListItem } from '@/lib/applesystem'
+import { searchBookings, type ASBookingListItem } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import { wasImportedFromAppleSystem } from '@/lib/as-reconcile'
@@ -212,6 +212,66 @@ function refOf(row: ASBookingListItem): string | null {
   return !raw || raw === 'NA' ? null : raw
 }
 
+/** `yyyy-mm-dd` the quotation was created upstream — the field is a string or `{ date }`. */
+function upstreamCreatedOn(row: ASBookingListItem): string | null {
+  const raw = row.created_at
+  const s = typeof raw === 'string' ? raw : raw?.date ?? null
+  return s && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null
+}
+
+/** `yyyy-mm-dd` arrival, assembled from the list row's `main` block. */
+function upstreamArrival(row: ASBookingListItem): string | null {
+  const y = row.main?.arrival_year
+  const m = row.main?.arrival_month
+  const d = row.main?.arrival_day
+  if (!y || !m || !d) return null
+  const out = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  return /^\d{4}-\d{2}-\d{2}$/.test(out) ? out : null
+}
+
+// ── Second look ───────────────────────────────────────────────────────────────
+
+/**
+ * What AppleSystem says about this IS number *right now*, across every quotation.
+ *
+ *   `cancelled`   — no quotation carrying this IS number is confirmed any more.
+ *   `superseded`  — the cancelled quotation was replaced: another quotation with
+ *                   the same IS number (or the same quotation, re-confirmed) is
+ *                   at status 2. The tour is still on; nothing to cancel.
+ *   `unknown`     — the lookup failed. Never act on a guess.
+ */
+export type UpstreamVerdict =
+  | { kind: 'cancelled' }
+  | { kind: 'superseded'; quotationNo: string }
+  | { kind: 'unknown'; error: string }
+
+/**
+ * Re-ask AppleSystem before touching a booking.
+ *
+ * The sweep reads a *list*, and a list row is one quotation. An amendment in
+ * AppleSystem is often done by cancelling the old quotation and confirming a new
+ * one under the same IS number — on the list that looks exactly like a
+ * cancellation, and acting on it would put a live tour in front of accounts for
+ * cancelling. So before a request goes out, every quotation for the IS number is
+ * fetched, and the request only proceeds when none of them is confirmed.
+ *
+ * Costs one scoped search per booking about to be acted on — a handful a day.
+ */
+export async function verifyUpstreamCancelled(
+  isNumberRaw: string,
+  ref: string,
+): Promise<UpstreamVerdict> {
+  try {
+    const { items } = await searchBookings({ isNumber: isNumberRaw || ref })
+    const same = items.filter((it) => refOf(it) === ref)
+    const live = same.find((it) => String(it.status ?? '') === '2')
+    if (live) return { kind: 'superseded', quotationNo: String(live.quotation_no ?? '').trim() || '—' }
+    return { kind: 'cancelled' }
+  } catch (err) {
+    return { kind: 'unknown', error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 // ── The request itself ────────────────────────────────────────────────────────
 
 export interface RequestOutcome {
@@ -241,11 +301,13 @@ async function applyCancellationRequest(
   booking: NonNullable<CancelCandidate>,
   row: { quotationNo: string; upstreamStatus: string },
   actor: { id: string; name: string; email: string },
+  /** Which automation found it — "the daily cancellation check", a range check… */
+  via = 'the live cancellation watch',
 ): Promise<RequestOutcome> {
   const now = new Date()
   const reason =
     `AppleSystem cancelled quotation ${row.quotationNo || '—'} (status ${row.upstreamStatus}). ` +
-    `Detected by the live cancellation watch on ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC. ` +
+    `Detected by ${via} on ${now.toISOString().slice(0, 16).replace('T', ' ')} UTC. ` +
     `No money has been decided either way — accounts approval is required to close the file.`
 
   let prevStatus: BookingStatus
@@ -288,7 +350,7 @@ async function applyCancellationRequest(
           toState: 'PENDING_CANCELLATION',
           actorId: actor.id,
           note:
-            `${reason} Requested by ${actor.name === AS_CANCEL_ACTOR ? 'the automatic watch' : actor.name}.`,
+            `${reason} Requested by ${actor.name === AS_CANCEL_ACTOR ? via : actor.name}.`,
         },
       })
 
@@ -418,6 +480,42 @@ export interface CancelSweepSummary {
   failed: number
   /** Refs requested on this tick, for the check log. */
   refs: string[]
+  /** Cancelled upstream but replaced by a confirmed quotation — left alone. */
+  superseded?: number
+  /** Per-booking outcome, only when the caller asked for it (range checks). */
+  details?: CancelSweepDetail[]
+}
+
+/** One line of a range check's report — what happened to one cancelled quotation. */
+export interface CancelSweepDetail {
+  ref: string | null
+  quotationNo: string
+  /** The upstream create / arrival date, as AppleSystem gave it. */
+  createdOn: string | null
+  arrivalDate: string | null
+  outcome:
+    | 'requested' | 'already-requested' | 'awaiting' | 'on-ground' | 'superseded'
+    | 'closed-here' | 'not-imported' | 'not-in-system' | 'no-is-number'
+    | 'decided' | 'unverified' | 'failed'
+  note: string | null
+}
+
+/**
+ * How a sweep may act.
+ *
+ *   `auto`    — obey the Live Watch switch (the original behaviour).
+ *   `request` — send every eligible booking for accounts approval now
+ *               (the daily check, and "Find & request" on a range).
+ *   `detect`  — list only, change nothing (a range preview).
+ */
+export type CancelSweepAction = 'auto' | 'request' | 'detect'
+
+export interface CancelSweepOptions {
+  action?: CancelSweepAction
+  /** Credited as "Sent by" on rows this sweep requests. */
+  via?: string
+  /** Build `summary.details` — only range checks want the per-row report. */
+  collectDetails?: boolean
 }
 
 export function emptyCancelSummary(): CancelSweepSummary {
@@ -434,25 +532,51 @@ export function emptyCancelSummary(): CancelSweepSummary {
 export async function sweepCancellations(
   cancelledRows: ASBookingListItem[],
   actorId: string,
+  opts: CancelSweepOptions = {},
 ): Promise<CancelSweepSummary> {
   const summary = emptyCancelSummary()
   summary.upstream = cancelledRows.length
+  summary.superseded = 0
+  if (opts.collectDetails) summary.details = []
 
   let ledger = await readLedger()
   const refreshed = await refreshDecisions(ledger)
   ledger = refreshed.list
   let dirty = refreshed.changed
 
-  const actionOn = await getCancelActionEnabled()
+  const mode: CancelSweepAction = opts.action ?? 'auto'
+  const actionOn = mode === 'request' ? true : mode === 'detect' ? false : await getCancelActionEnabled()
+  const via = opts.via ?? 'the automatic watch'
   const now = new Date()
   const nowIso = now.toISOString()
+
+  /** One report line — a no-op unless the caller asked for details. */
+  const report = (
+    row: ASBookingListItem, ref: string | null,
+    outcome: CancelSweepDetail['outcome'], note: string | null = null,
+  ) => {
+    summary.details?.push({
+      ref,
+      quotationNo: String(row.quotation_no ?? '').trim(),
+      createdOn: upstreamCreatedOn(row),
+      arrivalDate: upstreamArrival(row),
+      outcome,
+      note,
+    })
+  }
+
+  // The same IS number can appear on several cancelled rows (old revisions of
+  // one file). One decision per booking per sweep.
+  const seen = new Set<string>()
 
   for (const row of cancelledRows) {
     const ref = refOf(row)
     // No IS number upstream means nothing was ever imported under one, so there
     // is no booking here to withdraw. This is the ordinary shape of a quotation
     // cancelled before it was ever confirmed.
-    if (!ref) continue
+    if (!ref) { report(row, null, 'no-is-number', 'Cancelled before it was ever given an IS number.'); continue }
+    if (seen.has(ref)) continue
+    seen.add(ref)
 
     const quotationNo = String(row.quotation_no ?? '').trim()
     const upstreamStatus = String(row.status ?? '?')
@@ -460,13 +584,18 @@ export async function sweepCancellations(
 
     try {
       const booking = await loadBooking(ref)
-      if (!booking) continue
+      if (!booking) { report(row, ref, 'not-in-system', 'No booking with this IS number here.'); continue }
       summary.matched++
 
       const existing = ledger.find((e) => e.ref === ref)
       // Decided, one way or the other — nothing further is owed. A `declined`
       // entry in particular must never be re-raised: that is the whole point.
-      if (existing && (existing.state === 'approved' || existing.state === 'declined')) continue
+      if (existing && (existing.state === 'approved' || existing.state === 'declined')) {
+        report(row, ref, 'decided', existing.state === 'approved'
+          ? 'Accounts already approved this cancellation.'
+          : 'Accounts declined this cancellation earlier — not raised again.')
+        continue
+      }
 
       const base: CancelEntry = {
         ref,
@@ -489,6 +618,7 @@ export async function sweepCancellations(
       // Already sitting in the accounts queue — from this watch, from the
       // reconciler or from a person. Record where it got to and move on.
       if (booking.status === 'PENDING_CANCELLATION' || booking.cancelRequestedAt) {
+        report(row, ref, 'already-requested', 'Already waiting for accounts approval.')
         if (existing?.state === 'requested') continue
         ledger = upsertEntry(ledger, {
           ...base,
@@ -503,12 +633,10 @@ export async function sweepCancellations(
 
       if (CLOSED_HERE.includes(booking.status) || !CANCELLABLE_STATES.includes(booking.status)) {
         summary.skipped++
+        const note = `Already ${booking.status.replace(/_/g, ' ').toLowerCase()} here — nothing to ask for.`
+        report(row, ref, 'closed-here', note)
         if (existing?.state === 'skipped') continue
-        ledger = upsertEntry(ledger, {
-          ...base,
-          state: 'skipped',
-          note: `Already ${booking.status.replace(/_/g, ' ').toLowerCase()} here — nothing to ask for.`,
-        })
+        ledger = upsertEntry(ledger, { ...base, state: 'skipped', note })
         dirty = true
         continue
       }
@@ -518,14 +646,46 @@ export async function sweepCancellations(
       // number with a quotation that was never the same commitment.
       if (!(await wasImportedFromAppleSystem(booking.id))) {
         summary.skipped++
+        const note =
+          'This booking was not imported from AppleSystem, so an upstream cancellation ' +
+          'may not be about the same file. Left alone — check it by hand.'
+        report(row, ref, 'not-imported', note)
         if (existing?.state === 'skipped') continue
-        ledger = upsertEntry(ledger, {
-          ...base,
-          state: 'skipped',
-          note:
-            'This booking was not imported from AppleSystem, so an upstream cancellation ' +
-            'may not be about the same file. Left alone — check it by hand.',
-        })
+        ledger = upsertEntry(ledger, { ...base, state: 'skipped', note })
+        dirty = true
+        continue
+      }
+
+      // A listed-only row that is already on the panel needs no second look
+      // until somebody switches the action on — the lookup is not free.
+      if (!actionOn && existing?.state === 'awaiting' && existing.note) {
+        summary.awaiting++
+        report(row, ref, 'awaiting', existing.note)
+        continue
+      }
+
+      // Second look: is the file *really* off, or was the quotation replaced?
+      const verdict = await verifyUpstreamCancelled(String(row.is_number ?? ''), ref)
+      if (verdict.kind === 'superseded') {
+        summary.superseded = (summary.superseded ?? 0) + 1
+        summary.skipped++
+        const note =
+          `Quotation ${quotationNo || '—'} was cancelled, but AppleSystem still has ${ref} confirmed ` +
+          `under quotation ${verdict.quotationNo} — an amendment, not a cancellation. Left alone.`
+        report(row, ref, 'superseded', note)
+        if (existing?.state !== 'skipped' || existing.note !== note) {
+          ledger = upsertEntry(ledger, { ...base, state: 'skipped', note })
+          dirty = true
+        }
+        continue
+      }
+      if (verdict.kind === 'unknown') {
+        summary.awaiting++
+        const note =
+          `Could not double-check with AppleSystem (${verdict.error}). Nothing was changed — ` +
+          'it is checked again on the next run, or send it by hand.'
+        report(row, ref, 'unverified', note)
+        ledger = upsertEntry(ledger, { ...base, state: 'awaiting', note })
         dirty = true
         continue
       }
@@ -536,14 +696,12 @@ export async function sweepCancellations(
       const onGround = booking.arrivalDate ? booking.arrivalDate.getTime() <= now.getTime() : false
       if (onGround) {
         summary.awaiting++
+        const note =
+          'The tour has already started. Suspending a booking on the ground stops the guest ' +
+          'messaging, so this one waits for a person — use the button, or handle it in AppleSystem.'
+        report(row, ref, 'on-ground', note)
         if (existing?.state !== 'awaiting' || existing.note === null) {
-          ledger = upsertEntry(ledger, {
-            ...base,
-            state: 'awaiting',
-            note:
-              'The tour has already started. Suspending a booking on the ground stops the guest ' +
-              'messaging, so this one waits for a person — use the button, or handle it in AppleSystem.',
-          })
+          ledger = upsertEntry(ledger, { ...base, state: 'awaiting', note })
           dirty = true
           await raiseAsImportAlert({
             severity: 'warning',
@@ -561,14 +719,14 @@ export async function sweepCancellations(
 
       if (!actionOn) {
         summary.awaiting++
+        const note = mode === 'detect'
+          ? 'Found by a range check (preview only) — confirmed cancelled in AppleSystem. ' +
+            'Use the button on this row to send it for approval.'
+          : 'Detected only — sending cancellations for accounts approval is switched off. ' +
+            'Use the button on this row to send this one.'
+        report(row, ref, 'awaiting', note)
         if (existing?.state === 'awaiting' && existing.note) continue
-        ledger = upsertEntry(ledger, {
-          ...base,
-          state: 'awaiting',
-          note:
-            'Detected only — sending cancellations for accounts approval is switched off. ' +
-            'Use the button on this row to send this one.',
-        })
+        ledger = upsertEntry(ledger, { ...base, state: 'awaiting', note })
         dirty = true
         continue
       }
@@ -577,33 +735,36 @@ export async function sweepCancellations(
         booking,
         { quotationNo, upstreamStatus },
         { id: actorId, name: AS_CANCEL_ACTOR, email: '' },
+        via,
       )
 
       if (outcome.ok) {
         summary.requested++
         summary.refs.push(ref)
+        const note = outcome.emailFailed
+          ? 'Sent for accounts approval, but the notification email could not be delivered.'
+          : null
+        report(row, ref, 'requested', note ?? `Requested to cancel — was ${String(outcome.prevStatus ?? '').replace(/_/g, ' ').toLowerCase()}.`)
         ledger = upsertEntry(ledger, {
           ...base,
           state: 'requested',
           prevStatus: outcome.prevStatus ?? base.prevStatus,
           requestedAt: nowIso,
-          actedBy: 'the automatic watch',
-          note: outcome.emailFailed
-            ? 'Sent for accounts approval, but the notification email could not be delivered.'
-            : null,
+          actedBy: via,
+          note,
         })
       } else {
         summary.failed++
-        ledger = upsertEntry(ledger, {
-          ...base,
-          state: 'failed',
-          note: `Could not send for approval: ${outcome.reason ?? 'unknown error'}. It retries next sweep.`,
-        })
+        const note = `Could not send for approval: ${outcome.reason ?? 'unknown error'}. It retries next sweep.`
+        report(row, ref, 'failed', note)
+        ledger = upsertEntry(ledger, { ...base, state: 'failed', note })
       }
       dirty = true
     } catch (err) {
       summary.failed++
-      console.error(`[AsCancelWatch] ${ref} failed:`, err instanceof Error ? err.message : err)
+      const msg = err instanceof Error ? err.message : String(err)
+      report(row, ref, 'failed', msg)
+      console.error(`[AsCancelWatch] ${ref} failed:`, msg)
     }
   }
 
@@ -660,10 +821,24 @@ export async function requestCancellationByHand(
     return { ok: false, error: 'This booking did not come from AppleSystem — cancel it by hand from the booking page' }
   }
 
+  // Same second look as the sweep. A person pressing the button is trusted on
+  // timing, not on facts the system can check — and an amendment that replaced
+  // the quotation is exactly the fact a person cannot see from this row.
+  // A failed lookup does not block them: they asked, and accounts still decide.
+  const verdict = await verifyUpstreamCancelled(booking.isNumber ?? ref, ref)
+  if (verdict.kind === 'superseded') {
+    return {
+      ok: false,
+      error: `AppleSystem still has ${ref} confirmed under quotation ${verdict.quotationNo} — ` +
+        'this looks like an amendment, not a cancellation. Nothing was changed.',
+    }
+  }
+
   const outcome = await applyCancellationRequest(
     booking,
     { quotationNo: entry.quotationNo, upstreamStatus: entry.upstreamStatus },
     actor,
+    'a manual check on the Live Watch page',
   )
   if (!outcome.ok) return { ok: false, error: outcome.reason ?? 'Could not send for approval' }
 

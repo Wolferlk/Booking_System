@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { readApiResponse } from '@/lib/utils'
 import { fmtDateTime } from './shared'
+import CancelSweepCard from './cancel-sweep-card'
 import {
   relTime, REASON_LABEL, REASON_ACTION, isTransient, CANCEL_STATE_META,
   type WatchCheck, type WatchStatus, type WatchSettings,
@@ -445,6 +446,9 @@ export default function WatchTab() {
         <CreatedPanel entries={status?.ledger?.created ?? []} now={now} />
         <FailedPanel entries={status?.ledger?.failed ?? []} now={now} onDismiss={dismiss} />
       </div>
+
+      {/* ── Daily cancellation check + range check ────────────────────────── */}
+      <CancelSweepCard onRan={() => { void load(true) }} />
 
       {/* ── Cancelled in AppleSystem ─────────────────────────────────────── */}
       <CancellationPanel

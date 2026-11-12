@@ -465,6 +465,14 @@ export function startCronJobs() {
   // the watch above is the fast path, this is the one that checks its work.
   void startAsReconcileParityScheduler()
 
+  // AppleSystem daily cancellation check: once a day (default 07:00 Asia/Colombo)
+  // finds quotations created in the last 2 days that AppleSystem now shows at
+  // status 3, and sends each booking we hold for one to accounts as "requested
+  // to cancel". Never cancels by itself. Amplify: /api/cron/as-cancel-sweep.
+  void import('./as-cancel-sweep')
+    .then((m) => m.startCancelSweepScheduler())
+    .catch((err) => console.error('[Scheduler] as-cancel-sweep scheduler error:', err instanceof Error ? err.message : err))
+
   // Aahaas B2C order auto-import: node-cron daily job just after midnight
   // (timezone-aware, boot catch-up). Imports today's orders with upcoming travel.
   void startB2cImportCreateScheduler()

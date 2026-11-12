@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { isAssignLocked, assignLockMessage } from '@/lib/booking-assign-lock'
 import { hasPermission } from '@/lib/rbac'
 import { logActivity } from '@/lib/activity'
 import {
@@ -460,11 +461,15 @@ async function runAssignDriver(args: Record<string, unknown>, actor: OpsActor): 
 
   const item = await prisma.agendaItem.findUnique({
     where: { id },
-    include: { agenda: { include: { booking: { select: { bookingRef: true, operationCountry: true } } } } },
+    include: { agenda: { include: { booking: { select: { bookingRef: true, operationCountry: true, status: true } } } } },
   })
   if (!item) throw new OpsError('That agenda item no longer exists.')
   if (!actorMaySee(actor, item.agenda.booking.operationCountry)) {
     throw new OpsError('That agenda item is outside your country scope.')
+  }
+  // Requested to cancel: OPS AI may not allocate a driver or vendor.
+  if (isAssignLocked(item.agenda.booking.status)) {
+    throw new OpsError(assignLockMessage(item.agenda.booking.status, item.agenda.booking.bookingRef))
   }
 
   const payload = {

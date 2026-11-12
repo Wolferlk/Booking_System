@@ -588,7 +588,7 @@ export default function OperationsBoardPage() {
       r.outstanding.join('; ') || 'None',
       // Exported next to the checks on purpose: a spreadsheet can then answer
       // "what did we allocate against files that were being cancelled".
-      r.cancelPending ? 'AWAITING APPROVAL' : r.cancelled ? 'Approved / cancelled' : '',
+      r.cancelPending ? `REQUESTED TO CANCEL${r.cancellation?.requestedBy === 'AppleSystem' ? ' (AppleSystem)' : ''}` : r.cancelled ? 'Approved / cancelled' : '',
       r.cancellation?.requestedAt?.slice(0, 10) ?? '',
       r.cancellation?.requestedBy ?? '',
       r.cancelPending ? r.cancellation?.waitingDays ?? '' : '',
@@ -1001,7 +1001,7 @@ export default function OperationsBoardPage() {
                     </span>
                     <div>
                       <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
-                        Cancellation approvals pending
+                        Requested to cancel — awaiting accounts
                         <span className={cn(
                           'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold',
                           waitTone(cancelQueueOldest).chip,
@@ -1096,7 +1096,9 @@ export default function OperationsBoardPage() {
                             <span className="text-slate-400"> · day {r.dayNo}/{r.totalDays}</span>
                           </div>
                           <div className="text-slate-400 truncate">
-                            Requested by {c?.requestedBy || 'unknown'}
+                            {c?.requestedBy === 'AppleSystem'
+                              ? <span className="font-semibold text-violet-700">Cancelled in AppleSystem</span>
+                              : <>Requested by {c?.requestedBy || 'unknown'}</>}
                             {c?.heldAtLabel ? ` · held at ${c.heldAtLabel}` : ''}
                           </div>
                         </div>
@@ -1592,8 +1594,16 @@ export default function OperationsBoardPage() {
                                       + (r.cancellation?.reason ? `Reason: ${r.cancellation.reason}` : 'No reason recorded.')
                                     }
                                   >
-                                    <Ban className="w-2.5 h-2.5" /> Cancel Pending
+                                    <Ban className="w-2.5 h-2.5" /> Requested to cancel
                                     {r.cancellation?.waitingDays ? ` · ${r.cancellation.waitingDays}d` : ''}
+                                  </span>
+                                )}
+                                {r.cancelPending && r.cancellation?.requestedBy === 'AppleSystem' && (
+                                  <span
+                                    className="inline-flex items-center px-1.5 py-px rounded-full border border-violet-200 bg-violet-50 text-[9px] font-bold uppercase tracking-wide text-violet-800"
+                                    title="Cancelled in AppleSystem (status 3) — raised automatically by the AppleSystem cancellation check. Drivers and vendors are locked; tickets can still be issued."
+                                  >
+                                    AppleSystem
                                   </span>
                                 )}
                                 {r.testFile && (
@@ -1779,7 +1789,9 @@ export default function OperationsBoardPage() {
                                         )}>
                                           <h4 className="text-[10px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
                                             <Ban className="w-3 h-3" />
-                                            {r.cancelPending ? 'Cancellation — awaiting accounts approval' : 'Cancellation'}
+                                            {r.cancelPending
+                                              ? `Requested to cancel — awaiting accounts approval${r.cancellation.requestedBy === 'AppleSystem' ? ' · cancelled in AppleSystem' : ''}`
+                                              : 'Cancellation'}
                                           </h4>
                                           <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
                                             <div><span className="text-slate-400">Requested by:</span> {r.cancellation.requestedBy || '—'}</div>

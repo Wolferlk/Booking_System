@@ -45,6 +45,9 @@ export async function GET(req: NextRequest) {
         driverPhone: { not: null },
         driverName:  { not: null },
       },
+      // No morning brief for a file that is cancelled or requested to cancel —
+      // the driver must not be sent to a tour accounts is about to close.
+      agenda: { booking: { status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION'] } } },
     },
     include: {
       assignment: true,

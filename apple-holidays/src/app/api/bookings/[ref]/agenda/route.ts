@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isAssignLocked, assignLockMessage, partnerKeys, introducesNewPartner, type PartnerFields } from '@/lib/booking-assign-lock'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { carryMovementWhatsApp } from '@/lib/movement-whatsapp'
@@ -177,6 +178,23 @@ export async function POST(
     dates = (items as Record<string, unknown>[]).map((item, index) => parseAgendaDate(item.date, index))
   } catch (err: unknown) {
     return buildApiError(err instanceof Error ? err.message : 'Invalid movement date', 400)
+  }
+
+  // A booking requested to cancel takes no *new* driver or vendor. Checked here,
+  // before the chart is wiped and rebuilt, so a refused save changes nothing.
+  // Carrying the people already allocated through a re-save is allowed.
+  if (isAssignLocked(booking.status)) {
+    const held = booking.tourAgenda
+      ? await prisma.assignment.findMany({
+          where:  { agendaItem: { agendaId: booking.tourAgenda.id } },
+          select: { driverId: true, driverName: true, vendorId: true, vendorName: true, tourVendorId: true, tourVendorName: true },
+        })
+      : []
+    const heldKeys = new Set(held.flatMap(partnerKeys))
+    const adds = (items as Record<string, unknown>[]).some((item) =>
+      item.isLeisure !== true && item.isHotelOnly !== true &&
+      introducesNewPartner(item.assignment as PartnerFields | null | undefined, heldKeys))
+    if (adds) return buildApiError(assignLockMessage(booking.status, booking.bookingRef), 409)
   }
 
   let agenda = booking.tourAgenda
@@ -472,15 +490,28 @@ export async function PUT(
 
   // If assignment provided, upsert it
   if (assignment !== undefined) {
-    const agendaItem = await prisma.agendaItem.findUnique({ where: { id: itemId } })
+    const agendaItem = await prisma.agendaItem.findUnique({
+      where: { id: itemId },
+      include: { agenda: { select: { booking: { select: { bookingRef: true, status: true } } } } },
+    })
     if (!agendaItem) return buildApiError('Agenda item not found', 404)
 
     // Who held this movement before the change — needed to decide whether a
     // replaced driver should be told their assignment is off.
     const previous = await prisma.assignment.findUnique({
       where:  { agendaItemId: itemId },
-      select: { driverName: true, driverPhone: true },
+      select: {
+        driverName: true, driverPhone: true,
+        driverId: true, vendorId: true, vendorName: true, tourVendorId: true, tourVendorName: true,
+      },
     })
+
+    // Requested to cancel: removing or keeping the driver is fine, a new one is not.
+    const lockStatus = agendaItem.agenda?.booking?.status
+    if (assignment !== null && isAssignLocked(lockStatus)
+      && introducesNewPartner(assignment as PartnerFields, new Set(partnerKeys(previous)))) {
+      return buildApiError(assignLockMessage(lockStatus, agendaItem.agenda?.booking?.bookingRef), 409)
+    }
 
     if (assignment === null) {
       await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })

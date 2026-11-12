@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { isAssignLocked, assignLockMessage } from '@/lib/booking-assign-lock'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { backfillSlAllocationsFromAgenda } from '@/lib/sl-driver-allocation-sync'
@@ -215,10 +216,19 @@ export async function POST(req: NextRequest) {
   try {
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      select: { id: true, operationCountry: true },
+      select: { id: true, operationCountry: true, status: true, bookingRef: true },
     })
     if (!booking) return buildApiError('Booking not found', 404)
     if (booking.operationCountry !== 'SRILANKA') return buildApiError('Not a Sri Lanka booking', 400)
+    // Requested to cancel: no new driver / vendor. Vehicle-only edits and
+    // clearing stay open, so the board can still release a held driver.
+    if ((driverId || vendorId) && isAssignLocked(booking.status)) {
+      const held = await prisma.sriLankaDriverAllocation.findUnique({
+        where: { bookingId }, select: { driverId: true, vendorId: true },
+      })
+      const same = (driverId ?? null) === (held?.driverId ?? null) && (vendorId ?? null) === (held?.vendorId ?? null)
+      if (!same) return buildApiError(assignLockMessage(booking.status, booking.bookingRef), 409)
+    }
 
     // Read before the upsert overwrites it — the Hotel Only sync below acts on
     // the *change* of vehicle type, not on its value, so that a plain driver
