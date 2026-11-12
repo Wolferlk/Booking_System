@@ -11,6 +11,7 @@ import { toast } from 'sonner'
 import {
   RefreshCw, Loader2, Car, FileSpreadsheet, ArrowRight, Undo2, Search, Settings2, Database, CheckCircle2, AlertTriangle,
   Clock, ShieldCheck, ChevronLeft, ChevronRight, ExternalLink, Sparkles, Ban, RotateCcw, Check, Phone, Eye,
+  CalendarDays, PlaneLanding, SlidersHorizontal, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn } from '@/lib/utils'
@@ -27,6 +28,38 @@ const post = async (url: string, body: unknown) => {
   if (!json.success) throw new Error(json.error ?? 'Failed')
   return json.data
 }
+/** Today in Vietnam, YYYY-MM-DD — the quick-day chips count from here. */
+const vnDay = (offset = 0) => {
+  const s = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  return new Date(Date.parse(`${s}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10)
+}
+const chipDay = (iso: string, i: number) => (i === 0 ? 'Today' : i === 1 ? 'Tomorrow'
+  : new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', timeZone: 'UTC' }))
+
+interface Filters {
+  dateBy: 'movement' | 'arrival'
+  from: string; to: string; q: string
+  conf: '' | 'HIGH' | 'MEDIUM' | 'NONE'
+  method: '' | 'RULES' | 'AI'
+  driver: '' | 'has' | 'none'
+  phones: '' | 'yes' | 'no'
+  minScore: number
+  sort: 'date' | 'scoreDesc' | 'scoreAsc' | 'ref'
+}
+const NO_FILTERS: Filters = { dateBy: 'movement', from: '', to: '', q: '', conf: '', method: '', driver: '', phones: '', minScore: 0, sort: 'date' }
+const FILTER_KEY = 'vn-driver-sync:filters'
+
+function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: [T, string][] }) {
+  return (
+    <div className="inline-flex rounded-lg bg-slate-100 p-0.5">
+      {options.map(([v, label]) => (
+        <button key={v || 'any'} type="button" onClick={() => onChange(v)}
+          className={cn('rounded-md px-2 py-1 text-[11px] font-medium transition', value === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700')}>{label}</button>
+      ))}
+    </div>
+  )
+}
+
 const fmtDate = (iso: string | null) => (iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', weekday: 'short', timeZone: 'UTC' }) : '—')
 
 function RunRow({ r, isAdmin, picked, onPick, onUndo }: { r: DriverSyncRunInfo; isAdmin: boolean; picked: boolean; onPick: () => void; onUndo: () => void }) {
@@ -70,6 +103,12 @@ function LinkRow({ l, canEdit, busy, onAct }: { l: DriverSyncLinkInfo; canEdit: 
       <td className="whitespace-nowrap px-4 py-2.5">
         <Link href={`/dashboard/bookings/${l.bookingRef}/agenda`} className="font-mono text-[12px] font-semibold text-indigo-700 hover:underline">{l.bookingRef}</Link>
         <p className="text-[10.5px] text-slate-500">{fmtDate(l.movementDate)}</p>
+        {l.arrivalDate && (
+          <p className={cn('mt-0.5 inline-flex items-center gap-1 text-[10px]', l.arrivalDate === l.movementDate ? 'font-semibold text-sky-700' : 'text-slate-400')}
+            title={`Trip ${fmtDate(l.arrivalDate)} → ${fmtDate(l.departureDate)}`}>
+            <PlaneLanding className="h-3 w-3" />{l.arrivalDate === l.movementDate ? 'Arrival day' : `Arr ${fmtDate(l.arrivalDate)}`}
+          </p>
+        )}
       </td>
       <td className="max-w-[260px] px-2 py-2.5">
         <p className="text-[11.5px] font-medium text-slate-800">{l.movementLabel?.replace(/^\d{4}-\d{2}-\d{2} · /, '')}</p>
@@ -158,21 +197,43 @@ export default function DriverSyncPage() {
   const [cfg, setCfg] = useState<DriverSyncConfig | null>(null)
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState<'movements' | 'unmatched' | 'log'>('movements')
+  const [f, setF] = useState<Filters>(NO_FILTERS)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const setFilter = (patch: Partial<Filters>) => { setF(x => ({ ...x, ...patch })); setPage(1) }
+  // Filters are remembered per viewer; never required.
+  useEffect(() => {
+    try { const raw = localStorage.getItem(FILTER_KEY); if (raw) setF({ ...NO_FILTERS, ...JSON.parse(raw), from: '', to: '' }) } catch { /* ignore */ }
+  }, [])
+  useEffect(() => {
+    try { const { from: _f, to: _t, q: _q, ...keep } = f; localStorage.setItem(FILTER_KEY, JSON.stringify(keep)) } catch { /* ignore */ }
+  }, [f])
+  const activeExtra = [f.conf, f.method, f.driver, f.phones, f.minScore > 0 ? 'x' : '', f.sort !== 'date' ? 'x' : ''].filter(Boolean).length
+  const anyFilter = activeExtra > 0 || f.from || f.to || f.q
 
   const load = useCallback(async () => {
     const sp = new URLSearchParams({ page: String(page) })
     if (status) sp.set('status', status)
     if (ref.trim()) sp.set('ref', ref.trim())
     if (runId) sp.set('runId', runId)
+    sp.set('dateBy', f.dateBy)
+    if (f.from) sp.set('from', f.from)
+    if (f.to) sp.set('to', f.to)
+    if (f.q.trim()) sp.set('q', f.q.trim())
+    if (f.conf) sp.set('conf', f.conf)
+    if (f.method) sp.set('method', f.method)
+    if (f.driver) sp.set('driver', f.driver)
+    if (f.phones) sp.set('phones', f.phones)
+    if (f.minScore > 0) sp.set('minScore', String(f.minScore))
+    if (f.sort !== 'date') sp.set('sort', f.sort)
     try {
       const res = await fetch(`/api/vn-driver-sync?${sp}`, { cache: 'no-store' })
       const json = await res.json()
       if (json.success) { setData(json.data); setCfg(c => c ?? json.data.config) }
       else toast.error(json.error)
     } finally { setLoading(false) }
-  }, [page, status, ref, runId])
+  }, [page, status, ref, runId, f])
 
-  useEffect(() => { const t = setTimeout(() => { void load() }, ref ? 300 : 0); return () => clearTimeout(t) }, [load, ref])
+  useEffect(() => { const t = setTimeout(() => { void load() }, ref || f.q ? 300 : 0); return () => clearTimeout(t) }, [load, ref, f.q])
   useEffect(() => { const t = setInterval(() => { void load() }, 60_000); return () => clearInterval(t) }, [load])
 
   async function runAll() {
@@ -410,6 +471,85 @@ export default function DriverSyncPage() {
                     {LINK_STATUS[s].label} <span className="opacity-60">{totals[s] ?? 0}</span>
                   </button>
                 ))}
+              </div>
+
+              {/* Date + advanced filters */}
+              <div className="space-y-2 border-b border-slate-100 bg-slate-50/50 px-4 py-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Seg value={f.dateBy} onChange={v => setFilter({ dateBy: v })}
+                    options={[['movement', 'Movement day'], ['arrival', 'Arrival day']]} />
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button type="button" onClick={() => setFilter({ from: '', to: '' })}
+                      className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', !f.from && !f.to ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-white')}>
+                      All upcoming
+                    </button>
+                    {(data?.dayCounts ?? []).map((d, i) => {
+                      const on = f.from === d.date && f.to === d.date
+                      return (
+                        <button key={d.date} type="button" onClick={() => setFilter(on ? { from: '', to: '' } : { from: d.date, to: d.date })}
+                          title={`${f.dateBy === 'arrival' ? 'Bookings arriving' : 'Movements on'} ${fmtDate(d.date)}`}
+                          className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', on ? 'bg-sky-600 text-white' : d.count ? 'text-slate-600 hover:bg-white' : 'text-slate-300 hover:bg-white')}>
+                          {chipDay(d.date, i)} <span className="opacity-60">{d.count}</span>
+                        </button>
+                      )
+                    })}
+                    <button type="button" onClick={() => setFilter({ from: vnDay(0), to: vnDay(6) })}
+                      className={cn('rounded-full px-2.5 py-1 text-[11px] font-medium', f.from === vnDay(0) && f.to === vnDay(6) ? 'bg-sky-600 text-white' : 'text-slate-500 hover:bg-white')}>
+                      Next 7 days
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                    <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                    <input type="date" value={f.from} onChange={e => setFilter({ from: e.target.value, to: f.to && f.to < e.target.value ? e.target.value : f.to })}
+                      className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px]" aria-label="From" />
+                    <span>→</span>
+                    <input type="date" value={f.to} min={f.from || undefined} onChange={e => setFilter({ to: e.target.value })}
+                      className="rounded-md border border-slate-200 bg-white px-1.5 py-0.5 text-[11px]" aria-label="To" />
+                  </div>
+                  <div className="relative ml-auto">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                    <input value={f.q} onChange={e => setFilter({ q: e.target.value })} placeholder="Hotel, place, driver, phone…"
+                      className="w-56 rounded-lg border border-slate-200 bg-white py-1.5 pl-7 pr-2 text-xs" />
+                  </div>
+                  <button type="button" onClick={() => setMoreOpen(o => !o)}
+                    className={cn('inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold', moreOpen || activeExtra ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100')}>
+                    <SlidersHorizontal className="h-3.5 w-3.5" /> More filters{activeExtra ? ` · ${activeExtra}` : ''}
+                  </button>
+                  {anyFilter && (
+                    <button type="button" onClick={() => { setF({ ...NO_FILTERS, dateBy: f.dateBy }); setPage(1) }}
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-rose-600 hover:bg-rose-50">
+                      <X className="h-3.5 w-3.5" /> Clear
+                    </button>
+                  )}
+                </div>
+                {moreOpen && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-[11px] text-slate-500">
+                    <label className="flex items-center gap-1.5">Driver now
+                      <Seg value={f.driver} onChange={v => setFilter({ driver: v })} options={[['', 'Any'], ['none', 'No driver'], ['has', 'Has driver']]} />
+                    </label>
+                    <label className="flex items-center gap-1.5">Confidence
+                      <Seg value={f.conf} onChange={v => setFilter({ conf: v })} options={[['', 'Any'], ['HIGH', 'Sure'], ['MEDIUM', 'Likely'], ['NONE', 'No match']]} />
+                    </label>
+                    <label className="flex items-center gap-1.5">Matched by
+                      <Seg value={f.method} onChange={v => setFilter({ method: v })} options={[['', 'Any'], ['RULES', 'Rules'], ['AI', 'AI']]} />
+                    </label>
+                    <label className="flex items-center gap-1.5">Phone on sheet
+                      <Seg value={f.phones} onChange={v => setFilter({ phones: v })} options={[['', 'Any'], ['yes', 'Yes'], ['no', 'No']]} />
+                    </label>
+                    <label className="flex items-center gap-1.5">Min match
+                      <input type="range" min={0} max={100} step={5} value={f.minScore} onChange={e => setFilter({ minScore: Number(e.target.value) })} className="w-24" />
+                      <span className="w-8 font-semibold text-slate-700">{f.minScore}%</span>
+                    </label>
+                    <label className="flex items-center gap-1.5">Sort
+                      <select value={f.sort} onChange={e => setFilter({ sort: e.target.value as Filters['sort'] })} className="rounded-md border border-slate-200 bg-white px-1.5 py-1 text-[11px]">
+                        <option value="date">Date (soonest first)</option>
+                        <option value="scoreDesc">Match — highest first</option>
+                        <option value="scoreAsc">Match — lowest first</option>
+                        <option value="ref">Booking ref</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
               </div>
               {(data?.links.length ?? 0) === 0 ? (
                 <p className="px-4 py-8 text-center text-xs text-slate-400">{loading ? 'Loading…' : 'Nothing here for this filter.'}</p>

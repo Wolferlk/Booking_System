@@ -86,6 +86,17 @@ function needsDriver(item: { isLeisure: boolean; isHotelOnly: boolean }) {
   return !item.isLeisure && !item.isHotelOnly
 }
 
+/**
+ * A movement counts as allocated once it has a driver, a transport vendor or a
+ * tour vendor — any one of them covers it. Some movements carry both.
+ */
+function isMovementAllocated(a?: {
+  driverName?: string | null; vendorId?: string | null
+  tourVendorId?: string | null; tourVendorName?: string | null
+} | null) {
+  return !!(a?.driverName || a?.vendorId || a?.tourVendorId || a?.tourVendorName)
+}
+
 type NoDriverKind = 'leisure' | 'hotel' | 'none'
 
 /**
@@ -1325,7 +1336,7 @@ export default function AgendaPage() {
           const driverItems = items.filter(needsDriver)
           const total = driverItems.length
           if (total === 0) return label
-          const allocated = driverItems.filter(i => i.assignment?.driverName || i.assignment?.vendorId).length
+          const allocated = driverItems.filter(i => isMovementAllocated(i.assignment)).length
           const pending = total - allocated
           return (
             <span className="inline-flex items-center gap-2 flex-wrap">
@@ -1333,7 +1344,7 @@ export default function AgendaPage() {
               <span className="text-slate-300">·</span>
               <span
                 className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${pending === 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'}`}
-                title={`${allocated} of ${total} movements that need a driver are allocated`}
+                title={`${allocated} of ${total} movements that need a driver have a driver, vendor or tour vendor`}
               >
                 Drivers {allocated}/{total} allocated
               </span>

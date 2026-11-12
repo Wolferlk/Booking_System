@@ -111,6 +111,9 @@ export interface DriverSyncLinkInfo {
   id: string
   bookingRef: string
   agendaItemId: string | null
+  /** The booking's trip window (YYYY-MM-DD), for the arrival filter and the row. */
+  arrivalDate: string | null
+  departureDate: string | null
   movementDate: string | null
   movementLabel: string | null
   movementText: string | null
@@ -164,6 +167,8 @@ export interface DriverSyncOverview {
   runs: DriverSyncRunInfo[]
   links: DriverSyncLinkInfo[]
   linkTotal: number
+  /** Next 7 VN days with how many movements each holds (on the chosen date basis). */
+  dayCounts: { date: string; count: number }[]
   events: DriverSyncEventInfo[]
   unmatched: UnmatchedRow[]
 }

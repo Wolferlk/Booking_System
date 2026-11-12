@@ -730,31 +730,135 @@ export async function kickIfDue(): Promise<void> {
 
 // ── Page data ────────────────────────────────────────────────────────────────
 
+/** Movement filters on the VN Driver Sync page — every one optional. */
+export interface DriverSyncFilters {
+  /** Which date the range applies to: the movement's own day, or the booking's arrival day. */
+  dateBy?: 'movement' | 'arrival' | null
+  /** Inclusive YYYY-MM-DD bounds. With no `from`, past movements stay hidden. */
+  from?: string | null
+  to?: string | null
+  /** Free text over ref, system movement and sheet row. */
+  q?: string | null
+  conf?: 'HIGH' | 'MEDIUM' | 'NONE' | null
+  method?: 'RULES' | 'AI' | null
+  /** Driver on the movement right now. */
+  driver?: 'has' | 'none' | null
+  /** The sheet row carries a phone number. */
+  phones?: 'yes' | 'no' | null
+  /** 0–100. */
+  minScore?: number | null
+  sort?: 'date' | 'scoreDesc' | 'scoreAsc' | 'ref' | null
+}
+
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+const asDay = (s: string | null | undefined) => (s && DAY_RE.test(s) ? new Date(`${s}T00:00:00Z`) : null)
+
 export async function driverSyncOverview(q: {
   canEdit: boolean; isAdmin: boolean; status?: string | null; ref?: string | null; page?: number; runId?: string | null
-}): Promise<DriverSyncOverview> {
+} & DriverSyncFilters): Promise<DriverSyncOverview> {
   const config = await getDriverSyncConfig()
   const sa = serviceAccount()
   const access = { kind: isMicrosoftLink(config.sheet) ? 'MICROSOFT' as const : 'GOOGLE' as const, serviceAccount: sa?.email ?? null, sheetUrl: config.sheet }
-  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [] }
+  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [], dayCounts: [] }
   try {
     const today = vnToday()
     const ref = q.ref?.trim().toUpperCase() || null
     const page = Math.max(1, q.page ?? 1)
-    const where: Prisma.VnDriverSyncLinkWhereInput = {
-      movementDate: { gte: today },
-      ...(q.status ? { status: q.status } : {}),
-      ...(ref ? { bookingRef: { contains: ref } } : {}),
-      ...(q.runId ? { appliedRunId: q.runId } : {}),
+    const dateBy = q.dateBy === 'arrival' ? 'arrival' : 'movement'
+    const from = asDay(q.from)
+    const to = asDay(q.to)
+    const text = q.q?.trim() || null
+
+    // Arrival-day filter → the bookings arriving in that window.
+    let arrivalRefs: string[] | null = null
+    if (dateBy === 'arrival' && (from || to)) {
+      const bookings = await prisma.booking.findMany({
+        where: { arrivalDate: { ...(from ? { gte: from } : {}), ...(to ? { lt: new Date(to.getTime() + 86_400_000) } : {}) } },
+        select: { bookingRef: true },
+      })
+      arrivalRefs = bookings.map(b => b.bookingRef)
     }
-    const [runs, links, linkTotal, grouped, events, sheet] = await Promise.all([
+
+    // The date window on its own, so the quick-day chips can swap it for theirs.
+    const dateClauses: Prisma.VnDriverSyncLinkWhereInput[] =
+      dateBy === 'movement' && (from || to)
+        ? [{ movementDate: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } }]
+        : arrivalRefs
+          ? [{ bookingRef: { in: arrivalRefs } }, ...(from ? [] : [{ movementDate: { gte: today } }])]
+          : [{ movementDate: { gte: today } }]
+    // Every other filter except status.
+    const rest: Prisma.VnDriverSyncLinkWhereInput[] = [
+      ...(ref ? [{ bookingRef: { contains: ref } }] : []),
+      ...(q.runId ? [{ appliedRunId: q.runId }] : []),
+      ...(text ? [{ OR: [
+        { bookingRef: { contains: text } }, { movementText: { contains: text } }, { movementLabel: { contains: text } },
+        { sheetText: { contains: text } }, { sheetDetails: { contains: text } }, { phones: { contains: text } },
+      ] }] : []),
+      ...(q.conf === 'NONE' ? [{ confidence: null }] : q.conf ? [{ confidence: q.conf }] : []),
+      ...(q.method ? [{ method: q.method }] : []),
+      ...(q.phones === 'yes' ? [{ phones: { not: null } }, { NOT: { phones: '' } }] : q.phones === 'no' ? [{ OR: [{ phones: null }, { phones: '' }] }] : []),
+      ...(q.minScore && q.minScore > 0 ? [{ score: { gte: q.minScore / 100 } }] : []),
+    ]
+
+    // Driver on the movement now — resolved against the live assignments, over every date the page can show.
+    if (q.driver === 'has' || q.driver === 'none') {
+      const earliest = from && from < today ? from : today
+      const cand = await prisma.vnDriverSyncLink.findMany({ where: { AND: [...rest, { movementDate: { gte: earliest } }] }, select: { id: true, agendaItemId: true } })
+      const itemIds = cand.map(c => c.agendaItemId).filter((x): x is string => Boolean(x))
+      const withDriver = new Set(itemIds.length
+        ? (await prisma.assignment.findMany({
+          where: { agendaItemId: { in: itemIds }, OR: [{ driverId: { not: null } }, { vendorId: { not: null } }, { AND: [{ driverName: { not: null } }, { NOT: { driverName: '' } }] }] },
+          select: { agendaItemId: true },
+        })).map(a => a.agendaItemId)
+        : [])
+      rest.push({ id: { in: cand.filter(c => (c.agendaItemId ? withDriver.has(c.agendaItemId) : false) === (q.driver === 'has')).map(c => c.id) } })
+    }
+    const base = [...dateClauses, ...rest]
+
+    const where: Prisma.VnDriverSyncLinkWhereInput = { AND: [...base, ...(q.status ? [{ status: q.status }] : [])] }
+    const orderBy: Prisma.VnDriverSyncLinkOrderByWithRelationInput[] =
+      q.sort === 'scoreDesc' ? [{ score: 'desc' }, { movementDate: 'asc' }]
+        : q.sort === 'scoreAsc' ? [{ score: 'asc' }, { movementDate: 'asc' }]
+          : q.sort === 'ref' ? [{ bookingRef: 'asc' }, { movementDate: 'asc' }, { movementLabel: 'asc' }]
+            : [{ movementDate: 'asc' }, { bookingRef: 'asc' }, { movementLabel: 'asc' }]
+
+    // Quick-day chips: the next 7 days (VN), counted on the chosen date with every other filter but the range.
+    const week = Array.from({ length: 7 }, (_, i) => new Date(today.getTime() + i * 86_400_000))
+    const weekEnd = new Date(today.getTime() + 7 * 86_400_000)
+    const chipBase = rest
+    const dayCountsP = (async () => {
+      const statusWhere = q.status ? [{ status: q.status }] : []
+      if (dateBy === 'movement') {
+        const g = await prisma.vnDriverSyncLink.groupBy({
+          by: ['movementDate'], where: { AND: [...chipBase, ...statusWhere, { movementDate: { gte: today, lt: weekEnd } }] }, _count: { _all: true },
+        })
+        const m = new Map(g.map(x => [x.movementDate ? iso(x.movementDate) : '', x._count._all]))
+        return week.map(d => ({ date: iso(d), count: m.get(iso(d)) ?? 0 }))
+      }
+      const arriving = await prisma.booking.findMany({ where: { arrivalDate: { gte: today, lt: weekEnd } }, select: { bookingRef: true, arrivalDate: true } })
+      const dayOf = new Map(arriving.map(b => [b.bookingRef, iso(b.arrivalDate)]))
+      const g = arriving.length
+        ? await prisma.vnDriverSyncLink.groupBy({ by: ['bookingRef'], where: { AND: [...chipBase, ...statusWhere, { bookingRef: { in: Array.from(dayOf.keys()) } }] }, _count: { _all: true } })
+        : []
+      const m = new Map<string, number>()
+      for (const x of g) { const d = dayOf.get(x.bookingRef); if (d) m.set(d, (m.get(d) ?? 0) + x._count._all) }
+      return week.map(d => ({ date: iso(d), count: m.get(iso(d)) ?? 0 }))
+    })()
+
+    const [runs, links, linkTotal, grouped, events, sheet, dayCounts] = await Promise.all([
       prisma.vnDriverSyncRun.findMany({ orderBy: { startedAt: 'desc' }, take: 15 }),
-      prisma.vnDriverSyncLink.findMany({ where, orderBy: [{ movementDate: 'asc' }, { bookingRef: 'asc' }, { movementLabel: 'asc' }], skip: (page - 1) * 50, take: 50 }),
+      prisma.vnDriverSyncLink.findMany({ where, orderBy, skip: (page - 1) * 50, take: 50 }),
       prisma.vnDriverSyncLink.count({ where }),
-      prisma.vnDriverSyncLink.groupBy({ by: ['status'], where: { movementDate: { gte: today } }, _count: { _all: true } }),
+      // Status chips follow every other filter, so the counts match what clicking them shows.
+      prisma.vnDriverSyncLink.groupBy({ by: ['status'], where: { AND: base }, _count: { _all: true } }),
       prisma.vnDriverSyncEvent.findMany({ where: { ...(ref ? { bookingRef: { contains: ref } } : {}), ...(q.runId ? { runId: q.runId } : {}) }, orderBy: { createdAt: 'desc' }, take: 40 }),
       getSheetState(),
+      dayCountsP,
     ])
+    const arrivals = links.length
+      ? await prisma.booking.findMany({ where: { bookingRef: { in: Array.from(new Set(links.map(l => l.bookingRef))) } }, select: { bookingRef: true, arrivalDate: true, departureDate: true } })
+      : []
+    const tripOf = new Map(arrivals.map(b => [b.bookingRef, { arrival: iso(b.arrivalDate), departure: iso(b.departureDate) }]))
     const items = links.length
       ? await prisma.assignment.findMany({
         where: { agendaItemId: { in: links.map(l => l.agendaItemId).filter((x): x is string => Boolean(x)) } },
@@ -772,10 +876,12 @@ export async function driverSyncOverview(q: {
       totals: Object.fromEntries(grouped.map(g => [g.status, g._count._all])),
       runs: runs.map(toRunInfo),
       linkTotal,
+      dayCounts,
       links: links.map((l): DriverSyncLinkInfo => {
         const a = l.agendaItemId ? byItem.get(l.agendaItemId) : undefined
         return {
           id: l.id, bookingRef: l.bookingRef, agendaItemId: l.agendaItemId,
+          arrivalDate: tripOf.get(l.bookingRef)?.arrival ?? null, departureDate: tripOf.get(l.bookingRef)?.departure ?? null,
           movementDate: l.movementDate ? iso(l.movementDate) : null, movementLabel: l.movementLabel, movementText: l.movementText,
           sheet: { tab: l.sheetTab, row: l.sheetRow, date: l.sheetDate ? iso(l.sheetDate) : null, details: l.sheetDetails, time: l.sheetTime, service: l.sheetService, text: l.sheetText },
           phones: l.phones, score: l.score === null ? null : Number(l.score),
