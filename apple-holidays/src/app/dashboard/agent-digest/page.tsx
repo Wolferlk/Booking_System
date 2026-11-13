@@ -371,7 +371,12 @@ function RuleRail({ rules, archived, activeId, onPick, onRestore, onNew, loading
           </div>
           {r.lastSentAt && (
             <div className={cn('mt-1 text-[11px]', r.lastStatus === 'failed' ? 'text-rose-600' : 'text-slate-400')}>
-              Last {r.lastStatus} {ago(r.lastSentAt)}
+              Last {r.lastStatus === 'failed' && r.lastTotalCount && r.lastFailedCount !== r.lastTotalCount
+                ? `send: ${r.lastFailedCount} of ${r.lastTotalCount} failed`
+                : r.lastStatus} {ago(r.lastSentAt)}
+              {r.lastStatus === 'failed' && r.lastError && (
+                <span className="mt-0.5 block line-clamp-2 break-words text-[10px] text-rose-500" title={r.lastError}>{r.lastError}</span>
+              )}
             </div>
           )}
         </button>
@@ -493,6 +498,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
       const { data, message } = await api<SendResult>('/api/agent-digest/send', { method: 'POST', body: JSON.stringify({ ruleId: draft.id }) })
       setLastResult(data)
       if (data.failed) toast.warning(message); else toast.success(message)
+      if (draft.id) onSaved(draft.id) // refresh the cards' "Last sent / failed" line
     } catch (e) { toast.error((e as Error).message) } finally { setSending(false) }
   }
 
@@ -538,7 +544,7 @@ function Designer({ draft, dirty, patch, patchConfig, onSaved, onArchived, setup
         </>}
       >
         <p className="text-sm text-slate-600">
-          This goes to {c.recipients.length} recipient{c.recipients.length === 1 ? '' : 's'}. Anyone already sent today is skipped; failed ones are retried.
+          This goes to {c.recipients.length} recipient{c.recipients.length === 1 ? '' : 's'}. Everyone gets it again now, even if today’s copy already went out.
         </p>
       </Modal>
     </div>

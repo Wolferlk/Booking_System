@@ -174,6 +174,10 @@ export interface DigestRuleView {
   updatedAt: string
   lastSentAt: string | null
   lastStatus: string | null
+  /** First error of the latest run, when anyone in it failed. */
+  lastError?: string | null
+  lastFailedCount?: number
+  lastTotalCount?: number
   nextSendAt: string | null
 }
 

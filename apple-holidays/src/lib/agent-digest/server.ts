@@ -392,12 +392,14 @@ export function nextSendAt(rule: { autoSend: boolean; isActive: boolean; sendTim
   return new Date(t).toISOString()
 }
 
-export function toRuleView(r: RuleRow, last?: { at: Date; status: string } | null): DigestRuleView {
+export function toRuleView(r: RuleRow, last?: { at: Date; status: string; error?: string | null; failed?: number; total?: number } | null): DigestRuleView {
   return {
     id: r.id, name: r.name, isActive: r.isActive, autoSend: r.autoSend, sendTime: r.sendTime, timezone: r.timezone,
     config: normaliseConfig(r.config),
     createdByName: r.createdByName, updatedByName: r.updatedByName, updatedAt: r.updatedAt.toISOString(),
     lastSentAt: last?.at.toISOString() ?? null, lastStatus: last?.status ?? null,
+    lastError: last?.status === 'failed' ? (last.error ?? null) : null,
+    lastFailedCount: last?.failed ?? 0, lastTotalCount: last?.total ?? 0,
     nextSendAt: nextSendAt(r),
   }
 }
@@ -414,14 +416,28 @@ export async function listArchivedRules(): Promise<{ id: string; name: string; a
 
 export async function listRules(): Promise<DigestRuleView[]> {
   const rows = await prisma.agentDigestRule.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'asc' } })
-  const last = new Map<string, { at: Date; status: string }>()
+  const last = new Map<string, { at: Date; status: string; error?: string | null; failed?: number; total?: number }>()
   if (rows.length) {
     const sends = await prisma.agentDigestSend.findMany({
       where: { ruleId: { in: rows.map(r => r.id) }, trigger: { not: 'test' } },
       orderBy: { createdAt: 'desc' }, take: 500,
-      select: { ruleId: true, createdAt: true, status: true },
+      select: { ruleId: true, runId: true, createdAt: true, status: true, error: true },
     })
-    for (const s of sends) if (s.ruleId && !last.has(s.ruleId)) last.set(s.ruleId, { at: s.createdAt, status: s.status })
+    // The card reflects the latest RUN as a whole: failed only if someone in it failed.
+    const latestRun = new Map<string, string | null>()
+    for (const s of sends) {
+      if (!s.ruleId) continue
+      if (!latestRun.has(s.ruleId)) latestRun.set(s.ruleId, s.runId)
+      if (latestRun.get(s.ruleId) !== s.runId) continue
+      const cur = last.get(s.ruleId) ?? { at: s.createdAt, status: 'sent', error: null, failed: 0, total: 0 }
+      cur.total = (cur.total ?? 0) + 1
+      if (s.status === 'failed') {
+        cur.failed = (cur.failed ?? 0) + 1
+        cur.status = 'failed'
+        cur.error ??= s.error
+      }
+      last.set(s.ruleId, cur)
+    }
   }
   return rows.map(r => toRuleView(r, last.get(r.id)))
 }
@@ -456,6 +472,14 @@ async function createRun(input: { ruleId: string | null; ruleName: string; runDa
     },
     select: { id: true, token: true },
   })
+}
+
+const SEND_ATTEMPTS = 3
+
+/** Errors worth a second try — never ones Meta/Graph would reject again (bad number, template, params). */
+function isTransientSendError(error: string | undefined): boolean {
+  if (!error) return false
+  return /fetch failed|network|socket|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|timed? ?out|failed (429|5\d\d)\b|\b(429|500|502|503|504)\b|throttl|rate limit|"code":\s*(1|2|4|80007|130429|131000|131016|133004)\b/i.test(error)
 }
 
 /**
@@ -495,7 +519,7 @@ export async function sendDigest(opts: {
     bookings: payload.totals.bookings, lines: payload.totals.lines,
     sent: 0, failed: 0, skipped: 0, details: [],
   }
-  if (opts.trigger !== 'test' && config.skipEmpty && isEmptyPayload(payload)) {
+  if (opts.trigger === 'schedule' && config.skipEmpty && isEmptyPayload(payload)) {
     result.reason = 'Nothing to report for this day — skipped (the digest is set to skip empty days).'
     return result
   }
@@ -528,17 +552,24 @@ export async function sendDigest(opts: {
     let key = keyOf(channel, to)
     const existing = await prisma.agentDigestSend.findUnique({ where: { dedupeKey: key }, select: { status: true } })
     if (existing?.status === 'sent') {
-      if (!opts.force || opts.trigger === 'schedule') {
+      // A person pressing "Send now" always gets a fresh send; only the clock is de-duplicated.
+      if (opts.trigger === 'schedule' || (opts.trigger !== 'manual' && !opts.force)) {
         result.skipped++
         result.details.push({ name: recipientName, channel, to, status: 'skipped', note: 'already sent for this day' })
         return
       }
       key = `${key}|resend-${Date.now()}`
     }
-    let out: Awaited<ReturnType<typeof send>>
-    try { out = await send() } catch (err) {
-      out = { ok: false, error: err instanceof Error ? err.message : String(err), body: '' }
+    let out: Awaited<ReturnType<typeof send>> = { ok: false, error: 'Send failed', body: '' }
+    // Temporary errors (network, Meta/Graph 5xx, rate limits) are retried a couple of times.
+    for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+      try { out = await send() } catch (err) {
+        out = { ok: false, error: err instanceof Error ? err.message : String(err), body: '' }
+      }
+      if (out.ok || !isTransientSendError(out.error) || attempt === SEND_ATTEMPTS) break
+      await new Promise(res => setTimeout(res, attempt * 3000))
     }
+    if (!out.ok) console.warn(`[AgentDigest] ${name} → ${channel} ${to} failed: ${out.error}`)
     const data = {
       ...base, channel, recipient: to, recipientName, status: out.ok ? 'sent' : 'failed', mode: out.mode ?? null,
       subject: out.subject?.slice(0, 250) ?? null, body: out.body || null, waMessageId: out.waMessageId ?? null,
