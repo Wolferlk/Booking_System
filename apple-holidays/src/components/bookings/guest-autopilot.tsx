@@ -21,7 +21,7 @@ import SectionLogsButton from '@/components/logs/section-logs-button'
 
 type Kind = 'messages' | 'calls'
 
-interface Snapshot {
+export interface Snapshot {
   switches: { messages: boolean; calls: boolean; changedBy: string | null; changedAt: string | null; reason: string | null }
   journey: {
     phone: string

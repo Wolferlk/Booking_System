@@ -15,7 +15,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertTriangle, AudioLines, BedDouble, CalendarClock, CarFront, Check, ChevronDown, Compass, Copy, Download, ExternalLink,
   Globe, LayoutGrid, Loader2, Mail, MapPin, MessageCircle, Package, Phone, PhoneCall, Plane, RefreshCw,
-  Route, Send, Star, Ticket, UserRound, Users, Utensils, X,
+  HeartHandshake, Route, Send, Star, Ticket, UserRound, Users, Utensils, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_COLORS, STATUS_LABELS } from '@/lib/state-machine'
@@ -29,11 +29,13 @@ import {
   fmtDate as fmtCallDate, type TranscriptRecord,
 } from '@/components/te/transcript-shared'
 import { AgendaSendDialog, PortalSendDialog } from '@/components/whatsapp-inbox/trip-send'
+import { GuestCare, GuestCarePulse, careAlerts, useGuestCare, type GuestCareState } from '@/components/whatsapp-inbox/guest-care'
 
-type Section = 'overview' | 'itinerary' | 'agenda' | 'guests' | 'flights' | 'stays' | 'package' | 'team' | 'tickets' | 'calls'
+type Section = 'overview' | 'itinerary' | 'agenda' | 'guests' | 'flights' | 'stays' | 'package' | 'team' | 'tickets' | 'calls' | 'care'
 
 const SECTIONS: { key: Section; label: string; icon: typeof Plane }[] = [
   { key: 'overview',  label: 'Trip',    icon: LayoutGrid },
+  { key: 'care',      label: 'Care',    icon: HeartHandshake },
   { key: 'itinerary', label: 'Days',    icon: Compass },
   { key: 'agenda',    label: 'Agenda',  icon: Route },
   { key: 'guests',    label: 'Guests',  icon: Users },
@@ -125,6 +127,8 @@ function ChatTrip({ phone, bookingRef, ready, contactName, windowOpen, onClose, 
   useEffect(() => { scrollRef.current?.scrollTo({ top: 0 }) }, [section, data?.trip?.bookingRef])
 
   const trip = data?.trip ?? null
+  const care = useGuestCare(trip?.bookingRef ?? null, version)
+  const careAlert = careAlerts(care, trip)
   const linked = data?.linked ?? []
   const current = linked.find(l => l.bookingRef === trip?.bookingRef)
   const name = contactName || `+${phone}`
@@ -233,6 +237,7 @@ function ChatTrip({ phone, bookingRef, ready, contactName, windowOpen, onClose, 
                       {on && <motion.span layoutId="trip-rail" className="absolute inset-0 rounded-xl bg-gradient-to-b from-[#0c3b30] to-[#0a2b24] shadow-md shadow-emerald-950/25" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
                       <Icon className={`relative h-[18px] w-[18px] ${on ? 'text-amber-300' : dim ? 'text-slate-300' : 'text-slate-500'}`} />
                       <span className={`relative text-[9.5px] font-bold ${on ? 'text-white' : dim ? 'text-slate-300' : 'text-slate-500'}`}>{s.label}</span>
+                      {s.key === 'care' && careAlert > 0 && !on && <span title={`${careAlert} need attention`} className="absolute right-1 top-0.5 min-w-[14px] rounded-full bg-rose-500 px-1 text-center text-[8.5px] font-bold leading-[14px] text-white shadow-sm shadow-rose-500/40">{careAlert}</span>}
                       {!!n && !on && <span className="absolute right-1 top-0.5 min-w-[14px] rounded-full bg-slate-200 px-1 text-center text-[8.5px] font-bold leading-[14px] text-slate-600">{n}</span>}
                     </button>
                   )
@@ -242,7 +247,8 @@ function ChatTrip({ phone, bookingRef, ready, contactName, windowOpen, onClose, 
               <div ref={scrollRef} className="min-w-0 flex-1 overflow-y-auto px-3 py-3">
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div key={`${trip.bookingRef}:${section}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }}>
-                    {section === 'overview'  && <Overview trip={trip} jump={setSection} onOpenChat={onOpenChat} phone={phone} />}
+                    {section === 'overview'  && <Overview trip={trip} jump={setSection} onOpenChat={onOpenChat} phone={phone} care={care} />}
+                    {section === 'care'      && <GuestCare state={care} trip={trip} onRetry={refresh} />}
                     {section === 'itinerary' && <Itinerary trip={trip} />}
                     {section === 'agenda'    && <Agenda trip={trip} />}
                     {section === 'guests'    && <Guests trip={trip} onOpenChat={onOpenChat} phone={phone} />}
@@ -457,7 +463,7 @@ function Stub({ label, value, mono, small }: { label: string; value: string; mon
   )
 }
 
-function Overview({ trip: t, jump, onOpenChat, phone }: { trip: TripContext; jump: (s: Section) => void; onOpenChat: (p: string) => void; phone: string }) {
+function Overview({ trip: t, jump, onOpenChat, phone, care }: { trip: TripContext; jump: (s: Section) => void; onOpenChat: (p: string) => void; phone: string; care: GuestCareState }) {
   const focusDay = t.phase === 'ended' ? null : t.agenda.find(d => d.date >= t.today) ?? null
   const isToday = focusDay?.date === t.today
   const stay = t.stays.find(s => s.current)
@@ -480,6 +486,8 @@ function Overview({ trip: t, jump, onOpenChat, phone }: { trip: TripContext; jum
           <p className="text-[11.5px] font-semibold leading-snug text-slate-700">{t.specialOccasions}</p>
         </div>
       )}
+
+      <GuestCarePulse state={care} trip={t} onOpen={() => jump('care')} />
 
       <div className="grid grid-cols-4 gap-1.5">
         {tiles.map(tile => {
