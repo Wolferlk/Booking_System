@@ -9,8 +9,9 @@ import {
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
   PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
-  Columns3, Check, CheckCircle2, Circle, Undo2, Building2, Eye, Send, MessageCircle,
+  Columns3, Check, CheckCircle2, Circle, Undo2, Building2, Eye, Send, MessageCircle, AlertTriangle,
 } from 'lucide-react'
+import { checkPhone } from '@/lib/phone-intl'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { toast } from 'sonner'
@@ -123,6 +124,8 @@ type MCRow = {
   leadGuest:      string | null
   /** Lead passenger contact, falling back to the booking's guest phone. */
   leadGuestPhone: string | null
+  /** Booking's guest WhatsApp — the number daily plans, feedback & AI calls dial. */
+  guestWhatsapp?: string | null
   agent:          string | null
   bookingStatus:  string
   /** Cancellation-approval trail — set once a cancellation has been requested. */
@@ -294,7 +297,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
     row.guideName, row.tourVendorName,
-    row.vehicleType, row.vehiclePlate, row.leadGuest, row.leadGuestPhone, row.agent,
+    row.vehicleType, row.vehiclePlate, row.leadGuest, row.leadGuestPhone, row.guestWhatsapp, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
     row.vehicleTypeHint?.value,
     (row.flights ?? []).map(f => `${f.flightNo} ${f.fromApt} ${f.toApt} ${f.airline ?? ''}`).join(' ') || null,
@@ -338,6 +341,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Vehicle',   value: row.vehicleType },
     { label: 'Plate',     value: row.vehiclePlate },
     { label: 'Lead Guest', value: row.leadGuest },
+    { label: 'Guest WhatsApp', value: row.guestWhatsapp },
     { label: 'Guest Number', value: row.leadGuestPhone },
     { label: 'Agent',     value: row.agent },
     { label: 'Tour Ref',  value: row.vnCode },
@@ -2855,21 +2859,7 @@ export default function MCReportPage() {
                                   <span className="block truncate font-medium text-slate-800" title={row.leadGuest}>
                                     {q ? <Highlight text={row.leadGuest} query={deepSearch} /> : row.leadGuest}
                                   </span>
-                                  {row.leadGuestPhone ? (
-                                    <a
-                                      href={`tel:${row.leadGuestPhone}`}
-                                      onClick={e => e.stopPropagation()}
-                                      className="group/phone mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 ring-1 ring-sky-100 transition-colors hover:bg-sky-100 hover:text-sky-900"
-                                      title={`Call guest · ${row.leadGuestPhone}`}
-                                    >
-                                      <Phone className="h-2.5 w-2.5 flex-shrink-0 text-sky-500 group-hover/phone:text-sky-700" />
-                                      <span className="truncate">{row.leadGuestPhone}</span>
-                                    </a>
-                                  ) : (
-                                    <span className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-300" title="No guest number on this booking">
-                                      <Phone className="h-2.5 w-2.5" /> No number
-                                    </span>
-                                  )}
+                                  <GuestNumberChip whatsapp={row.guestWhatsapp ?? null} phone={row.leadGuestPhone} bookingRef={row.vnCode} />
                                 </div>
                               ) : <span className="text-slate-300">—</span>}
                             </td>
@@ -3799,5 +3789,68 @@ function DailyPickHeader({ rows, selected, all, some, onPick }: {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── Guest number chip ────────────────────────────────────────────────────────
+
+/**
+ * Which number the guest automations will dial for this row's booking:
+ *   green — the assigned guest WhatsApp (daily plan, feedback & AI calls use it)
+ *   amber — WhatsApp has no country code (WhatsApp can't deliver until it's fixed)
+ *   amber — no WhatsApp, phone only (shown in a different colour, call-only)
+ *   red   — neither: AI calls and guest messages are not working; links to the
+ *           booking page, where the number can be assigned
+ */
+function GuestNumberChip({ whatsapp, phone, bookingRef }: {
+  whatsapp: string | null; phone: string | null; bookingRef: string
+}) {
+  const stop = (e: React.MouseEvent) => e.stopPropagation()
+  const base = 'mt-1 inline-flex max-w-full items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 transition-colors'
+
+  if (whatsapp) {
+    const v = checkPhone(whatsapp)
+    const ok = v.state === 'valid'
+    const shown = ok ? v.pretty : whatsapp
+    return ok ? (
+      <a href={`https://wa.me/${v.digits}`} target="_blank" rel="noreferrer" onClick={stop}
+        className={`${base} bg-emerald-50 text-emerald-700 ring-emerald-200 hover:bg-emerald-100 hover:text-emerald-900`}
+        title={`Guest WhatsApp · ${shown}\nDaily plan, feedback & AI calls go to this number`}>
+        <MessageCircle className="h-2.5 w-2.5 flex-shrink-0 text-emerald-500" />
+        <span className="truncate tabular-nums">{shown}</span>
+      </a>
+    ) : (
+      <a href={`/dashboard/bookings/${bookingRef}`} target="_blank" rel="noreferrer" onClick={stop}
+        className={`${base} bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100`}
+        title={`Guest WhatsApp ${whatsapp} has no country code — WhatsApp messages & AI calls cannot reach it. Open the booking to fix.`}>
+        <AlertTriangle className="h-2.5 w-2.5 flex-shrink-0 text-amber-500" />
+        <span className="truncate tabular-nums">{whatsapp}</span>
+        <span className="flex-shrink-0 text-amber-600">· no country code</span>
+      </a>
+    )
+  }
+
+  if (phone) {
+    return (
+      <a href={`tel:${phone}`} onClick={stop}
+        className={`${base} bg-orange-50 text-orange-700 ring-orange-200 hover:bg-orange-100 hover:text-orange-900`}
+        title={`No WhatsApp on this booking — phone only · ${phone}\nAssign a WhatsApp number so daily plans & AI calls reach the guest`}>
+        <Phone className="h-2.5 w-2.5 flex-shrink-0 text-orange-500" />
+        <span className="truncate tabular-nums">{phone}</span>
+        <span className="flex-shrink-0 rounded bg-orange-100 px-1 text-[9px] uppercase tracking-wide">phone</span>
+      </a>
+    )
+  }
+
+  return (
+    <a href={`/dashboard/bookings/${bookingRef}`} target="_blank" rel="noreferrer" onClick={stop}
+      className="mt-1 flex max-w-full items-start gap-1 rounded-md bg-red-50 px-1.5 py-1 text-[10px] leading-tight text-red-700 ring-1 ring-red-200 hover:bg-red-100"
+      title="Open the booking to assign the guest's WhatsApp number">
+      <AlertTriangle className="mt-px h-3 w-3 flex-shrink-0 text-red-500" />
+      <span>
+        <span className="font-semibold">Customer WhatsApp number is missing</span>
+        <span className="block text-red-600/80">AI calls &amp; messages are not working for this booking</span>
+      </span>
+    </a>
   )
 }

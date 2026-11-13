@@ -170,7 +170,7 @@ async function hotelOnlyRows(
         select: {
           id: true,
           bookingRef: true, isNumber: true, agentBookingId: true,
-          paxAdults: true, paxChildren: true, agent: true, contactPhone: true, status: true,
+          paxAdults: true, paxChildren: true, agent: true, contactPhone: true, contactWhatsapp: true, status: true,
           ...CANCELLATION_SELECT,
           ...LEAD_GUEST_SELECT,
         },
@@ -247,6 +247,7 @@ async function hotelOnlyRows(
       tourFigures:    null,
       leadGuest:      s.booking.passengers[0]?.name ?? null,
       leadGuestPhone: s.booking.passengers[0]?.contact?.trim() || s.booking.contactPhone?.trim() || null,
+      guestWhatsapp:  s.booking.contactWhatsapp?.trim() || null,
       agent:          s.booking.agent ?? null,
       bookingStatus:  s.booking.status,
       ...cancellationFields(s.booking),
@@ -328,6 +329,7 @@ export async function GET(req: NextRequest) {
               paxChildren:    true,
               agent:          true,
               contactPhone:   true,
+              contactWhatsapp: true,
               status:         true,
               // Decides which partner columns the chart shows for this row.
               operationCountry: true,
@@ -445,6 +447,7 @@ export async function GET(req: NextRequest) {
     ...contextFields(context.get(item.agenda.booking.id), item.date.toISOString().slice(0, 10)),
     leadGuest:      item.agenda.booking.passengers[0]?.name ?? null,
     leadGuestPhone: item.agenda.booking.passengers[0]?.contact?.trim() || item.agenda.booking.contactPhone?.trim() || null,
+    guestWhatsapp:  item.agenda.booking.contactWhatsapp?.trim() || null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
     ...cancellationFields(item.agenda.booking),
