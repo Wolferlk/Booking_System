@@ -8,7 +8,7 @@
  * a human and is silently undeliverable to Meta, so this input:
  *   · shows the detected country (flag + dial code) as you type
  *   · flags a missing code and offers a one-tap fix using the guest's
- *     nationality ("Use +91 95352 50259")
+ *     nationality ("Use +91 9535250259")
  *   · lets staff pick any other country from a searchable list
  * Validation rules live in `lib/phone-intl.ts`, shared with the booking PUT
  * route, so the page and the server can never disagree.

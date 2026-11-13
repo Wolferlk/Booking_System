@@ -266,7 +266,7 @@ export async function PUT(
   // These numbers drive the daily trip plan, feedback request and AI calls, so
   // a changed one must carry its country code. Unchanged legacy values are let
   // through (saving the email must not fail on an old agent landline).
-  // WhatsApp is stored digits-only ("919535250259"), phone as "+91 95352 50259".
+  // WhatsApp is stored digits-only ("919535250259"), phone as "+91 9535250259".
   const phoneHint = guessCountry(booking.contactCountry)
   const phoneFields = { agentPhone, agentWhatsapp, contactPhone, contactWhatsapp } as Record<string, unknown>
   const phoneLabels: Record<string, string> = {

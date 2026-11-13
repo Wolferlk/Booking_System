@@ -100,7 +100,7 @@ export type PhoneVerdict =
       state: 'valid'
       /** Digits only, with country code — what WhatsApp / the call service take. */
       digits: string
-      /** "+91 95352 50259" — human display. */
+      /** "+91 9535250259" — human display. */
       pretty: string
       country: DialCountry | null
       /** True when the country code is outside our known list (accepted, unverified). */
@@ -116,13 +116,8 @@ export type PhoneVerdict =
 
 function prettyOf(c: DialCountry | null, digits: string): string {
   if (!c) return `+${digits}`
-  const n = digits.slice(c.dial.length)
-  // Light grouping: 10 → 5+5, 9 → 2+3+4 / 3+3+3, 8 → 4+4, else as-is.
-  const grouped =
-    n.length === 10 ? `${n.slice(0, 5)} ${n.slice(5)}` :
-    n.length === 9  ? `${n.slice(0, 2)} ${n.slice(2, 5)} ${n.slice(5)}` :
-    n.length === 8  ? `${n.slice(0, 4)} ${n.slice(4)}` : n
-  return `+${c.dial} ${grouped}`
+  // "+91 8335813336" — only the country code is set apart; the number stays whole.
+  return `+${c.dial} ${digits.slice(c.dial.length)}`
 }
 
 function asInternational(digits: string): PhoneVerdict | null {

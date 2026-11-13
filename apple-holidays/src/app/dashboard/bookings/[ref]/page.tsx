@@ -42,6 +42,7 @@ import BookingCallTranscripts from '@/components/bookings/booking-call-transcrip
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import { IntlPhoneInput, SameAsPhoneChip, ContactReachStrip } from '@/components/bookings/intl-phone-input'
 import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
+import GuestWhatsAppHero from '@/components/bookings/guest-whatsapp-hero'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
@@ -1249,7 +1250,7 @@ Wishing you a wonderful trip! ✈️
       const v = checkPhone(value, hint)
       if (v.state === 'empty') continue
       if (v.state === 'valid') {
-        // WhatsApp is stored digits-only, phone as "+91 95352 50259"
+        // WhatsApp is stored digits-only, phone as "+91 9535250259"
         form[field] = field.endsWith('Whatsapp') ? v.digits : v.pretty
         continue
       }
@@ -1771,6 +1772,26 @@ Wishing you a wonderful trip! ✈️
                 <p className="mt-2 text-xs text-red-600 font-medium">
                   ⚠ Cancellation penalty window active (100% charge applies)
                 </p>
+              )}
+
+              {/* Guest WhatsApp — the number every guest automation dials */}
+              {canViewClientDetails && (
+                <GuestWhatsAppHero
+                  bookingRef={ref}
+                  whatsapp={(booking.contactWhatsapp as string | null) ?? null}
+                  phone={(booking.contactPhone as string | null) ?? null}
+                  leadName={((booking.passengers ?? []) as { isLead?: boolean; name?: string }[]).find(p => p.isLead)?.name ?? null}
+                  candidates={[
+                    { label: 'Guest phone', value: String(booking.contactPhone ?? '') },
+                    ...((booking.passengers ?? []) as { isLead?: boolean; name?: string; contact?: string | null }[])
+                      .filter(p => p.contact)
+                      .sort((a, b) => Number(!!b.isLead) - Number(!!a.isLead))
+                      .map(p => ({ label: p.isLead ? 'Lead passenger' : (p.name?.split(' ')[0] ?? 'Passenger'), value: String(p.contact) })),
+                  ]}
+                  hint={guestPhoneHint}
+                  canEdit={canEditContacts}
+                  onSaved={async () => { setContactReachKey(k => k + 1); await load() }}
+                />
               )}
             </div>
 
