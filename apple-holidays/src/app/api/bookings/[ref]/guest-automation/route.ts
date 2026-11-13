@@ -23,6 +23,7 @@ import { getApprovalEntry } from '@/lib/te/call-approvals'
 import { getGuestAutoSwitches, getEngageJourney, SETTING_ENGAGE_ON_ASSIGN } from '@/lib/guest-auto-switches'
 import { autoEngageGuest, setGuestAutomation, MAX_REMINDERS } from '@/lib/guest-automation'
 import { GUEST_AUTOMATION_ROLES, guestAutomationKinds, guestAutomationTarget } from '@/lib/guest-automation-access'
+import { guestActivity } from '@/lib/guest-autopilot-activity'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -34,7 +35,7 @@ async function gate(ref: string) {
   if (!GUEST_AUTOMATION_ROLES.includes(role)) return { error: buildApiError('Forbidden', 403) }
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: ref },
-    select: { bookingRef: true, operationCountry: true, contactWhatsapp: true },
+    select: { bookingRef: true, operationCountry: true, contactWhatsapp: true, arrivalDate: true, departureDate: true },
   })
   if (!booking) return { error: buildApiError('Booking not found', 404) }
   const userCountry = session.user.country as string | undefined
@@ -46,12 +47,17 @@ async function gate(ref: string) {
   return { session, role, booking }
 }
 
-async function snapshot(bookingRef: string, whatsapp: string | null) {
-  const [switches, journey, svc, onAssign] = await Promise.all([
+type GateBooking = { bookingRef: string; operationCountry: string | null; contactWhatsapp: string | null; arrivalDate: Date | null; departureDate: Date | null }
+
+async function snapshot(b: GateBooking) {
+  const bookingRef = b.bookingRef
+  const whatsapp = b.contactWhatsapp
+  const [switches, journey, svc, onAssign, activity] = await Promise.all([
     getGuestAutoSwitches(bookingRef),
     getEngageJourney(bookingRef),
     prisma.tbl_te_service.findUnique({ where: { booking_ref: bookingRef }, select: { status: true, call_phone: true } }).catch(() => null),
     prisma.systemSetting.findUnique({ where: { key: SETTING_ENGAGE_ON_ASSIGN } }),
+    guestActivity(b).catch(() => null),
   ])
   const ledger = whatsapp ? await getApprovalEntry(whatsapp).catch(() => null) : null
   return {
@@ -61,13 +67,15 @@ async function snapshot(bookingRef: string, whatsapp: string | null) {
     allowedCalls: Boolean(ledger?.approvedAt) || journey?.approval.stage === 'allowed',
     aiService: svc ? { status: svc.status, callPhone: svc.call_phone } : null,
     engageOnAssign: onAssign?.value !== 'false',
+    allowedAt: ledger?.approvedAt ? new Date(ledger.approvedAt as string | Date).toISOString() : (journey?.approval.allowedAt ?? null),
+    activity,
   }
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { ref: string } }) {
   const g = await gate(params.ref)
   if ('error' in g) return g.error
-  return buildApiSuccess(await snapshot(g.booking.bookingRef, g.booking.contactWhatsapp))
+  return buildApiSuccess(await snapshot(g.booking))
 }
 
 export async function POST(req: NextRequest, { params }: { params: { ref: string } }) {
@@ -84,7 +92,7 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
       userId: session.user.id, action: ACTION.BOOKING_UPDATED, entityType: 'Booking', entityId: booking.bookingRef,
       details: { guestAutomation: 'approval-request-started', approval: r.approval, registration: r.registration },
     })
-    return buildApiSuccess({ result: r, ...(await snapshot(booking.bookingRef, booking.contactWhatsapp)) })
+    return buildApiSuccess({ result: r, ...(await snapshot(booking)) })
   }
 
   if (body.action !== 'set') return buildApiError('Unknown action')
@@ -113,5 +121,5 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
     userId: session.user.id, action: ACTION.BOOKING_UPDATED, entityType: 'Booking', entityId: booking.bookingRef,
     details: { guestAutomation: { kinds, on, otpVerified: !on, reason: body.reason ?? null, notes } },
   })
-  return buildApiSuccess({ notes, ...(await snapshot(booking.bookingRef, booking.contactWhatsapp)) })
+  return buildApiSuccess({ notes, ...(await snapshot(booking)) })
 }

@@ -8,13 +8,15 @@
  *
  * Server side: /api/bookings/[ref]/guest-automation (lib/guest-automation.ts).
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import {
   Zap, MessageCircle, Bot, Lock, ShieldCheck, Check, Send, Bell, PhoneCall, Hourglass,
-  XCircle, RotateCw, Loader2, UserPlus,
+  XCircle, RotateCw, Loader2, UserPlus, CheckCheck, AlertTriangle, PhoneIncoming, PhoneMissed, Clock,
+  Smile, Meh, Frown, Quote, Sparkles, CalendarDays,
 } from 'lucide-react'
 import VerificationModal, { type VerificationCredentials } from '@/components/security/verification-modal'
+import type { GuestActivity } from '@/lib/guest-autopilot-activity'
 
 type Kind = 'messages' | 'calls'
 
@@ -38,6 +40,8 @@ interface Snapshot {
   allowedCalls: boolean
   aiService: { status: string; callPhone: string | null } | null
   engageOnAssign: boolean
+  allowedAt?: string | null
+  activity?: GuestActivity | null
 }
 
 const DAY = 86_400_000
@@ -140,6 +144,11 @@ export default function GuestAutopilot({ bookingRef, hasWhatsapp, canEdit, reloa
       {/* Journey */}
       {switches.calls && <Journey snap={snap} hasWhatsapp={hasWhatsapp} canEdit={canEdit} busy={busy === 'start'} onStart={start} />}
 
+      {/* What actually went out: daily plans + AI calls, day by day */}
+      {snap.activity && snap.activity.days.length > 0 && (
+        <ActivityPanel a={snap.activity} messagesOn={switches.messages} callsOn={switches.calls} />
+      )}
+
       {/* Turn-off confirm: reason, then the emailed code */}
       {offKind && !verifyOpen && (
         <div className="mt-3 rounded-xl border border-red-200 bg-red-50/70 p-3">
@@ -210,6 +219,9 @@ function Journey({ snap, hasWhatsapp, canEdit, busy, onStart }: {
 }) {
   const j = snap.journey
   const allowed = snap.allowedCalls || j?.approval.stage === 'allowed'
+
+  // Once the guest has tapped Allow, the journey collapses into one celebratory line.
+  if (allowed) return <AllowedBanner snap={snap} />
 
   if (!j) {
     return (
@@ -312,5 +324,252 @@ function StartBtn({ busy, onClick, label, icon: Icon = Send }: { busy: boolean; 
       className="inline-flex items-center gap-1 rounded-full bg-[#25D366] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#1ebe5a] disabled:opacity-60">
       {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Icon className="w-3 h-3" />} {label}
     </button>
+  )
+}
+
+// ── Allowed banner ───────────────────────────────────────────────────────────
+
+function registrationOf(snap: Snapshot) {
+  const svcLive = !!snap.aiService && ['active', 'paused'].includes(snap.aiService.status.toLowerCase())
+  const st = snap.journey?.registration.state
+  if (svcLive) return { ok: true, label: snap.aiService!.status.toLowerCase() === 'paused' ? 'AI calls paused' : 'AI calls live' }
+  if (st === 'registered' || st === 'existing') return { ok: true, label: 'AI calls registered' }
+  if (st === 'failed') return { ok: false, label: 'AI-call registration failed' }
+  return { ok: false, label: 'AI calls not registered' }
+}
+
+function AllowedBanner({ snap }: { snap: Snapshot }) {
+  const at = snap.allowedAt ?? snap.journey?.approval.allowedAt ?? null
+  const reminders = snap.journey?.approval.reminders.filter(r => r.ok).length ?? 0
+  const reg = registrationOf(snap)
+  return (
+    <div className="relative mt-2.5 overflow-hidden rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 via-teal-50/70 to-white px-3 py-2.5">
+      <Sparkles aria-hidden className="pointer-events-none absolute -right-1 -top-1 h-14 w-14 text-emerald-200/50" />
+      <div className="relative flex items-center gap-3">
+        <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 text-white shadow-md shadow-emerald-500/25">
+          <PhoneCall className="h-4 w-4" />
+          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white ring-2 ring-emerald-50">
+            <Check className="h-2.5 w-2.5 text-emerald-600" strokeWidth={3} />
+          </span>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-emerald-900">Guest allowed WhatsApp calls</p>
+          <p className="text-[11px] text-emerald-700/80">
+            {at ? `Tapped Allow ${when(at)}` : 'Allowed on this number'}
+            {reminders > 0 ? ` · after ${reminders} reminder${reminders === 1 ? '' : 's'}` : snap.journey ? ' · on the first request' : ''}
+          </p>
+        </div>
+        <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+          reg.ok ? 'border-violet-200 bg-white/80 text-violet-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}
+          title={snap.journey?.registration.detail}>
+          {reg.ok && (
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-violet-400 opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-violet-500" />
+            </span>
+          )}
+          <Bot className="h-3 w-3" /> {reg.label}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Activity: daily plans + AI calls ─────────────────────────────────────────
+
+type ActDay = GuestActivity['days'][number]
+type Mood = 'positive' | 'neutral' | 'negative'
+
+const fmtDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+function moodKind(s: string | null | undefined): Mood | null {
+  const v = (s ?? '').toLowerCase()
+  if (!v) return null
+  if (/pos|happy|good|great/.test(v)) return 'positive'
+  if (/neg|bad|unhappy|angry|poor/.test(v)) return 'negative'
+  return 'neutral'
+}
+
+const MOOD: Record<Mood, { icon: typeof Smile; label: string; cls: string; bar: string }> = {
+  positive: { icon: Smile, label: 'Happy', cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', bar: 'from-emerald-400 to-emerald-500' },
+  neutral: { icon: Meh, label: 'Okay', cls: 'text-amber-600 bg-amber-50 border-amber-200', bar: 'from-amber-300 to-amber-400' },
+  negative: { icon: Frown, label: 'Unhappy', cls: 'text-rose-600 bg-rose-50 border-rose-200', bar: 'from-rose-400 to-rose-500' },
+}
+
+function Ring({ value, max, color }: { value: number; max: number; color: string }) {
+  const r = 13
+  const c = 2 * Math.PI * r
+  const pct = max > 0 ? Math.min(1, value / max) : 0
+  return (
+    <svg viewBox="0 0 32 32" className="h-8 w-8 shrink-0 -rotate-90">
+      <circle cx="16" cy="16" r={r} fill="none" strokeWidth="3.5" className="stroke-slate-100" />
+      <circle cx="16" cy="16" r={r} fill="none" strokeWidth="3.5" strokeLinecap="round"
+        className={`${color} transition-all duration-700`} strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+    </svg>
+  )
+}
+
+function StatTile({ ring, title, value, sub, dim }: { ring: ReactNode; title: string; value: string; sub: string; dim?: boolean }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-2 rounded-xl border border-slate-100 bg-white px-2.5 py-1.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${dim ? 'opacity-50' : ''}`}>
+      {ring}
+      <div className="min-w-0">
+        <p className="text-[9.5px] font-semibold uppercase tracking-wider text-slate-400">{title}</p>
+        <p className="truncate text-[13px] font-bold leading-tight text-slate-800">{value}</p>
+        <p className="truncate text-[10px] leading-tight text-slate-500">{sub}</p>
+      </div>
+    </div>
+  )
+}
+
+const PLAN_LOOK: Record<ActDay['plan']['state'], { cls: string; Icon: typeof Check; tip: string }> = {
+  read: { cls: 'bg-sky-500 text-white shadow-sm shadow-sky-500/30', Icon: CheckCheck, tip: 'Read by the guest' },
+  delivered: { cls: 'bg-slate-600 text-white', Icon: CheckCheck, tip: 'Delivered' },
+  sent: { cls: 'bg-slate-300 text-white', Icon: Check, tip: 'Sent' },
+  failed: { cls: 'bg-rose-500 text-white', Icon: AlertTriangle, tip: 'Failed to deliver' },
+  missed: { cls: 'border border-dashed border-rose-200 bg-rose-50 text-rose-300', Icon: XCircle, tip: 'No plan went out for this day' },
+  today: { cls: 'bg-amber-400 text-white ring-4 ring-amber-100 animate-pulse', Icon: Clock, tip: 'Due today' },
+  upcoming: { cls: 'border border-dashed border-slate-200 text-slate-300', Icon: MessageCircle, tip: 'Upcoming' },
+}
+
+function PlanCell({ d }: { d: ActDay }) {
+  const look = PLAN_LOOK[d.plan.state]
+  const at = d.plan.at ? ` · ${when(d.plan.at)}` : ''
+  return (
+    <span title={`Day ${d.dayNo} plan — ${look.tip}${at}`}
+      className={`flex h-6 w-6 items-center justify-center rounded-full transition hover:scale-110 ${look.cls}`}>
+      <look.Icon className="h-3 w-3" />
+    </span>
+  )
+}
+
+function CallCell({ d }: { d: ActDay }) {
+  const c = d.call
+  const mood = moodKind(c.sentiment)
+  const at = c.at ? ` · ${when(c.at)}` : ''
+  let cls = ''
+  let Icon: typeof Check = Bot
+  let tip = ''
+  switch (c.state) {
+    case 'answered':
+      cls = `bg-gradient-to-br ${mood ? MOOD[mood].bar : 'from-violet-400 to-violet-500'} text-white shadow-sm`
+      Icon = PhoneIncoming
+      tip = `Answered${mood ? ` · ${MOOD[mood].label}` : ''}${at}${c.summary ? `\n${c.summary.slice(0, 200)}` : ''}`
+      break
+    case 'missed':
+      cls = 'bg-rose-500 text-white'; Icon = PhoneMissed
+      tip = `Not answered${c.attempts > 1 ? ` · ${c.attempts} tries` : ''}${at}`
+      break
+    case 'calling':
+      cls = 'bg-violet-500 text-white ring-4 ring-violet-100 animate-pulse'; Icon = PhoneCall; tip = 'Calling now'
+      break
+    case 'scheduled':
+      cls = 'border border-violet-200 bg-violet-50 text-violet-500'; Icon = Clock; tip = `Scheduled${at}`
+      break
+    case 'none':
+      cls = 'bg-slate-50 text-slate-300'; Icon = XCircle; tip = 'No call this day'
+      break
+    default:
+      cls = 'border border-dashed border-slate-200 text-slate-300'; Icon = Bot; tip = 'Upcoming'
+  }
+  return (
+    <span title={`Day ${d.dayNo} AI call — ${tip}`}
+      className={`flex h-6 w-6 items-center justify-center rounded-full transition hover:scale-110 ${cls}`}>
+      <Icon className={c.state === 'none' ? 'h-2.5 w-2.5' : 'h-3 w-3'} />
+    </span>
+  )
+}
+
+function ActivityPanel({ a, messagesOn, callsOn }: { a: GuestActivity; messagesOn: boolean; callsOn: boolean }) {
+  const plansDue = Math.max(a.days.filter(d => d.date <= a.today).length, a.stats.plansSent)
+  const mood = a.stats.mood
+  const MoodIcon = mood ? MOOD[mood].icon : Meh
+  const showCalls = a.callsAvailable
+  const lastMood = moodKind(a.lastCall?.sentiment)
+  const LastMoodIcon = lastMood ? MOOD[lastMood].icon : null
+
+  return (
+    <div className="mt-3 space-y-2.5">
+      {/* Stat tiles */}
+      <div className={`grid gap-2 ${showCalls ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
+        <StatTile dim={!messagesOn}
+          ring={<Ring value={a.stats.plansSent} max={Math.max(plansDue, 1)} color="stroke-sky-500" />}
+          title="Daily plans" value={`${a.stats.plansSent}/${plansDue} sent`}
+          sub={a.stats.plansFailed ? `${a.stats.plansFailed} failed · ${a.stats.plansRead} read` : `${a.stats.plansRead} read by guest`} />
+        {showCalls && (
+          <StatTile dim={!callsOn}
+            ring={<Ring value={a.stats.callsAnswered} max={Math.max(a.stats.callsDue, 1)} color="stroke-violet-500" />}
+            title="AI calls" value={`${a.stats.callsAnswered}/${a.stats.callsDue} answered`}
+            sub={a.stats.callsDue ? `${a.stats.callsDue - a.stats.callsAnswered} not reached` : 'none due yet'} />
+        )}
+        {showCalls && (
+          <div className={`flex min-w-0 items-center gap-2 rounded-xl border px-2.5 py-1.5 ${mood ? MOOD[mood].cls : 'border-slate-100 bg-white text-slate-300'}`}>
+            <MoodIcon className="h-7 w-7 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[9.5px] font-semibold uppercase tracking-wider opacity-70">Guest mood</p>
+              <p className="truncate text-[13px] font-bold leading-tight">{mood ? MOOD[mood].label : '—'}</p>
+              <p className="truncate text-[10px] leading-tight opacity-70">{mood ? 'from the last call' : 'no call yet'}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Day-by-day timeline */}
+      <div className="rounded-xl border border-slate-100 bg-white/80 p-2">
+        <div className="flex items-stretch gap-1 overflow-x-auto pb-0.5">
+          <div className="sticky left-0 z-10 flex shrink-0 flex-col justify-end gap-1.5 bg-white/95 pb-1 pr-1.5 text-[9.5px] font-semibold text-slate-400">
+            <span className="flex h-6 items-center gap-1"><MessageCircle className="h-3 w-3 text-sky-500" />Plan</span>
+            {showCalls && <span className="flex h-6 items-center gap-1"><Bot className="h-3 w-3 text-violet-500" />Call</span>}
+          </div>
+          {a.days.map(d => {
+            const isToday = d.date === a.today
+            return (
+              <div key={d.date}
+                className={`flex min-w-[38px] flex-1 flex-col items-center gap-1.5 rounded-lg px-0.5 pb-1 pt-0.5 ${isToday ? 'bg-amber-50 ring-1 ring-amber-200' : ''}`}>
+                <div className="text-center leading-none">
+                  <p className={`text-[9.5px] font-bold ${isToday ? 'text-amber-700' : 'text-slate-600'}`}>D{d.dayNo}</p>
+                  <p className="text-[8.5px] text-slate-400">{isToday ? 'Today' : fmtDay(d.date)}</p>
+                </div>
+                <PlanCell d={d} />
+                {showCalls && <CallCell d={d} />}
+              </div>
+            )
+          })}
+        </div>
+        {a.extras.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1 border-t border-slate-100 pt-1.5">
+            {a.extras.map((x, i) => (
+              <span key={i} title={x.summary ?? undefined}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  x.state === 'answered' ? 'border-violet-200 bg-violet-50 text-violet-700'
+                  : x.state === 'missed' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                <CalendarDays className="h-3 w-3" /> {x.phase} · {fmtDay(x.date)} · {x.state === 'answered' ? 'answered' : x.state === 'missed' ? 'missed' : x.state === 'calling' ? 'calling' : 'scheduled'}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Latest call — what the guest said */}
+      {a.lastCall && (
+        <div className="relative overflow-hidden rounded-xl border border-violet-100 bg-gradient-to-br from-violet-50/80 via-white to-white p-2.5 pl-3.5">
+          <span aria-hidden className={`absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${lastMood ? MOOD[lastMood].bar : 'from-violet-400 to-violet-500'}`} />
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-violet-600">
+            <Quote className="h-3 w-3" /> Last AI call{a.lastCall.dayNo ? ` · Day ${a.lastCall.dayNo}` : ''} · {fmtDay(a.lastCall.date)}
+            {lastMood && LastMoodIcon && (
+              <span className={`ml-auto inline-flex items-center gap-1 rounded-full border px-1.5 py-px normal-case tracking-normal ${MOOD[lastMood].cls}`}>
+                <LastMoodIcon className="h-3 w-3" />{MOOD[lastMood].label}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 line-clamp-3 text-[12px] leading-snug text-slate-700" title={a.lastCall.summary}>{a.lastCall.summary}</p>
+          {a.lastCall.issues && (
+            <p className="mt-1 flex items-start gap-1 text-[11px] text-rose-600">
+              <AlertTriangle className="mt-px h-3 w-3 shrink-0" /><span className="line-clamp-2">{a.lastCall.issues}</span>
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
