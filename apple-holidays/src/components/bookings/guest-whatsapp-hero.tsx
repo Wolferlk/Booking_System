@@ -109,7 +109,7 @@ export default function GuestWhatsAppHero({
   // ── Editor (assign / change) ────────────────────────────────────────────
   if (editing) {
     return (
-      <div className="mt-4 max-w-xl rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white p-4 shadow-sm">
+      <div className="h-full rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white p-4 shadow-sm">
         <div className="flex items-center gap-2 mb-3">
           <span className="flex items-center justify-center w-7 h-7 rounded-full bg-[#25D366] text-white shadow">
             <MessageCircle className="w-4 h-4" />
@@ -159,9 +159,9 @@ export default function GuestWhatsAppHero({
   if (!current) {
     return (
       <button type="button" disabled={!canEdit} onClick={() => open(picks[0]?.pretty ?? '')}
-        className="group mt-4 w-full max-w-xl text-left rounded-2xl p-[1.5px] bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-[length:200%_100%] animate-[waGlow_4s_linear_infinite] disabled:opacity-60 disabled:cursor-not-allowed">
+        className="group h-full w-full text-left rounded-2xl p-[1.5px] bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-[length:200%_100%] animate-[waGlow_4s_linear_infinite] disabled:opacity-60 disabled:cursor-not-allowed">
         <style>{`@keyframes waGlow{0%{background-position:0% 0}100%{background-position:200% 0}}`}</style>
-        <div className="flex items-center gap-4 rounded-[15px] bg-white px-4 py-3.5 border border-dashed border-transparent group-hover:bg-emerald-50/40 transition">
+        <div className="flex h-full items-center gap-4 rounded-[15px] bg-white px-4 py-3.5 border border-dashed border-transparent group-hover:bg-emerald-50/40 transition">
           <span className="relative flex items-center justify-center w-11 h-11 rounded-full bg-slate-100 text-slate-400 group-hover:bg-[#25D366] group-hover:text-white transition">
             <MessageCircle className="w-5 h-5" />
             <span className="absolute -right-0.5 -bottom-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-amber-400 text-white ring-2 ring-white">
@@ -187,7 +187,7 @@ export default function GuestWhatsAppHero({
   // ── Number on file ──────────────────────────────────────────────────────
   const country = ready ? verdict.country : null
   return (
-    <div className={`relative mt-4 max-w-xl overflow-hidden rounded-2xl border shadow-sm ${
+    <div className={`relative h-full overflow-hidden rounded-2xl border shadow-sm ${
       ready ? 'border-emerald-200 bg-gradient-to-r from-emerald-50 via-white to-teal-50/40' : 'border-amber-300 bg-gradient-to-r from-amber-50 via-white to-white'}`}>
       {/* soft WhatsApp-green glow */}
       {ready && <span aria-hidden className="pointer-events-none absolute -left-10 -top-10 w-40 h-40 rounded-full bg-[#25D366]/10 blur-2xl" />}
@@ -206,7 +206,7 @@ export default function GuestWhatsAppHero({
           </p>
           <div className="flex items-center gap-2 mt-0.5">
             {country && <FlagByCode code={country.iso} className="w-6 h-4 rounded-[3px] shadow-sm" />}
-            <span className="text-xl font-bold tracking-wide text-slate-900 tabular-nums">{pretty}</span>
+            <span className="text-xl font-bold tracking-wide text-slate-900 tabular-nums whitespace-nowrap">{pretty}</span>
             {ready ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Live

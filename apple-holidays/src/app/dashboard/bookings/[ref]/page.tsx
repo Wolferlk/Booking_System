@@ -12,6 +12,7 @@ import {
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical, Globe, Sparkles, PlaneLanding,
   History, ChevronDown, RotateCcw, Wand2, ShieldCheck, Headphones, ListChecks,
+  Zap, LayoutGrid, Megaphone, Moon, AlertTriangle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -1651,11 +1652,14 @@ Wishing you a wonderful trip! ✈️
 
         {/* Lifecycle + status */}
         <section data-nav="Overview & Status" data-nav-icon="overview">
-        <Card className="p-6">
-          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
-            <div>
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+        <Card className="relative overflow-hidden p-5 sm:p-6">
+          {/* thin brand accent along the top edge */}
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-amber-400 via-rose-400 to-violet-500" />
+          <span aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-64 w-64 rounded-full bg-violet-100/40 blur-3xl" />
+          <div className="relative grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+                <span className="text-3xl font-black font-mono tracking-tight bg-gradient-to-r from-slate-900 via-slate-800 to-violet-700 bg-clip-text text-transparent">{booking.bookingRef as string}</span>
                 {/* Version selector — shows the active version; admins can switch */}
                 {(() => {
                   const versions = ((booking as any).versions ?? []) as { versionNo: number; source?: string | null; createdAt?: string; amendmentNote?: string | null }[]
@@ -1753,69 +1757,67 @@ Wishing you a wonderful trip! ✈️
                   </span>
                 )}
               </div>
-              <div className="flex flex-wrap gap-4 text-sm text-slate-500">
-                <span className="flex items-center gap-1">
-                  <Calendar className="w-4 h-4" />
-                  {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Users className="w-4 h-4" />
-                  {booking.paxAdults as number} adults, {booking.paxChildren as number} children{(booking.paxInfants as number) > 0 ? `, ${booking.paxInfants as number} infants` : ''}
-                </span>
-                <span className="flex items-center gap-1">
-                  <CreditCard className="w-4 h-4" />
-                  {formatCurrency(booking.quotedTotal as string, booking.currency as string)}
-                </span>
-                {daysUntil > 0 && (
-                  <span className={`flex items-center gap-1 font-medium ${daysUntil <= 7 ? 'text-red-600' : daysUntil <= 21 ? 'text-orange-600' : 'text-slate-500'}`}>
-                    <Clock className="w-4 h-4" />
-                    T−{daysUntil} days
-                  </span>
-                )}
+              {/* Trip at a glance — four tiles instead of a grey sentence */}
+              {(() => {
+                const arr = booking.arrivalDate ? new Date(booking.arrivalDate as string) : null
+                const dep = booking.departureDate ? new Date(booking.departureDate as string) : null
+                const nights = arr && dep ? Math.max(0, Math.round((dep.getTime() - arr.getTime()) / 86_400_000)) : null
+                const adults = Number(booking.paxAdults ?? 0), kids = Number(booking.paxChildren ?? 0), infants = Number(booking.paxInfants ?? 0)
+                const urgent = daysUntil > 0 && daysUntil <= 7, soon = daysUntil > 7 && daysUntil <= 21
+                const tile = 'rounded-xl border px-3 py-2 min-w-0'
+                const lbl = 'flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.12em]'
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className={`${tile} border-sky-100 bg-gradient-to-br from-sky-50 to-white`}>
+                      <p className={`${lbl} text-sky-500`}><Calendar className="w-3 h-3" /> Travel</p>
+                      <p className="mt-0.5 text-sm font-semibold text-slate-800 truncate">
+                        {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
+                      </p>
+                      {nights !== null && <p className="text-[11px] text-slate-400 flex items-center gap-1"><Moon className="w-3 h-3" /> {nights} night{nights === 1 ? '' : 's'}</p>}
+                    </div>
+                    <div className={`${tile} border-violet-100 bg-gradient-to-br from-violet-50 to-white`}>
+                      <p className={`${lbl} text-violet-500`}><Users className="w-3 h-3" /> Travellers</p>
+                      <p className="mt-0.5 text-sm font-semibold text-slate-800">{adults + kids + infants} pax</p>
+                      <p className="text-[11px] text-slate-400 truncate">
+                        {adults} adult{adults === 1 ? '' : 's'}{kids > 0 ? ` · ${kids} child${kids === 1 ? '' : 'ren'}` : ''}{infants > 0 ? ` · ${infants} inf` : ''}
+                      </p>
+                    </div>
+                    <div className={`${tile} border-emerald-100 bg-gradient-to-br from-emerald-50 to-white`}>
+                      <p className={`${lbl} text-emerald-600`}><CreditCard className="w-3 h-3" /> Value</p>
+                      <p className="mt-0.5 text-sm font-semibold text-slate-800 truncate">{formatCurrency(booking.quotedTotal as string, booking.currency as string)}</p>
+                      <p className="text-[11px] text-slate-400">quoted total</p>
+                    </div>
+                    <div className={`${tile} ${
+                      urgent ? 'border-red-200 bg-gradient-to-br from-red-50 to-white'
+                      : soon ? 'border-orange-200 bg-gradient-to-br from-orange-50 to-white'
+                      : 'border-slate-200 bg-gradient-to-br from-slate-50 to-white'}`}>
+                      <p className={`${lbl} ${urgent ? 'text-red-500' : soon ? 'text-orange-500' : 'text-slate-400'}`}><Clock className="w-3 h-3" /> Departs in</p>
+                      <p className={`mt-0.5 text-sm font-bold ${urgent ? 'text-red-600' : soon ? 'text-orange-600' : 'text-slate-800'}`}>
+                        {daysUntil > 0 ? `T−${daysUntil} day${daysUntil === 1 ? '' : 's'}` : daysUntil === 0 ? 'Today' : 'Underway / past'}
+                      </p>
+                      {urgent && <span className="relative mt-0.5 flex h-1.5 w-12 overflow-hidden rounded-full bg-red-100"><span className="absolute inset-y-0 left-0 bg-red-500 animate-pulse" style={{ width: `${Math.max(10, (1 - daysUntil / 7) * 100)}%` }} /></span>}
+                      {!urgent && <p className="text-[11px] text-slate-400">{soon ? 'getting close' : daysUntil > 0 ? 'plenty of time' : ''}</p>}
+                    </div>
+                  </div>
+                )
+              })()}
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 {/* Who filed this, when, and where it came in from. Derived
                     rather than read off `createdBy`, because most files here
                     are written by a pipeline under an automation account —
                     see `lib/booking-origin.ts`. */}
                 <BookingOriginChip bookingRef={booking.bookingRef as string} />
+                {daysUntil <= 21 && daysUntil > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600">
+                    <AlertTriangle className="w-3 h-3" /> Cancellation penalty window · 100% charge
+                  </span>
+                )}
               </div>
-              {daysUntil <= 21 && daysUntil > 0 && (
-                <p className="mt-2 text-xs text-red-600 font-medium">
-                  ⚠ Cancellation penalty window active (100% charge applies)
-                </p>
-              )}
-
-              {/* Guest WhatsApp — the number every guest automation dials */}
-              {canViewClientDetails && (
-                <GuestWhatsAppHero
-                  bookingRef={ref}
-                  whatsapp={(booking.contactWhatsapp as string | null) ?? null}
-                  phone={(booking.contactPhone as string | null) ?? null}
-                  leadName={((booking.passengers ?? []) as { isLead?: boolean; name?: string }[]).find(p => p.isLead)?.name ?? null}
-                  candidates={[
-                    { label: 'Guest phone', value: String(booking.contactPhone ?? '') },
-                    ...((booking.passengers ?? []) as { isLead?: boolean; name?: string; contact?: string | null }[])
-                      .filter(p => p.contact)
-                      .sort((a, b) => Number(!!b.isLead) - Number(!!a.isLead))
-                      .map(p => ({ label: p.isLead ? 'Lead passenger' : (p.name?.split(' ')[0] ?? 'Passenger'), value: String(p.contact) })),
-                  ]}
-                  hint={guestPhoneHint}
-                  canEdit={canEditContacts}
-                  onSaved={async () => { setContactReachKey(k => k + 1); await load() }}
-                />
-              )}
-              {/* Auto messages / auto AI calls switches + the Allow-request journey */}
-              {canViewClientDetails && (
-                <GuestAutopilot
-                  bookingRef={ref}
-                  hasWhatsapp={checkPhone(booking.contactWhatsapp as string | null, guestPhoneHint).state === 'valid'}
-                  canEdit={canEditContacts}
-                  reloadKey={contactReachKey}
-                />
-              )}
             </div>
 
-            {/* Action buttons */}
-            <div className="flex flex-wrap gap-2">
+            {/* Action buttons — grouped so the eye finds the right one */}
+            <div className="min-w-0 space-y-2">
+              <ActionGroup label="Workflow" icon={Zap} tone="brand">
               {transitions.map(t => {
                 // New step-through statuses use the advance-status endpoint
                 // QC1_PASS and QC2_PASS are auto-triggered — never show as manual buttons
@@ -1897,7 +1899,17 @@ Wishing you a wonderful trip! ✈️
               {!['COMPLETED', 'CANCELLED', 'PENDING_CANCELLATION'].includes(status) && (
                 <FullCancelButton bookingRef={ref} role={role} onDone={load} />
               )}
+              {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !['COMPLETED'].includes(status) && (
+                <button
+                  onClick={() => setDeleteVerify(true)}
+                  className="btn btn-sm bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              )}
+              </ActionGroup>
 
+              <ActionGroup label="Open & manage" icon={LayoutGrid} tone="slate">
               {/* OneDrive folder link + assignment */}
               {booking.onedriveFolderUrl ? (
                 <div className="flex items-center gap-1">
@@ -2011,6 +2023,9 @@ Wishing you a wonderful trip! ✈️
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
               )}
+              </ActionGroup>
+
+              <ActionGroup label="Reach out" icon={Megaphone} tone="green">
               {['BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={async () => {
@@ -2083,16 +2098,42 @@ Wishing you a wonderful trip! ✈️
                   <Send className="w-3.5 h-3.5" /> Send Email
                 </button>
               )}
-              {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !['COMPLETED'].includes(status) && (
-                <button
-                  onClick={() => setDeleteVerify(true)}
-                  className="btn btn-sm bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
-                >
-                  Delete
-                </button>
-              )}
+              </ActionGroup>
             </div>
           </div>
+
+          {/* Guest connect — the WhatsApp number and what the system does with it,
+              side by side across the full width instead of stacked in a corner. */}
+          {canViewClientDetails && (
+            <div className="relative mt-5 grid gap-3 lg:grid-flow-col lg:auto-cols-fr items-stretch">
+              <div className="min-w-0">
+                <GuestWhatsAppHero
+                  bookingRef={ref}
+                  whatsapp={(booking.contactWhatsapp as string | null) ?? null}
+                  phone={(booking.contactPhone as string | null) ?? null}
+                  leadName={((booking.passengers ?? []) as { isLead?: boolean; name?: string }[]).find(p => p.isLead)?.name ?? null}
+                  candidates={[
+                    { label: 'Guest phone', value: String(booking.contactPhone ?? '') },
+                    ...((booking.passengers ?? []) as { isLead?: boolean; name?: string; contact?: string | null }[])
+                      .filter(p => p.contact)
+                      .sort((a, b) => Number(!!b.isLead) - Number(!!a.isLead))
+                      .map(p => ({ label: p.isLead ? 'Lead passenger' : (p.name?.split(' ')[0] ?? 'Passenger'), value: String(p.contact) })),
+                  ]}
+                  hint={guestPhoneHint}
+                  canEdit={canEditContacts}
+                  onSaved={async () => { setContactReachKey(k => k + 1); await load() }}
+                />
+              </div>
+              <div className="min-w-0 empty:hidden">
+                <GuestAutopilot
+                  bookingRef={ref}
+                  hasWhatsapp={checkPhone(booking.contactWhatsapp as string | null, guestPhoneHint).state === 'valid'}
+                  canEdit={canEditContacts}
+                  reloadKey={contactReachKey}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Operation Checklist */}
           <OperationChecklist
@@ -5143,6 +5184,34 @@ function OperationChecklist(props: OpChecklistProps) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * One labelled cluster of header buttons. Hides itself when this role has
+ * nothing in it (the inner row renders no children → `:empty`).
+ */
+const ACTION_TONES = {
+  brand: { bar: 'from-amber-400 to-rose-500', label: 'text-amber-600', bg: 'bg-gradient-to-r from-amber-50/70 via-white to-white border-amber-100' },
+  slate: { bar: 'from-slate-400 to-slate-300', label: 'text-slate-500', bg: 'bg-gradient-to-r from-slate-50 via-white to-white border-slate-200/80' },
+  green: { bar: 'from-[#25D366] to-teal-500', label: 'text-emerald-600', bg: 'bg-gradient-to-r from-emerald-50/70 via-white to-white border-emerald-100' },
+} as const
+
+function ActionGroup({ label, icon: Icon, tone, children }: {
+  label: string
+  icon: typeof Zap
+  tone: keyof typeof ACTION_TONES
+  children: React.ReactNode
+}) {
+  const t = ACTION_TONES[tone]
+  return (
+    <div className={`relative overflow-hidden rounded-xl border pl-3.5 pr-2.5 py-2 has-[>div:empty]:hidden ${t.bg}`}>
+      <span aria-hidden className={`absolute left-0 inset-y-0 w-1 bg-gradient-to-b ${t.bar}`} />
+      <p className={`mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] ${t.label}`}>
+        <Icon className="w-3 h-3" /> {label}
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5">{children}</div>
     </div>
   )
 }

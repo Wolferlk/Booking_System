@@ -55,7 +55,9 @@ function when(iso: string | null | undefined): string {
 function inFuture(ms: number): string {
   const left = ms - Date.now()
   if (left <= 0) return 'due now'
-  const h = Math.floor(left / 3_600_000), m = Math.round((left % 3_600_000) / 60_000)
+  // Work in whole minutes first so 23h 59.6m reads "24h 0m", never "23h 60m".
+  const total = Math.ceil(left / 60_000)
+  const h = Math.floor(total / 60), m = total % 60
   return h > 0 ? `in ${h}h ${m}m` : `in ${m}m`
 }
 
@@ -114,7 +116,7 @@ export default function GuestAutopilot({ bookingRef, hasWhatsapp, canEdit, reloa
   const { switches, journey } = snap
 
   return (
-    <div className="mt-2 max-w-xl rounded-2xl border border-slate-200 bg-white/80 backdrop-blur px-4 py-3 shadow-sm">
+    <div className="h-full rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50/60 px-4 py-3 shadow-sm">
       {/* Header + switches */}
       <div className="flex flex-wrap items-center gap-2">
         <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
@@ -254,7 +256,12 @@ function Journey({ snap, hasWhatsapp, canEdit, busy, onStart }: {
     },
   ]
 
-  const reg = j.registration
+  // The live service row wins over the journey's note: if TE already has an
+  // active/paused service, the booking IS registered whatever the intake said.
+  const svcLive = !!snap.aiService && ['active', 'paused'].includes(snap.aiService.status.toLowerCase())
+  const reg = svcLive && (j.registration.state === 'failed' || j.registration.state === 'skipped')
+    ? { ...j.registration, state: 'existing' as const }
+    : j.registration
   return (
     <div className="mt-2.5">
       <ol className="flex items-start">
