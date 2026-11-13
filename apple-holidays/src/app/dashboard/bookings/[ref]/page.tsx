@@ -45,6 +45,7 @@ import { IntlPhoneInput, SameAsPhoneChip, ContactReachStrip } from '@/components
 import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
 import GuestWhatsAppHero from '@/components/bookings/guest-whatsapp-hero'
 import GuestAutopilot from '@/components/bookings/guest-autopilot'
+import SectionLogsButton from '@/components/logs/section-logs-button'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
@@ -1660,6 +1661,7 @@ Wishing you a wonderful trip! ✈️
             <div className="min-w-0">
               <div className="flex items-center gap-2.5 mb-3 flex-wrap">
                 <span className="text-3xl font-black font-mono tracking-tight bg-gradient-to-r from-slate-900 via-slate-800 to-violet-700 bg-clip-text text-transparent">{booking.bookingRef as string}</span>
+                <SectionLogsButton bookingRef={ref} section="overview" />
                 {/* Version selector — shows the active version; admins can switch */}
                 {(() => {
                   const versions = ((booking as any).versions ?? []) as { versionNo: number; source?: string | null; createdAt?: string; amendmentNote?: string | null }[]
@@ -2592,6 +2594,7 @@ Wishing you a wonderful trip! ✈️
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-slate-400" /> Passengers
+                <SectionLogsButton bookingRef={ref} section="passengers" />
                 <SpecialCountChip count={passengerNotes.count} />
               </h3>
             </CardHeader>
@@ -2751,6 +2754,7 @@ Wishing you a wonderful trip! ✈️
               <CardHeader>
                 <h3 className="text-sm font-semibold text-slate-400 flex items-center gap-2">
                   <Plane className="w-4 h-4 text-slate-300" /> Flights
+                  <SectionLogsButton bookingRef={ref} section="flights" />
                 </h3>
               </CardHeader>
               <CardBody>
@@ -2798,6 +2802,7 @@ Wishing you a wonderful trip! ✈️
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Plane className="w-4 h-4 text-slate-400" /> Flights
+                <SectionLogsButton bookingRef={ref} section="flights" />
               </h3>
             </CardHeader>
             <CardBody className="p-0">
@@ -2855,6 +2860,7 @@ Wishing you a wonderful trip! ✈️
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Hotel className="w-4 h-4 text-slate-400" /> Accommodation
+                <SectionLogsButton bookingRef={ref} section="accommodation" />
               </h3>
             </CardHeader>
             <CardBody className="p-0">
@@ -3029,6 +3035,7 @@ Wishing you a wonderful trip! ✈️
                 <CardHeader>
                   <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                     <Phone className="w-4 h-4 text-brand-400" /> Guest / Tourist Contact
+                    <SectionLogsButton bookingRef={ref} section="contact" />
                     {booking.contactCountry && <span className="text-xs text-slate-400 font-normal">— {booking.contactCountry as string}</span>}
                   </h3>
                 </CardHeader>

@@ -29,6 +29,7 @@ import { getCustomerBranding } from '@/lib/customer-branding-server'
 import { shouldHideBrand, type BrandAudience } from '@/lib/customer-branding'
 import { resolveVendorPhones } from '@/lib/vn-vendor-sync/registry'
 import { guestAutoOffRefs, isGuestAutoOff } from '@/lib/guest-auto-switches'
+import { logBookingEventOnce } from '@/lib/booking-logs'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -287,7 +288,7 @@ export interface SingleSendResult {
  * opts.dryRun    — build and return the message without sending or logging it
  * opts.to        — send to this number instead of the booking's own contact
  */
-export async function sendDailyBriefingForBooking(
+async function sendDailyBriefingForBookingInner(
   bookingRef: string,
   targetDateStr: string,
   opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean; to?: string } = {},
@@ -627,7 +628,7 @@ export async function runDueCustomerDailyBriefings(): Promise<AutomationRunResul
  * Send the post-departure feedback-form invite to one booking's guest.
  * opts.dryRun builds and returns the message without sending or logging it.
  */
-export async function sendFeedbackRequestForBooking(
+async function sendFeedbackRequestForBookingInner(
   bookingRef: string,
   opts: { force?: boolean; dryRun?: boolean } = {},
 ): Promise<SingleSendResult> {
@@ -733,3 +734,67 @@ export async function runCustomerFeedbackRequest(): Promise<AutomationRunResult>
 // runCustomerFeedbackRequest(). The HTTP cron routes remain as an external
 // fallback; /api/cron/customer-daily-briefing must then be called every 5–15 min.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── Booking Logs: why a daily plan / feedback request did not go out ─────────
+
+/** Outcomes that are normal, not worth a log line. */
+const QUIET_REASONS = /already sent|already received|booking not found/i
+
+async function logGuestSendOutcome(bookingRef: string, kind: 'Daily trip plan' | 'Feedback request', day: string | null, r: SingleSendResult | null, err?: unknown) {
+  const what = `${kind}${day ? ` for ${day}` : ''}`
+  if (err !== undefined) {
+    await logBookingEventOnce({
+      bookingRef, section: 'messages', action: 'failed', status: 'failed', source: 'scheduler',
+      summary: `${what} — failed`, reason: err instanceof Error ? err.message : String(err),
+    })
+    return
+  }
+  if (!r) return
+  if (r.ok) {
+    if (r.unconfirmed) {
+      await logBookingEventOnce({
+        bookingRef, section: 'messages', action: 'sent', status: 'ok', source: 'scheduler',
+        summary: `${what} — sent as plain text`,
+        reason: 'The guest is outside WhatsApp’s 24 h window, so WhatsApp may not deliver it.',
+      })
+    }
+    return
+  }
+  if (r.reason && QUIET_REASONS.test(r.reason)) return
+  const failed = /fail|error|not configured|rejected/i.test(r.reason ?? '')
+  await logBookingEventOnce({
+    bookingRef, section: 'messages', action: failed ? 'failed' : 'skipped', status: failed ? 'failed' : 'skipped', source: 'scheduler',
+    summary: `${what} — ${failed ? 'failed' : 'not sent'}`, reason: r.reason ?? 'No reason given',
+  })
+}
+
+export async function sendDailyBriefingForBooking(
+  bookingRef: string,
+  targetDateStr: string,
+  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean; to?: string } = {},
+): Promise<SingleSendResult> {
+  if (opts.dryRun) return sendDailyBriefingForBookingInner(bookingRef, targetDateStr, opts)
+  try {
+    const r = await sendDailyBriefingForBookingInner(bookingRef, targetDateStr, opts)
+    await logGuestSendOutcome(bookingRef, 'Daily trip plan', targetDateStr, r).catch(() => undefined)
+    return r
+  } catch (err) {
+    await logGuestSendOutcome(bookingRef, 'Daily trip plan', targetDateStr, null, err).catch(() => undefined)
+    throw err
+  }
+}
+
+export async function sendFeedbackRequestForBooking(
+  bookingRef: string,
+  opts: { force?: boolean; dryRun?: boolean } = {},
+): Promise<SingleSendResult> {
+  if (opts.dryRun) return sendFeedbackRequestForBookingInner(bookingRef, opts)
+  try {
+    const r = await sendFeedbackRequestForBookingInner(bookingRef, opts)
+    await logGuestSendOutcome(bookingRef, 'Feedback request', null, r).catch(() => undefined)
+    return r
+  } catch (err) {
+    await logGuestSendOutcome(bookingRef, 'Feedback request', null, null, err).catch(() => undefined)
+    throw err
+  }
+}

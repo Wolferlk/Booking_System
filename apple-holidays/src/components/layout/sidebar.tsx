@@ -8,7 +8,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, BarChart3, TrendingUp,
-  Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
+  Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft, History,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
@@ -41,7 +41,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
-  Database, ListChecks, Zap, Smartphone, BellRing,
+  Database, ListChecks, Zap, Smartphone, BellRing, History,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -273,6 +273,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Sales Report',       href: '/dashboard/reports/sales',               icon: 'TrendingUp' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Booking Logs',       href: '/dashboard/logs',                        icon: 'History' },
     { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
@@ -376,6 +377,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Sales Report',       href: '/dashboard/reports/sales',               icon: 'TrendingUp' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Booking Logs',       href: '/dashboard/logs',                        icon: 'History' },
     { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },

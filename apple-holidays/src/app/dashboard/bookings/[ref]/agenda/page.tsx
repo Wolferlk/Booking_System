@@ -39,6 +39,7 @@ import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/component
 import MovementWhatsAppModal, { MovementWhatsAppButton, type MovementSendSummary } from '@/components/agenda/movement-whatsapp-modal'
 import { type VendorSyncUpdate } from '@/components/agenda/vn-vendor-sync-panel'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
+import SectionLogsButton from '@/components/logs/section-logs-button'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
 function normalizeMealPlan(raw: string | null | undefined): string {
@@ -1362,6 +1363,7 @@ export default function AgendaPage() {
         })()}
         actions={
           <div className="flex gap-2 flex-wrap">
+            <SectionLogsButton bookingRef={ref} section="agenda" label="Movement chart" className="h-8 w-8 self-center" />
             {/* PDF Download — all users, full details */}
             <div className="relative" ref={pdfMenuRef}>
               <button

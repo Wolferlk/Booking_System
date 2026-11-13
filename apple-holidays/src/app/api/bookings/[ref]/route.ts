@@ -21,6 +21,8 @@ import type { UserRole } from '@prisma/client'
 import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
 import { syncAiCallsPhone, type AiCallSync } from '@/lib/contact-reach'
 import { autoEngageGuest, type EngageOutcome } from '@/lib/guest-automation'
+import { logBookingSave, snapshotChildren } from '@/lib/booking-logs-save'
+import { logBookingEvent } from '@/lib/booking-logs'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -288,6 +290,12 @@ export async function PUT(
     cleanPhones[field] = field.endsWith('Whatsapp') ? v.digits : v.pretty
   }
 
+  // What the passengers / flights / hotels looked like before this save — for the
+  // Booking Logs ("removed: TG330 HYD→BKK"). Read-only; skipped when untouched.
+  const touchesChildren = ['passengers', 'passengerUpdates', 'passengerDeletes', 'flights', 'flightUpdates', 'flightDeletes',
+    'accommodations', 'accommodationUpdates', 'accommodationDeletes'].some(k => (body as Record<string, unknown>)[k] !== undefined)
+  const beforeChildren = touchesChildren ? await snapshotChildren(booking.id).catch(() => null) : null
+
   const updated = await prisma.booking.update({
     where: { bookingRef: params.ref },
     data: {
@@ -524,7 +532,15 @@ export async function PUT(
     action: ACTION.BOOKING_UPDATED,
     entityType: 'Booking',
     entityId: params.ref,
-    details: { fields: Object.keys(body), role },
+    details: { fields: Object.keys(body), role, logged: true },
+  })
+  await logBookingSave({
+    bookingRef: params.ref,
+    before: booking as unknown as Record<string, unknown>,
+    beforeChildren,
+    body: body as Record<string, unknown>,
+    saved: updated as unknown as Record<string, unknown>,
+    actor: { id: session.user.id, name: session.user.name || session.user.email || null },
   })
 
   // The guest's WhatsApp moved → keep the AI-call service dialling the guest.
@@ -590,7 +606,12 @@ export async function DELETE(
     action: ACTION.BOOKING_DELETED,
     entityType: 'Booking',
     entityId: params.ref,
-    details: { bookingRef: params.ref, status: booking.status },
+    details: { bookingRef: params.ref, status: booking.status, logged: true },
+  })
+  await logBookingEvent({
+    bookingRef: params.ref, section: 'overview', action: 'deleted', summary: 'Booking deleted',
+    reason: `Status was ${booking.status}`,
+    actor: { id: session.user.id, name: session.user.name || session.user.email || null },
   })
 
   return buildApiSuccess(null, 'Booking permanently deleted')

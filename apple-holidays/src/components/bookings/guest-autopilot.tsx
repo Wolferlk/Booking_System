@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import VerificationModal, { type VerificationCredentials } from '@/components/security/verification-modal'
 import type { GuestActivity } from '@/lib/guest-autopilot-activity'
+import SectionLogsButton from '@/components/logs/section-logs-button'
 
 type Kind = 'messages' | 'calls'
 
@@ -126,6 +127,7 @@ export default function GuestAutopilot({ bookingRef, hasWhatsapp, canEdit, reloa
         <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
           <Zap className="w-3.5 h-3.5 text-amber-500" /> Guest Autopilot
         </p>
+        <SectionLogsButton bookingRef={bookingRef} section="messages" label="Daily messages & AI calls" />
         <div className="ml-auto flex items-center gap-2">
           <Switch label="Auto messages" icon={MessageCircle} on={switches.messages} busy={busy === 'messages'} disabled={!canEdit}
             onToggle={() => (switches.messages ? setOffKind('messages') : turnOn('messages'))} />

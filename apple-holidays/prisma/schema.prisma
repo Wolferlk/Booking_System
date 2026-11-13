@@ -4374,3 +4374,25 @@ model TicketPortalCache {
 
   @@map("ticket_portal_cache")
 }
+
+/// Booking Logs — who changed what on a booking, and why an automatic send did not go out.
+/// Additive table: prisma/sql/2026-11-13-booking-event-logs.sql
+model BookingEventLog {
+  id         String   @id @default(cuid())
+  bookingRef String   @db.VarChar(64)
+  section    String   @db.VarChar(24)
+  action     String   @db.VarChar(32)
+  summary    String   @db.VarChar(500)
+  changes    Json?
+  status     String?  @db.VarChar(16)
+  reason     String?  @db.Text
+  actorId    String?  @db.VarChar(191)
+  actorName  String?  @db.VarChar(191)
+  source     String?  @db.VarChar(32)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+
+  @@index([bookingRef, createdAt], map: "booking_event_logs_ref_idx")
+  @@index([section, createdAt], map: "booking_event_logs_section_idx")
+  @@index([createdAt], map: "booking_event_logs_created_idx")
+  @@map("booking_event_logs")
+}

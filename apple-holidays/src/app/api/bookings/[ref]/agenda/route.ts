@@ -29,6 +29,7 @@ import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
 import { carryMcSupplier } from '@/lib/mc-supplier'
 import type { UserRole } from '@prisma/client'
+import { logAgendaSave, logAssignment, logMovementEdit, snapshotAgenda } from '@/lib/booking-logs-agenda'
 
 export const dynamic = 'force-dynamic'
 
@@ -199,6 +200,8 @@ export async function POST(
 
   let agenda = booking.tourAgenda
   let createdItems: { id: string }[]
+  // For the Booking Logs: the chart as it was, before the rebuild below.
+  const chartBefore = await snapshotAgenda(booking.tourAgenda?.id)
 
   try {
     // Delete + recreate in one transaction: a failure part-way through rolls the
@@ -468,6 +471,20 @@ export async function POST(
     console.error('[Agenda] Driver WhatsApp notification error (non-fatal):', waErr)
   }
 
+  await logAgendaSave(
+    params.ref,
+    chartBefore,
+    (items as Record<string, unknown>[]).map((item, index) => ({
+      date: dates[index],
+      location: (item.location as string) ?? null,
+      fromPoint: (item.fromPoint as string) ?? null,
+      toPoint: (item.toPoint as string) ?? null,
+      serviceType: normaliseServiceType(item.serviceType) ?? 'OWN_ARRANGEMENT',
+      assignment: item.isLeisure === true || item.isHotelOnly === true ? null : (item.assignment as Record<string, string | null> | null) ?? null,
+    })),
+    { id: session.user.id, name: session.user.name || session.user.email || null },
+  )
+
   return buildApiSuccess({ agenda, items: createdItems, includesWarning }, 'Agenda saved')
 }
 
@@ -501,7 +518,7 @@ export async function PUT(
     const previous = await prisma.assignment.findUnique({
       where:  { agendaItemId: itemId },
       select: {
-        driverName: true, driverPhone: true,
+        driverName: true, driverPhone: true, vehicleType: true, vehiclePlate: true, guideName: true,
         driverId: true, vendorId: true, vendorName: true, tourVendorId: true, tourVendorName: true,
       },
     })
@@ -659,6 +676,13 @@ export async function PUT(
       : whatsapp.reason === 'no-phone'  ? ' — no driver phone number, WhatsApp not sent'
       : ' — WhatsApp to driver failed'
 
+    await logAssignment(
+      params.ref, agendaItem, previous,
+      assignment === null ? null : (assignment as Record<string, string | null>),
+      { id: session.user.id, name: session.user.name || session.user.email || null },
+      waNote ? waNote.replace(/^ — /, '') : undefined,
+    )
+
     return buildApiSuccess(
       { ...updated, whatsapp },
       `Assignment saved${waNote}`,
@@ -695,6 +719,10 @@ export async function PUT(
   }
 
   const editedServiceType = normaliseServiceType(body.serviceType)
+  const itemBefore = await prisma.agendaItem.findUnique({
+    where: { id: itemId },
+    select: { date: true, location: true, fromPoint: true, toPoint: true, details: true, mealPlan: true, meetingTime: true, serviceType: true, isLeisure: true, isHotelOnly: true },
+  }).catch(() => null)
 
   const updated = await prisma.agendaItem.update({
     where: { id: itemId },
@@ -718,6 +746,12 @@ export async function PUT(
     throw err
   })
   if (!updated) return buildApiError(CUSTOM_SERVICE_TYPE_NOT_READY, 400)
+
+  if (itemBefore) {
+    await logMovementEdit(params.ref, itemBefore as unknown as Record<string, unknown>,
+      updated as unknown as Record<string, unknown>,
+      { id: session.user.id, name: session.user.name || session.user.email || null })
+  }
 
   // A Hotel Only change on one movement can complete (or reopen) the whole file
   // on the Sri Lanka Driver Allocation board. Non-fatal.
