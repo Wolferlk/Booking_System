@@ -18,6 +18,8 @@ import {
   type PackageNoteField,
 } from '@/lib/booking-field-edits'
 import type { UserRole } from '@prisma/client'
+import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
+import { syncAiCallsPhone, type AiCallSync } from '@/lib/contact-reach'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -260,6 +262,31 @@ export async function PUT(
     return buildApiError('Booking cannot be edited in current state')
   }
 
+  // ── Phone / WhatsApp validation ─────────────────────────────────────────
+  // These numbers drive the daily trip plan, feedback request and AI calls, so
+  // a changed one must carry its country code. Unchanged legacy values are let
+  // through (saving the email must not fail on an old agent landline).
+  // WhatsApp is stored digits-only ("919535250259"), phone as "+91 95352 50259".
+  const phoneHint = guessCountry(booking.contactCountry)
+  const phoneFields = { agentPhone, agentWhatsapp, contactPhone, contactWhatsapp } as Record<string, unknown>
+  const phoneLabels: Record<string, string> = {
+    agentPhone: 'Agent phone', agentWhatsapp: 'Agent WhatsApp',
+    contactPhone: 'Guest phone', contactWhatsapp: 'Guest WhatsApp',
+  }
+  const cleanPhones: Record<string, string | null | undefined> = {}
+  for (const [field, raw] of Object.entries(phoneFields)) {
+    if (raw === undefined) { cleanPhones[field] = undefined; continue }
+    const text = raw === null ? '' : String(raw).trim()
+    const before = String((booking as unknown as Record<string, unknown>)[field] ?? '').trim()
+    if (!text) { cleanPhones[field] = null; continue }
+    const v = checkPhone(text, phoneHint)
+    if (v.state !== 'valid') {
+      if (text === before) { cleanPhones[field] = text; continue }
+      return buildApiError(`${phoneLabels[field]}: ${phoneProblem(v)}`)
+    }
+    cleanPhones[field] = field.endsWith('Whatsapp') ? v.digits : v.pretty
+  }
+
   const updated = await prisma.booking.update({
     where: { bookingRef: params.ref },
     data: {
@@ -287,12 +314,12 @@ export async function PUT(
       ...(otherNote          !== undefined && { otherNote }),
       ...(clientRequest      !== undefined && { clientRequest }),
       ...(agentEmail !== undefined && { agentEmail }),
-      ...(agentPhone !== undefined && { agentPhone }),
-      ...(agentWhatsapp !== undefined && { agentWhatsapp }),
+      ...(cleanPhones.agentPhone !== undefined && { agentPhone: cleanPhones.agentPhone }),
+      ...(cleanPhones.agentWhatsapp !== undefined && { agentWhatsapp: cleanPhones.agentWhatsapp }),
       ...(agentAddress !== undefined && { agentAddress }),
       ...(contactEmail !== undefined && { contactEmail }),
-      ...(contactPhone !== undefined && { contactPhone }),
-      ...(contactWhatsapp !== undefined && { contactWhatsapp }),
+      ...(cleanPhones.contactPhone !== undefined && { contactPhone: cleanPhones.contactPhone }),
+      ...(cleanPhones.contactWhatsapp !== undefined && { contactWhatsapp: cleanPhones.contactWhatsapp }),
       ...(contactAddress !== undefined && { contactAddress }),
       ...(operationCountry !== undefined && { operationCountry }),
       ...(isSuperAdmin && { version: { increment: 1 } }),
@@ -499,7 +526,28 @@ export async function PUT(
     details: { fields: Object.keys(body), role },
   })
 
-  return buildApiSuccess(updated, 'Booking updated')
+  // The guest's WhatsApp moved → keep the AI-call service dialling the guest.
+  // Daily plan + feedback read the booking live, so they follow automatically.
+  let aiCallsSync: AiCallSync | null = null
+  const nextWa = cleanPhones.contactWhatsapp
+  if (nextWa && nextWa !== (booking.contactWhatsapp ?? '').replace(/\D/g, '') && checkPhone(nextWa).state === 'valid') {
+    aiCallsSync = await syncAiCallsPhone({
+      bookingRef: params.ref,
+      nextDigits: nextWa,
+      previous: [booking.contactWhatsapp, booking.contactPhone],
+    })
+    if (aiCallsSync.result === 'updated') {
+      await logActivity({
+        userId: session.user.id,
+        action: ACTION.BOOKING_UPDATED,
+        entityType: 'Booking',
+        entityId: params.ref,
+        details: { aiCallsPhone: { from: aiCallsSync.from, to: aiCallsSync.to }, role },
+      })
+    }
+  }
+
+  return buildApiSuccess({ ...updated, aiCallsSync }, 'Booking updated')
 }
 
 export async function DELETE(

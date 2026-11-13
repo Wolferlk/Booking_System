@@ -40,6 +40,8 @@ import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
 import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
+import { IntlPhoneInput, SameAsPhoneChip, ContactReachStrip } from '@/components/bookings/intl-phone-input'
+import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
@@ -306,6 +308,7 @@ export default function BookingDetailPage() {
   const [editContactModal, setEditContactModal] = useState(false)
   const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', agentAddress: '', contactEmail: '', contactPhone: '', contactWhatsapp: '', contactAddress: '' })
   const [savingContact, setSavingContact] = useState(false)
+  const [contactReachKey, setContactReachKey] = useState(0)
 
   // Package Details & Notes inline editing
   const [pkgEditing, setPkgEditing] = useState(false)
@@ -694,6 +697,14 @@ export default function BookingDetailPage() {
   // The matching server-side rule lives in `api/bookings/[ref]/route.ts` (PUT).
   const canEditContacts   = canEditBooking || isVnGroundLimited
   const canEditPassengers = canEditBooking || isVnGroundLimited
+
+  // Likely country of each party — powers the "add +91" one-tap fix on a
+  // number typed without its country code. Guest: stated nationality, then the
+  // lead passenger's; MakeMyTrip guests are overwhelmingly Indian.
+  const isMmtAgent = /make\s*my\s*trip|\bmmt\b/i.test(String(booking.agent ?? ''))
+  const leadPax = ((booking.passengers ?? []) as { isLead?: boolean; nationality?: string | null }[]).find(p => p.isLead)
+  const guestPhoneHint = guessCountry(booking.contactCountry as string | null, leadPax?.nationality, isMmtAgent ? 'IN' : null)
+  const agentPhoneHint = guessCountry(isMmtAgent ? 'IN' : null, booking.contactCountry as string | null)
 
   const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
@@ -1220,24 +1231,56 @@ Wishing you a wonderful trip! ✈️
   }
 
   async function saveContactEdits() {
+    // Every number must carry its country code — it is what WhatsApp briefings,
+    // the feedback request and AI calls dial. An old value nobody touched is
+    // let through (the server applies the same rule).
+    const PHONE_FIELDS = [
+      ['agentPhone', 'Agent phone', agentPhoneHint], ['agentWhatsapp', 'Agent WhatsApp', agentPhoneHint],
+      ['contactPhone', 'Guest phone', guestPhoneHint], ['contactWhatsapp', 'Guest WhatsApp', guestPhoneHint],
+    ] as const
+    const form = {
+      ...contactForm,
+      // WhatsApp falls back to the phone when left empty
+      agentWhatsapp:   (contactForm.agentWhatsapp   || contactForm.agentPhone).trim(),
+      contactWhatsapp: (contactForm.contactWhatsapp || contactForm.contactPhone).trim(),
+    }
+    for (const [field, label, hint] of PHONE_FIELDS) {
+      const value = form[field]
+      const v = checkPhone(value, hint)
+      if (v.state === 'empty') continue
+      if (v.state === 'valid') {
+        // WhatsApp is stored digits-only, phone as "+91 95352 50259"
+        form[field] = field.endsWith('Whatsapp') ? v.digits : v.pretty
+        continue
+      }
+      if (value === String(booking[field] ?? '').trim()) continue
+      toast.error(`${label}: ${phoneProblem(v)}`)
+      return
+    }
+
     setSavingContact(true)
     try {
-      // WhatsApp must never have a + prefix; fall back to phone if empty
-      const stripPlus = (v: string) => v.replace(/\+/g, '').trim()
-      const payload = {
-        ...contactForm,
-        agentWhatsapp:   stripPlus(contactForm.agentWhatsapp   || contactForm.agentPhone),
-        contactWhatsapp: stripPlus(contactForm.contactWhatsapp || contactForm.contactPhone),
-      }
       const res = await fetch(`/api/bookings/${ref}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(form),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Contact info updated')
+      const sync = json.data?.aiCallsSync as { result: string; to?: string; callPhone?: string; error?: string } | null
+      if (sync?.result === 'updated') {
+        toast.success(`Contact saved · AI calls now dial +${sync.to}`, {
+          description: 'Daily trip plan & feedback request use the new number automatically. Ask the guest to allow WhatsApp calls on it from AI Calls if needed.',
+        })
+      } else if (sync?.result === 'kept-different') {
+        toast.success('Contact saved', { description: `AI calls are still on +${sync.callPhone} (registered for a different traveller) — change it in AI Calls if that is wrong.` })
+      } else if (sync?.result === 'failed') {
+        toast.warning('Contact saved, but AI calls could not be moved to the new number', { description: sync.error })
+      } else {
+        toast.success('Contact info updated')
+      }
       setEditContactModal(false)
+      setContactReachKey(k => k + 1)
       await load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
@@ -2823,24 +2866,23 @@ Wishing you a wonderful trip! ✈️
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
                           <Phone className="w-3.5 h-3.5" /> Phone
                         </label>
-                        <input className="form-input" type="tel" placeholder="+94 77 123 4567"
+                        <IntlPhoneInput kind="phone" hint={agentPhoneHint}
                           value={contactForm.agentPhone}
-                          onChange={e => {
-                            const phone = e.target.value
-                            setContactForm(f => ({
-                              ...f,
-                              agentPhone: phone,
-                              agentWhatsapp: f.agentWhatsapp ? f.agentWhatsapp : phone.replace(/\+/g, ''),
-                            }))
-                          }} />
+                          onChange={phone => setContactForm(f => {
+                            // WhatsApp follows the phone while it is empty or still mirroring it
+                            const follows = !f.agentWhatsapp || f.agentWhatsapp.replace(/\D/g, '') === f.agentPhone.replace(/\D/g, '')
+                            return { ...f, agentPhone: phone, agentWhatsapp: follows ? phone : f.agentWhatsapp }
+                          })} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
                           <MessageCircle className="w-3.5 h-3.5 text-green-500" /> WhatsApp
+                          <SameAsPhoneChip phone={contactForm.agentPhone} whatsapp={contactForm.agentWhatsapp} hint={agentPhoneHint}
+                            onUse={v => setContactForm(f => ({ ...f, agentWhatsapp: v }))} />
                         </label>
-                        <input className="form-input" type="tel" placeholder="94771234567 (no +)"
+                        <IntlPhoneInput kind="whatsapp" hint={agentPhoneHint}
                           value={contactForm.agentWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value.replace(/\+/g, '') }))} />
+                          onChange={v => setContactForm(f => ({ ...f, agentWhatsapp: v }))} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -2924,24 +2966,24 @@ Wishing you a wonderful trip! ✈️
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
                           <Phone className="w-3.5 h-3.5" /> Phone
                         </label>
-                        <input className="form-input" type="tel" placeholder="+94 77 123 4567"
+                        <IntlPhoneInput kind="phone" hint={guestPhoneHint}
                           value={contactForm.contactPhone}
-                          onChange={e => {
-                            const phone = e.target.value
-                            setContactForm(f => ({
-                              ...f,
-                              contactPhone: phone,
-                              contactWhatsapp: f.contactWhatsapp ? f.contactWhatsapp : phone.replace(/\+/g, ''),
-                            }))
-                          }} />
+                          onChange={phone => setContactForm(f => {
+                            // WhatsApp follows the phone while it is empty or still mirroring it
+                            const follows = !f.contactWhatsapp || f.contactWhatsapp.replace(/\D/g, '') === f.contactPhone.replace(/\D/g, '')
+                            return { ...f, contactPhone: phone, contactWhatsapp: follows ? phone : f.contactWhatsapp }
+                          })} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
                           <MessageCircle className="w-3.5 h-3.5 text-green-500" /> WhatsApp
+                          <span className="text-[10px] text-slate-300">· daily plan, feedback & AI calls</span>
+                          <SameAsPhoneChip phone={contactForm.contactPhone} whatsapp={contactForm.contactWhatsapp} hint={guestPhoneHint}
+                            onUse={v => setContactForm(f => ({ ...f, contactWhatsapp: v }))} />
                         </label>
-                        <input className="form-input" type="tel" placeholder="94771234567 (no +)"
+                        <IntlPhoneInput kind="whatsapp" hint={guestPhoneHint}
                           value={contactForm.contactWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value.replace(/\+/g, '') }))} />
+                          onChange={v => setContactForm(f => ({ ...f, contactWhatsapp: v }))} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -2980,6 +3022,9 @@ Wishing you a wonderful trip! ✈️
                           <div className="flex-1 min-w-0">
                             <p className="text-xs text-slate-400">WhatsApp</p>
                             <span className="text-sm text-slate-700">{booking.contactWhatsapp as string}</span>
+                            {checkPhone(booking.contactWhatsapp as string, guestPhoneHint).state === 'valid'
+                              ? <span className="ml-2 text-[10px] font-medium text-emerald-600">✓ WhatsApp-ready</span>
+                              : <span className="ml-2 text-[10px] font-medium text-amber-600">⚠ missing country code</span>}
                           </div>
                           <button onClick={() => { navigator.clipboard.writeText(booking.contactWhatsapp as string); toast.success('WhatsApp number copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
                         </div>
@@ -2999,6 +3044,19 @@ Wishing you a wonderful trip! ✈️
                       )}
                     </div>
                   )}
+
+                  {/* Live map of what this number drives — daily plan, feedback, AI calls */}
+                  <ContactReachStrip
+                    bookingRef={ref}
+                    whatsapp={canEditContacts ? contactForm.contactWhatsapp : String(booking.contactWhatsapp ?? '')}
+                    phone={canEditContacts ? contactForm.contactPhone : String(booking.contactPhone ?? '')}
+                    savedWhatsapp={(booking.contactWhatsapp as string | null) ?? null}
+                    hint={guestPhoneHint}
+                    arrivalDate={booking.arrivalDate as string}
+                    departureDate={booking.departureDate as string}
+                    reloadKey={contactReachKey}
+                    onOpenAiCalls={async () => { await loadTestMode(); setAiCallsModal(true) }}
+                  />
                 </CardBody>
               </Card>
             </div>
@@ -4761,15 +4819,15 @@ Wishing you a wonderful trip! ✈️
               </div>
               <div>
                 <label className="form-label">Agent Phone</label>
-                <input className="form-input" type="tel" placeholder="+94 77 123 4567"
+                <IntlPhoneInput kind="phone" hint={agentPhoneHint} compact
                   value={contactForm.agentPhone}
-                  onChange={e => setContactForm(f => ({ ...f, agentPhone: e.target.value }))} />
+                  onChange={v => setContactForm(f => ({ ...f, agentPhone: v }))} />
               </div>
               <div>
                 <label className="form-label">Agent WhatsApp</label>
-                <input className="form-input" type="tel" placeholder="94771234567 (no +)"
+                <IntlPhoneInput kind="whatsapp" hint={agentPhoneHint} compact
                   value={contactForm.agentWhatsapp}
-                  onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value }))} />
+                  onChange={v => setContactForm(f => ({ ...f, agentWhatsapp: v }))} />
               </div>
             </div>
           </div>
@@ -4784,15 +4842,15 @@ Wishing you a wonderful trip! ✈️
               </div>
               <div>
                 <label className="form-label">Customer Phone</label>
-                <input className="form-input" type="tel" placeholder="+94 77 123 4567"
+                <IntlPhoneInput kind="phone" hint={guestPhoneHint} compact
                   value={contactForm.contactPhone}
-                  onChange={e => setContactForm(f => ({ ...f, contactPhone: e.target.value }))} />
+                  onChange={v => setContactForm(f => ({ ...f, contactPhone: v }))} />
               </div>
               <div>
                 <label className="form-label">Customer WhatsApp</label>
-                <input className="form-input" type="tel" placeholder="94771234567 (no +)"
+                <IntlPhoneInput kind="whatsapp" hint={guestPhoneHint} compact
                   value={contactForm.contactWhatsapp}
-                  onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value }))} />
+                  onChange={v => setContactForm(f => ({ ...f, contactWhatsapp: v }))} />
               </div>
             </div>
           </div>

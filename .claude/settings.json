@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(*migrate:fresh*)",
+      "Bash(*migrate:reset*)",
+      "Bash(*migrate:refresh*)",
+      "Bash(*migrate:rollback*)",
+      "Bash(*db:wipe*)",
+      "Bash(*artisan db:seed*)",
+      "Bash(*npm run db:seed*)",
+      "Bash(*npm run db:push*)",
+      "Bash(*prisma migrate reset*)",
+      "Bash(*prisma db push*)",
+      "Bash(*prisma db seed*)",
+      "Bash(*--force-reset*)",
+      "Bash(*--accept-data-loss*)",
+      "Bash(*DROP TABLE*)",
+      "Bash(*DROP DATABASE*)",
+      "Bash(*drop table*)",
+      "Bash(*drop database*)",
+      "Bash(*TRUNCATE*)",
+      "Bash(*truncate table*)",
+      "Bash(mysqladmin*drop*)",
+      "Bash(dropdb*)",
+      "Bash(*dropDatabase*)",
+      "Bash(*deleteMany({})*)",
+      "Bash(*git push --force*)",
+      "Bash(*git push -f*)",
+      "PowerShell(*migrate:fresh*)",
+      "PowerShell(*migrate:reset*)",
+      "PowerShell(*migrate:refresh*)",
+      "PowerShell(*migrate:rollback*)",
+      "PowerShell(*db:wipe*)",
+      "PowerShell(*artisan db:seed*)",
+      "PowerShell(*npm run db:seed*)",
+      "PowerShell(*npm run db:push*)",
+      "PowerShell(*prisma migrate reset*)",
+      "PowerShell(*prisma db push*)",
+      "PowerShell(*prisma db seed*)",
+      "PowerShell(*--force-reset*)",
+      "PowerShell(*--accept-data-loss*)",
+      "PowerShell(*DROP TABLE*)",
+      "PowerShell(*DROP DATABASE*)",
+      "PowerShell(*TRUNCATE*)",
+      "PowerShell(*dropDatabase*)",
+      "Edit(**/.env)",
+      "Write(**/.env)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "This workspace (OPS System + ERP System) is connected to LIVE PRODUCTION databases (AWS RDS aahaas-prod-*, 13.250.96.119:6033, production_live1, apple_booking_system, invoice_processor, MongoDB Atlas) with real booking, invoice and payment data. Inspect the command in $ARGUMENTS. Answer not-ok if it could destroy, reset, truncate, mass-update or mass-delete data, or drop/rename tables, columns or databases. Flag specifically: artisan migrate:fresh/reset/refresh/rollback, db:wipe, db:seed; prisma migrate reset, prisma db push (any form), prisma db seed; SQL DROP/TRUNCATE/ALTER ... DROP; DELETE or UPDATE without a precise WHERE clause (including inside tinker, mysql, psql, node -e, DB::statement, $executeRaw); MongoDB deleteMany({})/updateMany({})/drop/dropDatabase; running test suites (php artisan test, phpunit, npm test) against a non-local DB; starting queue workers, schedulers or mail/OneDrive pollers (queue:work, schedule:run, cron scripts) that would act on live data; printing .env secrets to output; git push --force. Ordinary reads, SELECT queries, file reads/edits, git status/diff/log, composer/npm install, lint, and build are ok."
+          }
+        ]
+      }
+    ]
+  }
+}
