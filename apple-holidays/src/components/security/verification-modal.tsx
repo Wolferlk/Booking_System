@@ -25,6 +25,7 @@ export type VerifyActionName =
   | 'BOOKING_DELETE'
   | 'BOOKING_BULK_DELETE'
   | 'BOOKING_FILTERED_DELETE'
+  | 'GUEST_AUTOMATION_OFF'
 
 export interface VerificationCredentials {
   verificationId: string
@@ -55,6 +56,7 @@ const TITLES: Record<VerifyActionName, string> = {
   BOOKING_DELETE:      'Confirm Deletion',
   BOOKING_BULK_DELETE: 'Confirm Deletion',
   BOOKING_FILTERED_DELETE: 'Confirm Deletion',
+  GUEST_AUTOMATION_OFF: 'Confirm: Turn Off Guest Automation',
 }
 
 export default function VerificationModal({

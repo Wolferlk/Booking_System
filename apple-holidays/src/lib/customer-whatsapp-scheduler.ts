@@ -79,6 +79,12 @@ async function tick(): Promise<void> {
         console.error('[CustomerWhatsAppScheduler] ticket-sends error:', err instanceof Error ? err.message : err))
     await runGroupAutomations().catch(err =>
       console.error('[CustomerWhatsAppScheduler] group automation error:', err instanceof Error ? err.message : err))
+    // Guests who have not tapped Allow on the call-permission request: up to
+    // two reminders, 24 h apart (guest-automation.ts).
+    await import('./guest-automation')
+      .then(m => m.runGuestApprovalReminders())
+      .catch(err =>
+        console.error('[CustomerWhatsAppScheduler] approval-reminder error:', err instanceof Error ? err.message : err))
   } finally {
     ticking = false
   }

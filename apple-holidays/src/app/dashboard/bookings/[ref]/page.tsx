@@ -43,6 +43,7 @@ import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import { IntlPhoneInput, SameAsPhoneChip, ContactReachStrip } from '@/components/bookings/intl-phone-input'
 import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
 import GuestWhatsAppHero from '@/components/bookings/guest-whatsapp-hero'
+import GuestAutopilot from '@/components/bookings/guest-autopilot'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import { usePassengerNotes, SpecialChip, SpecialCountChip, SpecialNoteBlock } from '@/components/bookings/passenger-special-note'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
@@ -1269,7 +1270,16 @@ Wishing you a wonderful trip! ✈️
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       const sync = json.data?.aiCallsSync as { result: string; to?: string; callPhone?: string; error?: string } | null
-      if (sync?.result === 'updated') {
+      const engage = json.data?.guestEngage as { status: string; approval?: string; registration?: string } | null
+      if (engage?.status === 'started') {
+        toast.success('Contact saved · Guest Autopilot started', {
+          description: [
+            engage.approval === 'allowed' ? 'Guest already allows calls ✓' : 'Allow request sent to the guest',
+            engage.registration === 'registered' ? 'AI calls registered' : engage.registration === 'existing' ? 'AI calls already set up' : null,
+            engage.approval !== 'allowed' ? 'reminders every 24 h until they tap Allow' : null,
+          ].filter(Boolean).join(' · '),
+        })
+      } else if (sync?.result === 'updated') {
         toast.success(`Contact saved · AI calls now dial +${sync.to}`, {
           description: 'Daily trip plan & feedback request use the new number automatically. Ask the guest to allow WhatsApp calls on it from AI Calls if needed.',
         })
@@ -1791,6 +1801,15 @@ Wishing you a wonderful trip! ✈️
                   hint={guestPhoneHint}
                   canEdit={canEditContacts}
                   onSaved={async () => { setContactReachKey(k => k + 1); await load() }}
+                />
+              )}
+              {/* Auto messages / auto AI calls switches + the Allow-request journey */}
+              {canViewClientDetails && (
+                <GuestAutopilot
+                  bookingRef={ref}
+                  hasWhatsapp={checkPhone(booking.contactWhatsapp as string | null, guestPhoneHint).state === 'valid'}
+                  canEdit={canEditContacts}
+                  reloadKey={contactReachKey}
                 />
               )}
             </div>

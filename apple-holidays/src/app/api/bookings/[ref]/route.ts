@@ -20,6 +20,7 @@ import {
 import type { UserRole } from '@prisma/client'
 import { checkPhone, guessCountry, phoneProblem } from '@/lib/phone-intl'
 import { syncAiCallsPhone, type AiCallSync } from '@/lib/contact-reach'
+import { autoEngageGuest, type EngageOutcome } from '@/lib/guest-automation'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -529,6 +530,7 @@ export async function PUT(
   // The guest's WhatsApp moved → keep the AI-call service dialling the guest.
   // Daily plan + feedback read the booking live, so they follow automatically.
   let aiCallsSync: AiCallSync | null = null
+  let guestEngage: EngageOutcome | null = null
   const nextWa = cleanPhones.contactWhatsapp
   if (nextWa && nextWa !== (booking.contactWhatsapp ?? '').replace(/\D/g, '') && checkPhone(nextWa).state === 'valid') {
     aiCallsSync = await syncAiCallsPhone({
@@ -536,6 +538,13 @@ export async function PUT(
       nextDigits: nextWa,
       previous: [booking.contactWhatsapp, booking.contactPhone],
     })
+    // New guest number → ask the guest to allow calls, then register AI calls;
+    // reminders follow from the scheduler. Never fails the save.
+    guestEngage = await autoEngageGuest({
+      bookingRef: params.ref,
+      actor: session.user.name || session.user.email || 'booking page',
+      trigger: 'number-assigned',
+    }).catch((err): EngageOutcome => ({ status: 'skipped', reason: err instanceof Error ? err.message : String(err) }))
     if (aiCallsSync.result === 'updated') {
       await logActivity({
         userId: session.user.id,
@@ -547,7 +556,7 @@ export async function PUT(
     }
   }
 
-  return buildApiSuccess({ ...updated, aiCallsSync }, 'Booking updated')
+  return buildApiSuccess({ ...updated, aiCallsSync, guestEngage }, 'Booking updated')
 }
 
 export async function DELETE(

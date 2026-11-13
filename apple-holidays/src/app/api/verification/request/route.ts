@@ -10,6 +10,7 @@ import {
   VerificationUnavailableError, type VerifyAction,
 } from '@/lib/action-verification'
 import type { UserRole } from '@prisma/client'
+import { GUEST_AUTOMATION_ROLES, guestAutomationKinds, guestAutomationTarget } from '@/lib/guest-automation-access'
 
 export const dynamic = 'force-dynamic'
 
@@ -120,6 +121,18 @@ async function resolveTarget(action: VerifyAction, body: Record<string, unknown>
   }
   if (action === VERIFY_ACTION.BOOKING_CANCEL && !CANCEL_ROLES.includes(role)) {
     return { error: 'Your role is not allowed to cancel a booking', status: 403 }
+  }
+  if (action === VERIFY_ACTION.GUEST_AUTOMATION_OFF) {
+    if (!GUEST_AUTOMATION_ROLES.includes(role)) {
+      return { error: 'Your role is not allowed to change guest automation', status: 403 }
+    }
+    // Bound to exactly which switches go off, so a code for "messages" cannot turn off calls.
+    const kinds = guestAutomationKinds(body.kinds)
+    if (kinds.length === 0) return { error: 'Choose messages and/or calls to turn off', status: 400 }
+    return {
+      target: guestAutomationTarget(booking.bookingRef, kinds),
+      label:  `${booking.bookingRef} — auto ${kinds.join(' + ')} OFF`,
+    }
   }
   if (action === VERIFY_ACTION.BOOKING_FULL_CANCEL) {
     const rows = await prisma.systemSetting.findMany({

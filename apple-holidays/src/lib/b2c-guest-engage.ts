@@ -25,6 +25,7 @@ import { isB2cBooking } from './booking-source'
 import { normalizePhone, teGet, tePatch, tePost } from './te/te-api'
 import { markApproved, recordApprovalRequest } from './te/call-approvals'
 import { getVersionLinks } from './b2c-version-links'
+import { isGuestAutoOff, trackApprovalRequest } from './guest-auto-switches'
 
 export const ENGAGE_ENABLED = 'auto_b2c_guest_engage_enabled'
 /** One row per booking, written once the booking has been handled. */
@@ -90,6 +91,8 @@ export async function engageB2cGuest(params: {
   if (booking.status === 'CANCELLED' || booking.status === 'PENDING_CANCELLATION') return skip('booking is cancelled')
   if (booking.departureDate.toISOString().slice(0, 10) < new Date().toISOString().slice(0, 10)) return skip('trip is over')
 
+  if (await isGuestAutoOff(bookingRef, 'calls')) return skip('AI calls turned off for this booking')
+
   const phone = internationalDigits(booking.contactWhatsapp)
   if (!phone) return skip('no WhatsApp number with a country code')
   const guest = internationalDigits(params.guestPhone)
@@ -115,6 +118,11 @@ export async function engageB2cGuest(params: {
 
   const approval = await requestCallPermission(phone, booking.passengers[0]?.name ?? null, bookingRef, actor)
   await writeLedger(bookingRef, { phone, outcome: 'registered', approval })
+  // Same 24 h reminders as a number assigned on the booking page.
+  await trackApprovalRequest({
+    bookingRef, phone, actor, trigger: 'b2c-auto-engage', registered: true,
+    stage: approval === 'already-allowed' ? 'allowed' : approval ?? 'failed',
+  }).catch((err) => console.warn('[b2c-guest-engage] reminder tracking failed:', err))
   return { bookingRef, status: 'registered', approval }
 }
 

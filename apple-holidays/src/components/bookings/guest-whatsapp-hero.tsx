@@ -79,7 +79,16 @@ export default function GuestWhatsAppHero({
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       const sync = json.data?.aiCallsSync as { result: string; callPhone?: string; error?: string } | null
-      if (sync?.result === 'updated') {
+      const engage = json.data?.guestEngage as { status: string; approval?: string; registration?: string } | null
+      if (engage?.status === 'started') {
+        toast.success(`WhatsApp set to ${v.pretty} · Autopilot started`, {
+          description: [
+            engage.approval === 'allowed' ? 'Guest already allows calls ✓' : 'Allow request sent to the guest',
+            engage.registration === 'registered' ? 'AI calls registered' : engage.registration === 'existing' ? 'AI calls already set up' : null,
+            engage.approval !== 'allowed' ? 'reminders every 24 h until they tap Allow' : null,
+          ].filter(Boolean).join(' · '),
+        })
+      } else if (sync?.result === 'updated') {
         toast.success(`WhatsApp set to ${v.pretty}`, { description: 'Daily plan, feedback & AI calls now use this number.' })
       } else if (sync?.result === 'kept-different') {
         toast.success(`WhatsApp set to ${v.pretty}`, { description: `AI calls stay on +${sync.callPhone} (another traveller).` })

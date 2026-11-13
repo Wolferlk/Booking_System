@@ -25,6 +25,13 @@ import { prisma } from '@/lib/prisma'
 import { readDb } from '@/lib/prisma-read'
 import { normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
 import { portalLinkPath } from '@/lib/portal-link'
+import { guestAutoOffRefs } from '@/lib/guest-auto-switches'
+
+/** Drop bookings whose automatic guest messages were turned OFF (OTP-confirmed). */
+async function withoutMuted<T extends { bookingRef: string }>(rows: T[]): Promise<T[]> {
+  const muted = new Set(await guestAutoOffRefs('messages').catch(() => [] as string[]))
+  return muted.size ? rows.filter(r => !muted.has(r.bookingRef.toUpperCase())) : rows
+}
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
@@ -369,7 +376,7 @@ export async function runPortalWelcome(): Promise<PortalRunResult> {
   })
   console.log(`[PortalLink:welcome] ${candidates.length} candidate booking(s)`)
 
-  return runStage('welcome', candidates, targetDate)
+  return runStage('welcome', await withoutMuted(candidates), targetDate)
 }
 
 /** Reminder sweep — bookings arriving in exactly REMINDER_DAYS_BEFORE days. */
@@ -395,5 +402,5 @@ export async function runPortalReminder(): Promise<PortalRunResult> {
   })
   console.log(`[PortalLink:reminder] ${candidates.length} candidate booking(s)`)
 
-  return runStage('reminder', candidates, targetDate)
+  return runStage('reminder', await withoutMuted(candidates), targetDate)
 }

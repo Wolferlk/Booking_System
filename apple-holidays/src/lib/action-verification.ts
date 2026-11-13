@@ -37,13 +37,15 @@ export const VERIFY_ACTION = {
   BOOKING_DELETE:      'BOOKING_DELETE',
   BOOKING_BULK_DELETE: 'BOOKING_BULK_DELETE',
   BOOKING_FILTERED_DELETE: 'BOOKING_FILTERED_DELETE',
+  /** Turning a booking's automatic guest WhatsApp messages and/or AI calls OFF. */
+  GUEST_AUTOMATION_OFF: 'GUEST_AUTOMATION_OFF',
 } as const
 
 export type VerifyAction = (typeof VERIFY_ACTION)[keyof typeof VERIFY_ACTION]
 
 /** Copy for the mail and the audit trail. Keep the wording plain — this is the
  *  last thing a user reads before something becomes permanent. */
-const ACTION_COPY: Record<VerifyAction, { title: string; what: string; undo: string }> = {
+const ACTION_COPY: Record<VerifyAction, { title: string; what: string; undo: string; reversible?: boolean }> = {
   BOOKING_CANCEL: {
     title: 'Cancel a booking',
     what:  'send this booking to the accounts team as a cancellation request',
@@ -68,6 +70,12 @@ const ACTION_COPY: Record<VerifyAction, { title: string; what: string; undo: str
     title: 'Delete bookings matching a filter',
     what:  'permanently delete every booking matching the filter you set in Bookings Cleanup',
     undo:  'Every matching booking and everything attached to it — passengers, flights, hotels, agenda, PNL — is erased. This cannot be undone, and the match is evaluated again at the moment of deletion.',
+  },
+  GUEST_AUTOMATION_OFF: {
+    title: 'Turn off guest automation',
+    what:  "turn off automatic WhatsApp messages and/or AI calls for this booking's guest",
+    undo:  'The guest stops receiving the daily trip plan, feedback request and other automatic messages, and/or the AI calls (the call service is paused), until someone turns them back on from the booking page.',
+    reversible: true,
   },
 }
 
@@ -449,7 +457,7 @@ function buildCodeEmail(opts: {
 
   <div style="border:1px solid #fecaca;background:#fef2f2;border-radius:12px;padding:14px;margin-top:18px">
     <p style="font-size:12px;font-weight:700;color:#b91c1c;text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px">
-      This cannot be undone
+      ${copy.reversible ? 'What this changes' : 'This cannot be undone'}
     </p>
     <p style="font-size:13px;line-height:1.6;color:#991b1b;margin:0">${copy.undo}</p>
   </div>

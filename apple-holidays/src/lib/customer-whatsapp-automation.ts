@@ -28,6 +28,7 @@ import { listVersionLinks } from '@/lib/b2c-version-links'
 import { getCustomerBranding } from '@/lib/customer-branding-server'
 import { shouldHideBrand, type BrandAudience } from '@/lib/customer-branding'
 import { resolveVendorPhones } from '@/lib/vn-vendor-sync/registry'
+import { guestAutoOffRefs, isGuestAutoOff } from '@/lib/guest-auto-switches'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -81,7 +82,10 @@ export async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
   const base: Prisma.BookingWhereInput = engaged.length === 0
     ? live
     : { OR: [live, { status: 'DRAFT', agent: B2C_AGENT_NAME, bookingRef: { in: engaged } }] }
-  return replaced.length ? { AND: [base, { bookingRef: { notIn: replaced } }] } : base
+  // Staff turned automatic guest messages OFF for these (OTP-confirmed, guest-auto-switches.ts).
+  const muted = await guestAutoOffRefs('messages').catch(() => [] as string[])
+  const excluded = [...replaced, ...muted]
+  return excluded.length ? { AND: [base, { bookingRef: { notIn: excluded } }] } : base
 }
 
 async function settingEnabled(key: string): Promise<boolean> {
@@ -306,6 +310,12 @@ export async function sendDailyBriefingForBooking(
     },
   })
   if (!b) return { ok: false, reason: 'Booking not found' }
+
+  // Automatic sends respect the booking's "auto messages OFF"; a manual
+  // (forced) send from the panel is still the desk's own decision.
+  if (!opts.force && !opts.dryRun && await isGuestAutoOff(bookingRef, 'messages')) {
+    return { ok: false, reason: 'Automatic messages are turned off for this booking' }
+  }
 
   if (!opts.force && await alreadySentForDay(bookingRef, targetDateStr)) {
     return { ok: false, reason: 'Already sent for this day' }
@@ -630,6 +640,9 @@ export async function sendFeedbackRequestForBooking(
   })
   if (!b) return { ok: false, reason: 'Booking not found' }
   if (b.guestFeedback && !opts.dryRun) return { ok: false, reason: 'Feedback already received' }
+  if (!opts.force && !opts.dryRun && await isGuestAutoOff(bookingRef, 'messages')) {
+    return { ok: false, reason: 'Automatic messages are turned off for this booking' }
+  }
 
   if (!opts.force && await alreadySentToday(bookingRef, TAG_FEEDBACK_REQUEST)) {
     return { ok: false, reason: 'Already sent today' }
