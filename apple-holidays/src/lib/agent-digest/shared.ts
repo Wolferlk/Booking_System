@@ -529,6 +529,58 @@ export function partyText(p: DigestParty | null, withPhone: boolean): string {
   return [p.name, withPhone && p.phone ? p.phone : null].filter(Boolean).join(' · ')
 }
 
+/**
+ * Agents only want numbers to dial — not who is a driver, vendor or guide, and
+ * not vendor names. Pull every phone out of the enabled parties (including
+ * numbers typed into a name field, e.g. "Danang driver's manager: +8436…"),
+ * de-duplicated on the last 9 digits so "+84 912…" and "0912…" count once.
+ */
+const PHONE_RX = /\+?\d[\d\s().-]{6,}\d/g
+
+function phonesIn(s: string | null | undefined): string[] {
+  return (String(s ?? '').match(PHONE_RX) ?? [])
+    // "0912345678 0987654321" — two numbers with only a space between them
+    .flatMap(n => (n.replace(/\D/g, '').length > 15 ? n.split(/\s+/) : [n]))
+    .map(n => n.replace(/[\s().-]+/g, ''))
+}
+
+type ContactSource = { p: DigestParty | null | undefined; on: boolean; phone: boolean }
+
+export function contactNumbers(sources: ContactSource[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const { p, on, phone } of sources) {
+    if (!on || !p) continue
+    for (const n of [...phonesIn(p.name), ...(phone ? phonesIn(p.phone) : [])]) {
+      const digits = n.replace(/\D/g, '')
+      if (digits.length < 7) continue
+      const key = digits.slice(-9)
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(n)
+    }
+  }
+  return out
+}
+
+function itemContacts(it: DigestItem, f: DigestFields): string[] {
+  return contactNumbers([
+    { p: it.driver, on: f.driver, phone: f.driverPhone },
+    { p: it.driverVendor, on: f.driverVendor, phone: f.driverPhone },
+    { p: it.guide, on: f.guide, phone: f.guidePhone },
+    { p: it.tourVendor, on: f.tourVendor, phone: f.tourVendorPhone },
+  ])
+}
+
+function teamContacts(t: DigestBooking['team'], f: DigestFields): string[] {
+  return contactNumbers([
+    ...t.drivers.map(p => ({ p, on: f.driver, phone: f.driverPhone })),
+    ...t.driverVendors.map(p => ({ p, on: f.driverVendor, phone: f.driverPhone })),
+    ...t.guides.map(p => ({ p, on: f.guide, phone: f.guidePhone })),
+    ...t.tourVendors.map(p => ({ p, on: f.tourVendor, phone: f.tourVendorPhone })),
+  ])
+}
+
 export function paxText(b: DigestBooking): string {
   const parts = [`${b.paxAdults}A`]
   if (b.paxChildren) parts.push(`${b.paxChildren}C`)
@@ -556,15 +608,10 @@ function itemLinesWa(it: DigestItem, f: DigestFields, style: DigestStyle): strin
     .filter(Boolean).join(' ')
   out.push(`▸ ${head || 'Agenda line'}${it.isLeisure ? ' · 🌴 leisure' : ''}`)
   const sub: string[] = []
-  if (f.driver) {
-    const d = partyText(it.driver, f.driverPhone)
-    const veh = f.vehicle && it.vehicle ? it.vehicle : ''
-    if (d || veh) sub.push(`🚗 ${[d, veh].filter(Boolean).join(' · ')}`)
-    else if (f.flagMissing && allocationPending(it)) sub.push('⚠️ Driver pending')
-  } else if (f.vehicle && it.vehicle) sub.push(`🚗 ${it.vehicle}`)
-  if (f.driverVendor) { const v = partyText(it.driverVendor, f.driverPhone); if (v) sub.push(`🏢 ${v}`) }
-  if (f.guide) { const g = partyText(it.guide, f.guidePhone); if (g) sub.push(`🧭 Guide: ${g}`) }
-  if (f.tourVendor) { const t = partyText(it.tourVendor, f.tourVendorPhone); if (t) sub.push(`🎟️ ${t}`) }
+  const nums = itemContacts(it, f)
+  if (nums.length) sub.push(`📞 Contact: ${nums.join(' / ')}`)
+  else if (f.driver && f.flagMissing && allocationPending(it)) sub.push('⚠️ Contact pending')
+  if (f.vehicle && it.vehicle) sub.push(`🚐 ${it.vehicle}`)
   if (f.movementNote && it.note) sub.push(`📝 ${it.note}`)
   if (style === 'compact') {
     if (sub.length) out[0] += ` — ${sub.join(' | ')}`
@@ -576,14 +623,13 @@ function itemLinesWa(it: DigestItem, f: DigestFields, style: DigestStyle): strin
 
 function teamLinesWa(b: DigestBooking, f: DigestFields): string[] {
   const out: string[] = []
-  if (f.driver) {
-    if (b.team.drivers.length) {
-      for (const d of b.team.drivers) out.push(`   🚗 ${[partyText(d, f.driverPhone), f.vehicle ? d.vehicle : null].filter(Boolean).join(' · ')}`)
-    } else if (f.flagMissing && b.missing > 0) out.push('   ⚠️ Driver pending')
+  const nums = teamContacts(b.team, f)
+  if (nums.length) out.push(`   📞 Contact: ${nums.join(' / ')}`)
+  else if (f.driver && f.flagMissing && b.missing > 0) out.push('   ⚠️ Contact pending')
+  if (f.vehicle) {
+    const veh = [...new Set(b.team.drivers.map(d => d.vehicle).filter((v): v is string => !!v))]
+    if (veh.length) out.push(`   🚐 ${veh.join(' / ')}`)
   }
-  if (f.driverVendor) for (const v of b.team.driverVendors) out.push(`   🏢 ${partyText(v, f.driverPhone)}`)
-  if (f.guide) for (const g of b.team.guides) out.push(`   🧭 Guide: ${partyText(g, f.guidePhone)}`)
-  if (f.tourVendor) for (const t of b.team.tourVendors) out.push(`   🎟️ ${partyText(t, f.tourVendorPhone)}`)
   return out
 }
 
@@ -668,10 +714,15 @@ function detailLine(html: string, color = '#475569'): string {
   return `<div style="font-size:13px;line-height:20px;color:${color};margin-top:2px">${html}</div>`
 }
 
-function partyHtml(icon: string, label: string, p: DigestParty | null, phone: boolean, extra?: string | null): string {
-  if (!p?.name && !p?.phone && !extra) return ''
-  const tel = phone && p?.phone ? ` <a href="tel:${esc(p.phone.replace(/\s+/g, ''))}" style="color:#0f766e;text-decoration:none;white-space:nowrap">${esc(p.phone)}</a>` : ''
-  return detailLine(`${icon} <span style="color:#64748b">${label}</span> <b style="color:#0f172a">${esc(p?.name ?? '')}</b>${tel}${extra ? ` <span style="color:#64748b">· ${esc(extra)}</span>` : ''}`, '#334155')
+
+/** "📞 Contact  [+84…]  [+84…]" — each number a tap-to-dial pill. Solid fills
+ *  and inline-block only, so Outlook keeps it readable. */
+function contactHtml(nums: string[]): string {
+  if (!nums.length) return ''
+  const pills = nums.map(n =>
+    `<a href="tel:${esc(n)}" style="display:inline-block;background-color:#f0fdfa;border:1px solid #99f6e4;border-radius:999px;padding:2px 10px;margin:3px 4px 0 0;font-size:13px;line-height:18px;font-weight:700;color:#0f766e;text-decoration:none;white-space:nowrap">${esc(n)}</a>`,
+  ).join('')
+  return `<div style="margin-top:4px;font-size:13px;line-height:20px;color:#334155">📞 <span style="color:#64748b;font-weight:600">Contact</span><br>${pills}</div>`
 }
 
 function statTile(value: number, label: string, bg: string, border: string, fg: string): string {
@@ -712,12 +763,12 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
       let body = ''
       if (blk.scope === 'TOUR') {
         const t = b.team
+        const nums = teamContacts(t, f)
+        const veh = f.vehicle ? [...new Set(t.drivers.map(d => d.vehicle).filter((v): v is string => !!v))] : []
         body = [
-          ...(f.driver ? t.drivers.map(d => partyHtml('🚗', 'Driver', d, f.driverPhone, f.vehicle ? d.vehicle : null)) : []),
-          ...(f.driver && !t.drivers.length && f.flagMissing && b.missing ? [detailLine('⚠️ <b>Driver pending</b>', '#b91c1c')] : []),
-          ...(f.driverVendor ? t.driverVendors.map(v => partyHtml('🏢', 'Driver vendor', v, f.driverPhone)) : []),
-          ...(f.guide ? t.guides.map(g => partyHtml('🧭', 'Guide', g, f.guidePhone)) : []),
-          ...(f.tourVendor ? t.tourVendors.map(v => partyHtml('🎟️', 'Tour vendor', v, f.tourVendorPhone)) : []),
+          contactHtml(nums),
+          !nums.length && f.driver && f.flagMissing && b.missing ? detailLine('⚠️ <b>Contact pending</b>', '#b91c1c') : '',
+          veh.length ? detailLine(`🚐 ${esc(veh.join(' / '))}`, '#64748b') : '',
         ].join('')
       } else if (!b.items.length) {
         body = detailLine('No agenda lines this day.', '#64748b')
@@ -725,12 +776,11 @@ export function renderEmailHtml(p: DigestPayload, c: DigestConfig, recipient: st
         body = b.items.map(it => {
           const head = [f.time && it.time ? `<b style="color:#0f172a">${esc(it.time)}</b>` : '', f.route ? esc(it.route) : '', f.serviceType && it.service ? `<span style="color:#64748b">(${esc(it.service)})</span>` : '']
             .filter(Boolean).join(' ')
+          const nums = itemContacts(it, f)
           const people = [
-            f.driver ? (it.driver?.name ? partyHtml('🚗', 'Driver', it.driver, f.driverPhone, f.vehicle ? it.vehicle : null) : partyHtml('🚗', 'Vehicle', null, false, f.vehicle ? it.vehicle : null)) : '',
-            f.driver && f.flagMissing && allocationPending(it) ? detailLine('⚠️ <b>Driver pending</b>', '#b91c1c') : '',
-            f.driverVendor ? partyHtml('🏢', 'Driver vendor', it.driverVendor, f.driverPhone) : '',
-            f.guide ? partyHtml('🧭', 'Guide', it.guide, f.guidePhone) : '',
-            f.tourVendor ? partyHtml('🎟️', 'Tour vendor', it.tourVendor, f.tourVendorPhone) : '',
+            contactHtml(nums),
+            !nums.length && f.driver && f.flagMissing && allocationPending(it) ? detailLine('⚠️ <b>Contact pending</b>', '#b91c1c') : '',
+            f.vehicle && it.vehicle ? detailLine(`🚐 ${esc(it.vehicle)}`, '#64748b') : '',
             f.movementNote && it.note ? detailLine(`📝 ${esc(it.note)}`, '#64748b') : '',
           ].join('')
           return `<table ${TABLE_RESET} width="100%" style="margin-top:10px"><tr>
