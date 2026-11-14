@@ -17,6 +17,7 @@
  * a paid Cebu order is cancelled on Cebu and recorded here from Cebu's own answer.
  */
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { putUpload } from '@/lib/storage'
 import { logActivity } from '@/lib/activity'
@@ -51,20 +52,20 @@ const today = () => new Date().toISOString().slice(0, 10)
 
 /* ── loading ────────────────────────────────────────────────────────── */
 
-async function loadTicket(ticketId: string, user: DeskUser) {
-  const ticket = await prisma.ticket.findUnique({
-    where: { id: ticketId },
-    include: {
-      pnlLine: true,
-      agendaItem: { select: { date: true } },
-      booking: {
-        select: {
-          id: true, bookingRef: true, agent: true, status: true, operationCountry: true, arrivalDate: true, paxAdults: true, paxChildren: true,
-          passengers: { select: { name: true, isLead: true, contact: true } },
-        },
-      },
+/** What the desk reads with every ticket. The bulk desk reads the same, so the same helpers apply. */
+export const DESK_TICKET_INCLUDE = {
+  pnlLine: true,
+  agendaItem: { select: { date: true } },
+  booking: {
+    select: {
+      id: true, bookingRef: true, agent: true, status: true, operationCountry: true, arrivalDate: true, paxAdults: true, paxChildren: true,
+      passengers: { select: { name: true, isLead: true, contact: true } },
     },
-  })
+  },
+} satisfies Prisma.TicketInclude
+
+export async function loadTicket(ticketId: string, user: DeskUser) {
+  const ticket = await prisma.ticket.findUnique({ where: { id: ticketId }, include: DESK_TICKET_INCLUDE })
   if (!ticket) throw new DeskError('Ticket not found', 404)
   const scope = user.country as OperationCountry | undefined | null
   if (scope && scope !== 'ALL' && !isInCountryScope(ticket.booking.operationCountry as OperationCountry, scope)) {
@@ -72,7 +73,7 @@ async function loadTicket(ticketId: string, user: DeskUser) {
   }
   return ticket
 }
-type LoadedTicket = Awaited<ReturnType<typeof loadTicket>>
+export type LoadedTicket = Awaited<ReturnType<typeof loadTicket>>
 
 /** A fact written into a ticket's notes ("Visit: 2026-11-20 · Pax: ad 2 ch 1 · …"). */
 function noteFact(notes: string | null | undefined, label: string): string | null {
@@ -87,7 +88,7 @@ function noteFact(notes: string | null | undefined, label: string): string | nul
  * stays refused is a line the store itself already bought through a portal
  * (b2c-placement marks it) — buying it here would pay twice.
  */
-async function deskBlocker(t: LoadedTicket, config: PortalConfig): Promise<string | null> {
+export async function deskBlocker(t: LoadedTicket, config: PortalConfig): Promise<string | null> {
   if (!config.enabled) return 'The Ticket Issue Desk is switched off in Settings.'
   if (t.booking.status === 'CANCELLED') return 'This booking is cancelled.'
   const storeBooked = noteFact(t.notes, STORE_BOOKED_PREFIX)
@@ -96,7 +97,7 @@ async function deskBlocker(t: LoadedTicket, config: PortalConfig): Promise<strin
 }
 
 /** The same gates as the Purchase button. Null when buying is allowed. */
-async function purchaseGate(t: { id: string; category: string | null; pnlLine: { paymentStatus: string } | null }, country: OperationCountry | null, portalName: string) {
+export async function purchaseGate(t: { id: string; category: string | null; pnlLine: { paymentStatus: string } | null }, country: OperationCountry | null, portalName: string) {
   const direct = await directIssueEnabled()
   if (!direct && t.pnlLine && t.pnlLine.paymentStatus !== 'CONFIRMED') return 'The P&L payment is not confirmed by Accounts yet (G2).'
   const g3 = portalPurchaseBlocker(country, { category: t.category, portalName })
@@ -166,7 +167,7 @@ export async function deskState(ticketId: string, user: DeskUser) {
 
 /* ── compare ────────────────────────────────────────────────────────── */
 
-function countryCodes(t: LoadedTicket): string[] {
+export function countryCodes(t: LoadedTicket): string[] {
   // A B2C ticket names its product's own country; the booking's may be unset.
   const own = noteFact(t.notes, 'Country:')?.toUpperCase()
   if (own && /^[A-Z]{2}$/.test(own)) return [own]
@@ -179,7 +180,7 @@ function countryCodes(t: LoadedTicket): string[] {
 }
 
 /** The day of the visit: the agenda's, else the date the order named, else arrival. */
-function visitDateOf(t: LoadedTicket): string {
+export function visitDateOf(t: LoadedTicket): string {
   if (t.agendaItem?.date) return t.agendaItem.date.toISOString().slice(0, 10)
   const named = noteFact(t.notes, 'Visit:')
   if (named && /^\d{4}-\d{2}-\d{2}$/.test(named)) return named
@@ -187,14 +188,14 @@ function visitDateOf(t: LoadedTicket): string {
 }
 
 /** Who the ticket is for: the order line's own counts (B2C), else the booking's party. */
-function paxOf(t: LoadedTicket): { adults: number; children: number } {
+export function paxOf(t: LoadedTicket): { adults: number; children: number } {
   const m = /^ad (\d+) ch (\d+)$/.exec(noteFact(t.notes, 'Pax:') ?? '')
   if (m && Number(m[1]) + Number(m[2]) > 0) return { adults: Number(m[1]), children: Number(m[2]) }
   const total = t.booking.paxAdults + t.booking.paxChildren
   return total > 0 ? { adults: t.booking.paxAdults, children: t.booking.paxChildren } : { adults: Math.max(1, t.qty), children: 0 }
 }
 
-const cleanName = (name: string) => name.replace(/\s*[-–]\s*(entrance|entry|admission|ticket)s?\s*$/i, '').trim()
+export const cleanName = (name: string) => name.replace(/\s*[-–]\s*(entrance|entry|admission|ticket)s?\s*$/i, '').trim()
 
 export interface Candidate {
   key: string
@@ -492,7 +493,7 @@ export async function hold(ticketId: string, input: HoldInput, user: DeskUser) {
 
 /* ── one booking's steps ────────────────────────────────────────────── */
 
-async function loadBooking(ticketId: string, bookingId: string, user: DeskUser) {
+export async function loadBooking(ticketId: string, bookingId: string, user: DeskUser) {
   const t = await loadTicket(ticketId, user)
   const b = await prisma.ticketPortalBooking.findFirst({ where: { id: bookingId, ticketId } })
   if (!b) throw new DeskError('That portal booking is not on this ticket.', 404)
@@ -502,7 +503,7 @@ async function loadBooking(ticketId: string, bookingId: string, user: DeskUser) 
 const otpSubject = (b: { id: string; reference: string | null; amount: unknown }) =>
   ({ id: b.id, reference: b.reference ?? '', amount: String(b.amount ?? '') })
 
-async function assertCanBuy(t: LoadedTicket, provider: Provider) {
+export async function assertCanBuy(t: LoadedTicket, provider: Provider) {
   const { portalName } = await registryPortal(t.booking.operationCountry as OperationCountry, provider)
   const gate = await purchaseGate(t, t.booking.operationCountry as OperationCountry, portalName)
   if (gate) throw new DeskError(gate, 422)
@@ -554,6 +555,17 @@ export async function confirm(ticketId: string, bookingId: string, code: string,
   if (b.status !== 'reserved' || !b.reference) throw new DeskError(`This booking is ${b.status} — only a held booking can be paid.`, 409)
   await assertCanBuy(t, provider)
   await consumeOtp({ booking: otpSubject(b), purpose: 'CONFIRM', code })
+  return payHeld(t, b, provider, user)
+}
+
+export type PortalBookingRow = Awaited<ReturnType<typeof prisma.ticketPortalBooking.findUniqueOrThrow>>
+
+/**
+ * Pay one held booking. The caller has already checked the approval — a code
+ * for this booking (confirm), or a cart approval bound to it (bulk.ts).
+ */
+export async function payHeld(t: LoadedTicket, b: PortalBookingRow, provider: Provider, user: DeskUser) {
+  if (b.status !== 'reserved' || !b.reference) throw new DeskError(`This booking is ${b.status} — only a held booking can be paid.`, 409)
 
   // Only one press gets past this line.
   const moved = await prisma.ticketPortalBooking.updateMany({ where: { id: b.id, status: 'reserved' }, data: { status: 'confirming', lastError: null } })

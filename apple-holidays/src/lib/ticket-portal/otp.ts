@@ -150,6 +150,27 @@ export async function consumeOtp(input: {
   return { requestedByName: row.requestedByName }
 }
 
+/**
+ * A cart approval: the code for a whole cart (bulk.ts) was used, and is still
+ * fresh. It is bound like any code — to the cart's exact holds and amounts — so
+ * a cart that changed after approval needs a new code. Each hold can still be
+ * paid only once (payHeld moves its status atomically), so reusing the approval
+ * cannot pay twice. Null when there is no such approval.
+ */
+export async function findApproval(input: {
+  booking: { id: string; reference: string; amount: string }
+  purpose: OtpPurpose
+  withinMs: number
+}): Promise<{ approvedAt: Date; requestedByName: string | null } | null> {
+  const { booking, purpose } = input
+  const row = await prisma.ticketPortalOtp.findFirst({
+    where: { portalBookingId: booking.id, purpose, voidedAt: null, consumedAt: { gte: new Date(Date.now() - input.withinMs) } },
+    orderBy: { consumedAt: 'desc' },
+  })
+  if (!row?.consumedAt || row.bindHash !== bindFor(booking.id, purpose, booking.reference, booking.amount)) return null
+  return { approvedAt: row.consumedAt, requestedByName: row.requestedByName }
+}
+
 /** Settings → "Send test code": proves the template and numbers work. Stores nothing. */
 export async function sendTestCode(config: PortalConfig): Promise<SentTo[]> {
   const code = newCode()
