@@ -164,11 +164,11 @@ export default function PortalIssueDesk({ ticketId, ticketName, onClose, onChang
 
 /* ── shared bits ────────────────────────────────────────────────────── */
 
-function Spinner({ label }: { label: string }) {
+export function Spinner({ label }: { label: string }) {
   return <div className="flex items-center justify-center gap-2 py-20 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> {label}</div>
 }
 
-function Notice({ tone, children }: { tone: 'red' | 'amber' | 'blue' | 'green'; children: React.ReactNode }) {
+export function Notice({ tone, children }: { tone: 'red' | 'amber' | 'blue' | 'green'; children: React.ReactNode }) {
   const cls = { red: 'border-red-200 bg-red-50 text-red-700', amber: 'border-amber-200 bg-amber-50 text-amber-800', blue: 'border-blue-200 bg-blue-50 text-blue-700', green: 'border-emerald-200 bg-emerald-50 text-emerald-700' }[tone]
   return <div className={`flex items-start gap-2 rounded-xl border px-3.5 py-2.5 text-sm ${cls}`}><AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" /><div className="min-w-0">{children}</div></div>
 }
@@ -508,7 +508,7 @@ function Compare({ base, state, onManual, onHeld }: { base: string; state: DeskS
 
 /* ── after the hold ─────────────────────────────────────────────────── */
 
-function CodeBoxes({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+export function CodeBoxes({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   const refs = useRef<(HTMLInputElement | null)[]>([])
   const put = (i: number, raw: string) => {
     const digits = raw.replace(/\D/g, '')

@@ -9,7 +9,7 @@ import {
   Plus, Loader2, Search, Ticket as TicketIcon, Hotel, Anchor, Activity,
   MapPin, Plane, ShoppingCart, CheckCircle2, AlertCircle, Zap, Upload,
   Eye, ExternalLink, FileText, Image as ImageIcon, Pencil, X, Printer,
-  BarChart3, RefreshCw, ChevronLeft, ChevronRight,
+  BarChart3, RefreshCw, ChevronLeft, ChevronRight, Layers,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -22,6 +22,7 @@ import TicketFilterBar, {
 } from '@/components/tickets/ticket-filter-bar'
 import TicketReportModal from '@/components/tickets/ticket-report-modal'
 import BulkApiTicketsModal from '@/components/tickets/bulk-api-tickets-modal'
+import BulkIssueDesk from '@/components/tickets/bulk-issue-desk'
 import type { UserRole } from '@prisma/client'
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -135,6 +136,7 @@ export default function TETicketsPage() {
   const [loading, setLoading]         = useState(true)
   const [filters, setFilters]         = useState<TicketFilterState>(EMPTY_FILTERS)
   const [bulkApiOpen, setBulkApiOpen] = useState(false)
+  const [bulkIssueOpen, setBulkIssueOpen] = useState(false)
   const [page, setPage]               = useState(1)
   const [total, setTotal]             = useState(0)
   const [pageCount, setPageCount]     = useState(1)
@@ -427,6 +429,15 @@ export default function TETicketsPage() {
                 title="Pick a travel date and create tickets from the API for every booking travelling that day"
               >
                 <Zap className="w-4 h-4" /> Create Tickets from API
+              </button>
+            )}
+            {canPurchase && (
+              <button
+                onClick={() => setBulkIssueOpen(true)}
+                className="btn bg-slate-900 text-white hover:bg-slate-800"
+                title="Every open ticket in a date window, grouped by product: match on GlobalTix / Cebu, cart, hold, and pay all with one WhatsApp code"
+              >
+                <Layers className="w-4 h-4" /> Bulk Issue
               </button>
             )}
             {canCreate && (
@@ -778,6 +789,15 @@ export default function TETicketsPage() {
           open={bulkApiOpen}
           onClose={() => setBulkApiOpen(false)}
           onDone={load}
+          countryFilter={countryFilter}
+        />
+      )}
+
+      {/* ── Bulk Issue Desk: a window of tickets → cart → hold → one code ── */}
+      {bulkIssueOpen && (
+        <BulkIssueDesk
+          onClose={() => setBulkIssueOpen(false)}
+          onChanged={load}
           countryFilter={countryFilter}
         />
       )}
