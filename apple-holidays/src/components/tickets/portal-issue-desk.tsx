@@ -101,6 +101,40 @@ export default function PortalIssueDesk({ ticketId, ticketName, onClose, onChang
   onChanged: () => void
   onManual: () => void
 }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
+  }, [onClose])
+
+  const panel = (
+    <div className="fixed inset-0 z-[9999] flex items-stretch justify-center bg-slate-900/60 p-0 backdrop-blur-sm sm:p-5" role="dialog" aria-modal="true" aria-label={`Issue ${ticketName}`}>
+      <div className="flex w-full max-w-6xl flex-col overflow-hidden bg-slate-50 shadow-2xl sm:rounded-2xl">
+        <PortalIssuePane ticketId={ticketId} ticketName={ticketName} onChanged={onChanged} onManual={onManual}
+          trailing={<button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close"><X className="h-5 w-5" /></button>} />
+      </div>
+    </div>
+  )
+  return typeof document === 'undefined' ? null : createPortal(panel, document.body)
+}
+
+/** Where a ticket stands on the desk, for whoever shows the pane. */
+export type PaneStage = 'compare' | 'held' | 'waiting' | 'issued' | 'blocked'
+
+/**
+ * The desk itself, without the modal — the Tickets page's Issue workspace shows
+ * it beside the ticket list. Give it `key={ticketId}` so a new ticket starts fresh.
+ */
+export function PortalIssuePane({ ticketId, ticketName, onChanged, onManual, trailing, eyebrow = 'Ticket Issue Desk', onStage }: {
+  ticketId: string
+  ticketName: string
+  onChanged: () => void
+  onManual: () => void
+  trailing?: React.ReactNode
+  eyebrow?: string
+  onStage?: (stage: PaneStage) => void
+}) {
   const base = `/api/tickets/${ticketId}/portal`
   const [state, setState] = useState<DeskState | null>(null)
   const [stateError, setStateError] = useState<string | null>(null)
@@ -111,55 +145,49 @@ export default function PortalIssueDesk({ ticketId, ticketName, onClose, onChang
   }, [base])
   useEffect(() => { loadState() }, [loadState])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    document.body.style.overflow = 'hidden'
-    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
-  }, [onClose])
-
   const live = state?.bookings.find(b => LIVE_STATES.includes(b.status)) ?? null
   const step = !live ? 0 : live.status === 'confirmed' || live.status === 'cancelling' ? 3 : 2
 
+  const stage: PaneStage | null = !state ? null : state.blocked ? 'blocked' : !live ? 'compare'
+    : live.status === 'confirmed' ? 'issued' : live.status === 'reserved' ? 'held' : 'waiting'
+  useEffect(() => { if (stage) onStage?.(stage) }, [stage, onStage])
+
   const refresh = () => { loadState(); onChanged() }
 
-  const panel = (
-    <div className="fixed inset-0 z-[9999] flex items-stretch justify-center bg-slate-900/60 p-0 backdrop-blur-sm sm:p-5" role="dialog" aria-modal="true" aria-label={`Issue ${ticketName}`}>
-      <div className="flex w-full max-w-6xl flex-col overflow-hidden bg-slate-50 shadow-2xl sm:rounded-2xl">
-        <header className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-slate-200 bg-white px-5 py-3.5">
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Ticket Issue Desk</p>
-            <h2 className="truncate text-base font-bold text-slate-900">{ticketName}</h2>
-          </div>
-          <ol className="order-last flex w-full items-center gap-1.5 md:order-none md:w-auto">
-            {STEPS.map((s, i) => (
-              <li key={s} className="flex items-center gap-1.5">
-                <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                  i < step ? 'bg-emerald-50 text-emerald-700' : i === step ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'
-                }`}>
-                  {i < step ? <Check className="h-3 w-3" /> : <span className="tabular-nums">{i + 1}</span>}
-                  <span className="hidden md:inline">{s}</span>
-                </span>
-                {i < STEPS.length - 1 && <span className="h-px w-3 bg-slate-200" />}
-              </li>
-            ))}
-          </ol>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Close"><X className="h-5 w-5" /></button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto">
-          {stateError && <div className="p-5"><Notice tone="red">{stateError}</Notice></div>}
-          {!state && !stateError && <Spinner label="Opening the desk…" />}
-          {state && (state.blocked
-            ? <div className="p-5"><Notice tone="amber">{state.blocked}</Notice></div>
-            : live
-              ? <LiveBooking base={base} booking={live} state={state} quote={state.ticket} onChanged={refresh} />
-              : <Compare base={base} state={state} onManual={onManual} onHeld={refresh} />)}
+  return (
+    <>
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-slate-200 bg-white px-5 py-3.5">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{eyebrow}</p>
+          <h2 className="truncate text-base font-bold text-slate-900" title={ticketName}>{ticketName}</h2>
         </div>
+        <ol className="order-last flex w-full items-center gap-1.5 md:order-none md:w-auto">
+          {STEPS.map((s, i) => (
+            <li key={s} className="flex items-center gap-1.5">
+              <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+                i < step ? 'bg-emerald-50 text-emerald-700' : i === step ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'
+              }`}>
+                {i < step ? <Check className="h-3 w-3" /> : <span className="tabular-nums">{i + 1}</span>}
+                <span className="hidden md:inline">{s}</span>
+              </span>
+              {i < STEPS.length - 1 && <span className="h-px w-3 bg-slate-200" />}
+            </li>
+          ))}
+        </ol>
+        {trailing}
+      </header>
+
+      <div className="flex-1 overflow-y-auto">
+        {stateError && <div className="p-5"><Notice tone="red">{stateError}</Notice></div>}
+        {!state && !stateError && <Spinner label="Opening the desk…" />}
+        {state && (state.blocked
+          ? <div className="p-5"><Notice tone="amber">{state.blocked}</Notice></div>
+          : live
+            ? <LiveBooking base={base} booking={live} state={state} quote={state.ticket} onChanged={refresh} />
+            : <Compare base={base} state={state} onManual={onManual} onHeld={refresh} />)}
       </div>
-    </div>
+    </>
   )
-  return typeof document === 'undefined' ? null : createPortal(panel, document.body)
 }
 
 /* ── shared bits ────────────────────────────────────────────────────── */
