@@ -9,7 +9,7 @@ import {
   Plus, Loader2, Search, Ticket as TicketIcon, Hotel, Anchor, Activity,
   MapPin, Plane, ShoppingCart, CheckCircle2, AlertCircle, Zap, Upload,
   Eye, ExternalLink, FileText, Image as ImageIcon, Pencil, X, Printer,
-  BarChart3, RefreshCw, ChevronLeft, ChevronRight, Layers,
+  BarChart3, RefreshCw, ChevronLeft, ChevronRight, Layers, Sparkles,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -23,6 +23,7 @@ import TicketFilterBar, {
 import TicketReportModal from '@/components/tickets/ticket-report-modal'
 import BulkApiTicketsModal from '@/components/tickets/bulk-api-tickets-modal'
 import BulkIssueDesk from '@/components/tickets/bulk-issue-desk'
+import TicketIssueWorkspace, { type WorkspaceTicket } from '@/components/tickets/ticket-issue-workspace'
 import type { UserRole } from '@prisma/client'
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -137,6 +138,9 @@ export default function TETicketsPage() {
   const [filters, setFilters]         = useState<TicketFilterState>(EMPTY_FILTERS)
   const [bulkApiOpen, setBulkApiOpen] = useState(false)
   const [bulkIssueOpen, setBulkIssueOpen] = useState(false)
+  const [issueTicket, setIssueTicket] = useState<Ticket | null>(null)
+  // The Ticket Issue Desk: is it on, and where each ticket on this page stands on it.
+  const [desk, setDesk] = useState<{ enabled: boolean; byTicket: Record<string, { provider: string; reference: string | null; status: string }> }>({ enabled: false, byTicket: {} })
   const [page, setPage]               = useState(1)
   const [total, setTotal]             = useState(0)
   const [pageCount, setPageCount]     = useState(1)
@@ -237,6 +241,19 @@ export default function TETicketsPage() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setPreviewError(false) }, [viewFile])
+
+  // Desk marks for the rows on screen. A failed read leaves the Issue button
+  // hidden — the Purchase button is still there, as it always was.
+  useEffect(() => {
+    if (!canPurchase) return
+    let cancelled = false
+    const ids = tickets.map(t => t.id).join(',')
+    fetch(`/api/tickets/portal-status?ids=${ids}`)
+      .then(r => r.json())
+      .then(json => { if (!cancelled && json.success) setDesk({ enabled: Boolean(json.data.enabled), byTicket: json.data.byTicket ?? {} }) })
+      .catch(() => { /* silent */ })
+    return () => { cancelled = true }
+  }, [tickets, canPurchase])
 
   // ── tabs ──────────────────────────────────────────────────────────────────
   // Counts come from the server so they describe every matching ticket, not the
@@ -569,6 +586,22 @@ export default function TETicketsPage() {
                             {t.portalName}{t.portalRef ? ` · ${t.portalRef}` : ''}
                           </span>
                         )}
+                        {/* A hold on the Ticket Issue Desk that is not paid yet. */}
+                        {(() => {
+                          const m = desk.byTicket[t.id]
+                          if (!m || m.status === 'confirmed') return null
+                          const held = m.status === 'reserved'
+                          return (
+                            <button
+                              onClick={() => setIssueTicket(t)}
+                              className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border ${held ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-amber-50 text-amber-800 border-amber-200'}`}
+                              title={held ? 'Held on the portal, not paid yet — open to pay with the WhatsApp code' : 'The portal has not answered clearly — open and press Check status'}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${held ? 'bg-sky-500' : 'bg-amber-500'} animate-breathe`} />
+                              {held ? 'Held' : 'Check status'} · {m.provider === 'cebu' ? 'Cebu' : 'GlobalTix'}{m.reference ? ` · ${m.reference}` : ''}
+                            </button>
+                          )
+                        })()}
                         {/* Where the Accounts approval has got to. A ticket
                             cannot be bought until this says paid, so it is
                             shown beside the portal it is about — and an urgent
@@ -643,6 +676,17 @@ export default function TETicketsPage() {
                           className="btn btn-primary btn-sm text-xs"
                         >
                           <Zap className="w-3.5 h-3.5" /> Activate
+                        </button>
+                      )}
+
+                      {/* Issue from portal — GlobalTix / Cebu, beside the list */}
+                      {isActive && !isPurchased && canPurchase && desk.enabled && (
+                        <button
+                          onClick={() => setIssueTicket(t)}
+                          title="Compare GlobalTix and Cebu for this ticket, hold it, and issue it with a WhatsApp code"
+                          className="btn btn-sm text-xs text-white bg-gradient-to-r from-sky-600 to-violet-600 hover:from-sky-700 hover:to-violet-700 shadow-sm"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" /> {desk.byTicket[t.id]?.status === 'reserved' ? 'Pay held' : 'Issue'}
                         </button>
                       )}
 
@@ -799,6 +843,17 @@ export default function TETicketsPage() {
           onClose={() => setBulkIssueOpen(false)}
           onChanged={load}
           countryFilter={countryFilter}
+        />
+      )}
+
+      {/* ── Issue workspace: the list on the left, the desk on the right ── */}
+      {issueTicket && (
+        <TicketIssueWorkspace
+          initial={issueTicket as unknown as WorkspaceTicket}
+          baseParams={filterKey}
+          onClose={() => setIssueTicket(null)}
+          onChanged={load}
+          onManual={t => { setIssueTicket(null); setPurchaseModal(t as unknown as Ticket) }}
         />
       )}
 
