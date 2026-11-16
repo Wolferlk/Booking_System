@@ -26,6 +26,7 @@ import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 import { GroupWorkspace, GroupsRail, useGroupDetail } from '@/components/whatsapp-inbox/groups'
 import { TripPanel } from '@/components/whatsapp-inbox/trip-panel'
+import { RelatedThreadsStrip } from '@/components/whatsapp-inbox/related-threads-strip'
 import {
   BUSINESS_NUMBERS, DEFAULT_BUSINESS_NUMBER, businessNumber, type BusinessNumberKey,
 } from '@/lib/whatsapp-business-numbers'
@@ -1235,24 +1236,10 @@ function WhatsAppInboxInner() {
               {/* Other numbers on the same booking. Without this the thread looks
                   stale next to the booking page's mini chat, which merges every
                   number filed under the bookingRef into one stream. */}
-              {relatedThreads.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2" title="Messages sent to these numbers are part of the same booking but live in their own thread — the booking page's chat shows them all together.">
-                  <span className="text-[11px] font-bold text-amber-800">
-                    {relatedThreads.length === 1 ? 'Another number' : `${relatedThreads.length} other numbers`} on this booking:
-                  </span>
-                  {relatedThreads.map(rt => (
-                    <button
-                      key={rt.phone}
-                      onClick={() => openConversation(rt.phone)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition hover:-translate-y-px hover:bg-amber-100"
-                    >
-                      <MessageCircle className="h-3 w-3" />
-                      {rt.displayName ? `${rt.displayName} · ` : ''}+{rt.phone}
-                      <span className="font-normal text-amber-600">({rt.messageCount} · {fmtDate(rt.lastAt)})</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Collapsed to one line by default — a group booking can have
+                  hundreds of numbers, which used to bury the chat. */}
+              <RelatedThreadsStrip key={selected ?? ''} threads={relatedThreads} onOpen={openConversation} />
+
             </div>
 
             {/* messages */}
