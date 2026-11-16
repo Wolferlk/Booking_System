@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { attachGeminiFallback } from './ai-fallback'
 
 function getOpenAIKey() {
   const apiKey = process.env.OPENAI_API_KEY?.trim()
@@ -20,6 +21,11 @@ const openai = new OpenAI({
   apiKey: getOpenAIKey(),
 })
 
+// OpenAI stays primary. If a call fails on OpenAI's side (outage, quota,
+// rate limit, network), the same request is retried on Gemini automatically.
+// See ./ai-fallback.ts — no-op when GEMINI_API_KEY is not set.
+attachGeminiFallback(openai)
+
 export default openai
 
 // ─── AI Usage Logger ─────────────────────────────────────────────────────
@@ -27,6 +33,10 @@ export default openai
 const COST_PER_M = {
   'gpt-4o':       { input: 2.50,  output: 10.00 },
   'gpt-4o-mini':  { input: 0.15,  output: 0.60  },
+  // Gemini backup models (used only when OpenAI fails — see ai-fallback.ts).
+  // Approximate list prices; update if billing differs.
+  'gemini-3.5-flash':      { input: 0.30, output: 2.50 },
+  'gemini-3.5-flash-lite': { input: 0.10, output: 0.40 },
 }
 
 export async function logAiUsage(params: {
