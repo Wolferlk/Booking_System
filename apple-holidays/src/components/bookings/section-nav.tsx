@@ -68,6 +68,10 @@ export default function SectionNav() {
     let timer: ReturnType<typeof setTimeout>
     const scan = () => {
       const found = Array.from(document.querySelectorAll<HTMLElement>('[data-nav]'))
+        // A fold panel (fold-panel.tsx) is the nav entry for everything inside
+        // it — a panel's own `data-nav` under it would be a duplicate that
+        // points at a hidden element while the fold is closed.
+        .filter(el => !el.parentElement?.closest('[data-fold]'))
         .map(el => ({ el, label: el.dataset.nav ?? '', icon: el.dataset.navIcon }))
         .filter(s => s.label)
       setSections(prev => {
@@ -116,6 +120,8 @@ export default function SectionNav() {
   }, [sections])
 
   const goTo = useCallback((s: NavSection) => {
+    // Jumping to a minimised section opens it first.
+    if (s.el.dataset.fold === 'collapsed') s.el.dispatchEvent(new CustomEvent('bk-fold:open'))
     const top = s.el.getBoundingClientRect().top + window.scrollY - SCROLL_OFFSET
     window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
   }, [])

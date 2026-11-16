@@ -838,6 +838,8 @@ export default function Sidebar() {
       )}
 
       <aside
+        // Already dark — the booking page's dark-mode palette swap skips it.
+        data-theme-keep
         onMouseEnter={onRailEnter}
         onMouseLeave={onRailLeave}
         className={cn(

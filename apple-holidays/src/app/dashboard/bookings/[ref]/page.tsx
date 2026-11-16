@@ -79,6 +79,13 @@ import VnChecklistModal from '@/components/bookings/vn-checklist-modal'
 import VnSheetChecklistPanel from '@/components/bookings/vn-sheet-checklist-panel'
 import { canViewChecklist } from '@/lib/vn-checklist/shared'
 import { canManageMailbox, canUseMailbox } from '@/lib/mailbox/access'
+import FoldPanel from '@/components/bookings/fold-panel'
+import LeadGuestCard from '@/components/bookings/lead-guest-card'
+import { useBookingTheme, ThemeSwitch } from '@/components/bookings/booking-theme'
+import { ClipboardCheck, PhoneCall, AudioLines } from 'lucide-react'
+// Light / dark mode for this page — both only apply under `html.bk-dark`.
+import './booking-dark.generated.css'
+import './booking-theme.css'
 
 /**
  * Who holds the hotel reservation — the guest/agent, or us.
@@ -173,6 +180,9 @@ export default function BookingDetailPage() {
   const router = useRouter()
   const { data: session } = useSession()
   const role = (session?.user?.role ?? '') as UserRole
+  // Each user's own light/dark choice for this page.
+  const userId = (session?.user as { id?: string } | undefined)?.id ?? null
+  const { theme, toggle: toggleTheme } = useBookingTheme(userId)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [booking, setBooking] = useState<any>(null)
@@ -1515,9 +1525,12 @@ Wishing you a wonderful trip! ✈️
         title={`Booking ${ref}`}
         subtitle={(booking.agent as string) ?? ''}
         actions={
-          <button onClick={() => router.back()} className="btn-ghost btn text-sm">
-            <ArrowLeft className="w-4 h-4" /> Back
-          </button>
+          <div className="flex items-center gap-2">
+            <ThemeSwitch theme={theme} onToggle={toggleTheme} />
+            <button onClick={() => router.back()} className="btn-ghost btn text-sm">
+              <ArrowLeft className="w-4 h-4" /> Back
+            </button>
+          </div>
         }
       />
 
@@ -1660,7 +1673,7 @@ Wishing you a wonderful trip! ✈️
           <div className="relative grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
             <div className="min-w-0">
               <div className="flex items-center gap-2.5 mb-3 flex-wrap">
-                <span className="text-3xl font-black font-mono tracking-tight bg-gradient-to-r from-slate-900 via-slate-800 to-violet-700 bg-clip-text text-transparent">{booking.bookingRef as string}</span>
+                <span className="bk-ref text-3xl font-black font-mono tracking-tight">{booking.bookingRef as string}</span>
                 <SectionLogsButton bookingRef={ref} section="overview" />
                 {/* Version selector — shows the active version; admins can switch */}
                 {(() => {
@@ -1759,6 +1772,9 @@ Wishing you a wonderful trip! ✈️
                   </span>
                 )}
               </div>
+              {/* Lead passenger — directly under the reference / IS number, at
+                  the size of a name people say out loud on every call. */}
+              <LeadGuestCard passengers={passengers} />
               {/* Trip at a glance — four tiles instead of a grey sentence */}
               {(() => {
                 const arr = booking.arrivalDate ? new Date(booking.arrivalDate as string) : null
@@ -2487,7 +2503,9 @@ Wishing you a wonderful trip! ✈️
             the agenda holds the real pickup and drop-off points, the booked
             service type, and the hotel of each night. */}
         <section data-nav="Journey Map" data-nav-icon="itinerary">
-          <JourneyMap bookingRef={ref} source="agenda" />
+          {/* Slim strip while loading / when there is no route; full size
+              only once there is a map to show. Follows the page theme. */}
+          <JourneyMap bookingRef={ref} source="agenda" compactUntilReady theme={theme} />
         </section>
 
         {/* QC Panel — visible to operations/TE/admin. QC audits an operation a
@@ -2508,28 +2526,63 @@ Wishing you a wonderful trip! ✈️
             the two ways the deadline is met, so the standing is read first and
             the mechanics second. Shown on Hotel Only files too, where it says in
             one line why the deadline does not apply. */}
+        {/* These four (with Pre-checking below) start minimised to one bold
+            header each — open/closed is remembered per user. The panels stay
+            mounted while folded, so they load and behave exactly as before. */}
         {['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <ReconfirmDelayPanel
-            bookingRef={ref}
-            canEdit={['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
-          />
+          <FoldPanel
+            id="reconfirmation"
+            userId={userId}
+            title="Guest Reconfirmation"
+            subtitle="The D-10 reconfirmation deadline, and the reason on file when it is missed"
+            icon={ClipboardCheck}
+            tone="sky"
+            chips={['D-10 deadline']}
+            navLabel="Reconfirmation"
+            navIcon="phone"
+          >
+            <ReconfirmDelayPanel
+              bookingRef={ref}
+              canEdit={['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
+            />
+          </FoldPanel>
         )}
 
         {/* AI Voice Calls — Traveller Experience panel */}
         {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <section data-nav="AI Voice Calls" data-nav-icon="phone">
-          <TravellerExperiencePanel
-            bookingRef={ref}
-            booking={booking}
-          />
-          </section>
+          <FoldPanel
+            id="ai-voice-calls"
+            userId={userId}
+            title="AI Voice Calls — Setup & Control"
+            subtitle="Plan, place, pin or skip the automated guest calls for this trip"
+            icon={PhoneCall}
+            tone="violet"
+            chips={['Reconfirmation', 'On-tour', 'Post-tour']}
+            navLabel="AI Voice Calls"
+            navIcon="phone"
+          >
+            <TravellerExperiencePanel
+              bookingRef={ref}
+              booking={booking}
+            />
+          </FoldPanel>
         )}
 
         {/* AI Call Transcripts — DB-backed reconfirmation / on-tour / post-tour */}
         {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <section data-nav="Call Transcripts" data-nav-icon="transcript">
-          <BookingCallTranscripts bookingRef={ref} />
-          </section>
+          <FoldPanel
+            id="call-transcripts"
+            userId={userId}
+            title="AI Call Transcripts"
+            subtitle="What the guest said on every AI call: requests, issues and highlights"
+            icon={AudioLines}
+            tone="emerald"
+            chips={['Transcripts', 'Sentiment']}
+            navLabel="Call Transcripts"
+            navIcon="transcript"
+          >
+            <BookingCallTranscripts bookingRef={ref} />
+          </FoldPanel>
         )}
 
         {/* Customer WhatsApp — manual daily briefings + feedback form */}
@@ -2911,7 +2964,20 @@ Wishing you a wonderful trip! ✈️
             its access request asks for it to wait until the hotel pre-checking
             development is finished. Remove `!isVnGroundLimited` to hand it over. */}
         {!isVnGroundLimited && (
-          <>
+          <FoldPanel
+            id="precheck"
+            userId={userId}
+            title="Pre-checking"
+            subtitle={hotelOnly
+              ? 'The only reconfirmation this Hotel Only booking needs: every stay at D-10'
+              : 'D-10 hotel reconfirmation for every stay, plus driver checks'}
+            icon={Hotel}
+            tone="amber"
+            chips={hotelOnly ? ['D-10', 'Hotel Only'] : ['D-10', 'Hotels', 'Drivers']}
+            navLabel="Pre-checking"
+            navIcon="precheck"
+          >
+          <div className="space-y-3">
             {hotelOnly && (
               <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
@@ -2922,7 +2988,8 @@ Wishing you a wonderful trip! ✈️
               </div>
             )}
             <PrecheckPanel bookingRef={ref} />
-          </>
+          </div>
+          </FoldPanel>
         )}
 
         {/* Contact Information — Agent & Tourist */}
