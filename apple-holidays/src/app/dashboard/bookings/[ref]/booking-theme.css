@@ -1,0 +1,235 @@
+/*
+ * Booking detail page — theme layer.
+ *
+ * Light mode is the app as it always was, plus the styles for the pieces this
+ * page owns (lead-guest card, fold panels, theme switch). Dark mode applies
+ * only while `html.bk-dark` is set, which the page does for a user who chose
+ * it and removes again on the way out — no other route is affected. The bulk
+ * Tailwind palette remap lives in `booking-dark.generated.css`.
+ */
+
+/* ── Dark tokens ─────────────────────────────────────────────────────────── */
+html.bk-dark {
+  color-scheme: dark;
+  --bk-page: #080d18;
+  --bk-sunken: #0b1220;
+  --bk-surface: #111a2c;
+  --bk-raised: #1a2436;
+  --bk-raised-2: #243047;
+  --bk-hover: #172136;
+  --bk-line: #243047;
+}
+html.bk-dark body { background-color: var(--bk-page); color: #e2e8f0; }
+html.bk-dark .min-h-screen.bg-slate-50 { background-color: var(--bk-page) !important; }
+
+/* Shared component classes from globals.css */
+html.bk-dark .card { background-color: var(--bk-surface); border-color: var(--bk-line); }
+html.bk-dark :is(.form-input, .form-select, .form-textarea) {
+  background-color: var(--bk-sunken); border-color: #2f3c55; color: #e2e8f0;
+}
+html.bk-dark :is(.form-input, .form-select, .form-textarea):disabled { background-color: var(--bk-raised); color: #8d9bb0; }
+html.bk-dark .form-label { color: #cbd5e1; }
+html.bk-dark .btn-secondary { background-color: var(--bk-raised); color: #e2e8f0; border-color: #2f3c55; }
+html.bk-dark .btn-secondary:hover { background-color: var(--bk-raised-2); }
+html.bk-dark .btn-ghost { color: #aab6c8; }
+html.bk-dark .btn-ghost:hover { background-color: var(--bk-raised); color: #f1f5f9; }
+html.bk-dark .data-table th { background-color: var(--bk-sunken); color: #8d9bb0; border-color: var(--bk-line); }
+html.bk-dark .data-table td { color: #cbd5e1; border-color: #1b2538; }
+html.bk-dark .data-table tr:hover td { background-color: var(--bk-hover); }
+html.bk-dark .skeleton { background-color: var(--bk-raised-2); }
+html.bk-dark :is(.timeline-step.current, .timeline-step.upcoming) .step-circle { background-color: var(--bk-surface); }
+html.bk-dark ::-webkit-scrollbar-track { background: var(--bk-sunken); }
+html.bk-dark ::-webkit-scrollbar-thumb { background: #2f3c55; }
+html.bk-dark :is(input, select, textarea)::placeholder { color: #5b6a82; }
+html.bk-dark .shadow-card { box-shadow: 0 1px 0 0 rgb(255 255 255 / 3%) inset, 0 1px 3px 0 rgb(0 0 0 / 45%); }
+html.bk-dark .shadow-sm { --tw-shadow: 0 1px 2px 0 rgb(0 0 0 / 40%); }
+
+/* Theme changes fade rather than snap. Limited to colour properties so
+   nothing that animates layout is slowed down. */
+html.bk-theme-anim, html.bk-theme-anim * {
+  transition: background-color .35s ease, border-color .35s ease, color .25s ease !important;
+}
+
+/* ── Booking reference (gradient text needs a dark twin) ─────────────────── */
+.bk-ref {
+  background-image: linear-gradient(100deg, #0f172a 0%, #334155 45%, #7c3aed 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+html.bk-dark .bk-ref { background-image: linear-gradient(100deg, #f8fafc 0%, #cbd5e1 45%, #c4b5fd 100%); }
+
+/* ── Lead guest ──────────────────────────────────────────────────────────── */
+.bk-lead {
+  position: relative; overflow: hidden; isolation: isolate;
+  border-radius: 1rem; padding: .85rem 1rem .85rem .9rem;
+  border: 1px solid rgb(139 92 246 / 18%);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgb(251 191 36 / 16%) 0%, transparent 55%),
+    radial-gradient(120% 160% at 100% 100%, rgb(139 92 246 / 14%) 0%, transparent 60%),
+    linear-gradient(135deg, #ffffff 0%, #faf8ff 100%);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%), 0 8px 24px -14px rgb(109 40 217 / 35%);
+}
+html.bk-dark .bk-lead {
+  border-color: rgb(167 139 250 / 22%);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgb(251 191 36 / 12%) 0%, transparent 55%),
+    radial-gradient(120% 160% at 100% 100%, rgb(139 92 246 / 20%) 0%, transparent 60%),
+    linear-gradient(135deg, #131c30 0%, #161a33 100%);
+  box-shadow: 0 8px 28px -16px rgb(139 92 246 / 55%);
+}
+.bk-lead-avatar {
+  position: relative; flex-shrink: 0; width: 3.25rem; height: 3.25rem; border-radius: 9999px;
+  display: grid; place-items: center; font-weight: 800; font-size: 1.05rem; letter-spacing: .02em; color: #fff;
+  background: linear-gradient(135deg, #f59e0b 0%, #ec4899 55%, #8b5cf6 100%);
+  box-shadow: 0 0 0 3px #fff, 0 6px 16px -4px rgb(236 72 153 / 55%);
+}
+html.bk-dark .bk-lead-avatar { box-shadow: 0 0 0 3px #131c30, 0 6px 18px -4px rgb(236 72 153 / 60%); }
+.bk-lead-avatar::after {
+  content: ''; position: absolute; inset: -6px; border-radius: inherit;
+  border: 1.5px dashed rgb(139 92 246 / 45%); animation: bk-spin 18s linear infinite;
+}
+.bk-lead-crown {
+  position: absolute; top: -.45rem; right: -.35rem; width: 1.35rem; height: 1.35rem; border-radius: 9999px;
+  display: grid; place-items: center; background: #fbbf24; color: #78350f;
+  box-shadow: 0 0 0 2px #fff, 0 2px 6px rgb(245 158 11 / 50%);
+}
+html.bk-dark .bk-lead-crown { box-shadow: 0 0 0 2px #131c30, 0 2px 6px rgb(245 158 11 / 50%); }
+.bk-lead-name {
+  font-size: 1.45rem; line-height: 1.15; font-weight: 800; letter-spacing: -.02em; color: #0f172a;
+}
+html.bk-dark .bk-lead-name { color: #f8fafc; }
+.bk-lead-eyebrow {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-size: .625rem; font-weight: 800; letter-spacing: .18em; text-transform: uppercase;
+  background-image: linear-gradient(90deg, #d97706, #db2777, #7c3aed);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+html.bk-dark .bk-lead-eyebrow { background-image: linear-gradient(90deg, #fbbf24, #f472b6, #a78bfa); }
+.bk-lead-meta { color: #64748b; }
+html.bk-dark .bk-lead-meta { color: #94a3b8; }
+.bk-lead-pill {
+  display: inline-flex; align-items: center; gap: .25rem; padding: .15rem .55rem; border-radius: 9999px;
+  font-size: .6875rem; font-weight: 600; background: rgb(255 255 255 / 75%); color: #475569;
+  border: 1px solid rgb(148 163 184 / 30%);
+}
+html.bk-dark .bk-lead-pill { background: rgb(255 255 255 / 5%); color: #cbd5e1; border-color: rgb(255 255 255 / 10%); }
+.bk-lead-companions { display: flex; }
+.bk-lead-companions > span {
+  width: 1.6rem; height: 1.6rem; margin-left: -.45rem; border-radius: 9999px; display: grid; place-items: center;
+  font-size: .6rem; font-weight: 800; color: #475569; background: #e2e8f0; box-shadow: 0 0 0 2px #fff;
+}
+.bk-lead-companions > span:first-child { margin-left: 0; }
+html.bk-dark .bk-lead-companions > span { background: #243047; color: #cbd5e1; box-shadow: 0 0 0 2px #131c30; }
+
+/* ── Fold panels (Guest reconfirmation, AI calls, transcripts, pre-checking) ─ */
+.bk-fold { --tone: 14 165 233; scroll-margin-top: 6rem; }
+.bk-fold[data-tone='violet']  { --tone: 139 92 246; }
+.bk-fold[data-tone='emerald'] { --tone: 16 185 129; }
+.bk-fold[data-tone='amber']   { --tone: 245 158 11; }
+.bk-fold[data-tone='rose']    { --tone: 244 63 94; }
+
+.bk-fold-head {
+  position: relative; overflow: hidden; width: 100%; text-align: left;
+  display: flex; align-items: center; gap: .9rem; padding: .85rem 1rem .85rem .85rem;
+  border-radius: 1rem; border: 1px solid rgb(var(--tone) / 22%);
+  background:
+    linear-gradient(90deg, rgb(var(--tone) / 9%) 0%, rgb(var(--tone) / 2%) 45%, transparent 100%),
+    #ffffff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  transition: box-shadow .25s ease, transform .25s ease, border-color .25s ease;
+}
+.bk-fold-head::before { /* tone rail */
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: linear-gradient(180deg, rgb(var(--tone)), rgb(var(--tone) / 45%));
+}
+.bk-fold-head:hover {
+  border-color: rgb(var(--tone) / 45%);
+  box-shadow: 0 10px 24px -14px rgb(var(--tone) / 70%);
+  transform: translateY(-1px);
+}
+.bk-fold-head:focus-visible { outline: 2px solid rgb(var(--tone)); outline-offset: 2px; }
+.bk-fold[data-fold='open'] .bk-fold-head {
+  border-bottom-left-radius: .35rem; border-bottom-right-radius: .35rem;
+}
+html.bk-dark .bk-fold-head {
+  background:
+    linear-gradient(90deg, rgb(var(--tone) / 16%) 0%, rgb(var(--tone) / 4%) 45%, transparent 100%),
+    var(--bk-surface);
+  border-color: rgb(var(--tone) / 28%);
+}
+
+.bk-fold-icon {
+  position: relative; flex-shrink: 0; width: 2.6rem; height: 2.6rem; border-radius: .8rem;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, rgb(var(--tone)) 0%, rgb(var(--tone) / 70%) 100%);
+  box-shadow: 0 6px 14px -6px rgb(var(--tone) / 80%), inset 0 1px 0 rgb(255 255 255 / 35%);
+}
+.bk-fold[data-fold='collapsed'] .bk-fold-icon::after { /* soft pulse while folded */
+  content: ''; position: absolute; inset: -4px; border-radius: 1rem;
+  border: 2px solid rgb(var(--tone) / 35%); animation: bk-ping 2.6s cubic-bezier(0, 0, .2, 1) infinite;
+}
+.bk-fold-title { font-size: .95rem; font-weight: 800; letter-spacing: -.01em; color: #0f172a; }
+html.bk-dark .bk-fold-title { color: #f1f5f9; }
+.bk-fold-sub { font-size: .72rem; color: #64748b; }
+html.bk-dark .bk-fold-sub { color: #8d9bb0; }
+.bk-fold-chip {
+  display: inline-flex; align-items: center; gap: .25rem; padding: .1rem .5rem; border-radius: 9999px;
+  font-size: .625rem; font-weight: 700; letter-spacing: .02em;
+  color: rgb(var(--tone)); background: rgb(var(--tone) / 10%); border: 1px solid rgb(var(--tone) / 20%);
+}
+html.bk-dark .bk-fold-chip { background: rgb(var(--tone) / 16%); filter: brightness(1.25); }
+
+.bk-fold-toggle {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: .45rem;
+  padding: .35rem .4rem .35rem .75rem; border-radius: 9999px;
+  font-size: .7rem; font-weight: 700; color: rgb(var(--tone));
+  background: rgb(var(--tone) / 8%); border: 1px solid rgb(var(--tone) / 22%);
+  transition: background .2s ease;
+}
+.bk-fold-head:hover .bk-fold-toggle { background: rgb(var(--tone) / 14%); }
+html.bk-dark .bk-fold-toggle { filter: brightness(1.3); background: rgb(var(--tone) / 14%); }
+.bk-fold-toggle-btn {
+  width: 1.75rem; height: 1.75rem; border-radius: 9999px; display: grid; place-items: center; color: #fff;
+  background: rgb(var(--tone)); box-shadow: 0 3px 8px -2px rgb(var(--tone) / 70%);
+  transition: transform .3s cubic-bezier(.34, 1.56, .64, 1);
+}
+.bk-fold-head:hover .bk-fold-toggle-btn { transform: scale(1.12); }
+
+.bk-fold-body { margin-top: .4rem; animation: bk-unfold .32s cubic-bezier(.32, .72, 0, 1); }
+
+/* ── Theme switch ────────────────────────────────────────────────────────── */
+.bk-switch {
+  position: relative; display: inline-flex; align-items: center; width: 4.1rem; height: 2.1rem;
+  padding: 3px; border-radius: 9999px; cursor: pointer;
+  background: linear-gradient(135deg, #bae6fd 0%, #fde68a 100%);
+  box-shadow: inset 0 1px 3px rgb(15 23 42 / 18%);
+  transition: background .4s ease;
+}
+.bk-switch[data-on='true'] { background: linear-gradient(135deg, #1e1b4b 0%, #312e81 60%, #4c1d95 100%); }
+.bk-switch:focus-visible { outline: 2px solid #8b5cf6; outline-offset: 2px; }
+.bk-switch-knob {
+  position: relative; z-index: 1; width: 1.6rem; height: 1.6rem; border-radius: 9999px; display: grid; place-items: center;
+  background: #fff; color: #f59e0b; box-shadow: 0 2px 6px rgb(15 23 42 / 30%);
+  transition: transform .45s cubic-bezier(.34, 1.56, .64, 1), background .4s ease, color .4s ease;
+}
+.bk-switch[data-on='true'] .bk-switch-knob { transform: translateX(2rem) rotate(-30deg); background: #0f172a; color: #c4b5fd; }
+.bk-switch-stars { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .4s ease; }
+.bk-switch[data-on='true'] .bk-switch-stars { opacity: 1; }
+.bk-switch-stars i { position: absolute; width: 2px; height: 2px; border-radius: 9999px; background: #fff; animation: bk-twinkle 2.4s ease-in-out infinite; }
+
+/* ── Journey map, before it has anything to draw ─────────────────────────── */
+.bk-map-mini {
+  display: flex; align-items: center; gap: .9rem; padding: .8rem 1rem; border-radius: 1rem;
+  border: 1px dashed rgb(14 165 233 / 35%);
+  background: linear-gradient(90deg, rgb(14 165 233 / 7%), rgb(139 92 246 / 5%)), #fff;
+}
+html.bk-dark .bk-map-mini { background: linear-gradient(90deg, rgb(14 165 233 / 12%), rgb(139 92 246 / 8%)), var(--bk-surface); }
+
+@keyframes bk-spin    { to { transform: rotate(360deg); } }
+@keyframes bk-ping    { 0% { transform: scale(.95); opacity: .9; } 80%, 100% { transform: scale(1.25); opacity: 0; } }
+@keyframes bk-unfold  { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes bk-twinkle { 0%, 100% { opacity: .2; } 50% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-lead-avatar::after, .bk-fold-icon::after, .bk-switch-stars i { animation: none; }
+  .bk-fold-body { animation: none; }
+}

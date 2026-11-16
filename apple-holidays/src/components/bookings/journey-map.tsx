@@ -948,10 +948,16 @@ export interface JourneyMapProps {
    * itinerary instead.
    */
   source?: 'agenda' | 'itinerary'
+  /**
+   * Operations page only: while the route is loading, or when there is nothing
+   * to draw, show a slim one-line strip instead of the full-height panel. The
+   * map takes its full size only once it has a route to show.
+   */
+  compactUntilReady?: boolean
 }
 
 export default function JourneyMap({
-  bookingRef, className, portalToken, theme = 'light', source = 'itinerary',
+  bookingRef, className, portalToken, theme = 'light', source = 'itinerary', compactUntilReady = false,
 }: JourneyMapProps) {
   const agenda = source === 'agenda'
   const guest = !!portalToken
@@ -982,6 +988,13 @@ export default function JourneyMap({
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenKinds, setHiddenKinds] = useState<Set<StopKind>>(new Set())
   const [basemap, setBasemap] = useState<BasemapId>(theme === 'dark' ? 'midnight' : 'voyager')
+  // The operations page can flip light/dark while the map is open; the tiles follow.
+  const themeSeen = useRef(theme)
+  useEffect(() => {
+    if (themeSeen.current === theme) return
+    themeSeen.current = theme
+    setBasemap(theme === 'dark' ? 'midnight' : 'voyager')
+  }, [theme])
   const [showLayers, setShowLayers] = useState(false)
   const [showLegend, setShowLegend] = useState(false)
   const [showSpeed, setShowSpeed] = useState(false)
@@ -2052,7 +2065,36 @@ export default function JourneyMap({
 
   const dark = BASEMAPS.find(b => b.id === basemap)?.dark ?? false
 
+  if (loading && compactUntilReady) {
+    return (
+      <CompactMapStrip
+        title="Plotting the journey…"
+        body="Reading each day of the movement chart and locating it on the map"
+        busy
+      />
+    )
+  }
+
   if (loading) return <JourneyShell className={className} skin={skin}><MapSkeleton skin={skin} /></JourneyShell>
+
+  if ((error || !journey || places.length === 0) && compactUntilReady) {
+    return (
+      <CompactMapStrip
+        title={error ? 'The journey map could not be built' : agenda ? 'No mappable movements yet' : 'No mappable places on this itinerary'}
+        body={error ?? (agenda
+          ? 'Generate the agenda, or give its rows a From and To point, and the map will plot itself.'
+          : 'Add a location to the itinerary day titles and rebuild.')}
+        action={!guest ? (
+          <button
+            onClick={() => void load(true)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 transition-colors"
+          >
+            <RefreshCw className={cn('w-3.5 h-3.5', refreshing && 'animate-spin')} /> Rebuild map
+          </button>
+        ) : undefined}
+      />
+    )
+  }
 
   if (error || !journey || places.length === 0) {
     return (
@@ -2101,6 +2143,8 @@ export default function JourneyMap({
           missing tiles for the length of the animation. The container snaps to
           its new size and the ResizeObserver above re-lays the tiles. */}
       <div
+        // The map has its own light/dark skin; the booking page's palette swap skips it.
+        data-theme-keep
         // `--jm-card` is how much of the panel the open side drawer owns. The
         // drawer sets its own width from it and every piece of map chrome keeps
         // clear of it, so the two can never disagree about where the seam is.
@@ -3296,11 +3340,36 @@ function ActivityDrawer({ bookingRef, place, variant, skin, guest, portalToken, 
 
 // ─── Small pieces ────────────────────────────────────────────────────────
 
+/**
+ * The map before it has anything to show, on the operations page: one slim
+ * line instead of a 700px grey box. Uses the page's `bk-map-mini` style, so it
+ * follows the booking page's light / dark theme.
+ */
+function CompactMapStrip({ title, body, busy, action }: {
+  title: string; body: string; busy?: boolean; action?: React.ReactNode
+}) {
+  return (
+    <div className="bk-map-mini">
+      <div className="relative flex-shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-sky-500 to-violet-500 text-white flex items-center justify-center shadow-md">
+        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Compass className="w-5 h-5" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-sky-600">Journey map</span>
+          <span className="truncate">{title}</span>
+        </p>
+        <p className="text-xs text-slate-500 truncate">{body}</p>
+      </div>
+      {action}
+    </div>
+  )
+}
+
 function JourneyShell({ children, className, skin }: {
   children: React.ReactNode; className?: string; skin: Skin
 }) {
   return (
-    <div className={cn('overflow-hidden rounded-2xl border shadow-card', skin.shell, className)}>
+    <div data-theme-keep className={cn('overflow-hidden rounded-2xl border shadow-card', skin.shell, className)}>
       {children}
     </div>
   )
