@@ -125,10 +125,18 @@ export function attachGeminiFallback(client: OpenAI): OpenAI {
           console.warn(
             `\x1b[33m[AI fallback]\x1b[0m OpenAI ${body?.model} failed (${describe(openaiErr)}) → retrying on Gemini ${model}`
           )
-          const res = await gemini.chat.completions.create(
-            toGeminiChatBody(body, model),
-            options?.signal ? { signal: options.signal } : undefined
-          )
+          const reqOpts = options?.signal ? { signal: options.signal } : undefined
+          let res
+          try {
+            res = await gemini.chat.completions.create(toGeminiChatBody(body, model), reqOpts)
+          } catch (e) {
+            // If Gemini rejects the thinking setting, retry once without it.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if ((e as any)?.status !== 400 || body?.reasoning_effort) throw e
+            const plain = toGeminiChatBody(body, model)
+            delete plain.reasoning_effort
+            res = await gemini.chat.completions.create(plain, reqOpts)
+          }
           console.warn(`\x1b[32m[AI fallback]\x1b[0m Gemini ${model} succeeded`)
           return res
         } catch (geminiErr) {
