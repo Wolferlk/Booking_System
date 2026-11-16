@@ -256,6 +256,48 @@ export async function businessNumbersForInbound(
   return { byWamid, byPhone }
 }
 
+/**
+ * Is Meta's 24-hour window open between this person and the number OPS sends
+ * from (Aahaas Operations)?
+ *
+ * Meta keys the window per business number. Every Aahaas number shares n8n's
+ * webhook, so our inbox also holds replies the person sent to Aahaas B2C,
+ * Supplier, Apple… A plain "any inbound in 24h" check therefore reads a reply
+ * to the Supplier line as an open window on Operations, sends free-form, and
+ * Meta drops it with 131047 ("Re-engagement message"). This counts only
+ * replies that landed on Operations.
+ *
+ * When the number cannot be determined (shared DB unreachable, no record) the
+ * answer is `false`: the approved template always delivers, a free-form
+ * message on a closed window never does.
+ */
+export async function isOpsWindowOpen(phone: string): Promise<boolean> {
+  const p = normalisePhone(phone)
+  if (!p) return false
+  const recent = await prisma.whatsAppMessage.findMany({
+    where:   { phone: p, direction: 'inbound', createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+    orderBy: { createdAt: 'desc' },
+    select:  { waMessageId: true },
+    take:    50,
+  })
+  if (recent.length === 0) return false
+
+  const opsId = OPS_PHONE_NUMBER_ID()
+  if (!opsId) return true // single-number setup: the old reading is right
+
+  const wamids = recent.map(r => r.waMessageId).filter((w): w is string => !!w)
+  const { byWamid, byPhone } = await businessNumbersForInbound(wamids, [p])
+  const guestNumber = byPhone.get(p) ?? null
+  return recent.some(r => {
+    const on = (r.waMessageId && byWamid.get(r.waMessageId)) || guestNumber
+    return on === opsId
+  })
+}
+
+function OPS_PHONE_NUMBER_ID(): string {
+  return (process.env.WHATSAPP_PHONE_NUMBER_ID ?? '').trim()
+}
+
 // Outbound statuses that can still climb. `read` and `failed` are the last word.
 const OPEN_OUTBOUND = ['pending', 'accepted', 'held', 'sent', 'delivered']
 

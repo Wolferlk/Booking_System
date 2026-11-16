@@ -57,8 +57,9 @@
  */
 import { prisma } from '@/lib/prisma'
 import {
-  isWithin24hWindow, sendViaMetaApi, sendViaMetaTemplate, uploadMetaMedia,
+  sendViaMetaApi, sendViaMetaTemplate, uploadMetaMedia,
 } from '@/lib/whatsapp'
+import { isOpsWindowOpen } from '@/lib/whatsapp-shared-inbox-sync'
 import { putUpload } from '@/lib/storage'
 import { normaliseSriLankanPhone, type NormalisedPhone } from '@/lib/sl-phone'
 import { generateSettlementDocsPdf } from '@/lib/sl-settlement-docs-pdfkit'
@@ -498,7 +499,7 @@ export async function sendSettlementDocs(
 
   // One window reading for the whole send, so two attachments a second apart
   // cannot take different routes.
-  const open = await isWithin24hWindow(phone.msisdn).catch(() => false)
+  const open = await isOpsWindowOpen(phone.msisdn).catch(() => false)
 
   const params = settlementDocsParams(pack, kinds)
 
@@ -597,8 +598,10 @@ async function sendCopy(opts: {
 
   // The copy number is an office line that has almost certainly not messaged us
   // in the last 24 hours either, so it gets its own window reading rather than
-  // inheriting the driver's.
-  const open = await isWithin24hWindow(contact.msisdn).catch(() => false)
+  // inheriting the driver's — and that reading counts only replies to the
+  // Operations line, since a chat with another Aahaas number opens no window
+  // here (the cause of the copy's 131047 "Re-engagement message" failures).
+  const open = await isOpsWindowOpen(contact.msisdn).catch(() => false)
 
   return deliver({
     bookingRef: opts.bookingRef,
