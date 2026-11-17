@@ -216,6 +216,43 @@ html.bk-dark .bk-fold-toggle { filter: brightness(1.3); background: rgb(var(--to
 .bk-switch[data-on='true'] .bk-switch-stars { opacity: 1; }
 .bk-switch-stars i { position: absolute; width: 2px; height: 2px; border-radius: 9999px; background: #fff; animation: bk-twinkle 2.4s ease-in-out infinite; }
 
+/* ── Action groups (Workflow / Open & manage / Reach out) ────────────────── */
+.bk-action { --tone: 148 163 184; }
+.bk-action[data-tone='brand'] { --tone: 245 158 11; }
+.bk-action[data-tone='green'] { --tone: 16 185 129; }
+html.bk-dark .bk-action {
+  background:
+    linear-gradient(90deg, rgb(var(--tone) / 11%) 0%, rgb(var(--tone) / 3%) 38%, transparent 70%),
+    var(--bk-sunken) !important;
+  border-color: rgb(var(--tone) / 22%) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
+}
+html.bk-dark .bk-action[data-tone='slate'] { border-color: var(--bk-line) !important; }
+html.bk-dark .bk-action-label { color: rgb(var(--tone)) !important; filter: brightness(1.25); }
+html.bk-dark .bk-action[data-tone='slate'] .bk-action-label { color: #8d9bb0 !important; filter: none; }
+
+/* ── Guest WhatsApp, none on file ────────────────────────────────────────── */
+html.bk-dark .bk-wa-empty {
+  background-image: linear-gradient(90deg, rgb(16 185 129 / 45%), rgb(20 184 166 / 18%), rgb(245 158 11 / 40%), rgb(16 185 129 / 45%)) !important;
+}
+html.bk-dark .bk-wa-empty-body {
+  background:
+    radial-gradient(70% 90% at 50% 0%, rgb(37 211 102 / 7%) 0%, transparent 70%),
+    var(--bk-surface) !important;
+}
+html.bk-dark .bk-wa-empty:not(:disabled):hover .bk-wa-empty-body {
+  background:
+    radial-gradient(70% 90% at 50% 0%, rgb(37 211 102 / 13%) 0%, transparent 70%),
+    var(--bk-surface) !important;
+}
+
+/* ── Section rail ────────────────────────────────────────────────────────── */
+html.bk-dark [data-section-rail] > div {
+  background-color: rgb(17 26 44 / 88%) !important;
+  border-color: var(--bk-line) !important;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%) !important;
+}
+
 /* ── Journey map, before it has anything to draw ─────────────────────────── */
 .bk-map-mini {
   display: flex; align-items: center; gap: .9rem; padding: .8rem 1rem; border-radius: 1rem;

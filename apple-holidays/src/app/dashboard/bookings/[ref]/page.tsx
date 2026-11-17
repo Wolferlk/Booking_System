@@ -1537,7 +1537,9 @@ Wishing you a wonderful trip! ✈️
       {/* Cancelled bookings stay fully readable, but the whole page is visually
           shaded and red-marked so nobody mistakes them for live work. */}
       <div className={cn(
-        'p-8 space-y-6',
+        // lg: right padding clears the fixed section rail (SectionNav), which
+        // otherwise sits on top of the cards' right edge.
+        'p-8 lg:pr-[4.75rem] space-y-6',
         isCancelled && 'bg-slate-100/70 [&>*:not(:first-child):not([data-cancel-banner])]:opacity-75 [&>*:not(:first-child):not([data-cancel-banner])]:grayscale-[45%]',
         versionState === 'superseded' && cn(
           'bg-violet-50/40 [&>*:not([data-version-banner])]:pointer-events-none [&>*:not([data-version-banner])]:select-none [&>*:not([data-version-banner])]:transition-all',
@@ -1788,8 +1790,9 @@ Wishing you a wonderful trip! ✈️
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div className={`${tile} border-sky-100 bg-gradient-to-br from-sky-50 to-white`}>
                       <p className={`${lbl} text-sky-500`}><Calendar className="w-3 h-3" /> Travel</p>
-                      <p className="mt-0.5 text-sm font-semibold text-slate-800 truncate">
-                        {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
+                      <p className="mt-0.5 text-sm font-semibold leading-snug text-slate-800" title={`${formatDate(booking.arrivalDate as string)} → ${formatDate(booking.departureDate as string)}`}>
+                        <span className="whitespace-nowrap">{formatDate(booking.arrivalDate as string)} →</span>{' '}
+                        <span className="whitespace-nowrap">{formatDate(booking.departureDate as string)}</span>
                       </p>
                       {nights !== null && <p className="text-[11px] text-slate-400 flex items-center gap-1"><Moon className="w-3 h-3" /> {nights} night{nights === 1 ? '' : 's'}</p>}
                     </div>
@@ -5280,9 +5283,9 @@ function ActionGroup({ label, icon: Icon, tone, children }: {
 }) {
   const t = ACTION_TONES[tone]
   return (
-    <div className={`relative overflow-hidden rounded-xl border pl-3.5 pr-2.5 py-2 has-[>div:empty]:hidden ${t.bg}`}>
+    <div data-tone={tone} className={`bk-action relative overflow-hidden rounded-xl border pl-3.5 pr-2.5 py-2 has-[>div:empty]:hidden ${t.bg}`}>
       <span aria-hidden className={`absolute left-0 inset-y-0 w-1 bg-gradient-to-b ${t.bar}`} />
-      <p className={`mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] ${t.label}`}>
+      <p className={`bk-action-label mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.14em] ${t.label}`}>
         <Icon className="w-3 h-3" /> {label}
       </p>
       <div className="flex flex-wrap items-center gap-1.5">{children}</div>
