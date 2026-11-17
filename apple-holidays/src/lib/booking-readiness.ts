@@ -93,6 +93,14 @@ export interface ReadinessAgendaItem {
     vendorId?: string | null
     /** A local tour vendor handling the movement covers it just as a driver does. */
     tourVendorId?: string | null
+    /**
+     * Ad-hoc allocations carry only a name — the Excel MC import and manual
+     * entries on the movement chart write `driverName` with no `driverId`. They
+     * are as allocated as a registered driver; the agenda header counts them.
+     */
+    driverName?: string | null
+    vendorName?: string | null
+    tourVendorName?: string | null
   } | null
 }
 
@@ -165,7 +173,8 @@ function needsDriver(item: ReadinessAgendaItem): boolean {
 
 function isAllocated(item: ReadinessAgendaItem): boolean {
   const a = item.assignment
-  return !!(a?.driverId || a?.vendorId || a?.tourVendorId)
+  return !!(a?.driverId || a?.vendorId || a?.tourVendorId
+    || a?.driverName?.trim() || a?.vendorName?.trim() || a?.tourVendorName?.trim())
 }
 
 // ─── Checks ───────────────────────────────────────────────────────────────────

@@ -1043,7 +1043,7 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
               serviceType: true,
               isLeisure: true,
               isHotelOnly: true,
-              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true } },
+              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true, driverName: true, vendorName: true, tourVendorName: true } },
             },
           },
         },

@@ -692,7 +692,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
               serviceType: true,
               isLeisure: true,
               isHotelOnly: true,
-              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true, driverName: true, vendorName: true } },
+              assignment: { select: { driverId: true, vendorId: true, tourVendorId: true, driverName: true, vendorName: true, tourVendorName: true } },
             },
           },
         },
