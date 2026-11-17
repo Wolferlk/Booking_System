@@ -1,5 +1,6 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { readMcBaseline as getMcBaseline } from '@/lib/vn-mc-import/config'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { isAssignLocked, assignLockMessage, partnerKeys, introducesNewPartner, type PartnerFields } from '@/lib/booking-assign-lock'
@@ -29,7 +30,7 @@ import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
 import { carryMcSupplier } from '@/lib/mc-supplier'
 import type { UserRole } from '@prisma/client'
-import { logAgendaSave, logAssignment, logMovementEdit, snapshotAgenda } from '@/lib/booking-logs-agenda'
+import { logAgendaSave, logAssignment, logMovementEdit, snapshotAgenda, type AgendaSaveOrigin } from '@/lib/booking-logs-agenda'
 
 export const dynamic = 'force-dynamic'
 
@@ -169,7 +170,33 @@ export async function POST(
   })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  const { items = [], keepIncludeIds = [] } = await req.json()
+  // notifyDrivers: false lets a caller save without messaging drivers (Excel MC
+  // Generate asks first). Absent means true — every existing save is unchanged.
+  // origin: { kind: 'excel', … } tags the Booking Logs entry as built from the
+  // VN Movement Chart Excel. Optional; only used for logging.
+  // baseUpdatedAt: when the page loaded the chart. Sent by the movement-chart
+  // page only; other callers are unchanged.
+  const {
+    items = [], keepIncludeIds = [], notifyDrivers = true, origin = null,
+    baseUpdatedAt = null, overrideExcelAuto = false,
+  } = await req.json()
+
+  // The Excel auto-update changed this chart after the page loaded it: saving
+  // the page's copy would quietly undo those changes. Ask instead. Only this
+  // case — two people editing is unchanged behaviour.
+  if (booking.operationCountry === 'VIETNAM' && booking.tourAgenda && typeof baseUpdatedAt === 'string' && overrideExcelAuto !== true) {
+    try {
+      const baseline = await getMcBaseline(booking.bookingRef)
+      const autoAt = baseline?.autoAt ? Date.parse(baseline.autoAt) : NaN
+      const loaded = Date.parse(baseUpdatedAt)
+      if (Number.isFinite(autoAt) && Number.isFinite(loaded) && autoAt > loaded + 1000) {
+        return NextResponse.json({
+          success: false, code: 'EXCEL_AUTO_CONFLICT', autoAt: baseline!.autoAt,
+          error: 'The Movement Chart Excel updated this chart while you were editing — saving now would undo those changes.',
+        }, { status: 409 })
+      }
+    } catch { /* the guard is a courtesy — never block a save on it */ }
+  }
 
   // Every date is validated before anything is deleted — the save below wipes
   // the existing chart, so a bad row must fail here, while the old items are
@@ -407,7 +434,7 @@ export async function POST(
   // go through driver-assignment-whatsapp.ts, so a driver is messaged once per
   // distinct allocation, is cancelled when un-assigned/replaced, and receives a
   // single consolidated message when handling several movements on one file.
-  try {
+  if (notifyDrivers !== false) try {
     // Current drivers assigned across the saved chart, keyed by normalised phone,
     // with every movement they cover folded into one entry.
     // The agreed rate is not collected here — it is never sent to the driver.
@@ -480,9 +507,15 @@ export async function POST(
       fromPoint: (item.fromPoint as string) ?? null,
       toPoint: (item.toPoint as string) ?? null,
       serviceType: normaliseServiceType(item.serviceType) ?? 'OWN_ARRANGEMENT',
+      meetingTime: normaliseClock(item.meetingTime) ?? null,
+      mealPlan: (item.mealPlan as string) ?? null,
+      details: (item.details as string) ?? null,
       assignment: item.isLeisure === true || item.isHotelOnly === true ? null : (item.assignment as Record<string, string | null> | null) ?? null,
     })),
     { id: session.user.id, name: session.user.name || session.user.email || null },
+    origin && typeof origin === 'object' && (origin as { kind?: unknown }).kind === 'excel'
+      ? { ...(origin as AgendaSaveOrigin), notifyDrivers: notifyDrivers !== false }
+      : null,
   )
 
   return buildApiSuccess({ agenda, items: createdItems, includesWarning }, 'Agenda saved')

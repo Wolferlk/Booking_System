@@ -14,7 +14,22 @@ interface MovementLike {
   toPoint?: string | null
   serviceType?: string | null
   meetingTime?: string | null
+  details?: string | null
+  mealPlan?: string | null
   assignment?: AssignmentLike | null
+}
+
+/** Where a chart save came from, when it was not typed by hand (Excel MC Generate). */
+export interface AgendaSaveOrigin {
+  kind: 'excel'
+  sheetTitle?: string | null
+  added?: number
+  updated?: number
+  removed?: number
+  fieldsChanged?: number
+  notifyDrivers?: boolean
+  /** "1 Sep · Noi Bai Airport → Hanoi Lake View Hotel: Meeting time" … */
+  rows?: { label: string; fields: string[]; kind: string }[]
 }
 interface AssignmentLike {
   driverName?: string | null
@@ -69,16 +84,44 @@ export async function snapshotAgenda(agendaId: string | null | undefined) {
     where: { agendaId },
     select: {
       date: true, location: true, fromPoint: true, toPoint: true, serviceType: true,
+      meetingTime: true, mealPlan: true, details: true,
       assignment: { select: { driverName: true, driverPhone: true, vendorName: true, vehicleType: true, vehiclePlate: true, guideName: true, tourVendorName: true } },
     },
   }).catch(() => null)
 }
 
-export async function logAgendaSave(bookingRef: string, before: MovementLike[] | null, after: MovementLike[], actor: Actor) {
+const MOVEMENT_FIELDS: [keyof MovementLike, string][] = [
+  ['meetingTime', 'Meeting time'], ['location', 'Location'], ['fromPoint', 'From'], ['mealPlan', 'Meal plan'], ['details', 'Details'],
+]
+
+export async function logAgendaSave(bookingRef: string, before: MovementLike[] | null, after: MovementLike[], actor: Actor, origin?: AgendaSaveOrigin | null) {
+  const source = origin?.kind === 'excel' ? 'excel' : 'user'
   try {
+    if (origin?.kind === 'excel') {
+      const n = (v: unknown) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0)
+      const bits = [
+        n(origin.added) && `+${n(origin.added)} added`,
+        n(origin.updated) && `${n(origin.updated)} updated (${n(origin.fieldsChanged)} fields)`,
+        n(origin.removed) && `−${n(origin.removed)} removed`,
+      ].filter(Boolean)
+      await logBookingEvent({
+        bookingRef, section: 'agenda', action: before?.length ? 'excel_updated' : 'excel_generated', actor, source,
+        summary: `Movement chart ${before?.length ? 'updated' : 'generated'} from Excel MC${origin.sheetTitle ? ` (${String(origin.sheetTitle).slice(0, 120)})` : ''} — ${bits.join(', ') || 'no changes'}`,
+        changes: (Array.isArray(origin.rows) ? origin.rows : []).slice(0, 40).map(r => {
+          const label = String(r?.label ?? '').slice(0, 200)
+          const fields = Array.isArray(r?.fields) ? r.fields.slice(0, 8).map(f => String(f).slice(0, 40)) : []
+          return {
+            field: r?.kind === 'NEW' ? 'Added' : r?.kind === 'SYSTEM_ONLY' ? 'Removed' : 'Updated',
+            from: r?.kind === 'SYSTEM_ONLY' ? label : null,
+            to: r?.kind === 'SYSTEM_ONLY' ? null : `${label}${fields.length ? ` — ${fields.join(', ')}` : ''}`,
+          }
+        }),
+        reason: `Driver WhatsApp on save: ${origin.notifyDrivers ? 'sent' : 'not sent'}`,
+      })
+    }
     if (!before || before.length === 0) {
       await logBookingEvent({
-        bookingRef, section: 'agenda', action: 'created', actor, source: 'user',
+        bookingRef, section: 'agenda', action: 'created', actor, source,
         summary: `Movement chart created — ${after.length} movement${after.length === 1 ? '' : 's'}`,
       })
     } else {
@@ -92,9 +135,31 @@ export async function logAgendaSave(bookingRef: string, before: MovementLike[] |
       ]
       const bits = [added.length && `+${added.length} added`, removed.length && `−${removed.length} removed`].filter(Boolean)
       await logBookingEvent({
-        bookingRef, section: 'agenda', action: added.length || removed.length ? 'updated' : 'saved', actor, source: 'user', changes,
+        bookingRef, section: 'agenda', action: added.length || removed.length ? 'updated' : 'saved', actor, source, changes,
         summary: `Movement chart saved — ${after.length} movements${bits.length ? ` (${bits.join(', ')})` : ', no movements added or removed'}`,
       })
+
+      // Field edits on movements that were there before and after (time, meal,
+      // details…) — a whole-chart save used to record only adds and removals.
+      // Only the fields the save actually sent are compared.
+      const edits: LogChange[] = []
+      for (const m of after) {
+        const prev = oldKeys.get(keyOf(m))
+        if (!prev) continue
+        for (const [k, label] of MOVEMENT_FIELDS) {
+          if (m[k] === undefined) continue
+          const a = String(prev[k] ?? '').trim(), b = String(m[k] ?? '').trim()
+          if (a === b) continue
+          const clipText = (s: string) => (s.length > 140 ? `${s.slice(0, 139)}…` : s) || null
+          edits.push({ field: `${movementLabel(m)} · ${label}`, from: clipText(a), to: clipText(b) })
+        }
+      }
+      if (edits.length) {
+        await logBookingEvent({
+          bookingRef, section: 'agenda', action: 'edited', actor, source, changes: edits.slice(0, 40),
+          summary: `Movement details changed — ${edits.length} field${edits.length === 1 ? '' : 's'} on ${new Set(edits.map(e => e.field.split(' · ').slice(0, -1).join(' · '))).size} movement(s)`,
+        })
+      }
     }
 
     // Who is on each movement that existed before and after.
@@ -105,9 +170,9 @@ export async function logAgendaSave(bookingRef: string, before: MovementLike[] |
       if (!ch.length || (!prev && !m.assignment)) continue
       if (!prev && ch.every(c => !c.to)) continue
       await logBookingEvent({
-        bookingRef, section: 'agenda', actor, source: 'user', changes: ch,
+        bookingRef, section: 'agenda', actor, source, changes: ch,
         action: ch.every(c => !c.to) ? 'unassigned' : 'assigned',
-        summary: `${ch.map(c => c.field).join(' & ')} ${ch.every(c => !c.to) ? 'removed' : 'set'} · ${movementLabel(m)}`,
+        summary: `${ch.map(c => c.field).join(' & ')} ${ch.every(c => !c.to) ? 'removed' : 'set'}${source === 'excel' ? ' from Excel' : ''} · ${movementLabel(m)}`,
       })
     }
   } catch (err) {

@@ -54,6 +54,13 @@ export async function register() {
       // empty drivers (or ones it filled itself); a no-op until its tables exist.
       const { startVnDriverSyncScheduler } = await import('@/lib/vn-driver-sync/scheduler')
       startVnDriverSyncScheduler()
+
+      // Excel → Agenda auto-update — keeps VN charts that were BUILT from the
+      // Movement Chart Excel (Excel MC Generate) in step with it. Ships OFF
+      // (vn_mc_auto_mode); never deletes, never overwrites OPS edits, never
+      // touches drivers or sends WhatsApp. See lib/vn-mc-import/auto.ts.
+      const { startMcAutoScheduler } = await import('@/lib/vn-mc-import/scheduler')
+      startMcAutoScheduler()
     }
   }
 }

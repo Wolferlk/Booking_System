@@ -40,6 +40,8 @@ import MovementWhatsAppModal, { MovementWhatsAppButton, type MovementSendSummary
 import { type VendorSyncUpdate } from '@/components/agenda/vn-vendor-sync-panel'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 import SectionLogsButton from '@/components/logs/section-logs-button'
+import ExcelMcGenerate, { type ExcelMcApply } from '@/components/agenda/excel-mc-generate'
+import { itemFromLine, type McSheetLine } from '@/lib/vn-mc-import/shared'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
 function normalizeMealPlan(raw: string | null | undefined): string {
@@ -576,6 +578,10 @@ export default function AgendaPage() {
     } finally { setDownloadingWord(false) }
   }
 
+  // When the chart on screen was read — sent with a save so the server can say
+  // when the Excel auto-update changed the chart in the meantime.
+  const loadedAgendaAt = useRef<string | null>(null)
+
   const loadAgenda = useCallback(async () => {
     try {
       const [agendaRes, bookingRes] = await Promise.all([
@@ -585,6 +591,7 @@ export default function AgendaPage() {
       const [agendaJson, bookingJson] = await Promise.all([agendaRes.json(), bookingRes.json()])
 
       if (agendaJson.success && agendaJson.data) {
+        loadedAgendaAt.current = typeof agendaJson.data.updatedAt === 'string' ? agendaJson.data.updatedAt : null
         setItems((agendaJson.data.items ?? []).map((raw: unknown) => {
           const i = raw as Partial<{
             id: string; date: string; location: string; fromPoint: string
@@ -749,7 +756,56 @@ export default function AgendaPage() {
     })
   }
 
-  async function persistItems(itemsToSave: AgendaItem[], silent = false) {
+  // Excel MC Generate: a sheet import loaded into the editor but not saved yet.
+  // The next Save carries its log tag and WhatsApp choice, then records the
+  // sheet baseline so later Excel edits can be told apart from OPS edits.
+  const pendingExcel = useRef<Omit<ExcelMcApply<AgendaItem>, 'items' | 'save'> | null>(null)
+
+  const makeExcelItem = useCallback((line: McSheetLine): AgendaItem => itemFromLine(line, f => {
+    const isLeisure = f.isHotelOnly ? false : resolveIsLeisure({ ...f, isLeisure: null })
+    return {
+      ...f,
+      mealPlan: normalizeMealPlan(f.mealPlan),
+      isLeisure,
+      assignment: isLeisure ? null : (f.assignment as AgendaItem['assignment']) ?? null,
+    } as AgendaItem
+  }), [])
+
+  async function recordExcelBaseline(p: { keys: string[]; title: string | null }) {
+    try {
+      const res = await fetch(`/api/bookings/${ref}/agenda/mc-sheet`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: p.keys, title: p.title }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+    } catch {
+      toast.warning('Chart saved, but the Excel baseline was not recorded — the next "Sheet updated" check may tick more than it needs to')
+    }
+  }
+
+  async function applyExcel(r: ExcelMcApply<AgendaItem>) {
+    const { items: next, save, ...meta } = r
+    if (!save) {
+      setItems(next)
+      setEditMode(true)
+      pendingExcel.current = meta
+      toast.success('Sheet loaded into the editor — check it, then press Save changes')
+      return
+    }
+    setSaving(true)
+    try {
+      await persistItems(next, true, { notifyDrivers: meta.notifyDrivers, origin: meta.origin })
+      await recordExcelBaseline(meta)
+      pendingExcel.current = null
+      setEditMode(false)
+      toast.success(`Movement chart saved from Excel — +${meta.origin.added} added, ${meta.origin.updated} updated, ${meta.origin.removed} removed`)
+    } finally { setSaving(false) }
+  }
+
+  async function persistItems(
+    itemsToSave: AgendaItem[], silent = false,
+    opts: { notifyDrivers?: boolean; origin?: ExcelMcApply<AgendaItem>['origin']; overrideExcelAuto?: boolean } = {},
+  ) {
     // Caught here as well as on the server: a date the database will reject
     // should never leave the browser, since saving rewrites the whole chart.
     const badDate = itemsToSave.findIndex(it => {
@@ -774,16 +830,25 @@ export default function AgendaPage() {
 
     const res  = await fetch(`/api/bookings/${ref}/agenda`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: payloadItems, keepIncludeIds }),
+      body: JSON.stringify({
+        items: payloadItems, keepIncludeIds,
+        ...(opts.notifyDrivers === false ? { notifyDrivers: false } : {}),
+        ...(opts.origin ? { origin: opts.origin } : {}),
+        ...(loadedAgendaAt.current ? { baseUpdatedAt: loadedAgendaAt.current } : {}),
+        ...(opts.overrideExcelAuto ? { overrideExcelAuto: true } : {}),
+      }),
     })
     // A server crash returns an empty or HTML body; parsing it blindly surfaces
     // the useless "Unexpected end of JSON input" instead of the real failure.
     const raw  = await res.text()
-    let json: { success?: boolean; error?: string; data?: { includesWarning?: string | null } }
+    let json: { success?: boolean; error?: string; code?: string; data?: { includesWarning?: string | null } }
     try {
       json = raw ? JSON.parse(raw) : {}
     } catch {
       throw new Error(`Save failed (${res.status}). The server returned an unexpected response.`)
+    }
+    if (res.status === 409 && json.code === 'EXCEL_AUTO_CONFLICT') {
+      throw Object.assign(new Error(json.error || 'The Excel updated this chart while you were editing'), { code: 'EXCEL_AUTO_CONFLICT' })
     }
     if (!res.ok || !json.success) throw new Error(json.error || `Save failed (${res.status})`)
     if (!silent) toast.success('Movement chart saved!')
@@ -793,6 +858,7 @@ export default function AgendaPage() {
   }
 
   async function generateFromFile(file: File) {
+    pendingExcel.current = null
     setGenerating(true); setShowUpload(false)
     try {
       const formData = new FormData()
@@ -810,6 +876,7 @@ export default function AgendaPage() {
   }
 
   async function generateFromBooking() {
+    pendingExcel.current = null
     setGenerating(true)
     try {
       const res  = await fetch(`/api/bookings/${ref}/agenda/generate`, { method: 'POST' })
@@ -824,13 +891,32 @@ export default function AgendaPage() {
     } finally { setGenerating(false) }
   }
 
-  async function saveAgenda() {
+  async function saveAgenda(overrideExcelAuto: boolean = false) {
+    overrideExcelAuto = overrideExcelAuto === true   // never a click event
     setSaving(true)
     try {
-      await persistItems(items)
+      const excel = pendingExcel.current
+      await persistItems(items, false, {
+        ...(excel ? { notifyDrivers: excel.notifyDrivers, origin: excel.origin } : {}),
+        ...(overrideExcelAuto ? { overrideExcelAuto: true } : {}),
+      })
+      if (excel) {
+        pendingExcel.current = null
+        await recordExcelBaseline(excel)
+      }
       setEditMode(false)
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Save failed')
+      if ((err as { code?: string } | null)?.code === 'EXCEL_AUTO_CONFLICT') {
+        // Nothing was saved. The operator decides: see the Excel's changes, or keep theirs.
+        toast.warning((err as Error).message, {
+          duration: 30_000,
+          description: 'Reload shows the updated chart (your unsaved edits are dropped). Save anyway keeps your version — the auto-update will then leave fields you edited alone.',
+          action: { label: 'Save anyway', onClick: () => { void saveAgenda(true) } },
+          cancel: { label: 'Reload', onClick: () => { pendingExcel.current = null; setEditMode(false); void loadAgenda() } },
+        })
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Save failed')
+      }
     } finally { setSaving(false) }
   }
 
@@ -1437,6 +1523,20 @@ export default function AgendaPage() {
 
             {canEdit && (
               <>
+                {/* Excel MC Generate — Vietnam (VN…) bookings only. Shown outside
+                    edit mode too, so "Sheet updated" is seen without editing. */}
+                {booking && (booking.operationCountry === 'VIETNAM' || (!booking.operationCountry && /^VN/i.test(ref))) && (
+                  <ExcelMcGenerate<AgendaItem>
+                    bookingRef={ref}
+                    booking={booking}
+                    items={items}
+                    canEdit={canEdit && !saving && !generating}
+                    makeItem={makeExcelItem}
+                    onApply={applyExcel}
+                    editing={isEditing || Boolean(pendingExcel.current)}
+                    onServerChanged={() => { void loadAgenda() }}
+                  />
+                )}
                 {isEditing && (
                   <>
                     <button
@@ -1478,7 +1578,7 @@ export default function AgendaPage() {
                   </>
                 )}
                 {isEditing ? (
-                  <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
+                  <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={() => saveAgenda()}>
                     Save changes
                   </Button>
                 ) : (

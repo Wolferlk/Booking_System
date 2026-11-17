@@ -46,6 +46,10 @@ export interface SheetRow {
   to: string | null            // To/Tours column
   route: string | null         // "from → to", for display
   guest: string | null         // Name of guests ("Tapati Ganguly +918240694973")
+  /** The Meeting Time cell as it came (a range like "8:00 - 8:30 AM" survives here). */
+  timeRaw: string | number | null
+  adults: string | null        // Adult column, as typed
+  children: string | null      // Child column, as typed ("1 (3 - Infant)")
   text: string | null          // the Vendors cell, full
   driverText: string | null    // a Driver / Driver details column, when the sheet has one
   phones: string[]
@@ -226,11 +230,12 @@ const text = (v: Cell | undefined): string | null => {
 interface Columns {
   date: number; code: number; details: number; meal: number; time: number; service: number; vendor: number
   driver: number; from: number; to: number; location: number; guest: number
+  adults: number; children: number
 }
 
 /** Header text (normalised) → field. The first column that fits wins. */
 function mapColumns(header: Cell[]): Columns | null {
-  const c: Columns = { date: -1, code: -1, details: -1, meal: -1, time: -1, service: -1, vendor: -1, driver: -1, from: -1, to: -1, location: -1, guest: -1 }
+  const c: Columns = { date: -1, code: -1, details: -1, meal: -1, time: -1, service: -1, vendor: -1, driver: -1, from: -1, to: -1, location: -1, guest: -1, adults: -1, children: -1 }
   header.forEach((h, i) => {
     const n = norm(h)
     if (!n) return
@@ -246,6 +251,8 @@ function mapColumns(header: Cell[]): Columns | null {
     else if (c.to < 0 && /^(to|totours?|totour|dropoff|destination|tours?)$/.test(n)) c.to = i
     else if (c.location < 0 && /^(location|city)$/.test(n)) c.location = i
     else if (c.guest < 0 && /^(nameofguests?|guestnames?|guests?|leadguest|paxname|clientname)$/.test(n)) c.guest = i
+    else if (c.adults < 0 && /^(adults?|adt|noofadults?)$/.test(n)) c.adults = i
+    else if (c.children < 0 && /^(child|children|chd|kids?|noofchild(ren)?)$/.test(n)) c.children = i
   })
   return c.date >= 0 && c.code >= 0 && (c.vendor >= 0 || c.driver >= 0) ? c : null
 }
@@ -260,7 +267,8 @@ function toIsoDate(v: Cell | undefined): string | null {
     const d = XLSX.SSF.parse_date_code(v)
     return d && d.y > 2000 ? `${d.y}-${pad(d.m)}-${pad(d.d)}` : null
   }
-  const s = String(v).trim()
+  // "Tue, 1 Sep 2026" — a weekday typed in front of the date.
+  const s = String(v).trim().replace(/^[a-z]{3,9}\.?,?\s+(?=\d)/i, '')
   let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
   if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`
   m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/)            // dd/mm/yyyy — the Vietnam desk's order
@@ -357,6 +365,8 @@ export function parseMovementWorkbook(buf: Buffer): Omit<SheetRead, 'hash' | 'so
         location: text(at(cols.location)), from: text(at(cols.from)), to: text(at(cols.to)),
         route: [text(at(cols.from)), text(at(cols.to))].filter(Boolean).join(' → ') || null,
         guest: text(at(cols.guest)),
+        timeRaw: (() => { const t = at(cols.time); return typeof t === 'number' ? t : text(t) })(),
+        adults: text(at(cols.adults)), children: text(at(cols.children)),
         text: vendor, driverText: driver,
         phones: extractPhones(contact),
       })
