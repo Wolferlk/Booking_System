@@ -11,7 +11,7 @@ import {
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
   ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, UserX, Store, Utensils,
-  FileType, Settings2, RefreshCw,
+  FileType, Settings2, RefreshCw, FileCheck2,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -19,6 +19,8 @@ import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
+import ConfirmationDescriptionsModal, { type DescChange } from '@/components/agenda/confirmation-descriptions-modal'
+import { matchSourceDescriptions } from '@/lib/agenda-source-match'
 import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import PartnerAssignPicker, { EMPTY_SELECTION, type PartnerSelection } from '@/components/partners/partner-assign-picker'
 import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
@@ -371,6 +373,8 @@ export default function AgendaPage() {
   const [describingIdx,  setDescribingIdx]  = useState<number | null>(null)
   // Per-item AppleSystem source-description refresh loading
   const [sourceDescribingIdx, setSourceDescribingIdx] = useState<number | null>(null)
+  // "Confirmation Descriptions" — every movement's AppleSystem description at once
+  const [confDescOpen, setConfDescOpen] = useState(false)
   // Drag-to-reorder state
   const [dragIndex,      setDragIndex]      = useState<number | null>(null)
   const [dragOverIndex,  setDragOverIndex]  = useState<number | null>(null)
@@ -1125,30 +1129,47 @@ export default function AgendaPage() {
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error || 'Failed to fetch API description')
 
-      const sourceItems = Array.isArray(json.data?.items) ? json.data.items as {
-        dayNo?: number; date?: string; title?: string; description?: string
-      }[] : []
-      const normalise = (value: unknown) => String(value ?? '')
-        .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-      const itemTitle = normalise(item.toPoint)
-      const sameDate = sourceItems.filter(source => String(source.date ?? '').slice(0, 10) === item.date)
-      const exact = sameDate.find(source => normalise(source.title) === itemTitle)
-      const contains = sameDate.find(source => {
-        const title = normalise(source.title)
-        return title && itemTitle && (title.includes(itemTitle) || itemTitle.includes(title))
-      })
-      const byDay = sourceItems.find(source => Number(source.dayNo) === idx + 1)
-      const match = exact ?? contains ?? byDay
-      const description = String(match?.description ?? '').trim()
-      if (!description) throw new Error('AppleSystem returned no description for this movement')
+      const sourceItems = Array.isArray(json.data?.items) ? json.data.items : []
+      // Matched against the whole chart, so this movement gets the same text
+      // "Confirmation Descriptions" would give it (and never a sibling's).
+      const match = matchSourceDescriptions(items, sourceItems, booking?.arrivalDate).byItem.get(idx)
+      if (!match) throw new Error('AppleSystem has no description for this movement\'s date and activity')
 
-      setItems(current => current.map((x, j) => j === idx ? { ...x, details: description } : x))
-      toast.success('Official API description loaded into this draft')
+      setItems(current => current.map((x, j) => j === idx ? { ...x, details: match.description } : x))
+      toast.success(match.confidence === 'check'
+        ? `Loaded "${match.title || 'that day'}" — please check it is the right activity`
+        : 'Official API description loaded into this draft')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'API description refresh failed')
     } finally {
       setSourceDescribingIdx(null)
     }
+  }
+
+  /** Load the ticked confirmation descriptions into the draft, with an Undo. */
+  function applyConfirmationDescriptions(changes: DescChange[]) {
+    const before = new Map<number, string>()
+    const after = new Map<number, string>()
+    let skipped = 0
+    for (const c of changes) {
+      const x = items[c.idx]
+      // The row must still be the same movement it was matched as.
+      if (!x || x.date !== c.expect.date || x.toPoint !== c.expect.toPoint) { skipped++; continue }
+      before.set(c.idx, x.details)
+      after.set(c.idx, c.details)
+    }
+    setItems(current => current.map((x, j) => (after.has(j) ? { ...x, details: after.get(j)! } : x)))
+    setConfDescOpen(false)
+    const n = after.size
+    toast.success(`${n} description${n === 1 ? '' : 's'} replaced from the confirmation — press Save changes to keep`, {
+      description: skipped ? `${skipped} skipped: the movement changed while the preview was open` : undefined,
+      duration: 10_000,
+      action: n ? {
+        label: 'Undo',
+        // Only puts back rows still holding the text this load wrote.
+        onClick: () => setItems(current => current.map((x, j) => (before.has(j) && x.details === after.get(j) ? { ...x, details: before.get(j)! } : x))),
+      } : undefined,
+    })
   }
 
   function fillFromItinerary() {
@@ -1539,6 +1560,16 @@ export default function AgendaPage() {
                 )}
                 {isEditing && (
                   <>
+                    <button
+                      type="button"
+                      onClick={() => setConfDescOpen(true)}
+                      disabled={!items.length}
+                      className="btn btn-sm flex items-center gap-1.5 border border-sky-200 bg-gradient-to-r from-sky-50 to-cyan-50 text-sky-700 hover:from-sky-100 hover:to-cyan-100 disabled:opacity-50"
+                      title="Replace every movement's description with the official one from the AppleSystem confirmation — preview first, draft only"
+                    >
+                      <FileCheck2 className="w-4 h-4" />
+                      Confirmation Descriptions
+                    </button>
                     <button
                       onClick={fillFromItinerary}
                       className="btn btn-secondary btn-sm flex items-center gap-1.5"
@@ -2962,6 +2993,15 @@ export default function AgendaPage() {
           </div>
         </div>
       )}
+
+      <ConfirmationDescriptionsModal
+        open={confDescOpen}
+        onClose={() => setConfDescOpen(false)}
+        bookingRef={ref}
+        items={items}
+        arrivalDate={booking?.arrivalDate}
+        onApply={applyConfirmationDescriptions}
+      />
 
       {/* ── SEND AGENDA MODAL ── */}
       <Modal
