@@ -159,21 +159,23 @@ export default function GuestWhatsAppHero({
   if (!current) {
     return (
       <button type="button" disabled={!canEdit} onClick={() => open(picks[0]?.pretty ?? '')}
-        className="group h-full w-full text-left rounded-2xl p-[1.5px] bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-[length:200%_100%] animate-[waGlow_4s_linear_infinite] disabled:opacity-60 disabled:cursor-not-allowed">
+        className="bk-wa-empty group h-full w-full text-left rounded-2xl p-[1.5px] bg-gradient-to-r from-emerald-300 via-teal-200 to-amber-200 bg-[length:200%_100%] animate-[waGlow_4s_linear_infinite] disabled:opacity-60 disabled:cursor-not-allowed">
         <style>{`@keyframes waGlow{0%{background-position:0% 0}100%{background-position:200% 0}}`}</style>
-        <div className="flex h-full items-center gap-4 rounded-[15px] bg-white px-4 py-3.5 border border-dashed border-transparent group-hover:bg-emerald-50/40 transition">
-          <span className="relative flex items-center justify-center w-11 h-11 rounded-full bg-slate-100 text-slate-400 group-hover:bg-[#25D366] group-hover:text-white transition">
+        {/* lg: sits beside Guest Autopilot and is stretched to its height, so the
+            content stacks and centres instead of floating in an empty band. */}
+        <div className="bk-wa-empty-body flex h-full items-center gap-4 rounded-[15px] bg-white px-4 py-3.5 border border-dashed border-transparent group-hover:bg-emerald-50/40 transition lg:flex-col lg:justify-center lg:text-center lg:gap-3 lg:py-6">
+          <span className="relative flex shrink-0 items-center justify-center w-11 h-11 lg:w-14 lg:h-14 rounded-full bg-slate-100 text-slate-400 group-hover:bg-[#25D366] group-hover:text-white transition">
             <MessageCircle className="w-5 h-5" />
             <span className="absolute -right-0.5 -bottom-0.5 flex items-center justify-center w-[18px] h-[18px] rounded-full bg-amber-400 text-white ring-2 ring-white">
               <Plus className="w-3 h-3" />
             </span>
           </span>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 lg:flex-none">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-600">No guest WhatsApp</p>
-            <p className="text-base font-semibold text-slate-800">
+            <p className="text-base font-semibold text-slate-800 lg:text-lg">
               {canEdit ? 'Tap to assign a WhatsApp number' : 'Guest WhatsApp not on file'}
             </p>
-            <p className="text-xs text-slate-400 truncate">
+            <p className="text-xs text-slate-400 truncate lg:whitespace-normal lg:mt-0.5">
               Without it the guest gets no daily plan, feedback form or AI calls
               {picks.length > 0 && canEdit && <> · <span className="text-emerald-600 font-medium">{picks.length} number{picks.length > 1 ? 's' : ''} found on booking</span></>}
             </p>

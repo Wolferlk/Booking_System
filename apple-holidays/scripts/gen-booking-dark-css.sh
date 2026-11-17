@@ -114,6 +114,16 @@ while read -r C R G B L2 L3 L4; do
   gvia  ".via-$C-100"  "rgb($c / 16%)"
   gto   ".to-$C-50"    "rgb($c / 8%)"
   gto   ".to-$C-100"   "rgb($c / 14%)"
+  # Stops with an opacity (`from-amber-50/70`) — left light, they paint a
+  # pastel slab across a dark card.
+  for op in 30 40 50 60 70 80 90; do
+    gfrom ".from-$C-50\\/$op,.from-$C-100\\/$op" "rgb($c / $(( 12 * op / 100 + 2 ))%)"
+    gvia  ".via-$C-50\\/$op,.via-$C-100\\/$op"   "rgb($c / $(( 10 * op / 100 + 2 ))%)"
+    gto   ".to-$C-50\\/$op,.to-$C-100\\/$op"     "rgb($c / $(( 8 * op / 100 + 2 ))%)"
+  done
+  # Mid-tone stops (glow borders, accent rails) — dimmed, not dropped.
+  gfrom ".from-$C-200" "rgb($c / 38%)"; gvia ".via-$C-200" "rgb($c / 30%)"; gto ".to-$C-200" "rgb($c / 30%)"
+  gfrom ".from-$C-300" "rgb($c / 55%)"; gvia ".via-$C-300" "rgb($c / 45%)"; gto ".to-$C-300" "rgb($c / 45%)"
 done <<'PAL'
 red     239 68 68    #fecaca #fca5a5 #f87171
 rose    244 63 94    #fecdd3 #fda4af #fb7185
