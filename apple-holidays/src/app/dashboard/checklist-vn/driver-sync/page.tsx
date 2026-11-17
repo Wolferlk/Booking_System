@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils'
 import { guestDriver } from '@/lib/guest-driver'
 import {
   EVENT_ACTION, LINK_STATUS, timeAgo,
-  type DriverSyncConfig, type DriverSyncLinkInfo, type DriverSyncOverview, type DriverSyncRunInfo, type LinkStatus,
+  type DriverSyncConfig, type DriverSyncLinkInfo, type DriverSyncOverview, type DriverSyncRunInfo, type LinkStatus, type BookingSheetLine,
 } from '@/lib/vn-driver-sync/shared'
 
 const STATUSES: LinkStatus[] = ['APPLIED', 'IN_SYNC', 'SUGGESTED', 'KEPT_MANUAL', 'NO_NUMBER', 'STALE', 'IGNORED']
@@ -94,94 +94,224 @@ function RunRow({ r, isAdmin, picked, onPick, onUndo }: { r: DriverSyncRunInfo; 
   )
 }
 
-function LinkRow({ l, canEdit, busy, onAct }: { l: DriverSyncLinkInfo; canEdit: boolean; busy: boolean; onAct: (l: DriverSyncLinkInfo, action: string) => void }) {
+/** Sheet "details" is "from → to ¶ description" (route first when the chart has From/To). */
+function splitDetails(details: string | null): { route: string | null; desc: string } {
+  const parts = (details ?? '').split(' ¶ ').map(s => s.trim()).filter(Boolean)
+  if (parts.length && /→/.test(parts[0])) return { route: parts[0], desc: parts.slice(1).join(' ') }
+  return { route: null, desc: parts.join(' ') }
+}
+const firstWords = (s: string, n = 4) => {
+  const w = s.split(/\s+/).filter(Boolean)
+  return w.length > n ? `${w.slice(0, n).join(' ')}…` : w.join(' ')
+}
+const dayDiff = (a: string | null, b: string | null) => (a && b ? Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000) : null)
+/** One-by-one apply rule; bulk apply takes only plain "To review" rows with a number. */
+const canApply = (l: DriverSyncLinkInfo) => (l.status === 'SUGGESTED' || (l.status === 'KEPT_MANUAL' && !l.now.fromDirectory)) && Boolean(l.phones)
+const canBulk = (l: DriverSyncLinkInfo) => l.status === 'SUGGESTED' && Boolean(l.phones)
+
+const KIND_TONE = {
+  PRIVATE: 'bg-indigo-50 text-indigo-700 ring-indigo-200',
+  SIC: 'bg-teal-50 text-teal-700 ring-teal-200',
+  OTHER: 'bg-slate-100 text-slate-600 ring-slate-200',
+} as const
+
+function SheetLineRow({ line, matched, movementDate }: { line: BookingSheetLine; matched: boolean; movementDate: string | null }) {
+  const { route, desc } = splitDetails(line.details)
+  const otherDay = line.date && movementDate && line.date !== movementDate
+  return (
+    <li className={cn('grid grid-cols-[52px_1fr] gap-2 rounded-lg px-2 py-1.5 text-[11px] transition',
+      matched ? 'bg-emerald-50 ring-2 ring-emerald-400' : 'hover:bg-slate-50')}>
+      <div className="pt-px">
+        <span className={cn('inline-block rounded px-1 font-mono text-[10px] font-semibold', matched ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500')}>#{line.row ?? '—'}</span>
+        {otherDay && <p className="mt-0.5 text-[9.5px] text-slate-400">{fmtDate(line.date).replace(/^\w+ /, '')}</p>}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate font-medium text-slate-800" title={route ?? desc}>
+          {route ? route : <span className="italic text-slate-400">no from / to</span>}
+          {desc && <span className="font-normal text-slate-400"> · {firstWords(desc)}</span>}
+        </p>
+        <p className="flex min-w-0 items-center gap-1.5 text-slate-500">
+          <Car className="h-3 w-3 shrink-0 text-slate-400" />
+          <span className="truncate" title={line.text ?? ''}>{line.text || <span className="italic text-slate-300">no driver / vendor</span>}</span>
+          <span className="text-slate-300">|</span>
+          <Clock className="h-3 w-3 shrink-0 text-slate-400" />
+          <span className="shrink-0 font-semibold text-slate-700">{line.time || '—'}</span>
+          {line.service && <span className="shrink-0 text-slate-400">· {line.service}</span>}
+        </p>
+        {matched ? (
+          <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700"><Check className="h-3 w-3" />Matched to this movement</p>
+        ) : line.placedOn ? (
+          <p className="mt-0.5 truncate text-[10px] text-slate-400" title={line.placedOn}>On another movement: {line.placedOn.replace(/^\d{4}-\d{2}-\d{2} · /, '')}</p>
+        ) : line.why ? (
+          <p className="mt-0.5 truncate text-[10px] text-amber-600" title={line.why}>Not placed — {line.why}</p>
+        ) : null}
+      </div>
+    </li>
+  )
+}
+
+function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
+  l: DriverSyncLinkInfo; lines: BookingSheetLine[]; canEdit: boolean; busy: boolean
+  selected: boolean; onSelect: (on: boolean) => void; onAct: (l: DriverSyncLinkInfo, action: string) => void
+}) {
+  const [showAll, setShowAll] = useState(false)
   const s = LINK_STATUS[l.status]
   const guest = guestDriver(l.sheet.text, l.phones)
-  const ownedBySync = l.status === 'APPLIED'
+  const pct = l.score === null ? null : Math.round(l.score * 100)
+  const day = dayDiff(l.movementDate, l.arrivalDate)
+  const label = l.movementLabel?.replace(/^\d{4}-\d{2}-\d{2} · /, '') ?? ''
+  // Fall back to the saved label when the agenda item cannot be read.
+  const labelParts = label.split(' · ')
+  const sys = l.system ?? {
+    from: labelParts[labelParts.length - 1]?.split(' → ')[0] ?? null, to: labelParts[labelParts.length - 1]?.split(' → ')[1] ?? null,
+    meetingTime: labelParts.find(p => /^\d{1,2}:\d{2}/.test(p)) ?? null, service: labelParts[0] ?? null,
+    kind: /sic/i.test(labelParts[0] ?? '') ? 'SIC' as const : /private|pvt/i.test(labelParts[0] ?? '') ? 'PRIVATE' as const : 'OTHER' as const,
+  }
+  const timeDiffers = l.sheet.time && sys.meetingTime && l.sheet.time.slice(0, 5) !== sys.meetingTime.slice(0, 5)
+
+  // Lines on the movement's own day first; the matched line always shows.
+  const sameDay = lines.filter(x => x.linkId === l.id || !x.date || x.date === l.movementDate)
+  const shown = showAll ? lines : sameDay
+  const hidden = lines.length - sameDay.length
+  // The matched row may be missing from the booking list (older sweep) — show it from the link itself.
+  const hasMatched = lines.some(x => x.linkId === l.id)
+  const matchedLine: BookingSheetLine | null = !hasMatched && l.sheet.row
+    ? { tab: l.sheet.tab, row: l.sheet.row, date: l.sheet.date, time: l.sheet.time, service: l.sheet.service, details: l.sheet.details, text: l.sheet.text, linkId: l.id, placedOn: null, why: null }
+    : null
+
   return (
-    <tr className="align-top hover:bg-slate-50/70">
-      <td className="whitespace-nowrap px-4 py-2.5">
-        <Link href={`/dashboard/bookings/${l.bookingRef}/agenda`} className="font-mono text-[12px] font-semibold text-indigo-700 hover:underline">{l.bookingRef}</Link>
-        <p className="text-[10.5px] text-slate-500">{fmtDate(l.movementDate)}</p>
+    <article className={cn('overflow-hidden rounded-2xl border bg-white shadow-sm transition',
+      selected ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-slate-200 hover:border-slate-300 hover:shadow')}>
+      {/* Header */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-slate-100 bg-slate-50/70 px-4 py-2">
+        {canEdit && (
+          <input type="checkbox" checked={selected} disabled={!canBulk(l) || busy} onChange={e => onSelect(e.target.checked)}
+            title={canBulk(l) ? 'Select for bulk apply' : l.status === 'KEPT_MANUAL' ? 'Replacing a driver is one at a time' : 'Nothing to apply'}
+            className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-30" />
+        )}
+        <Link href={`/dashboard/bookings/${l.bookingRef}/agenda`} className="font-mono text-[13px] font-bold text-indigo-700 hover:underline">{l.bookingRef}</Link>
+        <span className="text-[11.5px] font-medium text-slate-600">{fmtDate(l.movementDate)}</span>
         {l.arrivalDate && (
-          <p className={cn('mt-0.5 inline-flex items-center gap-1 text-[10px]', l.arrivalDate === l.movementDate ? 'font-semibold text-sky-700' : 'text-slate-400')}
+          <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+            l.arrivalDate === l.movementDate ? 'bg-sky-100 text-sky-700' : 'text-slate-400')}
             title={`Trip ${fmtDate(l.arrivalDate)} → ${fmtDate(l.departureDate)}`}>
             <PlaneLanding className="h-3 w-3" />{l.arrivalDate === l.movementDate ? 'Arrival day' : `Arr ${fmtDate(l.arrivalDate)}`}
-          </p>
-        )}
-      </td>
-      <td className="max-w-[260px] px-2 py-2.5">
-        <p className="text-[11.5px] font-medium text-slate-800">{l.movementLabel?.replace(/^\d{4}-\d{2}-\d{2} · /, '')}</p>
-        {l.movementText && <p className="mt-0.5 line-clamp-2 text-[10.5px] text-slate-400" title={l.movementText}>{l.movementText}</p>}
-      </td>
-      <td className="max-w-[260px] px-2 py-2.5">
-        {l.sheet.row ? (
-          <>
-            <p className="text-[10.5px] text-slate-400">{l.sheet.tab} · row {l.sheet.row}{l.sheet.date && l.sheet.date !== l.movementDate ? <span className="ml-1 text-amber-600">({fmtDate(l.sheet.date)})</span> : null}</p>
-            {(l.sheet.details ?? '').split(' ¶ ').map((part, i, all) => (
-              <p key={i} className={cn('line-clamp-2 text-[11px]', all.length > 1 && i === 0 ? 'font-medium text-slate-700' : 'text-slate-500')} title={part}>{part}</p>
-            ))}
-            <p className="text-[10.5px] text-slate-400">{[l.sheet.time, l.sheet.service].filter(Boolean).join(' · ')}</p>
-          </>
-        ) : <span className="text-[11px] italic text-slate-300">no sheet row</span>}
-      </td>
-      <td className="max-w-[280px] px-2 py-2.5">
-        {l.sheet.text ? <p className="text-[11.5px] font-medium text-slate-800">{l.sheet.text}</p> : <span className="text-[11px] italic text-slate-300">empty</span>}
-        {l.phones && (
-          <p className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10.5px] text-emerald-700 ring-1 ring-emerald-200" title="What guests and agents are sent">
-            <Eye className="h-3 w-3" /> Guests see: <span className="font-semibold">{guest.name}</span>
-          </p>
-        )}
-      </td>
-      <td className="max-w-[220px] px-2 py-2.5 text-[11px]">
-        {l.now.driverName ? (
-          <>
-            <p className={cn('font-medium', ownedBySync || l.status === 'IN_SYNC' ? 'text-slate-800' : 'text-violet-700')}>{l.now.driverName}</p>
-            {l.now.driverPhone && l.now.driverPhone !== guest.name && <p className="text-[10.5px] text-slate-400"><Phone className="mr-0.5 inline h-3 w-3" />{l.now.driverPhone}</p>}
-            {l.now.fromDirectory && <p className="text-[10px] text-violet-500">from the driver directory</p>}
-          </>
-        ) : <span className="italic text-slate-300">no driver</span>}
-      </td>
-      <td className="whitespace-nowrap px-2 py-2.5">
-        {l.confidence && (
-          <span title={l.reason ?? ''} className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1',
-            l.confidence === 'HIGH' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-amber-50 text-amber-700 ring-amber-200')}>
-            {l.method === 'AI' && <Sparkles className="h-3 w-3" />}{l.confidence === 'HIGH' ? 'Sure' : 'Likely'} {l.score !== null && `${Math.round(l.score * 100)}%`}
           </span>
         )}
-        <p className="mt-1 max-w-[180px] whitespace-normal text-[10px] leading-snug text-slate-400">{l.reason}</p>
-      </td>
-      <td className="px-2 py-2.5">
-        <span title={s.hint} className={cn('whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold ring-1', s.tone)}>{s.label}</span>
-        {l.note && <p className="mt-1 max-w-[180px] text-[10px] leading-snug text-slate-400">{l.note}</p>}
-      </td>
-      <td className="whitespace-nowrap px-4 py-2.5 text-right">
-        {canEdit && (
-          <div className="flex justify-end gap-1">
-            {(l.status === 'SUGGESTED' || (l.status === 'KEPT_MANUAL' && !l.now.fromDirectory)) && l.phones && (
-              <button type="button" disabled={busy} onClick={() => onAct(l, 'apply')}
-                className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50">
-                <Check className="h-3 w-3" />{l.status === 'KEPT_MANUAL' ? 'Replace' : 'Apply'}
-              </button>
-            )}
-            {l.status === 'APPLIED' && (
-              <button type="button" disabled={busy} onClick={() => onAct(l, 'undo')} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50 disabled:opacity-50">
-                <Undo2 className="h-3 w-3" />Undo
-              </button>
-            )}
-            {l.status === 'IGNORED' ? (
-              <button type="button" disabled={busy} onClick={() => onAct(l, 'restore')} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-100 disabled:opacity-50">
-                <RotateCcw className="h-3 w-3" />Review again
-              </button>
-            ) : l.status !== 'APPLIED' && l.status !== 'IN_SYNC' && (
-              <button type="button" disabled={busy} onClick={() => onAct(l, 'ignore')} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-slate-500 hover:bg-slate-100 disabled:opacity-50">
-                <Ban className="h-3 w-3" />Ignore
-              </button>
-            )}
+        <div className="ml-auto flex items-center gap-2">
+          {pct !== null && (
+            <span className="flex items-center gap-1.5" title={l.reason ?? ''}>
+              <span className="h-1.5 w-16 overflow-hidden rounded-full bg-slate-200">
+                <span className={cn('block h-full rounded-full', l.confidence === 'HIGH' ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-400' : 'bg-rose-400')} style={{ width: `${pct}%` }} />
+              </span>
+              <span className={cn('text-[11px] font-bold tabular-nums', l.confidence === 'HIGH' ? 'text-emerald-700' : pct >= 50 ? 'text-amber-700' : 'text-rose-600')}>
+                {l.method === 'AI' && <Sparkles className="mr-0.5 inline h-3 w-3" />}{pct}%
+              </span>
+            </span>
+          )}
+          <span title={s.hint} className={cn('whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1', s.tone)}>{s.label}</span>
+        </div>
+      </header>
+
+      <div className="grid lg:grid-cols-[1fr_auto_1fr]">
+        {/* Left — the Movement Chart (Excel) */}
+        <section className="min-w-0 p-3">
+          <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-emerald-700">
+            <FileSpreadsheet className="h-3.5 w-3.5" /> Movement Chart
+            <span className="font-normal normal-case tracking-normal text-slate-400">· {lines.length || (l.sheet.row ? 1 : 0)} line{lines.length === 1 ? '' : 's'} for {l.bookingRef}</span>
+          </p>
+          {shown.length === 0 && !matchedLine ? (
+            <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] italic text-slate-400">No sheet line for this movement</p>
+          ) : (
+            <ul className={cn('space-y-1', showAll && 'max-h-72 overflow-y-auto pr-1')}>
+              {matchedLine && <SheetLineRow line={matchedLine} matched movementDate={l.movementDate} />}
+              {shown.map(x => <SheetLineRow key={`${x.tab}-${x.row}`} line={x} matched={x.linkId === l.id} movementDate={l.movementDate} />)}
+            </ul>
+          )}
+          {hidden > 0 && (
+            <button type="button" onClick={() => setShowAll(v => !v)} className="mt-1.5 text-[10.5px] font-semibold text-indigo-600 hover:underline">
+              {showAll ? 'Only this day' : `Show all ${lines.length} lines of the booking (+${hidden})`}
+            </button>
+          )}
+          {l.reason && <p className="mt-2 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-500">Why: </span>{l.reason}</p>}
+        </section>
+
+        {/* Bridge */}
+        <div className="hidden items-center justify-center px-1 lg:flex">
+          <span className={cn('flex h-8 w-8 items-center justify-center rounded-full ring-1',
+            l.confidence === 'HIGH' ? 'bg-emerald-50 text-emerald-600 ring-emerald-200' : 'bg-amber-50 text-amber-600 ring-amber-200')}>
+            <ArrowRight className="h-4 w-4" />
+          </span>
+        </div>
+
+        {/* Right — the system agenda */}
+        <section className="min-w-0 border-t border-slate-100 bg-gradient-to-br from-white to-indigo-50/40 p-3 lg:border-l lg:border-t-0">
+          <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-indigo-700">
+            <CalendarDays className="h-3.5 w-3.5" /> System agenda
+            {day !== null && day >= 0 && <span className="rounded bg-indigo-600 px-1.5 py-px font-mono text-[10px] normal-case tracking-normal text-white">Day {day + 1}</span>}
+          </p>
+          <p className="text-[12.5px] font-semibold leading-snug text-slate-900">
+            {sys.from || sys.to ? <>{sys.from ?? '—'} <ArrowRight className="mx-0.5 inline h-3 w-3 text-slate-400" /> {sys.to ?? '—'}</> : label}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', KIND_TONE[sys.kind])}>
+              {sys.kind === 'PRIVATE' ? 'Private' : sys.kind === 'SIC' ? 'SIC' : 'Other'}
+            </span>
+            {sys.service && <span className="text-[10.5px] text-slate-500">{sys.service}</span>}
+            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1',
+              timeDiffers ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-white text-slate-700 ring-slate-200')}
+              title={timeDiffers ? `Sheet says ${l.sheet.time}` : 'Meeting time'}>
+              <Clock className="h-3 w-3" />{sys.meetingTime || 'no time'}{timeDiffers && <span className="font-normal"> · sheet {l.sheet.time}</span>}
+            </span>
           </div>
-        )}
-      </td>
-    </tr>
+          {l.movementText && <p className="mt-1.5 line-clamp-2 text-[10.5px] text-slate-500" title={l.movementText}>{l.movementText}</p>}
+
+          {/* Driver: now → will be */}
+          <div className="mt-2.5 grid grid-cols-[auto_1fr] items-start gap-x-2 gap-y-1 rounded-xl bg-white/80 p-2 text-[11px] ring-1 ring-slate-200">
+            <span className="text-slate-400">Now</span>
+            <span className={cn(l.now.driverName ? 'font-medium text-violet-700' : 'italic text-slate-300')}>
+              {l.now.driverName ?? 'no driver'}{l.now.fromDirectory && <span className="ml-1 text-[10px] text-violet-500">(directory)</span>}
+            </span>
+            <span className="text-slate-400">Sheet</span>
+            <span className="min-w-0">
+              <span className="font-medium text-slate-800">{l.sheet.text || <span className="italic text-slate-300">empty</span>}</span>
+              {l.phones && <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-emerald-700"><Eye className="h-3 w-3" />Guests see <b>{guest.name}</b></span>}
+            </span>
+          </div>
+          {l.note && <p className="mt-1 text-[10px] text-slate-400">{l.note}</p>}
+
+          {/* Actions */}
+          {canEdit && (
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              {canApply(l) && (
+                <button type="button" disabled={busy} onClick={() => onAct(l, 'apply')}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50">
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  {l.status === 'KEPT_MANUAL' ? 'Replace driver' : 'Apply driver'}
+                </button>
+              )}
+              {l.status === 'SUGGESTED' && !l.phones && (
+                <span className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-center text-[11px] text-slate-500">Add a phone number in the sheet to apply</span>
+              )}
+              {l.status === 'APPLIED' && (
+                <button type="button" disabled={busy} onClick={() => onAct(l, 'undo')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50 disabled:opacity-50">
+                  <Undo2 className="h-3.5 w-3.5" />Undo
+                </button>
+              )}
+              {l.status === 'IGNORED' ? (
+                <button type="button" disabled={busy} onClick={() => onAct(l, 'restore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
+                  <RotateCcw className="h-3.5 w-3.5" />Review again
+                </button>
+              ) : l.status !== 'APPLIED' && l.status !== 'IN_SYNC' && (
+                <button type="button" disabled={busy} onClick={() => onAct(l, 'ignore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
+                  <Ban className="h-3.5 w-3.5" />Ignore
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    </article>
   )
 }
 
@@ -199,6 +329,15 @@ export default function DriverSyncPage() {
   const [tab, setTab] = useState<'movements' | 'unmatched' | 'log'>('movements')
   const [f, setF] = useState<Filters>(NO_FILTERS)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null)
+  // Keep only selections still on screen and still applicable after every reload.
+  useEffect(() => {
+    if (!data) return
+    const ok = new Set(data.links.filter(canBulk).map(l => l.id))
+    setSelected(cur => { const next = new Set(Array.from(cur).filter(id => ok.has(id))); return next.size === cur.size ? cur : next })
+  }, [data])
+  const toggle = (id: string, on: boolean) => setSelected(cur => { const n = new Set(cur); if (on) n.add(id); else n.delete(id); return n })
   const setFilter = (patch: Partial<Filters>) => { setF(x => ({ ...x, ...patch })); setPage(1) }
   // Filters are remembered per viewer; never required.
   useEffect(() => {
@@ -260,6 +399,32 @@ export default function DriverSyncPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed')
     } finally { setBusyId(null) }
+  }
+
+  /** Apply / ignore the selected movements one after another — each is the same single-movement action. */
+  async function runBulk(action: 'apply' | 'ignore') {
+    const picked = (data?.links ?? []).filter(l => selected.has(l.id) && canBulk(l))
+    if (!picked.length) return
+    const verb = action === 'apply' ? 'Apply the sheet driver to' : 'Ignore'
+    if (!window.confirm(`${verb} ${picked.length} movement${picked.length === 1 ? '' : 's'}?\n\n${picked.slice(0, 12).map(l => `• ${l.bookingRef} ${fmtDate(l.movementDate)} — ${l.sheet.text ?? ''}`.slice(0, 110)).join('\n')}${picked.length > 12 ? `\n… and ${picked.length - 12} more` : ''}`)) return
+    const failed: string[] = []
+    const errors: string[] = []
+    setBulk({ done: 0, total: picked.length })
+    for (let i = 0; i < picked.length; i++) {
+      setBusyId(picked[i].id)
+      try { await post('/api/vn-driver-sync/action', { action, linkId: picked[i].id }) } catch (err) {
+        failed.push(picked[i].id)
+        errors.push(`${picked[i].bookingRef}: ${err instanceof Error ? err.message : 'Failed'}`)
+      }
+      setBulk({ done: i + 1, total: picked.length })
+    }
+    setBusyId(null)
+    setBulk(null)
+    const ok = picked.length - failed.length
+    if (ok) toast.success(`${ok} movement${ok === 1 ? '' : 's'} ${action === 'apply' ? 'applied' : 'ignored'}`)
+    if (failed.length) toast.error(`${failed.length} could not be done`, { description: errors.slice(0, 5).join('\n'), duration: 12_000 })
+    setSelected(new Set(failed))
+    await load()
   }
 
   async function undoRun(r: DriverSyncRunInfo) {
@@ -554,15 +719,50 @@ export default function DriverSyncPage() {
               {(data?.links.length ?? 0) === 0 ? (
                 <p className="px-4 py-8 text-center text-xs text-slate-400">{loading ? 'Loading…' : 'Nothing here for this filter.'}</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-50 text-left text-[10.5px] uppercase tracking-wide text-slate-400">
-                      <tr><th className="px-4 py-2">Booking</th><th className="px-2 py-2">System movement</th><th className="px-2 py-2">Sheet row</th><th className="px-2 py-2">Driver from the sheet</th><th className="px-2 py-2">On the movement now</th><th className="px-2 py-2">Match</th><th className="px-2 py-2">Status</th><th className="px-4 py-2" /></tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {data!.links.map(l => <LinkRow key={l.id} l={l} canEdit={data!.canEdit} busy={busyId === l.id} onAct={act} />)}
-                    </tbody>
-                  </table>
+                <div className="space-y-3 bg-slate-50/60 p-3 sm:p-4">
+                  {data!.canEdit && (() => {
+                    const bulkable = data!.links.filter(canBulk)
+                    const all = bulkable.length > 0 && bulkable.every(l => selected.has(l.id))
+                    return (
+                      <div className="flex flex-wrap items-center gap-3 px-1 text-[11.5px] text-slate-500">
+                        <label className={cn('inline-flex items-center gap-2 font-medium', bulkable.length ? 'cursor-pointer text-slate-700' : 'opacity-40')}>
+                          <input type="checkbox" checked={all} disabled={!bulkable.length || Boolean(bulk)}
+                            onChange={e => setSelected(e.target.checked ? new Set(bulkable.map(l => l.id)) : new Set())}
+                            className="h-4 w-4 rounded border-slate-300 accent-emerald-600" />
+                          Select all ready to apply on this page ({bulkable.length})
+                        </label>
+                        <span className="hidden text-slate-400 sm:inline">· or tick cards one by one, then apply them together</span>
+                      </div>
+                    )
+                  })()}
+                  {data!.links.map(l => (
+                    <ReviewCard key={l.id} l={l} lines={data!.bookingSheets?.[l.bookingRef] ?? []} canEdit={data!.canEdit}
+                      busy={busyId === l.id || Boolean(bulk)} selected={selected.has(l.id)} onSelect={on => toggle(l.id, on)} onAct={act} />
+                  ))}
+                </div>
+              )}
+              {(selected.size > 0 || bulk) && (
+                <div className="sticky bottom-4 z-20 mx-3 mb-3 flex flex-wrap items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow-2xl ring-1 ring-white/10 sm:mx-4">
+                  <span className="flex h-8 min-w-[2rem] items-center justify-center rounded-full bg-emerald-500 px-2 text-sm font-bold">{bulk ? bulk.done : selected.size}</span>
+                  <div className="min-w-0 text-[12px]">
+                    {bulk ? (
+                      <>
+                        <p className="font-semibold">Working… {bulk.done} of {bulk.total}</p>
+                        <span className="mt-1 block h-1 w-48 overflow-hidden rounded-full bg-white/15"><span className="block h-full bg-emerald-400 transition-all" style={{ width: `${(bulk.done / bulk.total) * 100}%` }} /></span>
+                      </>
+                    ) : (
+                      <><p className="font-semibold">{selected.size} movement{selected.size === 1 ? '' : 's'} selected</p><p className="text-white/50">Each one is written exactly like its own Apply button</p></>
+                    )}
+                  </div>
+                  <div className="ml-auto flex items-center gap-2">
+                    <button type="button" disabled={Boolean(bulk)} onClick={() => setSelected(new Set())} className="rounded-lg px-3 py-2 text-[12px] text-white/70 hover:bg-white/10 disabled:opacity-40">Clear</button>
+                    <button type="button" disabled={Boolean(bulk)} onClick={() => runBulk('ignore')} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-medium ring-1 ring-white/20 hover:bg-white/10 disabled:opacity-40">
+                      <Ban className="h-3.5 w-3.5" />Ignore selected
+                    </button>
+                    <button type="button" disabled={Boolean(bulk)} onClick={() => runBulk('apply')} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-2 text-[12px] font-bold text-white shadow hover:bg-emerald-400 disabled:opacity-60">
+                      {bulk ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}Apply {bulk ? bulk.total : selected.size} selected
+                    </button>
+                  </div>
                 </div>
               )}
               {(data?.linkTotal ?? 0) > 50 && (

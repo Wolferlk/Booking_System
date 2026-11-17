@@ -131,6 +131,24 @@ export interface DriverSyncLinkInfo {
   appliedBy: string | null
   prevName: string | null
   updatedAt: string
+  /** The system agenda item as it is now (null when the item is gone). */
+  system: { from: string | null; to: string | null; meetingTime: string | null; service: string | null; kind: 'PRIVATE' | 'SIC' | 'OTHER' } | null
+}
+
+/** One Movement Chart line of a booking, for the review card's "whole booking" view. */
+export interface BookingSheetLine {
+  tab: string | null
+  row: number | null
+  date: string | null
+  time: string | null
+  service: string | null
+  details: string | null
+  text: string | null
+  /** The movement this line was placed on (null = not placed). */
+  linkId: string | null
+  placedOn: string | null
+  /** Why it was not placed, for unplaced lines. */
+  why: string | null
 }
 
 export interface DriverSyncEventInfo {
@@ -171,6 +189,8 @@ export interface DriverSyncOverview {
   dayCounts: { date: string; count: number }[]
   events: DriverSyncEventInfo[]
   unmatched: UnmatchedRow[]
+  /** Every known Movement Chart line for the bookings on this page, by booking ref. */
+  bookingSheets: Record<string, BookingSheetLine[]>
 }
 
 export function timeAgo(iso: string | null | undefined): string {

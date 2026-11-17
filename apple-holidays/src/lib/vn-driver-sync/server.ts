@@ -28,7 +28,7 @@ import { Prisma, type VnDriverSyncLink, type VnDriverSyncRun } from '@prisma/cli
 import { prisma } from '@/lib/prisma'
 import { isMissingTable } from '@/lib/vn-includes/includes'
 import { fold } from '@/lib/vn-vendor-sync/match'
-import { serviceTypeShortLabel } from '@/lib/service-types'
+import { serviceTypeShortLabel, isSicType, isPrivateTransferType } from '@/lib/service-types'
 import { parse12h } from '@/lib/clock-time'
 import { extractPhones } from '@/lib/guest-driver'
 import { readMovementSheet, serviceAccount, SheetAccessError, type SheetRow } from './sheet'
@@ -36,7 +36,7 @@ import { matchBooking, type AiCacheEntry, type Movement, type Pick as MatchPick 
 import {
   DEFAULT_DAYS_AHEAD, DEFAULT_INTERVAL_MIN, DEFAULT_SHEET_URL, DRIVER_SYNC_SETTINGS, isMicrosoftLink, sheetIdOf, sheetUrlOf,
   type DriverSyncConfig, type DriverSyncEventInfo, type DriverSyncLinkInfo, type DriverSyncMode, type DriverSyncOverview,
-  type DriverSyncRunInfo, type EventAction, type LinkStatus, type SheetState, type UnmatchedRow,
+  type DriverSyncRunInfo, type EventAction, type LinkStatus, type SheetState, type UnmatchedRow, type BookingSheetLine,
 } from './shared'
 
 export { isMissingTable }
@@ -759,7 +759,7 @@ export async function driverSyncOverview(q: {
   const config = await getDriverSyncConfig()
   const sa = serviceAccount()
   const access = { kind: isMicrosoftLink(config.sheet) ? 'MICROSOFT' as const : 'GOOGLE' as const, serviceAccount: sa?.email ?? null, sheetUrl: config.sheet }
-  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [], dayCounts: [] }
+  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [], dayCounts: [], bookingSheets: {} }
   try {
     const today = vnToday()
     const ref = q.ref?.trim().toUpperCase() || null
@@ -867,9 +867,47 @@ export async function driverSyncOverview(q: {
       : []
     const byItem = new Map(items.map(i => [i.agendaItemId, i]))
     const lastAll = runs.find(r => r.scope === 'ALL' && r.status === 'SUCCESS')
-    let unmatched: UnmatchedRow[] = []
-    try { unmatched = lastAll?.unmatchedJson ? JSON.parse(lastAll.unmatchedJson) : [] } catch { unmatched = [] }
-    if (ref) unmatched = unmatched.filter(u => u.bookingRef.includes(ref))
+    let allUnmatched: UnmatchedRow[] = []
+    try { allUnmatched = lastAll?.unmatchedJson ? JSON.parse(lastAll.unmatchedJson) : [] } catch { allUnmatched = [] }
+    const unmatched = ref ? allUnmatched.filter(u => u.bookingRef.includes(ref)) : allUnmatched
+
+    // The review card: the agenda item as it is now, and every chart line the sync knows for the booking.
+    const pageRefs = Array.from(new Set(links.map(l => l.bookingRef)))
+    const itemIds = links.map(l => l.agendaItemId).filter((x): x is string => Boolean(x))
+    const [agendaItems, siblings] = await Promise.all([
+      itemIds.length
+        ? prisma.agendaItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, fromPoint: true, toPoint: true, location: true, meetingTime: true, serviceType: true } })
+        : Promise.resolve([]),
+      pageRefs.length
+        ? prisma.vnDriverSyncLink.findMany({
+          where: { bookingRef: { in: pageRefs }, sheetRow: { not: null } },
+          select: { id: true, bookingRef: true, movementLabel: true, sheetTab: true, sheetRow: true, sheetDate: true, sheetTime: true, sheetService: true, sheetDetails: true, sheetText: true },
+          take: 2000,
+        })
+        : Promise.resolve([]),
+    ])
+    const itemOf = new Map(agendaItems.map(i => [i.id, i]))
+    const bookingSheets: Record<string, BookingSheetLine[]> = {}
+    const seenLine = new Set<string>()
+    for (const s of siblings) {
+      const k = `${s.bookingRef}|${s.sheetTab}|${s.sheetRow}`
+      if (seenLine.has(k)) continue
+      seenLine.add(k)
+      ;(bookingSheets[s.bookingRef] ??= []).push({
+        tab: s.sheetTab, row: s.sheetRow, date: s.sheetDate ? iso(s.sheetDate) : null, time: s.sheetTime, service: s.sheetService,
+        details: s.sheetDetails, text: s.sheetText, linkId: s.id, placedOn: s.movementLabel, why: null,
+      })
+    }
+    for (const u of allUnmatched) {
+      if (!pageRefs.includes(u.bookingRef)) continue
+      const k = `${u.bookingRef}|${u.tab}|${u.row}`
+      if (seenLine.has(k)) continue
+      seenLine.add(k)
+      ;(bookingSheets[u.bookingRef] ??= []).push({
+        tab: u.tab, row: u.row, date: u.date, time: u.time, service: u.service, details: u.details, text: u.text, linkId: null, placedOn: null, why: u.why,
+      })
+    }
+    for (const lines of Object.values(bookingSheets)) lines.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || (a.row ?? 0) - (b.row ?? 0))
 
     return {
       installed: true, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet,
@@ -893,8 +931,18 @@ export async function driverSyncOverview(q: {
             fromDirectory: Boolean(a?.driverId || a?.vendorId),
           },
           appliedAt: l.appliedAt?.toISOString() ?? null, appliedBy: l.appliedBy, prevName: l.prevName, updatedAt: l.updatedAt.toISOString(),
+          system: (() => {
+            const it = l.agendaItemId ? itemOf.get(l.agendaItemId) : undefined
+            if (!it) return null
+            return {
+              from: it.fromPoint, to: it.toPoint || it.location, meetingTime: it.meetingTime,
+              service: it.serviceType ? serviceTypeShortLabel(it.serviceType) : null,
+              kind: isSicType(it.serviceType) ? 'SIC' as const : isPrivateTransferType(it.serviceType) ? 'PRIVATE' as const : 'OTHER' as const,
+            }
+          })(),
         }
       }),
+      bookingSheets,
       events: events.map((e): DriverSyncEventInfo => ({
         id: e.id, runId: e.runId, bookingRef: e.bookingRef, movementLabel: e.movementLabel, action: e.action as EventAction,
         fromValue: e.fromValue, toValue: e.toValue, score: e.score === null ? null : Number(e.score), detail: e.detail, actor: e.actor,
