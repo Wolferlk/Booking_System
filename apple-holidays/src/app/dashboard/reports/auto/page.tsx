@@ -10,7 +10,7 @@
  *   4. Delivery history, so "did the 8am go out?" is answerable at a glance
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle, Bot, CalendarClock, CheckCircle2, Clock, FileSpreadsheet,
@@ -130,6 +130,26 @@ function ScheduleCard({
   onDelete: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close on outside click / Escape. (A blur-with-timeout on the trigger used
+  // to unmount the menu before a slower click on "Edit" landed.)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
+
+  const pick = (fn: () => void) => () => { setMenuOpen(false); fn() }
+
   const status = s.lastStatus ? STATUS_META[s.lastStatus] : null
   const StatusIcon = status?.icon
   const isBusy = busy === s.id
@@ -173,24 +193,23 @@ function ScheduleCard({
             </p>
           </div>
 
-          <div className="relative flex-shrink-0">
+          <div ref={menuRef} className="relative flex-shrink-0">
             <button
               onClick={() => setMenuOpen(v => !v)}
-              onBlur={() => setTimeout(() => setMenuOpen(false), 150)}
               className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
             >
               <MoreHorizontal className="w-4 h-4" />
             </button>
             {menuOpen && (
               <div className="absolute right-0 top-9 z-20 w-48 bg-white rounded-lg border border-slate-200 shadow-lg py-1 animate-fade-in">
-                <button onClick={onEdit} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Edit</button>
-                <button onClick={onTest} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Send test to me</button>
-                <button onClick={onSend} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Send now to everyone</button>
-                <button onClick={onToggle} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                <button onClick={pick(onEdit)} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Edit</button>
+                <button onClick={pick(onTest)} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Send test to me</button>
+                <button onClick={pick(onSend)} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Send now to everyone</button>
+                <button onClick={pick(onToggle)} className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">
                   {s.enabled ? 'Pause schedule' : 'Resume schedule'}
                 </button>
                 <div className="h-px bg-slate-100 my-1" />
-                <button onClick={onDelete} className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+                <button onClick={pick(onDelete)} className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
                   <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               </div>
