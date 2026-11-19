@@ -345,6 +345,23 @@ export interface ReadinessSection {
   cancelled: number
   /** The D-3 driver allocation picture for the operating tours above. */
   drivers: DriverAllocationSection
+  /**
+   * The same picture over the D-10 horizon (tomorrow through D-10) — the
+   * window the reconfirmation deadline works to, so a tour can be given its
+   * driver while there is still a week to find one.
+   */
+  drivers10: DriverAllocationSection
+  /**
+   * Every live arrival tomorrow through D-10 — operating tours plus
+   * accommodation-only files (they still land), cancelled left out.
+   */
+  arrivals10: {
+    days: number; fromDate: string; toDate: string
+    total: number; tours: number; hotelOnly: number; pax: number
+    b2b: number; b2c: number; cancelled: number
+    /** Arrivals per day, D-1 first — the ribbon draws these as a mini chart. */
+    byDay: { date: string; tag: string; count: number }[]
+  }
   byDay: ReadinessDay[]
   byCountry: CountryRow[]
   /** Arrivals split by trade channel — the two are worked by different desks. */
@@ -376,15 +393,25 @@ export interface DriverAllocationDay {
 }
 
 /**
- * Driver allocation for the tours landing in the next three days.
+ * Driver allocation for the tours landing in the next N days (3 or 10).
  *
  * Only tours that actually operate are in it: cancelled files and
  * accommodation-only bookings are removed before anything is counted, and a tour
  * whose agenda carries no transfer at all (every movement leisure or own
  * arrangement) is counted in `noTransfers` rather than as allocated — there was
  * nothing to allocate, and calling it "done" would flatter the figure.
+ *
+ * A tour counts as allocated once at least one of its movements has a driver
+ * or vendor — see `driverCheck()` in `booking-readiness.ts`.
  */
 export interface DriverAllocationSection {
+  /** The horizon in days — 3 for D-3, 10 for D-10. */
+  days: number
+  fromDate: string
+  toDate: string
+  /** Cancelled and accommodation-only arrivals left out of this window. */
+  cancelled: number
+  hotelOnly: number
   /** Tours needing at least one driver, or still missing the agenda that says. */
   tours: number
   allocated: number
@@ -400,6 +427,8 @@ export interface DriverAllocationSection {
   outstanding: ReadinessLine[]
   /** Fully allocated — for the record, soonest first. */
   done: ReadinessLine[]
+  /** Every tour in the window, outstanding first, uncapped — for the workbook. */
+  all: ReadinessLine[]
 }
 
 /** How a guest reconfirmation stands in the Completed / Pending view. */
@@ -489,6 +518,12 @@ export interface ReconfirmSection {
   total: number
   /** Completed / Pending, with both lists. */
   status: ReconfirmStatus
+  /**
+   * The tighter D-6 view: tours arriving tomorrow through D-6 that need a
+   * guest reconfirmation, and how many are done. Same rule and exclusions as
+   * `status`, counted on the uncapped list.
+   */
+  d6: { days: number; fromDate: string; toDate: string; total: number; completed: number; pending: number }
   /** Past the deadline with the guest still unreconfirmed. */
   breached: number
   /** Breaches with a recorded reason. */
@@ -691,6 +726,10 @@ const DEFAULT_MAX_ROWS = 30
  * ticket can still be fixed without scrambling.
  */
 const READINESS_DAYS = 3
+/** The longer driver-allocation horizon — the D-10 reconfirmation window. */
+const DRIVER_HORIZON_DAYS = RECONFIRM_DUE_DAYS
+/** The tighter reconfirmation check-point shown on the ribbon. */
+const RECONFIRM_D6_DAYS = 6
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
@@ -1003,6 +1042,76 @@ function isAccommodationOnly(r: {
 }
 
 /**
+ * Driver allocation over the next `days` days of arrivals.
+ *
+ * `NA` on an operating tour means the agenda has no transfer to cover; it is
+ * counted apart rather than as allocated. A tour with no agenda at all reads
+ * PENDING in `computeReadiness`, which is right — nobody can allocate a driver
+ * to movements that have not been written down yet. One driver or vendor on
+ * the chart makes the tour DONE (see `driverCheck`), so `partial` stays at 0
+ * under the current rule and is kept only so the shape does not change.
+ */
+function buildDriverAllocation(
+  w: ReportWindow,
+  lines: ReadinessLine[],
+  days: number,
+  maxRows: number,
+  leftOut: { cancelled: number; hotelOnly: number },
+): DriverAllocationSection {
+  const driverDays = new Map<string, DriverAllocationDay>()
+  for (let i = 1; i <= days; i++) {
+    const date = shiftDate(w.today, i)
+    const label = i === 1 ? 'Tomorrow' : formatReportDate(date, { weekday: true })
+    driverDays.set(date, {
+      date, tag: `D-${i}`, label, tours: 0, allocated: 0, partial: 0, pending: 0,
+      transfersRequired: 0, transfersCovered: 0,
+    })
+  }
+
+  const needsDriver = lines.filter(l => l.readiness.driver.state !== 'NA')
+  for (const l of needsDriver) {
+    const day = driverDays.get(l.arrivalDate)
+    if (!day) continue
+    const d = l.readiness.driver
+    day.tours += 1
+    if (d.state === 'DONE') day.allocated += 1
+    else if (d.state === 'PARTIAL') day.partial += 1
+    else day.pending += 1
+    day.transfersRequired += d.required
+    day.transfersCovered += d.done
+  }
+
+  const driverOrder = (a: ReadinessLine, b: ReadinessLine) =>
+    a.arrivalDate.localeCompare(b.arrivalDate) ||
+    (a.readiness.driver.state === 'PENDING' ? 0 : 1) - (b.readiness.driver.state === 'PENDING' ? 0 : 1) ||
+    a.readiness.driver.done / Math.max(1, a.readiness.driver.required) -
+      b.readiness.driver.done / Math.max(1, b.readiness.driver.required) ||
+    a.bookingRef.localeCompare(b.bookingRef)
+  const outstanding = needsDriver.filter(l => l.readiness.driver.state !== 'DONE').sort(driverOrder)
+  const done = needsDriver.filter(l => l.readiness.driver.state === 'DONE').sort(driverOrder)
+
+  return {
+    days,
+    fromDate: shiftDate(w.today, 1),
+    toDate: shiftDate(w.today, days),
+    cancelled: leftOut.cancelled,
+    hotelOnly: leftOut.hotelOnly,
+    tours: needsDriver.length,
+    allocated: done.length,
+    partial: needsDriver.filter(l => l.readiness.driver.state === 'PARTIAL').length,
+    pending: needsDriver.filter(l => l.readiness.driver.state === 'PENDING').length,
+    noTransfers: lines.length - needsDriver.length,
+    transfersRequired: needsDriver.reduce((s, l) => s + l.readiness.driver.required, 0),
+    transfersCovered: needsDriver.reduce((s, l) => s + l.readiness.driver.done, 0),
+    byDay: Array.from(driverDays.values()),
+    // Outstanding is the work list, so it gets the larger share of the cap.
+    outstanding: outstanding.slice(0, maxRows),
+    done: done.slice(0, maxRows),
+    all: [...outstanding, ...done],
+  }
+}
+
+/**
  * Tours arriving tomorrow and the two days after — each with its readiness
  * checklist (client confirmation, driver allocation, tickets, QC).
  *
@@ -1022,12 +1131,15 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
   const scope = await reportScope(countries)
   const fromDate = shiftDate(w.today, 1)
   const toDate = shiftDate(w.today, READINESS_DAYS)
+  // One read covers the longer D-10 driver horizon; the three-day readiness
+  // figures below are cut from it, so both sections see the same records.
+  const toDate10 = shiftDate(w.today, DRIVER_HORIZON_DAYS)
   const start = zonedDayStart(fromDate, w.timezone)
-  const end = zonedDayStart(shiftDate(toDate, 1), w.timezone)
+  const end = zonedDayStart(shiftDate(toDate10, 1), w.timezone)
 
   // No status filter in the query: cancelled files are read so they can be
   // counted as left out, then dropped below with every other non-operating file.
-  const rows = await prisma.booking.findMany({
+  const allRows = await prisma.booking.findMany({
     where: {
       arrivalDate: { gte: start, lt: end },
       ...(scope ?? {}),
@@ -1056,17 +1168,20 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
 
   // Country is settled on the built line (that is where SG/MY is split), so the
   // scope filter runs before anything is counted — including what is left out.
-  const inScope = rows.filter(r => inSelectedCountries(toLine(r).country, countries))
-  const cancelled = inScope.filter(r => isCancelledStatus(r.status))
-  const accommodationOnly = inScope.filter(r => !isCancelledStatus(r.status) && isAccommodationOnly(r))
-  const operating = inScope.filter(r => !isCancelledStatus(r.status) && !isAccommodationOnly(r))
+  const inScope10 = allRows.filter(r => inSelectedCountries(toLine(r).country, countries))
+  const cancelled10 = inScope10.filter(r => isCancelledStatus(r.status))
+  const accommodationOnly10 = inScope10.filter(r => !isCancelledStatus(r.status) && isAccommodationOnly(r))
+  const operating10 = inScope10.filter(r => !isCancelledStatus(r.status) && !isAccommodationOnly(r))
+  const withinReadiness = (r: (typeof allRows)[number]) => toLine(r).arrivalDate <= toDate
+  const cancelled = cancelled10.filter(withinReadiness)
+  const accommodationOnly = accommodationOnly10.filter(withinReadiness)
 
-  // Any arrival inside this three-day window is already well past its D-10
-  // deadline, so a recorded reason is fetched for all of them in one query and
-  // attached to the ones it is still true of.
-  const delays = await loadReconfirmDelays(operating.map(r => r.bookingRef))
+  // Every arrival inside the window is at or past its D-10 deadline, so a
+  // recorded reason is fetched for all of them in one query and attached to
+  // the ones it is still true of.
+  const delays = await loadReconfirmDelays(operating10.map(r => r.bookingRef))
 
-  const lines: ReadinessLine[] = operating.map(r => {
+  const lines10: ReadinessLine[] = operating10.map(r => {
     const line = toLine(r)
     const readiness = computeReadiness({
       status: r.status,
@@ -1090,16 +1205,14 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     }
   })
 
+  // The three-day readiness picture is the first slice of the D-10 read.
+  const lines = lines10.filter(l => l.arrivalDate <= toDate)
+
   const dayMap = new Map<string, ReadinessDay>()
-  const driverDays = new Map<string, DriverAllocationDay>()
   for (let i = 1; i <= READINESS_DAYS; i++) {
     const date = shiftDate(w.today, i)
     const label = i === 1 ? 'Tomorrow' : formatReportDate(date, { weekday: true })
     dayMap.set(date, { date, label, bookings: 0, pax: 0, ready: 0, notReady: 0 })
-    driverDays.set(date, {
-      date, tag: `D-${i}`, label, tours: 0, allocated: 0, partial: 0, pending: 0,
-      transfersRequired: 0, transfersCovered: 0,
-    })
   }
   for (const l of lines) {
     const day = dayMap.get(l.arrivalDate)
@@ -1110,45 +1223,13 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     else day.notReady += 1
   }
 
-  // ── D-3 driver allocation ────────────────────────────────────────────────
-  // `NA` on an operating tour means the agenda has no transfer to cover; it is
-  // counted apart rather than as allocated. A tour with no agenda at all reads
-  // PENDING in `computeReadiness`, which is right — nobody can allocate a
-  // driver to movements that have not been written down yet.
-  const needsDriver = lines.filter(l => l.readiness.driver.state !== 'NA')
-  for (const l of needsDriver) {
-    const day = driverDays.get(l.arrivalDate)
-    if (!day) continue
-    const d = l.readiness.driver
-    day.tours += 1
-    if (d.state === 'DONE') day.allocated += 1
-    else if (d.state === 'PARTIAL') day.partial += 1
-    else day.pending += 1
-    day.transfersRequired += d.required
-    day.transfersCovered += d.done
-  }
-  const driverOrder = (a: ReadinessLine, b: ReadinessLine) =>
-    a.arrivalDate.localeCompare(b.arrivalDate) ||
-    (a.readiness.driver.state === 'PENDING' ? 0 : 1) - (b.readiness.driver.state === 'PENDING' ? 0 : 1) ||
-    a.readiness.driver.done / Math.max(1, a.readiness.driver.required) -
-      b.readiness.driver.done / Math.max(1, b.readiness.driver.required) ||
-    a.bookingRef.localeCompare(b.bookingRef)
-  const driverOutstanding = needsDriver.filter(l => l.readiness.driver.state !== 'DONE').sort(driverOrder)
-  const driverDone = needsDriver.filter(l => l.readiness.driver.state === 'DONE').sort(driverOrder)
-
-  const drivers: DriverAllocationSection = {
-    tours: needsDriver.length,
-    allocated: driverDone.length,
-    partial: needsDriver.filter(l => l.readiness.driver.state === 'PARTIAL').length,
-    pending: needsDriver.filter(l => l.readiness.driver.state === 'PENDING').length,
-    noTransfers: lines.length - needsDriver.length,
-    transfersRequired: needsDriver.reduce((s, l) => s + l.readiness.driver.required, 0),
-    transfersCovered: needsDriver.reduce((s, l) => s + l.readiness.driver.done, 0),
-    byDay: Array.from(driverDays.values()),
-    // Outstanding is the work list, so it gets the larger share of the cap.
-    outstanding: driverOutstanding.slice(0, maxRows),
-    done: driverDone.slice(0, maxRows),
-  }
+  // ── D-3 and D-10 driver allocation ───────────────────────────────────────
+  const drivers = buildDriverAllocation(w, lines, READINESS_DAYS, maxRows, {
+    cancelled: cancelled.length, hotelOnly: accommodationOnly.length,
+  })
+  const drivers10 = buildDriverAllocation(w, lines10, DRIVER_HORIZON_DAYS, maxRows, {
+    cancelled: cancelled10.length, hotelOnly: accommodationOnly10.length,
+  })
 
   const tomorrow = lines.filter(l => l.arrivalDate === fromDate)
   const notReady = lines.filter(l => !l.readiness.ready)
@@ -1189,6 +1270,27 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     hotelOnly: accommodationOnly.length,
     cancelled: cancelled.length,
     drivers,
+    drivers10,
+    arrivals10: (() => {
+      const hotelLines = accommodationOnly10.map(r => toLine(r))
+      const live = [...lines10, ...hotelLines]
+      return {
+        days: DRIVER_HORIZON_DAYS,
+        fromDate,
+        toDate: toDate10,
+        total: live.length,
+        tours: lines10.length,
+        hotelOnly: hotelLines.length,
+        pax: live.reduce((s, l) => s + l.pax, 0),
+        b2b: live.filter(l => l.source === 'B2B').length,
+        b2c: live.filter(l => l.source === 'B2C').length,
+        cancelled: cancelled10.length,
+        byDay: Array.from({ length: DRIVER_HORIZON_DAYS }, (_, i) => {
+          const date = shiftDate(w.today, i + 1)
+          return { date, tag: `D-${i + 1}`, count: live.filter(l => l.arrivalDate === date).length }
+        }),
+      }
+    })(),
     byDay: Array.from(dayMap.values()),
     byCountry: rollUpByCountry(lines),
     channel: channelSplit(lines),
@@ -1359,11 +1461,25 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
     completedLines: completedLines.slice(0, maxRows),
   }
 
+  // D-6: tomorrow through D-6. Today's arrivals are already landing, so they are
+  // not "to reconfirm" any more — the same D-1 start the driver horizons use.
+  const d6Lines = statusLines.filter(l => l.daysToArrival >= 1 && l.daysToArrival <= RECONFIRM_D6_DAYS)
+  const d6Done = d6Lines.filter(l => l.completed).length
+  const d6 = {
+    days: RECONFIRM_D6_DAYS,
+    fromDate: shiftDate(w.today, 1),
+    toDate: shiftDate(w.today, RECONFIRM_D6_DAYS),
+    total: d6Lines.length,
+    completed: d6Done,
+    pending: d6Lines.length - d6Done,
+  }
+
   return {
     fromDate,
     toDate,
     total: statusLines.length,
     status,
+    d6,
     breached: lines.length,
     explained: lines.filter(l => l.delay).length,
     unexplained: lines.filter(l => !l.delay).length,

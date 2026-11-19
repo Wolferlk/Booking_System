@@ -19,7 +19,7 @@ import {
   formatReportDate, PERIOD_LABEL, type ReportWindow,
 } from './report-window'
 import {
-  bar, C, compact, csvBlock, emptyNote, esc, FONT, kpiRow, money, moreNote, num,
+  bar, C, compact, HERO, csvBlock, emptyNote, esc, FONT, kpiRow, money, moreNote, num,
   pill, section, shortDate, stamp, statusWord, STYLE_BLOCK, TABLE_CLOSE, tableOpen,
   td, trend, truncate,
 } from './email-kit'
@@ -743,50 +743,65 @@ function heroMeter(opts: {
   </table>`
 }
 
-// ─── D-3 driver allocation ────────────────────────────────────────────────────
+// ─── D-3 / D-10 driver allocation ─────────────────────────────────────────────
 
 /**
- * D-3 Driver Allocation — who has a driver for the next three days of arrivals.
+ * Driver Allocation — who has a driver for the next N days of arrivals.
  *
- * Only tours we actually move are on it. Cancelled files (a cancellation still
- * waiting on accounts included) and accommodation-only bookings are removed in
- * `collectReadiness`, and a tour whose agenda has no transfer at all is counted
- * apart instead of being called "allocated". The section ends by saying how many
- * of each were left out, so the smaller number is never mistaken for lost data.
+ * Rendered twice: D-3 (tomorrow to D-3, day cards, full work list) and D-10
+ * (tomorrow to D-10, a day-by-day table, work list for D-4 onwards because the
+ * D-3 section directly above already lists the first three days).
+ *
+ * A tour counts as allocated once at least one movement on its chart has a
+ * driver or vendor — the rule lives in `driverCheck()`. Only tours we actually
+ * move are on it: cancelled files and accommodation-only bookings are removed
+ * in `collectReadiness`, and a tour whose agenda has no transfer is counted
+ * apart. The section ends by saying how many of each were left out, so a
+ * smaller number is never mistaken for lost data.
  */
-function driverAllocationSection(d: ReportData): string {
-  const r = d.readiness
-  const a = r.drivers
+function driverAllocationSection(d: ReportData, horizon: 'D3' | 'D10', opts: { d3Shown?: boolean } = {}): string {
+  const a = horizon === 'D3' ? d.readiness.drivers : d.readiness.drivers10
   const open = a.partial + a.pending
+  const pct = a.tours ? Math.round((a.allocated / a.tours) * 100) : 100
+  const tag = `D-${a.days}`
 
+  const parts = [
+    { value: a.allocated, color: C.good, label: 'Allocated' },
+    ...(a.partial ? [{ value: a.partial, color: C.warn, label: 'Part-allocated' }] : []),
+    { value: a.pending, color: C.bad, label: 'No driver / vendor yet' },
+  ]
   const hero = heroMeter({
-    label: 'Tours fully allocated',
+    label: `Tours with a driver or vendor · ${pct}%`,
     value: a.allocated,
     of: a.tours,
     unit: a.tours === 1 ? 'tour' : 'tours',
-    color: open ? (a.allocated ? C.warn : C.bad) : C.good,
+    color: open ? (pct >= 80 ? C.warn : C.bad) : C.good,
     side: {
-      label: 'Transfers covered',
-      value: `${num(a.transfersCovered)}<span style="font:700 13px/1 ${FONT};color:${C.faint};"> / ${num(a.transfersRequired)}</span>`,
-      color: a.transfersCovered === a.transfersRequired ? C.good : C.ink,
+      label: open ? 'Still to allocate' : 'All allocated',
+      value: open
+        ? `${num(open)}<span style="font:700 13px/1 ${FONT};color:${C.faint};"> tour${open === 1 ? '' : 's'}</span>`
+        : '&#10003;',
+      color: open ? C.bad : C.good,
     },
-    parts: [
-      { value: a.allocated, color: C.good, label: 'Allocated' },
-      { value: a.partial, color: C.warn, label: 'Part-allocated' },
-      { value: a.pending, color: C.bad, label: 'No driver yet' },
-    ],
+    parts,
   })
 
-  // One card per day. Tomorrow is the one with no slack, so it gets the red edge
-  // whenever anything on it is still open.
-  const dayCards = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -5px 6px -5px;"><tr>${
+  const dayEdge = (day: ReportData['readiness']['drivers']['byDay'][number]) => {
+    const dayOpen = day.partial + day.pending
+    return !day.tours ? C.line : dayOpen ? (day.tag === 'D-1' ? C.bad : C.warn) : C.good
+  }
+  const dayLabel = (day: ReportData['readiness']['drivers']['byDay'][number]) =>
+    day.label === 'Tomorrow' ? `Tomorrow ${formatReportDate(day.date)}` : day.label
+
+  // D-3: one card per day. Tomorrow is the one with no slack, so it gets the red
+  // edge whenever anything on it is still open.
+  const dayCards = () => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -5px 6px -5px;"><tr>${
     a.byDay.map(day => {
       const dayOpen = day.partial + day.pending
-      const edge = !day.tours ? C.line : dayOpen ? (day.tag === 'D-1' ? C.bad : C.warn) : C.good
       return `<td width="${Math.floor(100 / a.byDay.length)}%" valign="top" style="padding:0 5px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="border-top:3px solid ${edge};">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="border-top:3px solid ${dayEdge(day)};">
           <tr><td style="padding:11px 12px;">
-            <div class="kpi-l">${esc(day.tag)} · ${esc(day.label === 'Tomorrow' ? `Tomorrow ${formatReportDate(day.date)}` : day.label)}</div>
+            <div class="kpi-l">${esc(day.tag)} · ${esc(dayLabel(day))}</div>
             <div style="font:800 22px/1.2 ${FONT};color:${C.ink};padding-top:6px;">${num(day.allocated)}<span style="font:700 12px/1 ${FONT};color:${C.faint};"> / ${num(day.tours)} allocated</span></div>
             <div style="padding-top:8px;">${segBar([
               { value: day.allocated, color: C.good },
@@ -794,13 +809,41 @@ function driverAllocationSection(d: ReportData): string {
               { value: day.pending, color: C.bad },
             ], 6)}</div>
             <div class="kpi-n">${day.tours
-              ? (dayOpen ? `<strong style="color:${C.bad};">${num(dayOpen)} need a driver</strong> · ${num(day.transfersCovered)}/${num(day.transfersRequired)} transfers` : `All ${num(day.transfersRequired)} transfers covered`)
+              ? (dayOpen ? `<strong style="color:${C.bad};">${num(dayOpen)} need a driver</strong>` : 'All tours allocated')
               : 'No tours with transfers'}</div>
           </td></tr>
         </table>
       </td>`
     }).join('')
   }</tr></table>`
+
+  // D-10: ten cards would not fit a 680px mail, so the days become rows — each
+  // with its own bar, so the week reads as a heat strip from top to bottom.
+  const dayTable = () => {
+    const rows = a.byDay.map(day => {
+      const dayOpen = day.partial + day.pending
+      const dayPct = day.tours ? Math.round((day.allocated / day.tours) * 100) : null
+      return `<tr>
+        <td class="c nw" style="border-left:3px solid ${dayEdge(day)};">${dayTag(Number(day.tag.slice(2)))}</td>
+        ${td(esc(dayLabel(day)), { nowrap: true, color: C.ink })}
+        ${td(num(day.tours), { align: 'right', bold: true })}
+        ${td(num(day.allocated), { align: 'right', color: C.good, bold: true })}
+        ${td(dayOpen ? num(dayOpen) : '—', { align: 'right', color: dayOpen ? C.bad : C.faint, bold: !!dayOpen })}
+        ${td(day.tours ? segBar([
+          { value: day.allocated, color: C.good },
+          { value: day.partial, color: C.warn },
+          { value: day.pending, color: C.bad },
+        ], 8) : '<span class="sub">no tours</span>')}
+        ${td(dayPct === null ? '' : `<strong style="color:${dayPct === 100 ? C.good : dayPct >= 80 ? C.warn : C.bad};">${dayPct}%</strong>`, { align: 'right', nowrap: true })}
+      </tr>`
+    }).join('')
+    return `<div style="padding-bottom:6px;"><div class="h3">Day by day</div>` +
+      tableOpen([
+        { text: 'Day', width: '52' }, { text: 'Date' },
+        { text: 'Tours', align: 'right', width: '46' }, { text: 'Done', align: 'right', width: '46' },
+        { text: 'Open', align: 'right', width: '46' }, { text: 'Progress', width: '150' }, { text: '%', align: 'right', width: '40' },
+      ]) + rows + TABLE_CLOSE + '</div>'
+  }
 
   const coverage = (b: ReadinessLine) => {
     const c = b.readiness.driver
@@ -814,13 +857,26 @@ function driverAllocationSection(d: ReportData): string {
     </tr></table>`
   }
 
-  const outstandingTable = a.outstanding.length
-    ? `<div style="padding-top:16px;"><div class="h3">Needs a driver — ${num(open)} tour${open === 1 ? '' : 's'}</div>` +
+  // The D-10 list skips D-1..D-3 when the D-3 section is in the same mail —
+  // the desk would otherwise read the same refs twice in a row.
+  const skipFirst = horizon === 'D10' && opts.d3Shown
+  // Filtered from the uncapped list, then cut to the same cap the D-3 list
+  // uses — filtering the capped list would lose D-4+ tours behind D-1..D-3.
+  const outstanding = skipFirst
+    ? a.all.filter(b => b.readiness.driver.state !== 'DONE' && b.daysToArrival > d.readiness.drivers.days).slice(0, Math.max(1, a.outstanding.length))
+    : a.outstanding
+  const outstandingTotal = skipFirst ? open - (d.readiness.drivers.partial + d.readiness.drivers.pending) : open
+  const listTitle = skipFirst
+    ? `Needs a driver, D-${d.readiness.drivers.days + 1} to ${tag}: ${num(outstandingTotal)} tour${outstandingTotal === 1 ? '' : 's'}`
+    : `Needs a driver: ${num(open)} tour${open === 1 ? '' : 's'}`
+
+  const outstandingTable = outstanding.length
+    ? `<div style="padding-top:16px;"><div class="h3">${esc(listTitle)}</div>` +
       tableOpen([
         { text: 'Ref' }, { text: 'Day', align: 'center', width: '48' }, { text: 'Channel', width: '56' },
         { text: 'Country' }, { text: 'Pax', align: 'right', width: '36' },
-        { text: 'Coverage', width: '110' }, { text: 'What is missing' },
-      ]) + a.outstanding.map(b => `<tr>
+        { text: 'Movements', width: '110' }, { text: 'What is missing' },
+      ]) + outstanding.map(b => `<tr>
         ${td(refCell(b.bookingRef, b.leadPassenger ?? b.destination), { nowrap: true })}
         ${td(dayTag(b.daysToArrival), { align: 'center' })}
         ${td(sourcePill(b.source))}
@@ -829,28 +885,33 @@ function driverAllocationSection(d: ReportData): string {
         ${td(coverage(b))}
         ${td(esc(b.readiness.driver.detail))}
       </tr>`).join('') + TABLE_CLOSE +
-      moreNote(a.outstanding.length, open, 'tours still needing a driver') + '</div>'
+      moreNote(outstanding.length, outstandingTotal, 'tours still needing a driver') +
+      (skipFirst ? `<div class="more">D-1 to D-${d.readiness.drivers.days} are listed in the D-${d.readiness.drivers.days} section above.</div>` : '') +
+      '</div>'
     : ''
 
   // Allocated tours as compact chips — the record that they were checked,
-  // without a second full table competing with the work list for attention.
-  const doneChips = a.done.length
-    ? `<div style="padding-top:16px;"><div class="h3">Fully allocated — ${num(a.allocated)} tour${a.allocated === 1 ? '' : 's'}</div><div>${
-        a.done.map(b => `<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 9px;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;font:400 11px/1.5 ${FONT};color:#065f46;white-space:nowrap;"><strong>${esc(b.bookingRef)}</strong> · D-${num(b.daysToArrival)} · ${num(b.readiness.driver.done)}/${num(b.readiness.driver.required)}</span>`).join('')
+  // without a second full table competing with the work list. D-3 only: over
+  // ten days the chips would cost more of the mail's size budget than they earn.
+  const doneChips = horizon === 'D3' && a.done.length
+    ? `<div style="padding-top:16px;"><div class="h3">Allocated: ${num(a.allocated)} tour${a.allocated === 1 ? '' : 's'}</div><div>${
+        a.done.map(b => `<span style="display:inline-block;margin:0 6px 6px 0;padding:4px 9px;border:1px solid #a7f3d0;background:#ecfdf5;border-radius:8px;font:400 11px/1.5 ${FONT};color:#065f46;white-space:nowrap;"><strong>${esc(b.bookingRef)}</strong> · D-${num(b.daysToArrival)}</span>`).join('')
       }</div>${moreNote(a.done.length, a.allocated, 'allocated tours')}</div>`
     : ''
 
+  const ruleNote = `<div class="more">A tour counts as allocated once at least one movement on its chart has a driver or vendor.</div>`
+
   const body = a.tours
-    ? hero + dayCards + outstandingTable + doneChips
-    : emptyNote('No tour with a transfer arrives in the next three days.')
+    ? hero + (horizon === 'D3' ? dayCards() : dayTable()) + outstandingTable + doneChips + ruleNote
+    : emptyNote(`No tour with a transfer arrives in the next ${a.days} days.`)
 
   return section(
-    'D-3 Driver Allocation',
-    `${formatReportDate(r.fromDate, { weekday: true })} to ${formatReportDate(r.toDate, { weekday: true })} · operating tours only — cancelled and accommodation-only files are not included`,
+    `${tag} Driver Allocation`,
+    `${formatReportDate(a.fromDate, { weekday: true })} to ${formatReportDate(a.toDate, { weekday: true })} · operating tours only — cancelled and accommodation-only files are not included`,
     open ? (a.pending ? C.bad : C.warn) : C.good,
     body + leftOutNote([
-      { n: r.cancelled, what: 'cancelled' },
-      { n: r.hotelOnly, what: 'accommodation only' },
+      { n: a.cancelled, what: 'cancelled' },
+      { n: a.hotelOnly, what: 'accommodation only' },
       { n: a.noTransfers, what: 'with no transfers in the agenda' },
     ]),
   )
@@ -1518,7 +1579,46 @@ export interface RenderOptions {
   testSend?: boolean
 }
 
-function headerBlock(w: ReportWindow, opts: RenderOptions): string {
+/** "WED / 18 / NOV 2026" — the date as a tear-off calendar leaf. */
+function calendarLeaf(iso: string): string {
+  const dt = new Date(`${iso}T00:00:00Z`)
+  const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...o }).format(dt)
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" style="border-collapse:separate;border-radius:12px;overflow:hidden;background:#ffffff;">
+    <tr><td align="center" style="background:${C.bad};padding:4px 16px;font:800 10px/1.4 ${FONT};color:#ffffff;letter-spacing:.14em;text-transform:uppercase;">${esc(part({ weekday: 'short' }))}</td></tr>
+    <tr><td align="center" style="padding:4px 16px 0 16px;font:800 30px/1.1 ${FONT};color:${C.ink};letter-spacing:-.02em;">${esc(part({ day: '2-digit' }))}</td></tr>
+    <tr><td align="center" style="padding:0 16px 7px 16px;font:700 10px/1.4 ${FONT};color:${C.muted};letter-spacing:.08em;text-transform:uppercase;">${esc(part({ month: 'short', year: 'numeric' }))}</td></tr>
+  </table>`
+}
+
+/**
+ * The few things that most need a human this morning, as chips under the
+ * title — the mail's own subject line made readable. Worst first, capped at
+ * four; an all-clear chip when nothing is open.
+ */
+function focusChips(d: ReportData): string {
+  const items: { color: string; text: string }[] = []
+  const d1 = d.readiness.drivers.byDay[0]
+  const d1Open = d1 ? d1.partial + d1.pending : 0
+  if (d.parity.available && !d.parity.inParity && d.parity.missing > 0) {
+    items.push({ color: HERO.bad, text: `${num(d.parity.missing)} AppleSystem booking${d.parity.missing === 1 ? '' : 's'} missing` })
+  }
+  if (d1Open) items.push({ color: HERO.bad, text: `${num(d1Open)} tour${d1Open === 1 ? '' : 's'} tomorrow without a driver` })
+  if (d.readiness.tomorrowNotReady) {
+    items.push({ color: HERO.warn, text: `${num(d.readiness.tomorrowNotReady)} arrival${d.readiness.tomorrowNotReady === 1 ? '' : 's'} tomorrow not ready` })
+  }
+  const d10Open = d.readiness.drivers10.partial + d.readiness.drivers10.pending
+  if (d10Open) items.push({ color: HERO.warn, text: `${num(d10Open)} tour${d10Open === 1 ? '' : 's'} in ${d.readiness.drivers10.days} days need a driver` })
+  if (d.reconfirm.unexplained) items.push({ color: HERO.warn, text: `${num(d.reconfirm.unexplained)} late reconfirmation${d.reconfirm.unexplained === 1 ? '' : 's'} unexplained` })
+  if (d.complaints.open) items.push({ color: HERO.bad, text: `${num(d.complaints.open)} open complaint${d.complaints.open === 1 ? '' : 's'}` })
+
+  const shown = items.length ? items.slice(0, 4) : [{ color: HERO.good, text: 'All clear — nothing urgent open' }]
+  return shown.map(i =>
+    `<span style="display:inline-block;margin:8px 6px 0 0;padding:5px 11px;border-radius:999px;background:${HERO.deep};border:1px solid ${HERO.tileLine};font:600 11.5px/1.4 ${FONT};color:#ffffff;white-space:nowrap;"><span style="color:${i.color};font-size:12px;">&#9679;</span>&nbsp; ${esc(i.text)}</span>`,
+  ).join('')
+}
+
+function headerBlock(d: ReportData, opts: RenderOptions): string {
+  const w = d.window
   // A back-dated view says so on its face: the counts are for the chosen period,
   // but the forward-looking sections read from today's booking records, so it is
   // not the mail that went out that morning and must not be mistaken for it.
@@ -1526,19 +1626,26 @@ function headerBlock(w: ReportWindow, opts: RenderOptions): string {
     opts.testSend ? 'TEST SEND' : '',
     w.anchored ? `BACK-DATED TO ${formatReportDate(w.toDate).toUpperCase()}` : '',
   ].filter(Boolean).map(text =>
-    `<span style="display:inline-block;margin-left:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
+    `<span style="display:inline-block;margin:0 0 8px 5px;padding:3px 9px;border-radius:999px;background:${HERO.tile};border:1px solid ${HERO.tileLine};color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
   ).join('')
   return `
-  <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${C.brandDeep} 0%,${C.brand} 100%);padding:26px 24px;border-radius:16px 16px 0 0;">
+  <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${HERO.deep} 0%,${C.brand} 100%);padding:26px 24px 20px 24px;border-radius:16px 16px 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td>
-          <div style="font:700 11px/1.4 ${FONT};color:rgba(255,255,255,.72);text-transform:uppercase;letter-spacing:.14em;">AppleHolidays Operations</div>
-          <div style="font:800 24px/1.25 ${FONT};color:#ffffff;padding-top:6px;letter-spacing:-0.02em;">${esc(PERIOD_LABEL[w.period])} Operations Report</div>
-          <div style="font:400 13px/1.5 ${FONT};color:rgba(255,255,255,.82);padding-top:5px;">${esc(w.label)}</div>
+        <td valign="top">
+          <div style="font:700 11px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.16em;">AppleHolidays Operations · Morning Briefing</div>
+          <div style="font:800 28px/1.15 ${FONT};color:#ffffff;padding-top:8px;letter-spacing:-0.02em;">${esc(PERIOD_LABEL[w.period])} Operations Report</div>
+          <div style="font:400 13px/1.5 ${FONT};color:${HERO.soft};padding-top:5px;">${esc(w.label)}</div>
         </td>
-        <td align="right" valign="top" style="white-space:nowrap;">${badge}</td>
+        <td align="right" valign="top" style="white-space:nowrap;padding-left:12px;">
+          ${badge ? `<div>${badge}</div>` : ''}
+          ${w.period === 'DAILY' ? calendarLeaf(w.fromDate) : ''}
+        </td>
       </tr>
+      <tr><td colspan="2" style="padding-top:12px;">
+        <div style="font:700 10px/1.4 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.14em;">Today’s focus</div>
+        ${focusChips(d)}
+      </td></tr>
     </table>
   </td></tr>`
 }
@@ -1548,15 +1655,55 @@ function newBookingsCount(d: ReportData): number {
   return todayNewAndUpdated(d)
 }
 
+interface RibbonTile {
+  label: string
+  value: string
+  sub: string
+  /** Status colour for the top edge; neutral tiles use the band's own line. */
+  tone?: 'good' | 'warn' | 'bad'
+  /** Draws a small progress bar for "x of y" tiles. */
+  ratio?: { done: number; of: number }
+}
+
+/** Green when nothing is open, amber while mostly there, red otherwise. */
+function ratioTone(done: number, of: number): 'good' | 'warn' | 'bad' {
+  if (!of || done >= of) return 'good'
+  return done / of >= 0.8 ? 'warn' : 'bad'
+}
+
+function ribbonTile(t: RibbonTile, width: number): string {
+  const edge = t.tone ? HERO[t.tone] : HERO.tileLine
+  const pct = t.ratio && t.ratio.of ? Math.max(0, Math.min(100, Math.round((t.ratio.done / t.ratio.of) * 100))) : null
+  const bar = pct === null ? '' : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:7px;border-collapse:separate;border-radius:999px;overflow:hidden;"><tr>${
+    pct > 0 ? `<td width="${pct}%" style="background:${edge};height:5px;line-height:5px;font-size:0;">&nbsp;</td>` : ''
+  }${pct < 100 ? `<td style="background:${HERO.track};height:5px;line-height:5px;font-size:0;">&nbsp;</td>` : ''}</tr></table>`
+  return `<td width="${width}%" valign="top" style="padding:5px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${HERO.tile};border-top:3px solid ${edge};border-radius:10px;border-collapse:separate;">
+      <tr><td style="padding:11px 12px 12px 12px;">
+        <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;">${esc(t.label)}</div>
+        <div style="font:800 24px/1.15 ${FONT};color:#ffffff;padding-top:5px;letter-spacing:-.02em;white-space:nowrap;">${t.value}</div>
+        ${bar}
+        <div style="font:400 11px/1.45 ${FONT};color:${HERO.soft};padding-top:5px;">${esc(t.sub)}</div>
+      </td></tr>
+    </table>
+  </td>`
+}
+
 function summaryStrip(d: ReportData): string {
   const sp = d.split
+  const ratio = (done: number, of: number) => `${num(done)}<span style="font:700 14px/1 ${FONT};color:${HERO.dim};"> / ${num(of)}</span>`
+  const d3 = d.readiness.drivers
+  const d10 = d.readiness.drivers10
 
-  const cells = [
+  // Two rows of four. Seven-plus tiles in one row squeezed every label onto
+  // three lines on a 680px mail; two rows read as "what came in" and "what is
+  // ready", which is also the order the sections below follow.
+  const intake: RibbonTile[] = [
     // Leads with the day's new & updated business as the accounts invoice mail
     // adds it up — this period's own bookings plus older confirmations edited —
     // and the same number the New bookings card quotes.
     {
-      label: 'Today new & updated',
+      label: 'New & updated',
       value: num(newBookingsCount(d)),
       sub: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'confirmed bookings',
     },
@@ -1567,30 +1714,132 @@ function summaryStrip(d: ReportData): string {
         ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
         : 'accounts unreachable',
     },
-    { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
+    { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests travelling` },
+    { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} arriving in 7 days` },
+  ]
+  const ready: RibbonTile[] = [
     {
-      label: 'D-3 drivers',
-      value: `${num(d.readiness.drivers.allocated)}/${num(d.readiness.drivers.tours)}`,
-      sub: `${num(d.readiness.drivers.partial + d.readiness.drivers.pending)} need a driver`,
+      label: `D-${d3.days} drivers`,
+      value: ratio(d3.allocated, d3.tours),
+      sub: d3.partial + d3.pending ? `${num(d3.partial + d3.pending)} need a driver` : 'all allocated',
+      tone: ratioTone(d3.allocated, d3.tours),
+      ratio: { done: d3.allocated, of: d3.tours },
+    },
+    {
+      label: `D-${d10.days} drivers`,
+      value: ratio(d10.allocated, d10.tours),
+      sub: d10.partial + d10.pending ? `${num(d10.partial + d10.pending)} need a driver` : 'all allocated',
+      tone: ratioTone(d10.allocated, d10.tours),
+      ratio: { done: d10.allocated, of: d10.tours },
     },
     {
       label: 'Reconfirmed',
-      value: `${num(d.reconfirm.status.completed)}/${num(d.reconfirm.total)}`,
+      value: ratio(d.reconfirm.status.completed, d.reconfirm.total),
       sub: `${num(d.reconfirm.status.pending)} pending · ${num(d.reconfirm.status.overdue)} late`,
+      tone: d.reconfirm.status.overdue ? 'bad' : ratioTone(d.reconfirm.status.completed, d.reconfirm.total),
+      ratio: { done: d.reconfirm.status.completed, of: d.reconfirm.total },
     },
-    { label: 'Complaints', value: num(d.complaints.total), sub: `${num(d.complaints.open)} open` },
-    { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} in 7d` },
+    {
+      label: 'Complaints',
+      value: num(d.complaints.total),
+      sub: `${num(d.complaints.open)} open`,
+      tone: d.complaints.open ? 'bad' : 'good',
+    },
   ]
+  const row = (eyebrow: string, tiles: RibbonTile[]) => `
+    <tr><td style="padding:4px 5px 0 5px;font:700 10px/1.4 ${FONT};color:${HERO.dim};text-transform:uppercase;letter-spacing:.14em;">${esc(eyebrow)}</td></tr>
+    <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${
+      tiles.map(t => ribbonTile(t, Math.floor(100 / tiles.length))).join('')
+    }</tr></table></td></tr>`
   return `
-  <tr><td style="background:#0b3d3a;padding:14px 18px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${cells.map(c => `<td width="${Math.floor(100 / cells.length)}%" align="center" style="padding:2px 4px;">
-        <div style="font:800 22px/1.2 ${FONT};color:#ffffff;">${c.value}</div>
-        <div style="font:700 10px/1.4 ${FONT};color:rgba(255,255,255,.66);text-transform:uppercase;letter-spacing:.08em;padding-top:3px;">${esc(c.label)}</div>
-        <div style="font:400 10px/1.4 ${FONT};color:rgba(255,255,255,.45);padding-top:2px;">${esc(c.sub)}</div>
-      </td>`).join('')}
-    </tr></table>
+  <tr><td style="background:${HERO.deep};padding:12px 13px 14px 13px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      ${row('Intake & on the ground', intake)}
+      ${row('Readiness', ready)}
+      ${lookAheadRow(d)}
+    </table>
   </td></tr>`
+}
+
+/**
+ * The third ribbon row — the look-ahead. Two wide tiles:
+ *
+ *  - **D-10 arrivals**: how many files land tomorrow through D-10, with a mini
+ *    column chart of the ten days so a heavy day stands out before anyone
+ *    opens a section.
+ *  - **D-6 reconfirmation**: of the tours landing tomorrow through D-6, how
+ *    many guests have been reconfirmed — the check-point that still leaves
+ *    time to reach a guest before the D-3 crunch.
+ *
+ * Tables only (no flex, no positioned divs) so Outlook keeps the columns.
+ */
+function lookAheadRow(d: ReportData): string {
+  const a = d.readiness.arrivals10
+  const r = d.reconfirm.d6
+  const max = Math.max(1, ...a.byDay.map(x => x.count))
+  const CHART_H = 38
+
+  // One column per day, bottom-aligned. The busiest day is drawn in the
+  // eyebrow colour so it is the first thing the eye lands on.
+  const columns = a.byDay.map(x => {
+    const h = x.count ? Math.max(3, Math.round((x.count / max) * CHART_H)) : 2
+    const colour = x.count === max && x.count > 0 ? HERO.eyebrow : x.count ? HERO.tileLine : HERO.track
+    return `<td valign="bottom" align="center" style="padding:0 2px;">
+      <div style="font:700 9px/1.2 ${FONT};color:${HERO.soft};padding-bottom:2px;">${x.count ? num(x.count) : '&nbsp;'}</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${colour};height:${h}px;line-height:${h}px;font-size:0;border-radius:3px 3px 0 0;">&nbsp;</td></tr></table>
+      <div style="font:600 9px/1.4 ${FONT};color:${HERO.dim};padding-top:3px;">${esc(x.tag.replace('D-', ''))}</div>
+    </td>`
+  }).join('')
+
+  const arrivalsTile = `<td width="50%" valign="top" style="padding:5px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${HERO.tile};border-top:3px solid ${HERO.eyebrow};border-radius:10px;border-collapse:separate;">
+      <tr><td style="padding:11px 12px 10px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td valign="top">
+            <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;">D-${a.days} arrivals</div>
+            <div style="font:800 24px/1.15 ${FONT};color:#ffffff;padding-top:5px;letter-spacing:-.02em;">${num(a.total)}<span style="font:700 12px/1 ${FONT};color:${HERO.dim};"> files</span></div>
+          </td>
+          <td valign="top" align="right" style="font:400 11px/1.55 ${FONT};color:${HERO.soft};white-space:nowrap;">
+            ${num(a.pax)} pax<br>B2B ${num(a.b2b)} · B2C ${num(a.b2c)}${a.hotelOnly ? `<br>${num(a.hotelOnly)} hotel only` : ''}
+          </td>
+        </tr></table>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;"><tr>${columns}</tr></table>
+        <div style="font:400 10px/1.4 ${FONT};color:${HERO.dim};padding-top:4px;">${esc(formatReportDate(a.fromDate))} → ${esc(formatReportDate(a.toDate))} · cancelled left out</div>
+      </td></tr>
+    </table>
+  </td>`
+
+  const tone = ratioTone(r.completed, r.total)
+  const edge = HERO[tone]
+  const pct = r.total ? Math.round((r.completed / r.total) * 100) : 100
+  const reconTile = `<td width="50%" valign="top" style="padding:5px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${HERO.tile};border-top:3px solid ${edge};border-radius:10px;border-collapse:separate;">
+      <tr><td style="padding:11px 12px 10px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td valign="top">
+            <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;">D-${r.days} reconfirmation</div>
+            <div style="font:800 24px/1.15 ${FONT};color:#ffffff;padding-top:5px;letter-spacing:-.02em;">${num(r.completed)}<span style="font:700 14px/1 ${FONT};color:${HERO.dim};"> / ${num(r.total)}</span></div>
+          </td>
+          <td valign="top" align="right">
+            <div style="font:800 22px/1.15 ${FONT};color:${edge};">${pct}%</div>
+            <div style="font:400 10px/1.4 ${FONT};color:${HERO.dim};">complete</div>
+          </td>
+        </tr></table>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;border-collapse:separate;border-radius:999px;overflow:hidden;"><tr>${
+          pct > 0 ? `<td width="${pct}%" style="background:${edge};height:8px;line-height:8px;font-size:0;">&nbsp;</td>` : ''
+        }${pct < 100 ? `<td style="background:${HERO.track};height:8px;line-height:8px;font-size:0;">&nbsp;</td>` : ''}</tr></table>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;"><tr>
+          <td style="font:400 11px/1.5 ${FONT};color:${HERO.soft};"><span style="color:${HERO.good};font-size:12px;">&#9679;</span> <strong style="color:#ffffff;">${num(r.completed)}</strong> completed</td>
+          <td align="right" style="font:400 11px/1.5 ${FONT};color:${HERO.soft};"><span style="color:${r.pending ? HERO.bad : HERO.good};font-size:12px;">&#9679;</span> <strong style="color:#ffffff;">${num(r.pending)}</strong> to reconfirm</td>
+        </tr></table>
+        <div style="font:400 10px/1.4 ${FONT};color:${HERO.dim};padding-top:4px;">Arrivals ${esc(formatReportDate(r.fromDate))} → ${esc(formatReportDate(r.toDate))} · cancelled &amp; hotel only left out</div>
+      </td></tr>
+    </table>
+  </td>`
+
+  return `
+    <tr><td style="padding:4px 5px 0 5px;font:700 10px/1.4 ${FONT};color:${HERO.dim};text-transform:uppercase;letter-spacing:.14em;">Look-ahead</td></tr>
+    <tr><td><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${arrivalsTile}${reconTile}</tr></table></td></tr>`
 }
 
 export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): string {
@@ -1644,12 +1893,15 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     want.onGround ? onGroundSection(d) : '',
     // Drivers lead the next-three-days block: an unallocated transfer tomorrow
     // is the one gap that cannot be fixed once the guest has landed.
-    want.drivers ? driverAllocationSection(d) : '',
+    want.drivers ? driverAllocationSection(d, 'D3') : '',
     want.readiness ? readinessSection(d) : '',
     // Placed after readiness and before complaints: readiness is the next three
     // days, this is the next ten, and both are things to fix before the guest
     // lands — complaints are what happens when neither was.
     want.reconfirm ? reconfirmSection(d) : '',
+    // The D-10 driver horizon sits beside the D-10 reconfirmation deadline it
+    // shares: both are the week of slack before a gap becomes a D-3 emergency.
+    want.drivers ? driverAllocationSection(d, 'D10', { d3Shown: want.drivers }) : '',
     want.complaints ? complaintsSection(d) : '',
     want.upcoming ? upcomingSection(d) : '',
   ].join('')
@@ -1667,11 +1919,11 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.drivers.partial + d.readiness.drivers.pending)} D-3 tours need a driver, reconfirmation ${num(d.reconfirm.status.completed)} completed / ${num(d.reconfirm.status.pending)} pending, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}${d.countCheck.available && d.countCheck.sweptAt ? `, count check ${d.countCheck.balanced ? 'balanced' : 'SHORT'} (${num(d.countCheck.overall.upstream)} upstream / ${num(d.countCheck.overall.pnls)} P&amp;Ls / ${num(d.countCheck.overall.invoices)} invoices)` : ''}.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.drivers.partial + d.readiness.drivers.pending)} D-3 / ${num(d.readiness.drivers10.partial + d.readiness.drivers10.pending)} D-10 tours need a driver, reconfirmation ${num(d.reconfirm.status.completed)} completed / ${num(d.reconfirm.status.pending)} pending, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}${d.countCheck.available && d.countCheck.sweptAt ? `, count check ${d.countCheck.balanced ? 'balanced' : 'SHORT'} (${num(d.countCheck.overall.upstream)} upstream / ${num(d.countCheck.overall.pnls)} P&amp;Ls / ${num(d.countCheck.overall.invoices)} invoices)` : ''}.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
-      ${headerBlock(d.window, opts)}
+      ${headerBlock(d, opts)}
       ${summaryStrip(d)}
       <tr><td style="background:#ffffff;padding:20px 18px 6px 18px;border-left:1px solid ${C.line};border-right:1px solid ${C.line};">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -1874,14 +2126,17 @@ export function renderReportCsv(d: ReportData): string {
       ].map(String)))
   }
 
-  // D-3 driver allocation — operating tours only, outstanding first.
-  block(`D-3 driver allocation ${d.readiness.fromDate} to ${d.readiness.toDate} (cancelled and accommodation-only excluded)`,
-    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Day', 'Pax', 'Status', 'Allocation', 'Transfers covered', 'Transfers required', 'Detail'],
-    [...d.readiness.drivers.outstanding, ...d.readiness.drivers.done].map(b => [
-      b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, `D-${b.daysToArrival}`, b.pax, b.status,
-      b.readiness.driver.state === 'DONE' ? 'Allocated' : b.readiness.driver.state === 'PARTIAL' ? 'Part-allocated' : 'Pending',
-      b.readiness.driver.done, b.readiness.driver.required, b.readiness.driver.detail,
-    ].map(String)))
+  // D-3 and D-10 driver allocation — operating tours only, outstanding first.
+  // A tour is allocated once one movement has a driver or vendor.
+  for (const a of [d.readiness.drivers, d.readiness.drivers10]) {
+    block(`D-${a.days} driver allocation ${a.fromDate} to ${a.toDate} (cancelled and accommodation-only excluded)`,
+      ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Day', 'Pax', 'Status', 'Allocation', 'Movements named', 'Movements', 'Detail'],
+      a.all.map(b => [
+        b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, `D-${b.daysToArrival}`, b.pax, b.status,
+        b.readiness.driver.state === 'DONE' ? 'Allocated' : b.readiness.driver.state === 'PARTIAL' ? 'Part-allocated' : 'Pending',
+        b.readiness.driver.done, b.readiness.driver.required, b.readiness.driver.detail,
+      ].map(String)))
+  }
 
   // Reconfirmation status — Completed and Pending, cancelled and Hotel Only excluded.
   block(`Reconfirmation status ${d.reconfirm.fromDate} to ${d.reconfirm.toDate} (cancelled and hotel-only excluded)`,

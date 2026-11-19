@@ -222,9 +222,16 @@ function overview(wb: import('exceljs').Workbook, d: ReportData, index: { name: 
     { label: 'Today new & updated', value: todayNewAndUpdated(d), note: sp.available ? `${sp.todayCount} new + ${sp.oldCount} amended` : `B2B ${d.created.channel.b2b} · B2C ${d.created.channel.b2c}`, color: P.brand },
     { label: 'Old amendments', value: sp.available ? sp.oldCount : '—', note: sp.available && sp.oldest ? `oldest ${sp.oldest}d back` : 'earlier files re-opened', color: P.amber },
     { label: 'On ground today', value: d.opsBoard?.today?.onGround.files ?? d.onGround.total, note: `${d.opsBoard?.today?.onGround.pax ?? d.onGround.pax} guests`, color: P.indigo },
-    { label: 'D-3 drivers', value: `${d.readiness.drivers.allocated}/${d.readiness.drivers.tours}`, note: `${d.readiness.drivers.partial + d.readiness.drivers.pending} need a driver`, color: P.blue },
-    { label: 'Reconfirmed', value: `${d.reconfirm.status.completed}/${d.reconfirm.total}`, note: `${d.reconfirm.status.pending} pending · ${d.reconfirm.status.overdue} late`, color: P.green },
+    { label: 'Upcoming', value: d.upcoming.total, note: `${d.upcoming.next7} in 7 days`, color: P.brand },
     { label: 'Complaints', value: d.complaints.total, note: `${d.complaints.open} open`, color: P.red },
+  ])
+  // Second row — readiness and the look-ahead. A canvas row holds six tiles.
+  c.tiles([
+    { label: 'D-3 drivers', value: `${d.readiness.drivers.allocated}/${d.readiness.drivers.tours}`, note: `${d.readiness.drivers.partial + d.readiness.drivers.pending} need a driver`, color: P.blue },
+    { label: 'D-10 drivers', value: `${d.readiness.drivers10.allocated}/${d.readiness.drivers10.tours}`, note: `${d.readiness.drivers10.partial + d.readiness.drivers10.pending} need a driver`, color: P.blue },
+    { label: 'D-10 arrivals', value: d.readiness.arrivals10.total, note: `${d.readiness.arrivals10.pax} pax · ${d.readiness.arrivals10.hotelOnly} hotel only`, color: P.indigo },
+    { label: 'D-6 reconfirmed', value: `${d.reconfirm.d6.completed}/${d.reconfirm.d6.total}`, note: `${d.reconfirm.d6.pending} still to reconfirm`, color: P.green },
+    { label: 'Reconfirmed (D-10)', value: `${d.reconfirm.status.completed}/${d.reconfirm.total}`, note: `${d.reconfirm.status.pending} pending · ${d.reconfirm.status.overdue} late`, color: P.green },
   ])
 
   const b = d.opsBoard
@@ -557,28 +564,29 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
   // ── Readiness, drivers, reconfirmation (the mail's own sections)
   const rd = d.readiness
   type RdLine = typeof rd.bookings[number]
-  plan.table<RdLine>({
-    name: 'D-3 Drivers', tab: P.blue,
-    title: `D-3 driver allocation — arrivals ${formatReportDate(rd.fromDate)} to ${formatReportDate(rd.toDate)}`,
-    description: 'Operating tours only — cancelled and accommodation-only files are left out. Outstanding first.',
-    totals: `${rd.drivers.allocated}/${rd.drivers.tours} allocated · ${rd.drivers.partial} part · ${rd.drivers.pending} pending`,
-    what: 'D-3 driver allocation for the next three days of arrivals',
-    cols: [
-      { header: 'Booking ref', width: 13, value: x => x.bookingRef },
-      { header: 'Lead guest', width: 24, value: x => x.leadPassenger ?? '' },
-      { header: 'Channel', width: 9, kind: 'source', value: x => x.source },
-      { header: 'Country', width: 12, value: x => x.countryLabel },
-      { header: 'Arrival', width: 12, kind: 'date', value: x => x.arrivalDate },
-      { header: 'Day', width: 6, value: x => `D-${x.daysToArrival}` },
-      { header: 'Pax', width: 6, kind: 'int', value: x => x.pax, total: 'sum' },
-      { header: 'Allocation', width: 14, kind: 'flag', value: x => (x.readiness.driver.state === 'DONE' ? 'Allocated' : x.readiness.driver.state === 'PARTIAL' ? 'Part-allocated' : 'Pending') },
-      { header: 'Covered', width: 9, kind: 'int', value: x => x.readiness.driver.done, total: 'sum' },
-      { header: 'Required', width: 9, kind: 'int', value: x => x.readiness.driver.required, total: 'sum' },
-      { header: 'Coverage', width: 10, kind: 'pct', value: x => (x.readiness.driver.required ? x.readiness.driver.done / x.readiness.driver.required : null), bar: P.blue },
-      { header: 'Detail', width: 50, wrap: true, value: x => x.readiness.driver.detail },
-    ],
-    rows: [...rd.drivers.outstanding, ...rd.drivers.done],
-  })
+  for (const al of [rd.drivers, rd.drivers10]) {
+    plan.table<RdLine>({
+      name: `D-${al.days} Drivers`, tab: P.blue,
+      title: `D-${al.days} driver allocation — arrivals ${formatReportDate(al.fromDate)} to ${formatReportDate(al.toDate)}`,
+      description: 'Operating tours only — cancelled and accommodation-only files are left out. A tour is allocated once one movement has a driver or vendor. Outstanding first.',
+      totals: `${al.allocated}/${al.tours} allocated · ${al.pending} still need a driver`,
+      what: `D-${al.days} driver allocation for the next ${al.days} days of arrivals`,
+      cols: [
+        { header: 'Booking ref', width: 13, value: x => x.bookingRef },
+        { header: 'Lead guest', width: 24, value: x => x.leadPassenger ?? '' },
+        { header: 'Channel', width: 9, kind: 'source', value: x => x.source },
+        { header: 'Country', width: 12, value: x => x.countryLabel },
+        { header: 'Arrival', width: 12, kind: 'date', value: x => x.arrivalDate },
+        { header: 'Day', width: 6, value: x => `D-${x.daysToArrival}` },
+        { header: 'Pax', width: 6, kind: 'int', value: x => x.pax, total: 'sum' },
+        { header: 'Allocation', width: 14, kind: 'flag', value: x => (x.readiness.driver.state === 'DONE' ? 'Allocated' : x.readiness.driver.state === 'PARTIAL' ? 'Part-allocated' : 'Pending') },
+        { header: 'Named', width: 9, kind: 'int', value: x => x.readiness.driver.done, total: 'sum' },
+        { header: 'Movements', width: 11, kind: 'int', value: x => x.readiness.driver.required, total: 'sum' },
+        { header: 'Detail', width: 50, wrap: true, value: x => x.readiness.driver.detail },
+      ],
+      rows: al.all,
+    })
+  }
   plan.table<RdLine>({
     name: 'Readiness 3 Days', tab: P.indigo,
     title: `Arrivals ${formatReportDate(rd.fromDate)} to ${formatReportDate(rd.toDate)} — readiness`,

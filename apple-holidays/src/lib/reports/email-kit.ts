@@ -40,7 +40,27 @@ export const C = {
   bad: '#dc2626',
 }
 
-export const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+/**
+ * Solid colours for the dark header bands. Outlook (desktop and the new web
+ * client) drops `rgba()` and falls back to near-black text, which left the
+ * daily report's ribbon labels unreadable dark-on-teal — so nothing on a dark
+ * band may use transparency.
+ */
+export const HERO = {
+  deep: '#0b3d3a',
+  band: '#0d4a46',
+  tile: '#115e59',
+  tileLine: '#1f7a72',
+  track: '#1a6b64',
+  eyebrow: '#99f6e4',
+  soft: '#ccfbf1',
+  dim: '#a7d3cc',
+  good: '#34d399',
+  warn: '#fbbf24',
+  bad: '#f87171',
+}
+
+export const FONT ="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
 /**
  * Every rule that repeats more than a handful of times. Kept deliberately terse
@@ -81,9 +101,9 @@ table{border-collapse:collapse;}
 .bar{border-radius:999px;height:6px;}
 .foot{font-size:11px;line-height:1.7;color:${C.faint};padding-top:16px;}
 .mv{border-radius:12px;border-collapse:separate;}
-.mv-l{font-size:10px;line-height:1.3;font-weight:700;color:rgba(255,255,255,.78);text-transform:uppercase;letter-spacing:.1em;}
+.mv-l{font-size:10px;line-height:1.3;font-weight:700;color:#f1f5f9;text-transform:uppercase;letter-spacing:.1em;}
 .mv-v{font-size:28px;line-height:1.15;font-weight:800;color:#ffffff;padding-top:5px;letter-spacing:-.02em;}
-.mv-n{font-size:11px;line-height:1.5;color:rgba(255,255,255,.85);}
+.mv-n{font-size:11px;line-height:1.5;color:#f8fafc;}
 .sub{color:${C.faint};font-size:11px;}
 .pc{display:inline-block;min-width:34px;text-align:center;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:700;}
 `.replace(/\n+/g, '\n').trim()

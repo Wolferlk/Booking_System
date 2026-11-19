@@ -5,8 +5,8 @@
  * Four questions, asked in the order ops asks them:
  *   1. Has the **client confirmed**?   status has reached `GT_VERIFIED`
  *      ("Client Confirmed" in STATUS_LABELS) or anything after it.
- *   2. Are **drivers allocated**?      every serviced agenda row has an
- *      assignment with a driver on it.
+ *   2. Are **drivers allocated**?      at least one serviced agenda row has a
+ *      driver or vendor on it (one allocation completes the tour).
  *   3. Are **tickets issued**?         every activated ticket is PURCHASED or PAID.
  *   4. What **QC stage** is it at?     QC1 / QC2 reached, from the booking status.
  *
@@ -250,13 +250,19 @@ function driverCheck(b: ReadinessBooking): ReadinessCheck {
     }
   }
 
+  // Ops rule: one driver or vendor on the movement chart means the tour's
+  // allocation is complete. The desk allocates the tour, not each row — a
+  // vendor booked for the trip carries every movement whether or not each row
+  // was ticked — so a single allocation is DONE, and only a chart with nobody
+  // on it at all is still PENDING. `done`/`required` keep the row-level
+  // coverage so the mail can still show how many rows carry a name.
   const allocated = serviced.filter(isAllocated).length
   return {
-    state: allocated === serviced.length ? 'DONE' : allocated > 0 ? 'PARTIAL' : 'PENDING',
-    short: `${allocated}/${serviced.length}`,
-    detail: allocated === serviced.length
-      ? `All ${serviced.length} transfer(s) have a driver or vendor`
-      : `${serviced.length - allocated} of ${serviced.length} transfers still need a driver or vendor`,
+    state: allocated > 0 ? 'DONE' : 'PENDING',
+    short: allocated > 0 ? 'Allocated' : 'None',
+    detail: allocated > 0
+      ? `Driver/vendor allocated on the movement chart (${allocated} of ${serviced.length} movement${serviced.length === 1 ? '' : 's'} named)`
+      : `No driver or vendor on any of the ${serviced.length} movement${serviced.length === 1 ? '' : 's'} yet`,
     done: allocated,
     required: serviced.length,
   }

@@ -119,6 +119,7 @@ interface OpsPreviewData {
   readiness: {
     total: number; notReady: number; tomorrow: number; hotelOnly: number
     drivers: { tours: number; allocated: number; partial: number; pending: number }
+    drivers10?: { tours: number; allocated: number; partial: number; pending: number }
   }
   reconfirm: {
     total: number; breached: number; explained: number; unexplained: number
@@ -220,6 +221,11 @@ function opsStats(d: OpsPreviewData): StatTile[] {
       value: d.readiness.drivers.allocated,
       sub: `of ${d.readiness.drivers.tours} allocated · ${d.readiness.drivers.partial + d.readiness.drivers.pending} need a driver`,
     },
+    ...(d.readiness.drivers10 ? [{
+      label: 'D-10 drivers',
+      value: d.readiness.drivers10.allocated,
+      sub: `of ${d.readiness.drivers10.tours} allocated · ${d.readiness.drivers10.partial + d.readiness.drivers10.pending} need a driver`,
+    }] : []),
     {
       label: 'Reconfirmed',
       value: d.reconfirm.status.completed,
