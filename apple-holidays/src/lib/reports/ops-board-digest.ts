@@ -4,17 +4,18 @@
  * The desk asked for the morning mail to carry the same picture they read on
  * `/dashboard/accounts/reports` — on ground, arrivals, departures and the five
  * check cards — twice: once for **today** and once for the **next 7 days**
- * (today through D+6), each broken down by sales channel, with Hotel Only and
+ * (tomorrow through D+7 — today is left out of it, the Today view already
+ * covers it), each broken down by sales channel, with Hotel Only and
  * Cancelled files counted on their own lines instead of folded in.
  *
  * ## One fetch, two views
  *
  * `collectOpsDay()` is the board's own loader, so every rule — what counts as
  * on ground, how a check is graded, what a cancelled or Hotel Only file is — is
- * the board's rule, not a copy of it. It is asked once, for the seven-day
- * window; today is cut from those rows. Because both views start on the same
- * day, a row's day-of-tour is identical in both and only the arrival / departure
- * flags need re-deriving for the single day.
+ * the board's rule, not a copy of it. It is asked once, for today through D+7;
+ * the Today view is cut from those rows, and the Next 7 days view is the rows on
+ * the ground from D+1 to D+7 with their arrival / departure flags and
+ * day-of-tour re-derived against that window.
  *
  * ## Counting rules (the board's)
  *
@@ -98,7 +99,12 @@ export interface BoardDay {
   hotelOnly: number
   cancelled: number
   ready: number
-  /** Live, non-Hotel-Only files with no driver on any transfer yet. */
+  /**
+   * Live files with at least one driver or vendor on the movement chart —
+   * driver allocation done (one is enough; see `driverCheck()`).
+   */
+  driverDone: number
+  /** Live, non-Hotel-Only files with no driver or vendor on any movement yet. */
   driverPending: number
   /** Live files arriving this day whose reconfirmation has not started. */
   reconfirmPending: number
@@ -153,7 +159,7 @@ export interface OpsBoardDigest {
 export const BOARD_CHECKS: { key: BoardCheckKey; label: string; hint: string; pick: (r: BoardRow) => ReadinessState }[] = [
   { key: 'reconfirm', label: 'Reconfirmation', hint: 'Client confirm or pre-tour call', pick: r => r.reconfirmState },
   { key: 'calls', label: 'Call Requests', hint: 'WhatsApp permission to call the guest', pick: r => r.callState },
-  { key: 'driver', label: 'Driver / Vendor', hint: 'Every transfer has a driver or vendor', pick: r => r.driver.state },
+  { key: 'driver', label: 'Driver / Vendor', hint: 'A driver or vendor on the movement chart', pick: r => r.driver.state },
   { key: 'tickets', label: 'Tickets Issued', hint: 'Every active ticket purchased or paid', pick: r => r.tickets.state },
   { key: 'qc', label: 'QC1 / QC2', hint: 'Both quality rounds signed off', pick: r => r.qc.state },
 ]
@@ -291,6 +297,7 @@ function perDay(rows: BoardRow[], from: string, days: number): BoardDay[] {
       hotelOnly: live.filter(r => r.hotelOnly).length,
       cancelled: on.length - live.length,
       ready: live.filter(r => r.ready).length,
+      driverDone: live.filter(r => r.driver.state === 'DONE' || r.driver.state === 'PARTIAL').length,
       driverPending: live.filter(r => r.driver.state === 'PENDING').length,
       reconfirmPending: arr.filter(r => r.reconfirmState === 'PENDING').length,
     })
@@ -300,8 +307,13 @@ function perDay(rows: BoardRow[], from: string, days: number): BoardDay[] {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+/** Whole days from `a` to `b` (yyyy-mm-dd). */
+function dayDiff(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)
+}
+
 /**
- * The pure half: board rows for `from` … `from + 6` in, both views out. Split
+ * The pure half: board rows for `from` … `from + 7` in, both views out. Split
  * from the fetch so the render check can drive it with fixture rows.
  */
 export function digestBoardRows(
@@ -310,7 +322,9 @@ export function digestBoardRows(
   countries: string[],
   meta: { callDataAvailable: boolean; truncated: boolean },
 ): OpsBoardDigest {
-  const to = shiftDate(from, WEEK_DAYS - 1)
+  // Next 7 days = D+1 … D+7. Today is its own view, so the week starts tomorrow.
+  const weekFrom = shiftDate(from, 1)
+  const weekTo = shiftDate(from, WEEK_DAYS)
   const rows: BoardRow[] = boardRows
     .filter(r => inSelectedCountries(r.country, countries))
     .map(r => ({
@@ -324,12 +338,23 @@ export function digestBoardRows(
     }))
 
   const today = buildView(rows.filter(r => r.onToday), from, from, r => r.arrivesToday, r => r.departsToday)
-  const week = buildView(rows, from, to, r => r.isArrival, r => r.isDeparture)
+  // Only files on the ground at some point D+1 … D+7; a file that leaves today
+  // belongs to the Today view alone. The loader's flags were set against
+  // today … D+7, so they are re-derived for the week's own window.
+  const weekRows: BoardRow[] = rows
+    .filter(r => r.departureDate >= weekFrom && r.arrivalDate <= weekTo)
+    .map(r => ({
+      ...r,
+      dayNo: Math.max(1, dayDiff(r.arrivalDate, weekFrom) + 1),
+      isArrival: r.arrivalDate >= weekFrom && r.arrivalDate <= weekTo,
+      isDeparture: r.departureDate >= weekFrom && r.departureDate <= weekTo,
+    }))
+  const week = buildView(weekRows, weekFrom, weekTo, r => r.isArrival, r => r.isDeparture)
 
   return {
     available: true,
     today,
-    week: { ...week, perDay: perDay(rows, from, WEEK_DAYS) },
+    week: { ...week, perDay: perDay(weekRows, weekFrom, WEEK_DAYS) },
     callDataAvailable: meta.callDataAvailable,
     truncated: meta.truncated,
   }
@@ -340,7 +365,8 @@ export async function collectOpsBoardDigest(
   countries: string[],
 ): Promise<OpsBoardDigest> {
   const from = window.today
-  const to = shiftDate(from, WEEK_DAYS - 1)
+  // Today plus the seven days after it: the Today view and D+1 … D+7.
+  const to = shiftDate(from, WEEK_DAYS)
 
   try {
     const board = await collectOpsDay({ from, to, timezone: window.timezone })

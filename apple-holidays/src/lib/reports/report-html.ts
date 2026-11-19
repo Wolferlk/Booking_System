@@ -117,31 +117,9 @@ function createdSection(d: ReportData): string {
     { label: 'Pax booked', value: num(c.pax) },
   ])
 
-  // Where those new bookings actually came in from — the AppleSystem importer,
-  // a OneDrive drop, the confirmation mailbox, a person typing it. The parts
-  // sum to the headline above, so the tile can be checked against the rows
-  // rather than taken on trust; "Not filed here" is the line to act on.
-  const originsMax = sp.origins.length ? Math.max(...sp.origins.map(o => o.bookings)) : 0
-  const origins = sp.available && sp.origins.length
-    ? `<div style="padding-top:4px;padding-bottom:14px;">
-         <div class="h3">How the ${num(sp.todayCount)} ledger-dated new bookings came in</div>` +
-      tableOpen([
-        { text: 'Intake channel' },
-        { text: 'Bookings', align: 'right', width: '70' },
-        { text: 'Share', width: '140' },
-      ]) +
-      sp.origins.map(o => `<tr>
-        ${td(esc(o.label), { bold: true, color: o.channel === 'MISSING' ? C.bad : C.ink })}
-        ${td(num(o.bookings), { align: 'right', bold: true, color: o.channel === 'MISSING' ? C.bad : C.ink })}
-        ${td(bar(o.bookings, originsMax, o.channel === 'MISSING' ? C.bad : C.brand))}
-      </tr>`).join('') + TABLE_CLOSE +
-      `<div style="font:400 11.5px/1.6 ${FONT};color:${C.muted};padding-top:6px;">
-         Read from how each booking reached this system — the creation log first, then the import trail,
-         the confirmation mail and the Drive event. The parts add up to ${num(sp.todayCount)} — the bookings the
-         accounts ledger dates to this period.
-       </div>
-       </div>`
-    : ''
+  // The "How the N ledger-dated new bookings came in" intake-channel table was
+  // removed from the mail at the desk's request (Nov 2026). The origin split
+  // is still collected (`d.split.origins`) and stays in the CSV attachment.
 
   const value = `<div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding:0 0 14px 0;"><strong style="color:${C.ink};">Quoted value</strong> &nbsp;${currencyNote}</div>`
 
@@ -168,29 +146,13 @@ function createdSection(d: ReportData): string {
       TABLE_CLOSE + '</div>'
     : ''
 
-  // What the section is counting, said once, at the top.
-  //
-  // The number is no longer "bookings this system filed yesterday" but "the
-  // confirmations AppleSystem raised yesterday" — the same population the two
-  // accounts mails now report, which is what lets the three figures be
-  // compared at all. Stated explicitly, because a headline that changed
-  // meaning without saying so is worse than the disagreement it fixes.
+  // The "Counted: the N bookings AppleSystem confirmed…" explainer box was
+  // removed from the mail at the desk's request (Nov 2026) — the KPI tiles
+  // above already carry the new + amended split. Only the fallback warning
+  // stays: when the ledger cannot be read the figure may not match the
+  // accounts mails, and the reader must be told.
   const basisNote = c.basis === 'apple'
-    ? `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
-         <strong style="color:${C.ink};">Counted: the ${num(c.total)} booking${c.total === 1 ? '' : 's'} AppleSystem confirmed in this period.</strong>
-         ${c.cancelledUpstream ? `${num(c.cancelledUpstream)} further confirmation${c.cancelledUpstream === 1 ? ' was' : 's were'} withdrawn upstream. ` : ''}
-         The same population the accounts invoice and P&amp;L mails report, so the three figures line up.
-         Bookings filed here in this period against an earlier confirmation are listed below, uncounted.
-         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings (Today new &amp; updated) is ${num(newBookings)}
-           = ${num(sp.todayCount)} new + ${num(sp.oldCount)} amended</strong>, the same figures the accounts invoice mail prints.
-           ${num(sp.todayCount)} ${sp.todayCount === 1 ? 'is' : 'are'} this period's own business (new, or booked &amp; amended the same day) —
-           a booking whose first invoice document was raised inside the window. ${sp.oldCount
-             ? `${num(sp.oldCount)} ${sp.oldCount === 1 ? 'is an order confirmation' : 'are order confirmations'} from earlier days edited in this period
-                (Old amendments${sp.oldest ? `, the oldest ${num(sp.oldest)} days back` : ''}), counted once per booking;
-                they are not in the table below.`
-             : 'No confirmation from an earlier day was edited in this period.'}
-           ` : ''}
-       </div>`
+    ? ''
     : `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
          <strong style="color:${C.ink};">Counted: bookings filed in this system.</strong>
          The accounts Sync Ledger could not be read, so this period could not be cut to AppleSystem's own
@@ -233,7 +195,7 @@ function createdSection(d: ReportData): string {
     'Bookings created',
     `${d.window.label} · confirmed by AppleSystem in this period`,
     C.brand,
-    basisNote + kpis + origins + value +
+    basisNote + kpis + value +
       `<div class="h3">Country-wise</div>${countryTable(c.byCountry)}` +
       `<div style="padding-top:18px;"><div class="h3">Booking detail</div>${list}</div>` +
       missing + alsoFiled +
@@ -1459,9 +1421,10 @@ function boardPerDayTable(days: BoardDay[]): string {
     { text: 'Hotel', align: 'right', width: '40' },
     { text: 'Canc', align: 'right', width: '38' },
     { text: 'Ready', align: 'right', width: '44' },
+    { text: 'Drv ✓', align: 'right', width: '44' },
     { text: 'No drv', align: 'right', width: '46' },
   ]) + days.map((x, i) => `<tr${i === 0 ? ` style="background:#eef2ff;"` : ''}>
-    ${td(`${esc(formatReportDate(x.date, { weekday: true }).replace(/ \d{4}$/, ''))}${i === 0 ? ' <span class="pill" style="background:#4f46e5;color:#fff;">TODAY</span>' : ''}`, { nowrap: true, bold: true })}
+    ${td(`${esc(formatReportDate(x.date, { weekday: true }).replace(/ \d{4}$/, ''))}${i === 0 ? ' <span class="pill" style="background:#4f46e5;color:#fff;">TOMORROW</span>' : ''}`, { nowrap: true, bold: true })}
     ${td(num(x.onGround), { align: 'right', bold: true })}
     ${td(num(x.pax), { align: 'right' })}
     ${td(n(x.arrivals), { align: 'right' })}
@@ -1471,9 +1434,10 @@ function boardPerDayTable(days: BoardDay[]): string {
     ${td(n(x.hotelOnly), { align: 'right' })}
     ${td(n(x.cancelled), { align: 'right' })}
     ${td(n(x.ready), { align: 'right' })}
+    ${td(n(x.driverDone), { align: 'right', bold: x.driverDone > 0, color: x.driverDone ? C.good : undefined })}
     ${td(n(x.driverPending), { align: 'right', bold: x.driverPending > 0, color: x.driverPending ? C.bad : undefined })}
   </tr>`).join('') + TABLE_CLOSE +
-  `<div class="more">On grd = live files on the ground that day (cancelled not counted). No drv = live files with no driver on any transfer yet.</div>`
+  `<div class="more">On grd = live files on the ground that day (cancelled not counted). Drv ✓ = driver allocation done — at least one driver or vendor on the movement chart. No drv = no driver or vendor on any movement yet. Hotel Only and no-transfer files are in neither.</div>`
 }
 
 /**
@@ -1558,7 +1522,7 @@ function opsBoardSection(d: ReportData): string {
     '#4f46e5',
     boardViewBlock('Today', 'TODAY', '#4f46e5', t) +
       `<div style="border-top:1px dashed ${C.line};margin:10px 0 14px 0;font-size:0;line-height:0;">&nbsp;</div>` +
-      boardViewBlock('Next 7 days', 'D+0 → D+6', '#0f766e', w,
+      boardViewBlock('Next 7 days', 'D+1 → D+7', '#0f766e', w,
         `<div class="h3">Day by day</div>${boardPerDayTable(w.perDay)}<div style="padding-top:16px;">${countries}</div>`) +
       lists +
       (notes.length ? `<div class="more">${notes.map(esc).join(' ')}</div>` : ''),
@@ -1577,6 +1541,8 @@ export interface RenderOptions {
   scheduleName?: string
   /** Marks the mail as a manual/test send. */
   testSend?: boolean
+  /** Opt back in to the AppleSystem parity card — off by default since Nov 2026. */
+  showParity?: boolean
 }
 
 /** "WED / 18 / NOV 2026" — the date as a tear-off calendar leaf. */
@@ -1883,13 +1849,17 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     // Created / created & updated / old booking updated, by creation method,
     // with what each update did to the invoice — the same block the weekly and
     // monthly reviews print.
-    want.created ? activitySection(d, 'day') : '',
+    want.created ? activitySection(d, 'day', { intakeMatrix: false, invoiceDetail: false }) : '',
     // The board, today and the next 7 days, straight after intake: what came in,
     // then what is on the ground and coming. Follows the On ground switch.
     want.onGround ? opsBoardSection(d) : '',
     // Immediately after intake, because it qualifies it: the created count above
     // is only trustworthy if the two systems agree on what was confirmed.
-    want.parity ? paritySection(d) : '',
+    // The "AppleSystem parity" card was removed from the daily mail at the
+    // desk's request (Nov 2026). Parity is still checked: a gap still reaches
+    // the subject line and the header's "Today's focus" chips, and the
+    // reconciliation mail carries the full picture.
+    want.parity && opts.showParity === true ? paritySection(d) : '',
     want.onGround ? onGroundSection(d) : '',
     // Drivers lead the next-three-days block: an unallocated transfer tomorrow
     // is the one gap that cannot be fixed once the guest has landed.

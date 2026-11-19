@@ -33,7 +33,17 @@ function moneyLines(rows: CurrencyMove[], withChange: boolean): string {
     : money(m.amount, m.currency)).join('<br>')
 }
 
-export function activitySection(d: ReportData, periodWord: string): string {
+export function activitySection(
+  d: ReportData,
+  periodWord: string,
+  /**
+   * `intakeMatrix: false` drops the "How these bookings were created" table;
+   * `invoiceDetail: false` drops "Invoice value" and "Biggest invoice changes
+   * from updates". The daily mail turns both off (desk request, Nov 2026); the
+   * weekly and monthly reviews keep them.
+   */
+  opts: { intakeMatrix?: boolean; invoiceDetail?: boolean } = {},
+): string {
   const sp = d.split
   if (!sp.available) {
     return section('Booking activity', `Created and updated this ${periodWord}`, C.brand,
@@ -65,7 +75,7 @@ export function activitySection(d: ReportData, periodWord: string): string {
     </div>`
 
   // How each stage was created — the method matrix.
-  const matrix = a.intakes.length
+  const matrix = opts.intakeMatrix !== false && a.intakes.length
     ? `<div class="h3">How these bookings were created</div>` +
       tableOpen([
         { text: 'Created by' },
@@ -120,6 +130,6 @@ export function activitySection(d: ReportData, periodWord: string): string {
     `Booking activity — ${num(a.total)} bookings`,
     `Created this ${periodWord}, created & updated this ${periodWord}, and older bookings updated this ${periodWord} · B2B, from the accounts invoice ledger`,
     C.brand,
-    tiles + matrix + value + moves,
+    tiles + matrix + (opts.invoiceDetail === false ? '' : value + moves),
   )
 }

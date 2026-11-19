@@ -63,7 +63,7 @@ function boardCols(single: boolean): Col<BoardRow>[] {
     { header: 'Status', width: 18, value: r => r.statusLabel },
     { header: 'Arrival', width: 12, kind: 'date', value: r => r.arrivalDate },
     { header: 'Departure', width: 12, kind: 'date', value: r => r.departureDate },
-    { header: single ? 'Day' : 'Day (on D+0)', width: 9, value: r => `${r.dayNo}/${r.totalDays}` },
+    { header: single ? 'Day' : 'Day (on D+1)', width: 9, value: r => `${r.dayNo}/${r.totalDays}` },
     { header: 'Movement', width: 15, value: r => movement(r, single) },
     { header: 'Pax', width: 6, kind: 'int', value: r => r.pax, total: 'sum' },
     { header: 'Adults', width: 7, kind: 'int', value: r => r.paxAdults, total: 'sum' },
@@ -255,7 +255,7 @@ function overview(wb: import('exceljs').Workbook, d: ReportData, index: { name: 
 
     // ── Today vs next 7 days
     c.title('Operations board — Today vs Next 7 days',
-      `Today = ${t.label}. Next 7 days = ${w.label} (today included). Live files exclude Cancelled; Hotel Only is part of live and shown on its own line. Same rules as the dashboard board.`)
+      `Today = ${t.label}. Next 7 days = ${w.label} (D+1 to D+7, today not included). Live files exclude Cancelled; Hotel Only is part of live and shown on its own line. Same rules as the dashboard board.`)
     c.header(['Measure', 'Today files', 'Today pax', 'Today B2B', 'Today B2C', '', '7-day files', '7-day pax', '7-day B2B', '7-day B2C'],
       [undefined, P.indigo, P.indigo, P.b2b, P.b2c, P.white, P.brand, P.brand, P.b2b, P.b2c])
     type Quad = { files: number; pax: number; b2b: number; b2c: number }
@@ -296,12 +296,12 @@ function overview(wb: import('exceljs').Workbook, d: ReportData, index: { name: 
 
     // ── The week at a glance, with bars
     c.title('Next 7 days at a glance', 'Live files on the ground each day, with arrivals and departures. The bars are drawn to scale inside the cells.')
-    c.header(['Day', 'On ground', 'Guests', 'Arrivals', 'Departures', 'Fully ready', 'No driver', 'Reconfirm pending'],
-      [undefined, P.indigo, P.indigo, P.green, P.blue, P.green, P.red, P.amber])
+    c.header(['Day', 'On ground', 'Guests', 'Arrivals', 'Departures', 'Fully ready', 'Driver done', 'No driver', 'Reconfirm pending'],
+      [undefined, P.indigo, P.indigo, P.green, P.blue, P.green, P.green, P.red, P.amber])
     const first = c.r
     for (const x of w.perDay) {
-      c.line([shortDay(x.date), x.onGround, x.pax, x.arrivals, x.departures, x.ready, x.driverPending, x.reconfirmPending],
-        { alarmCols: [7, 8], bg: x.date === w.from ? P.indigoWash : undefined })
+      c.line([shortDay(x.date), x.onGround, x.pax, x.arrivals, x.departures, x.ready, x.driverDone, x.driverPending, x.reconfirmPending],
+        { alarmCols: [8, 9], bg: x.date === w.from ? P.indigoWash : undefined })
     }
     c.bars(2, first, c.r - 1, P.indigo)
     c.bars(4, first, c.r - 1, P.green)
@@ -426,7 +426,7 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
     plan.table({
       name: 'Board Next 7 Days', tab: P.brand,
       title: `Operations board — Next 7 days · ${w.label}`,
-      description: 'Every file on the ground at any point from today through D+6. Movement says whether the guest arrives or departs inside the window. Cancelled rows are shown but not counted.',
+      description: 'Every file on the ground at any point from D+1 through D+7 (today not included). Movement says whether the guest arrives or departs inside the window. Cancelled rows are shown but not counted.',
       totals: `${w.live} live · ${w.onGround.pax} pax · B2B ${w.onGround.b2b} · B2C ${w.onGround.b2c} · ${w.arrivals.files} arriving · ${w.departures.files} departing · ${w.hotelOnly} Hotel Only · ${w.cancelled} cancelled`,
       what: 'Every file on the ground in the next 7 days, with all five checks',
       cols: boardCols(false), rows: w.rows, rowTint: tintRow, strike: r => r.cancelled,
@@ -450,6 +450,7 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
         { header: 'Hotel Only', width: 10, kind: 'int', value: x => x.hotelOnly },
         { header: 'Cancelled', width: 10, kind: 'int', value: x => x.cancelled },
         { header: 'Fully ready', width: 11, kind: 'int', value: x => x.ready },
+        { header: 'Driver done', width: 11, kind: 'int', value: x => x.driverDone, tone: x => (x.driverDone ? 'good' : null) },
         { header: 'No driver', width: 10, kind: 'int', value: x => x.driverPending, tone: x => (x.driverPending ? 'bad' : null) },
         { header: 'Reconfirm pending', width: 12, kind: 'int', value: x => x.reconfirmPending, tone: x => (x.reconfirmPending ? 'warn' : null) },
       ],

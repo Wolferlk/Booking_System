@@ -2028,7 +2028,7 @@ async function collectActivitySplitSection(
     collectReconfirm(window, countries, maxRows),
     collectComplaints(window, countries, maxRows),
     collectUpcoming(window, countries, maxRows),
-    // The board itself, today and D+6. Only the daily mail prints it, so only
+    // The board itself, today and D+1 … D+7. Only the daily mail prints it, so only
     // the daily run pays for it. Never throws — see ops-board-digest.ts.
     window.period === 'DAILY' ? collectOpsBoardDigest(window, countries) : Promise.resolve(null),
   ])

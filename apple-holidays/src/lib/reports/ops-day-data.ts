@@ -731,7 +731,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
         date: i.date.toISOString().slice(0, 10),
         needsDriver: !i.isLeisure && !i.isHotelOnly && i.serviceType !== 'OWN_ARRANGEMENT',
         hasDriver: !!(i.assignment?.driverId || i.assignment?.vendorId || i.assignment?.tourVendorId
-          || i.assignment?.driverName?.trim() || i.assignment?.vendorName?.trim()),
+          || i.assignment?.driverName?.trim() || i.assignment?.vendorName?.trim() || i.assignment?.tourVendorName?.trim()),
       })),
     })), from, today),
   ])
