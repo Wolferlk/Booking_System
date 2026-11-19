@@ -216,6 +216,11 @@ export interface OpsDayRow {
   driverBrief: DriverBrief
   /** Client-service calls on tour days 1–3. */
   guestCalls: GuestCalls
+  /**
+   * Which guest contact details are on file — booleans only, never the values,
+   * so the report can count "WhatsApp missing" without carrying the number.
+   */
+  contact: { whatsapp: boolean; phone: boolean; email: boolean }
 }
 
 export interface OpsCountRow {
@@ -670,7 +675,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     orderBy: [{ arrivalDate: 'asc' }, { bookingRef: 'asc' }],
     take: MAX_ROWS,
     select: {
-      id: true, contactWhatsapp: true, contactPhone: true,
+      id: true, contactWhatsapp: true, contactPhone: true, contactEmail: true,
       bookingRef: true, agent: true, fileHandler: true, status: true,
       operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, paxInfants: true,
@@ -842,6 +847,13 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       driverBrief: comms.get(b.bookingRef)?.brief
         ?? { state: 'na', target: null, at: null, time: null, tz: null, movements: 0, withDriver: 0, hint: null },
       guestCalls: comms.get(b.bookingRef)?.calls ?? { available: false, days: [], done: 0, due: 0 },
+      // Presence only — the numbers and address themselves never leave the
+      // booking page, so a report mail can say "missing" without leaking them.
+      contact: {
+        whatsapp: !!b.contactWhatsapp?.trim(),
+        phone: !!b.contactPhone?.trim(),
+        email: !!b.contactEmail?.trim(),
+      },
     }
   })
 

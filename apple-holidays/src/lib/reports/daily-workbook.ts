@@ -27,6 +27,7 @@ import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { todayNewAndUpdated, reportCountryLabel, type ReportData, type BookingLine, type SplitFile } from './report-data'
 import type { BoardRow, BoardView } from './ops-board-digest'
+import { driverBriefState, qcRoundState, ticketsSentState } from './ops-board-states'
 import { addActivitySheets } from './activity-workbook'
 import { stageOf, changeWord } from './activity-breakdown'
 import { formatReportDate, PERIOD_LABEL } from './report-window'
@@ -79,8 +80,15 @@ function boardCols(single: boolean): Col<BoardRow>[] {
     { header: 'Transfers covered', width: 11, value: r => (r.driver.required ? `${r.driver.done}/${r.driver.required}` : '') },
     { header: 'Tickets', width: 10, kind: 'state', value: r => st(r, r.tickets.state) },
     { header: 'Tickets issued', width: 10, value: r => (r.tickets.required ? `${r.tickets.done}/${r.tickets.required}` : '') },
+    { header: 'Tickets sent', width: 10, kind: 'state', value: r => st(r, ticketsSentState(r)) },
+    { header: 'Sent / issued', width: 10, value: r => (r.ticketSends.issued ? `${r.ticketSends.sent}/${r.ticketSends.issued}` : '') },
+    { header: 'Driver details', width: 11, kind: 'state', value: r => st(r, driverBriefState(r)) },
+    { header: 'CS calls D1·D2·D3', width: 14, value: r => (r.cancelled || !r.guestCalls.due ? '' : `${r.guestCalls.done}/${r.guestCalls.due} called`) },
     { header: 'QC stage', width: 9, value: r => (r.qc.stage === 'NONE' ? '—' : r.qc.stage) },
-    { header: 'QC', width: 9, kind: 'state', value: r => st(r, r.qc.state) },
+    { header: 'QC1', width: 8, kind: 'state', value: r => st(r, qcRoundState(r, 1)) },
+    { header: 'QC2', width: 8, kind: 'state', value: r => st(r, qcRoundState(r, 2)) },
+    { header: 'WhatsApp on file', width: 10, kind: 'yes', value: r => (r.cancelled ? '' : yes(r.contact.whatsapp)) },
+    { header: 'Email on file', width: 10, kind: 'yes', value: r => (r.cancelled ? '' : yes(r.contact.email)) },
     { header: 'Fully ready', width: 10, kind: 'flag', value: r => (r.cancelled ? '' : r.ready ? 'Ready' : 'Not ready') },
     { header: 'Outstanding', width: 34, wrap: true, value: r => r.outstanding.join(', ') },
     { header: `D-${RECONFIRM_DUE_DAYS} due`, width: 12, kind: 'date', value: r => r.reconfirmStanding.dueAt },

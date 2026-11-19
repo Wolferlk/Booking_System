@@ -106,6 +106,16 @@ table{border-collapse:collapse;}
 .mv-n{font-size:11px;line-height:1.5;color:#f8fafc;}
 .sub{color:${C.faint};font-size:11px;}
 .pc{display:inline-block;min-width:34px;text-align:center;padding:2px 6px;border-radius:6px;font-size:11px;font-weight:700;}
+.q{text-align:center;padding:7px 1px;border-bottom:1px solid ${C.wash};white-space:nowrap;}
+.qh{font-size:9px;line-height:1.2;font-weight:700;color:${C.muted};text-transform:uppercase;letter-spacing:.04em;text-align:center;padding:0 1px 7px 1px;border-bottom:1px solid ${C.line};}
+.d{display:inline-block;width:18px;height:18px;line-height:18px;border-radius:5px;font-size:10px;font-weight:800;text-align:center;}
+.d3{display:inline-block;width:11px;height:14px;line-height:14px;border-radius:3px;font-size:8px;font-weight:800;text-align:center;margin:0 1px;}
+.dg{background:#d1fae5;color:#065f46;}
+.da{background:#fef3c7;color:#92400e;}
+.dr{background:#fee2e2;color:#991b1b;}
+.db{background:#e0f2fe;color:#075985;}
+.dn{background:${C.wash};color:#cbd5e1;}
+.dayrow{background:#f1f5f9;font-size:11px;line-height:1.4;font-weight:700;color:${C.ink};padding:7px 8px;}
 `.replace(/\n+/g, '\n').trim()
 
 // ─── Primitives ───────────────────────────────────────────────────────────────

@@ -30,7 +30,8 @@ import { todayNewAndUpdated } from './report-data'
 import { activitySection } from './activity-html'
 import type { CountCheckSection, CountCheckTally } from './count-check'
 import type { BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
-import type { ReadinessCheck } from '@/lib/booking-readiness'
+import type { ReadinessCheck, ReadinessState } from '@/lib/booking-readiness'
+import { driverBriefState, qcRoundState, ticketsSentState } from './ops-board-states'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 
 const SEVERITY_PILL: Record<string, string> = {
@@ -879,7 +880,252 @@ function driverAllocationSection(d: ReportData, horizon: 'D3' | 'D10', opts: { d
   )
 }
 
+// ─── Arriving next 3 days — on the Operations board's own checks ─────────────
+
+/** Rows printed in the tour grid; the workbook's board tabs carry every one. */
+const READINESS_GRID_CAP = 30
+
+/** One state as a small coloured square — ✓ done, ~ part, ✕ open, – n/a. */
+function stateDot(s: ReadinessState): string {
+  switch (s) {
+    case 'DONE': return '<span class="d dg">&#10003;</span>'
+    case 'PARTIAL': return '<span class="d da">~</span>'
+    case 'PENDING': return '<span class="d dr">&#10005;</span>'
+    default: return '<span class="d dn">&ndash;</span>'
+  }
+}
+
+/** Yes / no for a contact detail on file. */
+function haveDot(has: boolean): string {
+  return has ? '<span class="d dg">&#10003;</span>' : '<span class="d dr">&#10005;</span>'
+}
+
+/** CS calls D1·D2·D3 as three mini squares, coloured like the board's day dots. */
+function callDots(r: BoardRow): string {
+  if (r.cancelled || !r.guestCalls.days.length || r.guestCalls.days.every(x => x.state === 'na')) {
+    return '<span class="d dn">&ndash;</span>'
+  }
+  const cls: Record<string, string> = { done: 'dg', missed: 'dr', scheduled: 'db', none: 'da', upcoming: 'dn', na: 'dn' }
+  return r.guestCalls.days.map(x => `<span class="d3 ${cls[x.state] ?? 'dn'}">${x.day}</span>`).join('')
+}
+
+interface BoardCheckDef {
+  key: string
+  label: string
+  head: string
+  pick: (r: BoardRow) => ReadinessState
+}
+
+/** The board's columns, in the board's order. */
+const READY_CHECKS: BoardCheckDef[] = [
+  { key: 'reconfirm', label: 'Reconfirm', head: 'Recon', pick: r => r.reconfirmState },
+  { key: 'call', label: 'Call request', head: 'Call', pick: r => r.callState },
+  { key: 'driver', label: 'Driver / Vendor', head: 'Drv', pick: r => r.driver.state },
+  { key: 'tickets', label: 'Tickets', head: 'Tkt', pick: r => r.tickets.state },
+  { key: 'sent', label: 'Tickets sent', head: 'Sent', pick: r => ticketsSentState(r) },
+  { key: 'brief', label: 'Driver details', head: 'Brief', pick: r => driverBriefState(r) },
+  { key: 'qc1', label: 'QC1', head: 'QC1', pick: r => qcRoundState(r, 1) },
+  { key: 'qc2', label: 'QC2', head: 'QC2', pick: r => qcRoundState(r, 2) },
+]
+
+/** A small card with a big number and a two-part bar — used for the contact strip. */
+function contactCard(opts: { label: string; have: number; missing: number; haveWord: string; missWord: string; tone?: string }): string {
+  const total = opts.have + opts.missing
+  return `<td width="33%" valign="top" style="padding:0 5px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="border-top:3px solid ${opts.missing ? C.bad : C.good};">
+      <tr><td style="padding:11px 12px;">
+        <div class="kpi-l">${esc(opts.label)}</div>
+        <div style="font:800 22px/1.2 ${FONT};color:${C.ink};padding-top:6px;">${num(opts.have)}<span style="font:700 12px/1 ${FONT};color:${C.faint};"> / ${num(total)} ${esc(opts.haveWord)}</span></div>
+        <div style="padding-top:8px;">${segBar([{ value: opts.have, color: C.good }, { value: opts.missing, color: C.bad }], 6)}</div>
+        <div class="kpi-n">${opts.missing ? `<strong style="color:${C.bad};">${num(opts.missing)} ${esc(opts.missWord)}</strong>` : 'none missing'}</div>
+      </td></tr>
+    </table>
+  </td>`
+}
+
+/**
+ * Arriving next 3 days — readiness, read from the Operations board rows so the
+ * mail and `/dashboard/accounts/reports` grade every tour identically:
+ * Reconfirm · Call request · Driver / Vendor · Tickets · Tickets sent · Driver
+ * details · CS calls D1·D2·D3 · QC1 · QC2, plus whether the guest's WhatsApp
+ * number and email are on file (presence only — never the values).
+ *
+ * "Ready" is the board's own: driver, tickets, QC2 and reconfirmation clear.
+ * Cancelled and Hotel Only files are left out and counted at the foot.
+ */
+function boardReadinessSection(d: ReportData, rowsIn: BoardRow[]): string {
+  const from = d.readiness.fromDate
+  const to = d.readiness.toDate
+  const inWindow = rowsIn.filter(r => r.arrivalDate >= from && r.arrivalDate <= to)
+  const cancelled = inWindow.filter(r => r.cancelled).length
+  const hotelOnly = inWindow.filter(r => !r.cancelled && r.hotelOnly).length
+  const rows = inWindow.filter(r => !r.cancelled && !r.hotelOnly)
+
+  const dayNo = (r: BoardRow) => Math.round((Date.parse(`${r.arrivalDate}T00:00:00Z`) - Date.parse(`${d.window.today}T00:00:00Z`)) / 86_400_000)
+  const tomorrow = rows.filter(r => r.arrivalDate === from)
+  const tomorrowNotReady = tomorrow.filter(r => !r.ready).length
+  const ready = rows.filter(r => r.ready).length
+  const pax = rows.reduce((s, r) => s + r.pax, 0)
+
+  const kpis = kpiRow([
+    { label: 'Arriving in 3 days', value: num(rows.length), note: `${num(pax)} guests`, color: C.brand },
+    { label: 'Tomorrow', value: num(tomorrow.length), note: tomorrowNotReady ? `${num(tomorrowNotReady)} not ready` : 'all ready', color: tomorrowNotReady ? C.bad : C.good },
+    { label: 'Fully ready', value: num(ready), note: rows.length ? `${Math.round((ready / rows.length) * 100)}% of tours` : '&nbsp;', color: C.good },
+    { label: 'Needs action', value: num(rows.length - ready), color: rows.length - ready ? C.bad : C.ink },
+  ])
+
+  const banner = tomorrowNotReady
+    ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
+         ${num(tomorrowNotReady)} tour${tomorrowNotReady === 1 ? '' : 's'} arriving tomorrow ${tomorrowNotReady === 1 ? 'is' : 'are'} not fully ready — clear ${tomorrowNotReady === 1 ? 'it' : 'them'} first.
+         <div style="font-weight:400;padding-top:3px;">Same rule as the Operations board: reconfirmation, driver / vendor, tickets and QC2 must all be clear.</div>
+       </div>`
+    : ''
+
+  // ── Guest contact: WhatsApp, email, call permission
+  const waHave = rows.filter(r => r.contact.whatsapp).length
+  const mailHave = rows.filter(r => r.contact.email).length
+  const callOk = rows.filter(r => r.callState === 'DONE').length
+  const callAsked = rows.filter(r => r.callState === 'PARTIAL').length
+  const callNot = rows.filter(r => r.callState === 'PENDING').length
+  const contactStrip = rows.length
+    ? `<div class="h3">Guest contact</div>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 -5px 6px -5px;"><tr>
+         ${contactCard({ label: 'WhatsApp number', have: waHave, missing: rows.length - waHave, haveWord: 'on file', missWord: 'missing — add before arrival' })}
+         ${contactCard({ label: 'Email address', have: mailHave, missing: rows.length - mailHave, haveWord: 'on file', missWord: 'missing' })}
+         <td width="33%" valign="top" style="padding:0 5px;">
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="kpi" style="border-top:3px solid ${callNot ? C.warn : C.good};">
+             <tr><td style="padding:11px 12px;">
+               <div class="kpi-l">Call permission</div>
+               <div style="font:800 22px/1.2 ${FONT};color:${C.ink};padding-top:6px;">${num(callOk)}<span style="font:700 12px/1 ${FONT};color:${C.faint};"> approved</span></div>
+               <div style="padding-top:8px;">${segBar([{ value: callOk, color: C.good }, { value: callAsked, color: C.warn }, { value: callNot, color: C.bad }], 6)}</div>
+               <div class="kpi-n">${num(callAsked)} asked · <strong style="color:${callNot ? C.bad : C.faint};">${num(callNot)} not requested</strong></div>
+             </td></tr>
+           </table>
+         </td>
+       </tr></table>`
+    : ''
+
+  // ── Scorecard: one line per board check
+  const scoreRow = (label: string, states: ReadinessState[]) => {
+    const c = { DONE: 0, PARTIAL: 0, PENDING: 0, NA: 0 } as Record<ReadinessState, number>
+    for (const s of states) c[s] += 1
+    const scope = c.DONE + c.PARTIAL + c.PENDING
+    const pct = scope ? Math.round(((c.DONE + c.PARTIAL) / scope) * 100) : null
+    return `<tr>
+      ${td(esc(label), { bold: true, color: C.ink, nowrap: true })}
+      ${td(c.DONE ? num(c.DONE) : '<span class="na">0</span>', { align: 'right', color: C.good, bold: !!c.DONE })}
+      ${td(c.PARTIAL ? num(c.PARTIAL) : '<span class="na">0</span>', { align: 'right', color: C.warn })}
+      ${td(c.PENDING ? num(c.PENDING) : '<span class="na">0</span>', { align: 'right', color: c.PENDING ? C.bad : C.body, bold: !!c.PENDING })}
+      ${td(c.NA ? num(c.NA) : '<span class="na">0</span>', { align: 'right', color: C.faint })}
+      ${td(scope ? segBar([{ value: c.DONE, color: C.good }, { value: c.PARTIAL, color: C.warn }, { value: c.PENDING, color: C.bad }], 7) : '<span class="sub">n/a</span>')}
+      ${td(pct === null ? '' : `<strong style="color:${pct === 100 ? C.good : pct >= 80 ? C.warn : C.bad};">${pct}%</strong>`, { align: 'right', nowrap: true })}
+    </tr>`
+  }
+  const csStates: ReadinessState[] = rows.map(r => {
+    const c = r.guestCalls
+    if (!c.due) return 'NA'
+    return c.done >= c.due ? 'DONE' : c.done > 0 ? 'PARTIAL' : 'PENDING'
+  })
+  const scorecard = rows.length
+    ? `<div style="padding-top:12px;"><div class="h3">Board checks — ${num(rows.length)} tours</div>` +
+      tableOpen([
+        { text: 'Check' }, { text: 'Done', align: 'right', width: '44' }, { text: 'Part', align: 'right', width: '40' },
+        { text: 'Open', align: 'right', width: '42' }, { text: 'N/A', align: 'right', width: '38' },
+        { text: 'Progress', width: '150' }, { text: '%', align: 'right', width: '38' },
+      ]) +
+      scoreRow('WhatsApp number', rows.map(r => (r.contact.whatsapp ? 'DONE' : 'PENDING'))) +
+      scoreRow('Email address', rows.map(r => (r.contact.email ? 'DONE' : 'PENDING'))) +
+      READY_CHECKS.slice(0, 6).map(c => scoreRow(c.label, rows.map(c.pick))).join('') +
+      scoreRow('CS calls D1·D2·D3', csStates) +
+      READY_CHECKS.slice(6).map(c => scoreRow(c.label, rows.map(c.pick))).join('') +
+      TABLE_CLOSE + '</div>'
+    : ''
+
+  // ── Tour grid: not-ready tours, grouped by arrival day, worst first
+  const openCount = (r: BoardRow) =>
+    READY_CHECKS.filter(c => c.pick(r) === 'PENDING').length + (r.contact.whatsapp ? 0 : 1)
+  const notReady = rows.filter(r => !r.ready).sort((a, b) =>
+    a.arrivalDate.localeCompare(b.arrivalDate) || openCount(b) - openCount(a) || a.bookingRef.localeCompare(b.bookingRef))
+  const shown = notReady.slice(0, READINESS_GRID_CAP)
+  const COLS = 13
+  let lastDate = ''
+  const gridRows = shown.map(r => {
+    let head = ''
+    if (r.arrivalDate !== lastDate) {
+      lastDate = r.arrivalDate
+      const dayRows = rows.filter(x => x.arrivalDate === r.arrivalDate)
+      const dayOpen = dayRows.filter(x => !x.ready).length
+      head = `<tr><td colspan="${COLS}" class="dayrow">${dayTag(dayNo(r))} &nbsp;${esc(formatReportDate(r.arrivalDate, { weekday: true }))} · ${num(dayRows.length)} tours · <span style="color:${C.bad};">${num(dayOpen)} not ready</span></td></tr>`
+    }
+    const guest = r.leadPassenger ?? r.destination
+    return head + `<tr>
+      <td class="c nw"><strong style="color:${C.ink};">${esc(r.bookingRef)}</strong> ${sourcePill(r.source)}${r.cancelPending ? ' <span class="pill" style="background:#fff7ed;color:#9a3412;">CXL?</span>' : ''}${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 20)} · ${num(r.pax)} pax</div>` : ''}</td>
+      <td class="q">${haveDot(r.contact.whatsapp)}</td>
+      <td class="q">${haveDot(r.contact.email)}</td>
+      ${READY_CHECKS.slice(0, 6).map(c => `<td class="q">${stateDot(c.pick(r))}</td>`).join('')}
+      <td class="q">${callDots(r)}</td>
+      ${READY_CHECKS.slice(6).map(c => `<td class="q">${stateDot(c.pick(r))}</td>`).join('')}
+    </tr>`
+  }).join('')
+  const head = (t: string) => `<th class="qh">${t}</th>`
+  const grid = shown.length
+    ? `<div style="padding-top:18px;"><div class="h3">Tour by tour — what is still open (${num(notReady.length)} not ready)</div>
+       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><thead><tr>
+         <th align="left" class="th">Tour</th>${head('WA')}${head('Mail')}${READY_CHECKS.slice(0, 6).map(c => head(c.head)).join('')}${head('CS D1·2·3')}${READY_CHECKS.slice(6).map(c => head(c.head)).join('')}
+       </tr></thead><tbody>${gridRows}</tbody></table>
+       ${moreNote(shown.length, notReady.length, 'tours not ready')}
+       <div class="more">
+         <span class="d dg">&#10003;</span> done &nbsp; <span class="d da">~</span> part / on its way &nbsp; <span class="d dr">&#10005;</span> open &nbsp; <span class="d dn">&ndash;</span> not applicable ·
+         WA / Mail = guest WhatsApp number / email on file · Recon = client confirmed or pre-tour call · Call = WhatsApp permission to call ·
+         Sent = issued tickets sent to the guest · Brief = daily plan with driver details · CS = client-service call on tour day 1, 2, 3
+         (<span class="d3 dg">1</span> called <span class="d3 dr">1</span> missed <span class="d3 db">1</span> scheduled <span class="d3 da">1</span> not called).
+       </div></div>`
+    : rows.length
+      ? `<div style="padding-top:18px;">${emptyNote('Every tour arriving in the next three days is fully ready.')}</div>`
+      : ''
+
+  const body = rows.length
+    ? banner + kpis + contactStrip + scorecard + grid
+    : emptyNote('No tours arrive in the next three days.')
+
+  return section(
+    'Arriving next 3 days — readiness',
+    `${formatReportDate(from, { weekday: true })} to ${formatReportDate(to, { weekday: true })} · the Operations board's checks, tour by tour · ${num(rows.filter(r => r.source === 'B2B').length)} B2B and ${num(rows.filter(r => r.source === 'B2C').length)} B2C`,
+    C.warn,
+    body + leftOutNote([
+      { n: cancelled, what: 'cancelled' },
+      { n: hotelOnly, what: 'accommodation only' },
+    ]),
+  )
+}
+
+/**
+ * Not-ready counts for the next three days, on the board's rule when the board
+ * loaded — so the subject line, the header chips and the section agree.
+ */
+function arrivalsNotReady(d: ReportData): { notReady: number; tomorrowNotReady: number } {
+  const week = d.opsBoard?.available ? d.opsBoard.week : null
+  if (!week) return { notReady: d.readiness.notReady, tomorrowNotReady: d.readiness.tomorrowNotReady }
+  const rows = week.rows.filter(r =>
+    !r.cancelled && !r.hotelOnly && r.arrivalDate >= d.readiness.fromDate && r.arrivalDate <= d.readiness.toDate)
+  return {
+    notReady: rows.filter(r => !r.ready).length,
+    tomorrowNotReady: rows.filter(r => !r.ready && r.arrivalDate === d.readiness.fromDate).length,
+  }
+}
+
+/**
+ * The readiness section. Built on the Operations board rows when the board
+ * digest loaded (the normal case); falls back to the older checklist, built
+ * from `d.readiness`, if the board could not be read this morning.
+ */
 function readinessSection(d: ReportData): string {
+  const week = d.opsBoard?.available ? d.opsBoard.week : null
+  return week ? boardReadinessSection(d, week.rows) : readinessSectionLegacy(d)
+}
+
+/** The pre-board checklist — used only when the board digest is unavailable. */
+function readinessSectionLegacy(d: ReportData): string {
   const r = d.readiness
 
   const kpis = kpiRow([
@@ -1569,8 +1815,9 @@ function focusChips(d: ReportData): string {
     items.push({ color: HERO.bad, text: `${num(d.parity.missing)} AppleSystem booking${d.parity.missing === 1 ? '' : 's'} missing` })
   }
   if (d1Open) items.push({ color: HERO.bad, text: `${num(d1Open)} tour${d1Open === 1 ? '' : 's'} tomorrow without a driver` })
-  if (d.readiness.tomorrowNotReady) {
-    items.push({ color: HERO.warn, text: `${num(d.readiness.tomorrowNotReady)} arrival${d.readiness.tomorrowNotReady === 1 ? '' : 's'} tomorrow not ready` })
+  const { tomorrowNotReady } = arrivalsNotReady(d)
+  if (tomorrowNotReady) {
+    items.push({ color: HERO.warn, text: `${num(tomorrowNotReady)} arrival${tomorrowNotReady === 1 ? '' : 's'} tomorrow not ready` })
   }
   const d10Open = d.readiness.drivers10.partial + d.readiness.drivers10.pending
   if (d10Open) items.push({ color: HERO.warn, text: `${num(d10Open)} tour${d10Open === 1 ? '' : 's'} in ${d.readiness.drivers10.days} days need a driver` })
@@ -1934,7 +2181,8 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
     const short = d.countCheck.overall.pnlShort + d.countCheck.overall.invoiceShort + d.countCheck.overall.bookingShort
     parts.push(`count check SHORT by ${short}`)
   }
-  if (d.readiness.notReady > 0) parts.push(`${d.readiness.notReady} not ready in 3d`)
+  const { notReady } = arrivalsNotReady(d)
+  if (notReady > 0) parts.push(`${notReady} not ready in 3d`)
   // Only the unexplained breaches earn a place in the subject. A late booking
   // somebody has accounted for is inside-the-mail detail; a late booking nobody
   // has spoken for is the reason to open the mail at all.

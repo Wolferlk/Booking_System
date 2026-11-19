@@ -24,6 +24,43 @@ export function reconfirmState(r: Pick<OpsDayRow, 'hotelOnly' | 'clientConfirmed
   return 'PENDING'
 }
 
+/**
+ * QC1 and QC2 as two separate ticks, both read off the one stage — the same
+ * rule as `qcTick` in the board's `ops-board-parts.tsx`.
+ */
+export function qcRoundState(r: Pick<OpsDayRow, 'hotelOnly' | 'qc'>, round: 1 | 2): ReadinessState {
+  if (r.hotelOnly) return 'NA'
+  if (r.qc.stage === 'QC2') return 'DONE'
+  if (r.qc.stage === 'QC1') return round === 1 ? 'DONE' : 'PENDING'
+  return 'PENDING'
+}
+
+/**
+ * Tickets Sent, graded like the board's chip: every issued ticket sent is
+ * DONE, some is PARTIAL, none is PENDING. Nothing issued yet (or no tickets on
+ * the file at all) is NA — there is nothing to send.
+ */
+export function ticketsSentState(r: Pick<OpsDayRow, 'cancelled' | 'ticketSends'>): ReadinessState {
+  const t = r.ticketSends
+  if (r.cancelled || t.issued === 0) return 'NA'
+  if (t.sent >= t.issued) return 'DONE'
+  return t.sent > 0 ? 'PARTIAL' : 'PENDING'
+}
+
+/**
+ * Driver Details (the daily plan): sent is DONE, scheduled / going out is
+ * PARTIAL (on its way), missed is PENDING; off or not applicable is NA.
+ */
+export function driverBriefState(r: Pick<OpsDayRow, 'driverBrief'>): ReadinessState {
+  switch (r.driverBrief.state) {
+    case 'sent': return 'DONE'
+    case 'scheduled':
+    case 'sending': return 'PARTIAL'
+    case 'missed': return 'PENDING'
+    default: return 'NA'
+  }
+}
+
 export function callState(r: Pick<OpsDayRow, 'hotelOnly' | 'call'>): ReadinessState {
   // No call is ever placed for a room-only file, so permission is moot.
   if (r.hotelOnly) return 'NA'
