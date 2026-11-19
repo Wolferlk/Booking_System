@@ -529,7 +529,8 @@ function PlanCard<T extends ChartItemLike>({ r, items, sel, hasBaseline, expande
   const cur = r.index !== null ? items[r.index] : null
   const line = r.line
   const on = Boolean(sel.rows[r.id])
-  const time = line?.time ?? cur?.meetingTime ?? ''
+  // The chart's own meeting time — the Excel never sets it, so don't preview the sheet's.
+  const time = cur?.meetingTime ?? ''
   const service = line?.serviceType ?? cur?.serviceType ?? ''
   const from = line?.from ?? cur?.fromPoint ?? ''
   const to = line?.to ?? cur?.toPoint ?? ''
@@ -549,7 +550,7 @@ function PlanCard<T extends ChartItemLike>({ r, items, sel, hasBaseline, expande
             <span className={`inline-flex items-center gap-1 rounded-full px-2 py-px font-semibold ring-1 ${K.tone}`}><Icon className="h-3 w-3" />{K.label}</span>
             {hasBaseline && r.sheetUpdated && <span className="rounded-full bg-amber-500 px-2 py-px font-semibold text-white">Updated in Excel</span>}
             {removing && <span className="rounded-full bg-rose-600 px-2 py-px font-semibold text-white">Will be removed</span>}
-            {time && <span className="inline-flex items-center gap-1 text-slate-600"><Clock className="h-3 w-3" />{line?.timeRaw && line.timeRaw !== time ? line.timeRaw : to12h(time)}</span>}
+            {time && <span className="inline-flex items-center gap-1 text-slate-600"><Clock className="h-3 w-3" />{to12h(time)}</span>}
             {service && <span className="rounded bg-slate-100 px-1.5 py-px font-medium text-slate-600">{serviceTypeShortLabel(service)}</span>}
             {(line?.location ?? cur?.location) && <span className="inline-flex items-center gap-1 text-slate-500"><MapPin className="h-3 w-3" />{line?.location ?? cur?.location}</span>}
             {line && <span className="ml-auto font-mono text-[10px] text-slate-400" title="Workbook tab and row">{line.tab}!{line.row}</span>}

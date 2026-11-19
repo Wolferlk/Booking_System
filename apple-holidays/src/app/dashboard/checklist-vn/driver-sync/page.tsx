@@ -572,8 +572,8 @@ export default function DriverSyncPage() {
                 </label>
                 <label className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
                   <span><span className="flex items-center gap-1 font-medium text-slate-700"><Clock className="h-3.5 w-3.5 text-cyan-600" />Fill meeting time</span>
-                    <span className="text-[10.5px] text-slate-400">Sheet&apos;s Meeting Time onto a matched movement that has none</span></span>
-                  <input type="checkbox" disabled={!data?.isAdmin} checked={cfg.fillTime} onChange={e => setCfg({ ...cfg, fillTime: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
+                    <span className="text-[10.5px] text-slate-400">Turned off — meeting times are set in OPS, never taken from the sheet</span></span>
+                  <input type="checkbox" disabled checked={false} onChange={e => setCfg({ ...cfg, fillTime: e.target.checked })} className="h-4 w-4 rounded border-slate-300" />
                 </label>
                 <label className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-2.5 py-2">
                   <span><span className="flex items-center gap-1 font-medium text-slate-700"><Phone className="h-3.5 w-3.5 text-pink-600" />Fill guest contact</span>

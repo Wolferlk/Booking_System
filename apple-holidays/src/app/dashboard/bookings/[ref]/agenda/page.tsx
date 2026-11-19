@@ -176,6 +176,53 @@ function NoDriverButtons({
   )
 }
 
+/**
+ * The "×" that sits on an allocated driver / transport-vendor chip. Two-step on
+ * purpose: the first click arms it (the chip turns red and asks), the second
+ * removes. It disarms itself after a few seconds so a stray click is harmless.
+ * The removal saves straight to the movement, so PDF / Word / Excel MC pick it
+ * up at once — no Excel resync, no full "Save changes" needed.
+ */
+function RemoveDriverChip({ onRemove, busy }: { onRemove: () => void; busy: boolean }) {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    if (!armed) return
+    const t = setTimeout(() => setArmed(false), 4000)
+    return () => clearTimeout(t)
+  }, [armed])
+
+  if (busy) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 py-2 text-[11px] font-medium text-red-600">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Removing…
+      </span>
+    )
+  }
+  if (armed) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-lg border border-red-300 bg-red-50 pl-2 pr-1 py-1 text-[11px] font-medium text-red-700">
+        Remove driver?
+        <button type="button" onClick={() => { setArmed(false); onRemove() }}
+          className="rounded-md bg-red-600 px-2 py-1 text-white hover:bg-red-700">
+          Remove
+        </button>
+        <button type="button" onClick={() => setArmed(false)}
+          className="rounded-md px-2 py-1 text-red-600 hover:bg-red-100">
+          Keep
+        </button>
+      </span>
+    )
+  }
+  return (
+    <button type="button" onClick={() => setArmed(true)}
+      title="Remove this driver allocation (guide / tour vendor are kept)"
+      aria-label="Remove driver allocation"
+      className="inline-flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600 transition-colors">
+      <X className="w-3.5 h-3.5" />
+    </button>
+  )
+}
+
 interface AgendaItem {
   id?: string
   date: string
@@ -1014,6 +1061,61 @@ export default function AgendaPage() {
       + ' — save to confirm',
     )
     setAssigningIdx(null)
+  }
+
+  /**
+   * Take the driver / transport vendor off one movement, in place. Guide and
+   * tour vendor stay — only the transport half is released. A saved movement is
+   * written immediately through the per-item endpoint (the same one the assign
+   * dialog uses), so the downloads read the change straight from the database;
+   * the rest of the unsaved draft is left exactly as the operator has it.
+   */
+  const [removingDriverIdx, setRemovingDriverIdx] = useState<number | null>(null)
+  async function removeDriver(idx: number) {
+    const item = items[idx]
+    if (!item?.assignment) return
+    const a = item.assignment
+    const keepsPartner = Boolean(a.guideName || a.tourVendorName || a.guideId || a.tourVendorId)
+    const next: AgendaItem['assignment'] = keepsPartner
+      ? {
+          ...a,
+          driverId: null, vendorId: null, vendorName: null,
+          // Omitted fields are stored as null by the agenda PUT.
+          driverName: undefined, driverPhone: undefined, vehicleType: undefined, vehiclePlate: undefined,
+          driverRate: null,
+        }
+      : null
+    const who = a.driverName || a.vendorName || 'Driver'
+    const reassign = { label: 'Re-assign', onClick: () => openAssignPanel(idx) }
+
+    if (!item.id) {
+      setItems(is => is.map((x, j) => j === idx ? { ...x, assignment: next } : x))
+      toast.success(`${who} removed — save to confirm`, { action: reassign })
+      return
+    }
+
+    setRemovingDriverIdx(idx)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, assignment: next }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      // Patch only this row — the id is checked so a reorder mid-request can't
+      // land the change on a different movement.
+      setItems(is => is.map(x => x.id === item.id ? { ...x, assignment: next } : x))
+      toast.success(`${who} removed from ${formatDate(item.date)}`, {
+        description: 'Saved — PDF, Word and Excel MC already show it unassigned.',
+        action: reassign,
+        duration: 8000,
+      })
+      if (item.date) loadDriversForDate(item.date)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to remove the driver')
+    } finally {
+      setRemovingDriverIdx(null)
+    }
   }
 
   function openAssignPanel(idx: number) {
@@ -2292,6 +2394,9 @@ export default function AgendaPage() {
                           ) : (
                             <span className="text-xs text-slate-400 italic">No driver assigned</span>
                           )}
+                          {needsDriver(item) && (item.assignment?.driverName || item.assignment?.vendorId) && (
+                            <RemoveDriverChip busy={removingDriverIdx === i} onRemove={() => removeDriver(i)} />
+                          )}
                           {needsDriver(item) && <PartnerChips assignment={item.assignment} vendorFromSheet={Boolean(item.id && sheetVendorIds.has(item.id))} />}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
@@ -2478,6 +2583,11 @@ export default function AgendaPage() {
                               <Eye className="w-3 h-3 text-blue-400" />
                             </button>
                           )
+                        )}
+                        {canAssign && needsDriver(item) && (item.assignment?.driverName || item.assignment?.vendorId) && (
+                          <div className="mt-1.5">
+                            <RemoveDriverChip busy={removingDriverIdx === i} onRemove={() => removeDriver(i)} />
+                          </div>
                         )}
 
                         {needsDriver(item) && (item.assignment?.guideName || item.assignment?.tourVendorName) && (

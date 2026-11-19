@@ -267,7 +267,15 @@ export const FIELD_LABELS: Record<FieldKey, string> = {
 
 const oneLine = (s: string | null | undefined) => String(s ?? '').replace(/\s*\n\s*/g, ', ').trim()
 
-/** What the sheet says each field should hold. Empty = the sheet is silent on it. */
+/**
+ * What the sheet says each field should hold. Empty = the sheet is silent on it.
+ *
+ * Meeting time is deliberately always empty: the desk owns meeting times in OPS
+ * and the Excel MC must never write them — not on Excel MC Generate, not on the
+ * auto-update, not on a row added from the sheet. Empty means "never touched"
+ * everywhere downstream. The sheet's time is still read (`line.time`) to pair
+ * sheet rows with chart movements and to order them; it is just never copied.
+ */
 export function sheetValues(line: McSheetLine): Record<FieldKey, string> {
   return {
     location:    oneLine(line.location),
@@ -275,7 +283,7 @@ export function sheetValues(line: McSheetLine): Record<FieldKey, string> {
     toPoint:     oneLine(line.to),
     details:     String(line.details ?? '').trim(),
     mealPlan:    String(line.meal ?? '').trim(),
-    meetingTime: line.time ?? '',
+    meetingTime: '',
     serviceType: line.serviceType ?? '',
     driver:      line.driverName && line.driverPhone ? line.driverName : '',
   }
@@ -310,8 +318,8 @@ export function valueKey(key: FieldKey, date: string, v: string | null | undefin
   return fingerprint([key, date.slice(0, 10), canon(key, v)])
 }
 
-/** Fields the auto-update keeps in step. Drivers belong to VN Driver Sync. */
-export const AUTO_FIELDS: Exclude<FieldKey, 'driver'>[] = ['location', 'fromPoint', 'toPoint', 'details', 'mealPlan', 'meetingTime', 'serviceType']
+/** Fields the auto-update keeps in step. Drivers belong to VN Driver Sync; meeting time belongs to OPS. */
+export const AUTO_FIELDS: Exclude<FieldKey, 'driver' | 'meetingTime'>[] = ['location', 'fromPoint', 'toPoint', 'details', 'mealPlan', 'serviceType']
 
 /** The valueKeys of everything a sheet line says. */
 export function lineValueKeys(line: McSheetLine): string[] {

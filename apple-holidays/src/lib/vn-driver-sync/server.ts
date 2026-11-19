@@ -64,7 +64,10 @@ export async function getDriverSyncConfig(): Promise<DriverSyncConfig> {
     intervalMin: Number.isFinite(interval) && interval >= 5 && interval <= 240 ? interval : DEFAULT_INTERVAL_MIN,
     daysAhead: Number.isFinite(days) && days >= 1 && days <= 400 ? days : DEFAULT_DAYS_AHEAD,
     useAi: map.get(DRIVER_SYNC_SETTINGS.useAi) !== 'false',
-    fillTime: map.get(DRIVER_SYNC_SETTINGS.fillTime) !== 'false',
+    // Always off: meeting times are owned by OPS and are never taken from the
+    // VN sheet (same rule as the Excel MC import). The stored setting is ignored;
+    // Undo of earlier TIME_FILLED events still works.
+    fillTime: false,
     fillContact: map.get(DRIVER_SYNC_SETTINGS.fillContact) !== 'false',
     sheet: map.get(DRIVER_SYNC_SETTINGS.sheet) || DEFAULT_SHEET_URL,
   }
