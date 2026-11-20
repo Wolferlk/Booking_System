@@ -48,6 +48,7 @@ import {
 } from './report-window'
 import { collectPeriodInsights, finaliseInsights, type PeriodInsights } from './period-insights'
 import { collectOpsBoardDigest, type OpsBoardDigest } from './ops-board-digest'
+import { collectB2cDay, type B2cDaySection } from './b2c-day'
 import type { Prisma } from '@prisma/client'
 import { loadTestBookings, testBookingKey, testBookingReference, testBookingRefs } from '@/lib/test-bookings'
 import { reportScope } from './report-scope'
@@ -671,6 +672,12 @@ export interface ReportData {
    * See `ops-board-digest.ts`.
    */
   opsBoard?: OpsBoardDigest | null
+  /**
+   * Aahaas B2C bookings for the window — new orders placed + older bookings
+   * amended — counted the way the accounts "Daily Invoice Report — Aahaas
+   * (B2C)" mail counts them. See `b2c-day.ts`.
+   */
+  b2cDay?: B2cDaySection | null
   /** Test bookings the weekly / monthly review left out, listed. See TestBookingsSection. */
   testBookings: TestBookingsSection
   /** AI-call results, guest feedback forms and desk feedback. Weekly / monthly only. */
@@ -2009,7 +2016,7 @@ async function collectActivitySplitSection(
   const periodic = window.period !== 'DAILY'
   const cohort = await collectAppleCohort(window, { excludeTests: periodic })
 
-  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard] = await Promise.all([
+  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard, b2cDay] = await Promise.all([
     // The two figures this mail now leads with, read from the accounts ledger
     // so all three daily mails describe the day with one set of numbers.
     // `cohort.total` is the Apple System count they are checked against.
@@ -2031,6 +2038,10 @@ async function collectActivitySplitSection(
     // The board itself, today and D+1 … D+7. Only the daily mail prints it, so only
     // the daily run pays for it. Never throws — see ops-board-digest.ts.
     window.period === 'DAILY' ? collectOpsBoardDigest(window, countries) : Promise.resolve(null),
+    // Aahaas B2C, counted as the accounts B2C invoice mail counts it. Read-only
+    // on the storefront and the accounts ledger; never throws. Only when the
+    // report is not narrowed to a country — B2C orders carry no country scope.
+    countries.length ? Promise.resolve(null) : collectB2cDay(window),
   ])
 
   // Only the periodic mails carry analytics, and only they pay for the extra
@@ -2081,6 +2092,7 @@ async function collectActivitySplitSection(
     complaints,
     upcoming,
     opsBoard,
+    b2cDay,
     insights,
     testBookings,
     guestVoice,

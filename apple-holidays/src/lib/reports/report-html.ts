@@ -104,17 +104,28 @@ function createdSection(d: ReportData): string {
   // the same 27 new + 11 amended the New bookings tile adds up — not the
   // narrower set of confirmations AppleSystem raised in the window.
   const b2b = sp.available ? newBookings : c.channel.b2b
-  const pct = (n: number) => (b2b + c.channel.b2c ? Math.round((n / (b2b + c.channel.b2c)) * 100) : 0)
+  // B2C is the accounts B2C invoice mail's own count — storefront orders placed
+  // in the window plus older bookings amended in it (see b2c-day.ts). The old
+  // figure here was AppleSystem's B2C channel, which is always ~0.
+  const bc = d.b2cDay?.available ? d.b2cDay : null
+  const b2c = bc ? bc.total : c.channel.b2c
+  const total = b2b + b2c
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0)
 
   const kpis = kpiRow([
     {
       label: 'New bookings',
-      value: num(newBookings),
-      note: `today new &amp; updated<br>${trend(c.total, c.previousTotal)}`,
+      value: num(total),
+      note: `${num(b2b)} B2B + ${num(b2c)} B2C<br>${trend(c.total, c.previousTotal)}`,
       color: C.brand,
     },
     { label: 'B2B', value: num(b2b), note: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : `${pct(b2b)}% of confirmations`, color: C.b2b },
-    { label: 'B2C', value: num(c.channel.b2c), note: `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`, color: C.b2c },
+    {
+      label: 'B2C',
+      value: num(b2c),
+      note: bc ? `${num(bc.newCount)} new + ${num(bc.amendedCount)} amended` : `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`,
+      color: C.b2c,
+    },
     { label: 'Pax booked', value: num(c.pax) },
   ])
 
@@ -170,27 +181,9 @@ function createdSection(d: ReportData): string {
        </div>`
     : ''
 
-  // Filed here against an earlier confirmation. Real work, another day's
-  // business — shown so the intake is never invisible, never added in.
-  const alsoFiled = c.outside.length
-    ? `<div style="padding-top:18px;"><div class="h3">Also filed here — not counted (${num(c.outside.length)})</div>
-         <div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding-bottom:8px;">
-           Entered in this period against a confirmation AppleSystem raised on an earlier day.
-         </div>` +
-      tableOpen([
-        { text: 'Ref' }, { text: 'Src', width: '46' }, { text: 'Country' },
-        { text: 'Agent' }, { text: 'Travel dates' }, { text: 'Pax', align: 'right', width: '45' },
-        { text: 'Value', align: 'right' },
-      ]) + c.outside.map(b => `<tr>
-        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>`, { nowrap: true })}
-        ${td(sourcePill(b.source), { nowrap: true })}
-        ${td(esc(b.countryLabel), { nowrap: true })}
-        ${td(truncate(b.agent, 26))}
-        ${td(`${shortDate(b.arrivalDate)} → ${shortDate(b.departureDate)}`, { nowrap: true })}
-        ${td(num(b.pax), { align: 'right' })}
-        ${td(b.quotedTotal !== null ? money(b.quotedTotal, b.currency) : '—', { align: 'right', nowrap: true })}
-      </tr>`).join('') + TABLE_CLOSE + '</div>'
-    : ''
+  // The "Also filed here — not counted" table (bookings entered this period
+  // against an earlier AppleSystem confirmation) was removed from the mail at
+  // the desk's request (Nov 2026). The rows still go out in the CSV attachment.
 
   return section(
     'Bookings created',
@@ -199,9 +192,56 @@ function createdSection(d: ReportData): string {
     basisNote + kpis + value +
       `<div class="h3">Country-wise</div>${countryTable(c.byCountry)}` +
       `<div style="padding-top:18px;"><div class="h3">Booking detail</div>${list}</div>` +
-      missing + alsoFiled +
+      missing +
+      b2cDayBlock(d) +
       agents,
   )
+}
+
+/**
+ * Aahaas B2C bookings for the period — the same list, and the same count, as
+ * the accounts "Daily Invoice Report — Aahaas (B2C)" mail: storefront orders
+ * placed in the period (New) and older bookings re-issued in it (Amended).
+ */
+function b2cDayBlock(d: ReportData): string {
+  const bc = d.b2cDay
+  if (!bc) return ''
+  if (!bc.available) {
+    return `<div style="padding-top:18px;"><div class="h3">Aahaas B2C</div>${emptyNote('The storefront or the accounts ledger could not be read while this report was written, so the B2C bookings are not listed.')}</div>`
+  }
+  const kindPill = (k: 'New' | 'Amended') => k === 'New'
+    ? '<span class="pill" style="background:#dbeafe;color:#1e40af;">New</span>'
+    : '<span class="pill" style="background:#fef3c7;color:#92400e;">Amended</span>'
+  const when = (l: (typeof bc.lines)[number]) => l.placedAt
+    ? `placed ${esc(formatReportDate(l.placedAt.slice(0, 10)))} ${esc(l.placedAt.slice(11, 16))}`
+    : l.raisedAt ? `re-issued ${esc(formatReportDate(l.raisedAt.slice(0, 10)))}` : '—'
+  const rows = bc.lines.map((l, i) => `<tr>
+    ${td(String(i + 1), { color: C.faint })}
+    ${td(l.invoiceNumber
+      ? `<strong style="color:${C.ink};">${esc(l.invoiceNumber)}</strong>`
+      : `<strong style="color:${C.ink};">${esc(l.bookingRef)}</strong><div style="color:${C.bad};font-size:11px;">not invoiced yet</div>`, { nowrap: true })}
+    ${td(kindPill(l.kind))}
+    ${td(truncate(l.guest || l.customer, 26))}
+    ${td(`<span style="font-size:11px;">${when(l)}</span>`, { nowrap: true, color: C.muted })}
+    ${td(l.amount !== null && l.currency ? money(l.amount, l.currency) : '—', { align: 'right', nowrap: true, bold: true })}
+  </tr>`).join('')
+  const left = [
+    bc.excluded.agent ? `${num(bc.excluded.agent)} agent-portal order${bc.excluded.agent === 1 ? '' : 's'} (Aahaas B2B Flights report)` : '',
+    bc.excluded.amendmentOrders ? `${num(bc.excluded.amendmentOrders)} amendment re-order${bc.excluded.amendmentOrders === 1 ? '' : 's'} (counted on the original booking)` : '',
+    bc.excluded.test ? `${num(bc.excluded.test)} test booking${bc.excluded.test === 1 ? '' : 's'}` : '',
+  ].filter(Boolean)
+  return `<div style="padding-top:18px;">
+    <div class="h3">Aahaas B2C — ${num(bc.total)} booking${bc.total === 1 ? '' : 's'}
+      &nbsp;<span class="pill" style="background:#dbeafe;color:#1e40af;">${num(bc.newCount)} new</span>
+      <span class="pill" style="background:#fef3c7;color:#92400e;">${num(bc.amendedCount)} amended</span></div>
+    ${bc.lines.length
+      ? tableOpen([
+          { text: '#', width: '22' }, { text: 'Invoice #' }, { text: 'Type', width: '70' },
+          { text: 'Guest' }, { text: 'When' }, { text: 'Amount', align: 'right' },
+        ]) + rows + TABLE_CLOSE
+      : emptyNote('No Aahaas B2C orders were placed or amended in this period.')}
+    <div class="more">Counted as the accounts “Daily Invoice Report — Aahaas (B2C)” counts them: New = storefront orders placed in the period; Amended = an older booking re-issued in it (one line per booking, latest revision).${bc.notInvoiced ? ` <strong style="color:${C.bad};">${num(bc.notInvoiced)} not invoiced yet.</strong>` : ''}${left.length ? ` Left out: ${left.map(esc).join(' · ')}.` : ''}</div>
+  </div>`
 }
 
 /**
@@ -810,7 +850,9 @@ function driverAllocationSection(d: ReportData, horizon: 'D3' | 'D10', opts: { d
 
   const coverage = (b: ReadinessLine) => {
     const c = b.readiness.driver
-    if (!c.required) return `<span class="pill bd">${esc(c.short)}</span>`
+    // Longer labels ("No agenda · not reconfirmed") wrap inside the pill rather
+    // than pushing the table wider than the mail.
+    if (!c.required) return `<span class="pill bd" style="white-space:normal;">${esc(c.short)}</span>`
     return `<table role="presentation" width="110" cellpadding="0" cellspacing="0" border="0"><tr>
       <td width="70" style="padding-right:8px;">${segBar([
         { value: c.done, color: c.state === 'DONE' ? C.good : C.warn },
@@ -1917,8 +1959,12 @@ function summaryStrip(d: ReportData): string {
     // and the same number the New bookings card quotes.
     {
       label: 'New & updated',
-      value: num(newBookingsCount(d)),
-      sub: sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'confirmed bookings',
+      // B2B (accounts ledger split) plus Aahaas B2C (b2c-day.ts) — the two
+      // accounts invoice mails added together.
+      value: num(newBookingsCount(d) + (d.b2cDay?.available ? d.b2cDay.total : 0)),
+      sub: d.b2cDay?.available
+        ? `B2B ${num(newBookingsCount(d))} · B2C ${num(d.b2cDay.total)}`
+        : sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'confirmed bookings',
     },
     {
       label: 'Old amendments',
@@ -2170,6 +2216,7 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
     d.split.available
       ? `${d.split.todayCount} new${d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`
       : `${newBookingsCount(d)} new`,
+    ...(d.b2cDay?.available ? [`B2C ${d.b2cDay.newCount} new + ${d.b2cDay.amendedCount} amended`] : []),
     `${d.onGround.total} on ground`,
   ]
   // A parity gap outranks everything else in the subject: it means the mail's

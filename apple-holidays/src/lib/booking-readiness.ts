@@ -228,11 +228,24 @@ function driverCheck(b: ReadinessBooking): ReadinessCheck {
 
   const items = b.tourAgenda?.items ?? []
   if (!items.length) {
-    return {
-      state: 'PENDING', short: 'No agenda',
-      detail: 'No movement chart has been built yet, so no driver can be allocated',
-      done: 0, required: 0,
-    }
+    // Never a bare "No agenda" — say what it is blocking. The agenda is
+    // auto-generated at intake and comes *before* reconfirmation: a booking
+    // cannot be reconfirmed without one. So a missing agenda on an
+    // unreconfirmed file is the blocker for both reconfirmation and drivers;
+    // on a file already past reconfirmation it is an anomaly (agenda removed
+    // or never generated) and needs regenerating.
+    const reconfirmed = hasReached(b.status, CLIENT_CONFIRMED_FROM)
+    return reconfirmed
+      ? {
+          state: 'PENDING', short: 'No agenda · regenerate',
+          detail: 'Reconfirmed but the agenda is missing — regenerate the movement chart so a driver or vendor can be allocated',
+          done: 0, required: 0,
+        }
+      : {
+          state: 'PENDING', short: 'No agenda · blocks reconfirm',
+          detail: 'Agenda was not auto-generated — generate it first; until it exists the booking cannot be reconfirmed and no driver or vendor can be allocated',
+          done: 0, required: 0,
+        }
   }
 
   const serviced = items.filter(needsDriver)

@@ -570,6 +570,31 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
     })
   }
 
+  // ── Aahaas B2C bookings — same count as the accounts B2C invoice mail
+  const bc = d.b2cDay
+  if (bc?.available) {
+    type BcLine = typeof bc.lines[number]
+    plan.table<BcLine>({
+      name: 'B2C Bookings', tab: P.b2c,
+      title: `Aahaas B2C bookings — ${d.window.label}`,
+      description: 'Counted as the accounts "Daily Invoice Report — Aahaas (B2C)" counts them: New = storefront orders placed in the period (agent-portal, test and amendment re-orders left out); Amended = an older booking re-issued in the period, one line per booking.',
+      totals: `${bc.total} bookings · ${bc.newCount} new · ${bc.amendedCount} amended${bc.notInvoiced ? ` · ${bc.notInvoiced} not invoiced yet` : ''}`,
+      what: 'Aahaas B2C new and amended bookings for the period',
+      cols: [
+        { header: 'Type', width: 10, kind: 'flag', value: x => x.kind },
+        { header: 'Booking', width: 12, value: x => x.bookingRef },
+        { header: 'Invoice #', width: 16, value: x => x.invoiceNumber ?? 'Not invoiced yet' },
+        { header: 'Guest', width: 26, value: x => x.guest ?? '' },
+        { header: 'Customer', width: 20, value: x => x.customer ?? '' },
+        { header: 'Order placed', width: 17, value: x => x.placedAt ?? '' },
+        { header: 'Invoice raised (UTC)', width: 17, value: x => (x.raisedAt ? x.raisedAt.slice(0, 16).replace('T', ' ') : '') },
+        { header: 'Currency', width: 9, value: x => x.currency ?? '' },
+        { header: 'Amount', width: 13, kind: 'money', value: x => x.amount },
+      ],
+      rows: bc.lines,
+    })
+  }
+
   // ── Readiness, drivers, reconfirmation (the mail's own sections)
   const rd = d.readiness
   type RdLine = typeof rd.bookings[number]

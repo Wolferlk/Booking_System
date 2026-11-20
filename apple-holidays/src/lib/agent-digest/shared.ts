@@ -193,10 +193,10 @@ export function newId(prefix = 'x'): string {
   return `${prefix}${Math.random().toString(36).slice(2, 9)}`
 }
 
+/** The daily update covers the report day only — next-day arrivals belong in their own send. */
 export function defaultBlocks(): DigestBlock[] {
   return [
-    { id: newId('b'), label: 'On ground today',   basis: 'ON_GROUND', offset: 0, scope: 'ITEM', enabled: true },
-    { id: newId('b'), label: 'Arriving tomorrow', basis: 'ARRIVAL',   offset: 1, scope: 'TOUR', enabled: true },
+    { id: newId('b'), label: 'On ground today', basis: 'ON_GROUND', offset: 0, scope: 'ITEM', enabled: true },
   ]
 }
 
@@ -225,7 +225,7 @@ export function defaultConfig(): DigestConfig {
 export const DIGEST_PRESETS: { key: string; title: string; blurb: string; emoji: string; build: () => Partial<DigestConfig> & { name: string } }[] = [
   {
     key: 'agent-daily', title: 'Agent daily ops', emoji: '🌅',
-    blurb: 'Today on ground line by line + tomorrow’s arrivals. The 30 Sundays morning update.',
+    blurb: 'Today on ground, line by line. The 30 Sundays morning update.',
     build: () => ({ name: '30 Sundays — daily ops', agents: ['30 Sundays', '30sundays', 'Thirty Sundays'], blocks: defaultBlocks() }),
   },
   {
