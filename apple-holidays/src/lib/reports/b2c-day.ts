@@ -21,9 +21,25 @@
  *     orders and test bookings are left out. One line per booking, on its
  *     latest revision in the window.
  *
- * The storefront answers "new", the accounts invoice ledger answers "amended"
- * and supplies each booking's invoice (number, guest, amount). An order not
- * invoiced yet is still counted — it was placed — and says so.
+ * The storefront answers "which orders were placed", the accounts invoice
+ * ledger answers "which of them are B2C invoices, and what each one is".
+ *
+ * ## Only bookings with a B2C invoice (user, 2026-11-20)
+ *
+ * The B2C tile must reflect the B2C invoice mail and nothing else. 19/11/2026
+ * read 20 here (18 new + 2 amended) against the mail's 8 (6 + 2): of the 18
+ * orders placed, 12 were never invoiced — checkout attempts and payment links
+ * never paid, which the storefront files as order headers all the same. So:
+ *
+ *   • An order placed in the window counts only once the accounts ledger holds
+ *     a B2C invoice for it (raised in the window, or late — the mail fetches a
+ *     late first invoice too, `fetchForBookings`). The rest are left out and
+ *     reported as "not invoiced", never silently dropped.
+ *   • Each counted booking is classified by its LATEST document, exactly as
+ *     the mail's New / Amended / Cancelled cards are (`movementOf`): a
+ *     cancellation document → Cancelled, an AHS revision (AHS-16220R2) →
+ *     Amended, otherwise New. Documents raised before the window closed are
+ *     preferred; a booking invoiced only afterwards is read off those.
  *
  * ## Safety
  *
@@ -39,7 +55,7 @@ import { loadTestBookings, testBookingKey } from '@/lib/test-bookings'
 import { shiftDate, type ReportWindow } from './report-window'
 
 export interface B2cDayLine {
-  kind: 'New' | 'Amended'
+  kind: 'New' | 'Amended' | 'Cancelled'
   /** The booking — "AHS-16299". */
   bookingRef: string
   /** The document printed: latest invoice for a new order, the revision for an amended one. Null = not invoiced yet. */
@@ -59,8 +75,11 @@ export interface B2cDaySection {
   error?: string
   newCount: number
   amendedCount: number
+  /** Bookings whose latest B2C document is a cancellation — the mail's "Cancelled". */
+  cancelledCount: number
+  /** new + amended + cancelled — the mail's "Total invoices". */
   total: number
-  /** New orders with no invoice yet — counted, flagged. */
+  /** Orders placed in the window with no B2C invoice — NOT counted, reported. */
   notInvoiced: number
   /** Left out, so a smaller number is never read as lost data. */
   excluded: { agent: number; test: number; amendmentOrders: number }
@@ -69,7 +88,7 @@ export interface B2cDaySection {
 
 export function emptyB2cDay(error?: string): B2cDaySection {
   return {
-    available: false, error, newCount: 0, amendedCount: 0, total: 0, notInvoiced: 0,
+    available: false, error, newCount: 0, amendedCount: 0, cancelledCount: 0, total: 0, notInvoiced: 0,
     excluded: { agent: 0, test: 0, amendmentOrders: 0 }, lines: [],
   }
 }
@@ -185,13 +204,42 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
             ORDER BY gi.created_at`,
         )
       : []
-    // Latest non-cancellation document per booking.
-    const latestNew = new Map<number, InvRow>()
+    // Each placed order's documents. Those raised before the window closed
+    // are what the mail read; a booking invoiced only afterwards (the mail's
+    // late fetch) is read off its later documents instead.
+    const windowEnd = w.end.getTime()
+    const docsOf = new Map<number, InvRow[]>()
     for (const r of newDocs) {
       const id = ahsIdOf(r)
-      if (!id || Number(r.is_cancellation ?? 0)) continue
-      latestNew.set(id, r)
+      if (!id) continue
+      docsOf.set(id, [...(docsOf.get(id) ?? []), r])
     }
+
+    // The booking's standing document and what the mail calls it: a
+    // cancellation outranks every revision; otherwise the latest revision
+    // (then the latest raised) — Amended if it is a revision, New if not.
+    const classify = (docs: InvRow[]): { doc: InvRow; kind: B2cDayLine['kind'] } => {
+      const before = docs.filter(r => {
+        const at = iso(r.created_at)
+        return at !== null && new Date(at).getTime() < windowEnd
+      })
+      const pool = before.length ? before : docs
+      const cxl = pool.filter(r => Number(r.is_cancellation ?? 0))
+      if (cxl.length) return { doc: cxl[cxl.length - 1], kind: 'Cancelled' }
+      const latest = pool.reduce((a, b) =>
+        revisionNumberOf(b) > revisionNumberOf(a)
+        || (revisionNumberOf(b) === revisionNumberOf(a) && String(b.created_at) >= String(a.created_at)) ? b : a)
+      return { doc: latest, kind: looksRevised(latest) ? 'Amended' : 'New' }
+    }
+
+    // Only orders with a B2C invoice are the mail's; the rest are reported.
+    const invoiced = fresh.filter(o => docsOf.has(Number(o.id)))
+    const notInvoiced = fresh.length - invoiced.length
+    const placedLines = invoiced.map(o => {
+      const id = Number(o.id)
+      const { doc, kind } = classify(docsOf.get(id) ?? [])
+      return { o, id, doc, kind }
+    })
 
     // ── Amended: older bookings re-issued in the window ───────────────────
     const windowDocs = await accountsQuery<InvRow>(
@@ -215,21 +263,17 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
     }
 
     const lines: B2cDayLine[] = [
-      ...fresh.map(o => {
-        const id = Number(o.id)
-        const doc = latestNew.get(id) ?? null
-        return {
-          kind: 'New' as const,
-          bookingRef: `AHS-${id}`,
-          invoiceNumber: doc?.invoice_number ?? null,
-          guest: doc?.guest_name ?? null,
-          customer: doc?.customer_name ?? null,
-          currency: doc?.currency ?? null,
-          amount: doc ? amountOf(doc) : null,
-          placedAt: stamp(o.checkout_date),
-          raisedAt: doc ? iso(doc.created_at) : null,
-        }
-      }),
+      ...placedLines.map(({ o, id, doc, kind }) => ({
+        kind,
+        bookingRef: `AHS-${id}`,
+        invoiceNumber: doc.invoice_number ?? null,
+        guest: doc.guest_name ?? null,
+        customer: doc.customer_name ?? null,
+        currency: doc.currency ?? null,
+        amount: amountOf(doc),
+        placedAt: stamp(o.checkout_date),
+        raisedAt: iso(doc.created_at),
+      })),
       ...Array.from(amended.entries()).map(([id, doc]) => ({
         kind: 'Amended' as const,
         bookingRef: `AHS-${id}`,
@@ -243,12 +287,16 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
       })),
     ]
 
+    const count = (k: B2cDayLine['kind']) => lines.filter(l => l.kind === k).length
+
     return {
       available: true,
-      newCount: fresh.length,
-      amendedCount: amended.size,
-      total: fresh.length + amended.size,
-      notInvoiced: fresh.filter(o => !latestNew.has(Number(o.id))).length,
+      newCount: count('New'),
+      // Same-day revisions of the window's own orders, plus older bookings re-issued in it.
+      amendedCount: count('Amended'),
+      cancelledCount: count('Cancelled'),
+      total: lines.length,
+      notInvoiced,
       excluded: { agent: agent.length, test: test.length, amendmentOrders: amendmentOrders.length },
       lines,
     }

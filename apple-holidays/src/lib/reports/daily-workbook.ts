@@ -577,8 +577,8 @@ export async function renderDailyWorkbook(d: ReportData): Promise<{ buffer: Buff
     plan.table<BcLine>({
       name: 'B2C Bookings', tab: P.b2c,
       title: `Aahaas B2C bookings — ${d.window.label}`,
-      description: 'Counted as the accounts "Daily Invoice Report — Aahaas (B2C)" counts them: New = storefront orders placed in the period (agent-portal, test and amendment re-orders left out); Amended = an older booking re-issued in the period, one line per booking.',
-      totals: `${bc.total} bookings · ${bc.newCount} new · ${bc.amendedCount} amended${bc.notInvoiced ? ` · ${bc.notInvoiced} not invoiced yet` : ''}`,
+      description: 'Only bookings with a B2C invoice, counted as the accounts "Daily Invoice Report — Aahaas (B2C)" counts them, one line per booking on its latest invoice: New = a storefront order placed in the period (agent-portal, test and amendment re-orders left out); Amended = a revised invoice, including older bookings re-issued in the period; Cancelled = a cancellation invoice. Orders placed but never invoiced are left out.',
+      totals: `${bc.total} bookings · ${bc.newCount} new · ${bc.amendedCount} amended${bc.cancelledCount ? ` · ${bc.cancelledCount} cancelled` : ''}${bc.notInvoiced ? ` · ${bc.notInvoiced} placed but not invoiced (left out)` : ''}`,
       what: 'Aahaas B2C new and amended bookings for the period',
       cols: [
         { header: 'Type', width: 10, kind: 'flag', value: x => x.kind },

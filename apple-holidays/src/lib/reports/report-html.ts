@@ -123,7 +123,9 @@ function createdSection(d: ReportData): string {
     {
       label: 'B2C',
       value: num(b2c),
-      note: bc ? `${num(bc.newCount)} new + ${num(bc.amendedCount)} amended` : `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`,
+      note: bc
+        ? `${num(bc.newCount)} new + ${num(bc.amendedCount)} amended${bc.cancelledCount ? ` + ${num(bc.cancelledCount)} cancelled` : ''}`
+        : `${pct(c.channel.b2c)}% of ${sp.available ? 'files' : 'confirmations'}`,
       color: C.b2c,
     },
     { label: 'Pax booked', value: num(c.pax) },
@@ -209,9 +211,11 @@ function b2cDayBlock(d: ReportData): string {
   if (!bc.available) {
     return `<div style="padding-top:18px;"><div class="h3">Aahaas B2C</div>${emptyNote('The storefront or the accounts ledger could not be read while this report was written, so the B2C bookings are not listed.')}</div>`
   }
-  const kindPill = (k: 'New' | 'Amended') => k === 'New'
+  const kindPill = (k: 'New' | 'Amended' | 'Cancelled') => k === 'New'
     ? '<span class="pill" style="background:#dbeafe;color:#1e40af;">New</span>'
-    : '<span class="pill" style="background:#fef3c7;color:#92400e;">Amended</span>'
+    : k === 'Cancelled'
+      ? '<span class="pill" style="background:#fee2e2;color:#b91c1c;">Cancelled</span>'
+      : '<span class="pill" style="background:#fef3c7;color:#92400e;">Amended</span>'
   const when = (l: (typeof bc.lines)[number]) => l.placedAt
     ? `placed ${esc(formatReportDate(l.placedAt.slice(0, 10)))} ${esc(l.placedAt.slice(11, 16))}`
     : l.raisedAt ? `re-issued ${esc(formatReportDate(l.raisedAt.slice(0, 10)))}` : '—'
@@ -226,6 +230,7 @@ function b2cDayBlock(d: ReportData): string {
     ${td(l.amount !== null && l.currency ? money(l.amount, l.currency) : '—', { align: 'right', nowrap: true, bold: true })}
   </tr>`).join('')
   const left = [
+    bc.notInvoiced ? `${num(bc.notInvoiced)} order${bc.notInvoiced === 1 ? '' : 's'} placed but not invoiced (checkout attempts / unpaid links)` : '',
     bc.excluded.agent ? `${num(bc.excluded.agent)} agent-portal order${bc.excluded.agent === 1 ? '' : 's'} (Aahaas B2B Flights report)` : '',
     bc.excluded.amendmentOrders ? `${num(bc.excluded.amendmentOrders)} amendment re-order${bc.excluded.amendmentOrders === 1 ? '' : 's'} (counted on the original booking)` : '',
     bc.excluded.test ? `${num(bc.excluded.test)} test booking${bc.excluded.test === 1 ? '' : 's'}` : '',
@@ -233,14 +238,15 @@ function b2cDayBlock(d: ReportData): string {
   return `<div style="padding-top:18px;">
     <div class="h3">Aahaas B2C — ${num(bc.total)} booking${bc.total === 1 ? '' : 's'}
       &nbsp;<span class="pill" style="background:#dbeafe;color:#1e40af;">${num(bc.newCount)} new</span>
-      <span class="pill" style="background:#fef3c7;color:#92400e;">${num(bc.amendedCount)} amended</span></div>
+      <span class="pill" style="background:#fef3c7;color:#92400e;">${num(bc.amendedCount)} amended</span>${bc.cancelledCount ? `
+      <span class="pill" style="background:#fee2e2;color:#b91c1c;">${num(bc.cancelledCount)} cancelled</span>` : ''}</div>
     ${bc.lines.length
       ? tableOpen([
           { text: '#', width: '22' }, { text: 'Invoice #' }, { text: 'Type', width: '70' },
           { text: 'Guest' }, { text: 'When' }, { text: 'Amount', align: 'right' },
         ]) + rows + TABLE_CLOSE
-      : emptyNote('No Aahaas B2C orders were placed or amended in this period.')}
-    <div class="more">Counted as the accounts “Daily Invoice Report — Aahaas (B2C)” counts them: New = storefront orders placed in the period; Amended = an older booking re-issued in it (one line per booking, latest revision).${bc.notInvoiced ? ` <strong style="color:${C.bad};">${num(bc.notInvoiced)} not invoiced yet.</strong>` : ''}${left.length ? ` Left out: ${left.map(esc).join(' · ')}.` : ''}</div>
+      : emptyNote('No Aahaas B2C invoice was raised for this period.')}
+    <div class="more">Only bookings with a B2C invoice, counted as the accounts “Daily Invoice Report — Aahaas (B2C)” counts them — one line per booking, on its latest invoice: New = a storefront order placed in the period; Amended = a revised invoice (AHS-…R2), including older bookings re-issued in it; Cancelled = a cancellation invoice.${left.length ? ` Left out: ${left.map(esc).join(' · ')}.` : ''}</div>
   </div>`
 }
 
