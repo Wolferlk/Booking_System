@@ -1959,26 +1959,46 @@ function summaryStrip(d: ReportData): string {
   // Two rows of four. Seven-plus tiles in one row squeezed every label onto
   // three lines on a 680px mail; two rows read as "what came in" and "what is
   // ready", which is also the order the sections below follow.
+  // Intake: four separate cards, B2B then B2C, each business split the way
+  // its accounts invoice mail splits it — this period's own bookings (new,
+  // plus booked & amended the same day) apart from older bookings amended in
+  // it. No B2B + B2C total: the two are different businesses and the desk
+  // reads them apart (Nov 2026).
+  const bc = d.b2cDay?.available ? d.b2cDay : null
+  const b2bNew = sp.files.filter(f => f.pass === 'New' && f.type === 'New').length
+  const b2bSame = sp.files.filter(f => f.pass === 'New' && f.type === 'Updated').length
+  const plural = (n: number, one: string, many: string) => `${num(n)} ${n === 1 ? one : many}`
   const intake: RibbonTile[] = [
-    // Leads with the day's new & updated business as the accounts invoice mail
-    // adds it up — this period's own bookings plus older confirmations edited —
-    // and the same number the New bookings card quotes.
     {
-      label: 'New & updated',
-      // B2B (accounts ledger split) plus Aahaas B2C (b2c-day.ts) — the two
-      // accounts invoice mails added together.
-      value: num(newBookingsCount(d) + (d.b2cDay?.available ? d.b2cDay.total : 0)),
-      sub: d.b2cDay?.available
-        ? `B2B ${num(newBookingsCount(d))} · B2C ${num(d.b2cDay.total)}`
-        : sp.available ? `${num(sp.todayCount)} new + ${num(sp.oldCount)} amended` : 'confirmed bookings',
+      label: 'B2B new & same-day amended',
+      value: sp.available ? num(sp.todayCount) : num(newBookingsCount(d)),
+      sub: sp.available
+        ? (sp.files.length ? `${num(b2bNew)} new · ${num(b2bSame)} same-day amended` : 'this period’s own bookings')
+        : 'confirmed bookings · accounts unreachable',
     },
     {
-      label: 'Old amendments',
+      label: 'B2B old amendments',
       value: sp.available ? num(sp.oldCount) : '—',
       sub: sp.available
         ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
         : 'accounts unreachable',
     },
+    {
+      label: 'B2C new & same-day amended',
+      value: bc ? num(bc.total - bc.oldAmendedCount) : '—',
+      sub: bc
+        ? `${num(bc.newCount)} new · ${num(bc.sameDayAmendedCount)} same-day amended${bc.cancelledCount ? ` · ${num(bc.cancelledCount)} cancelled` : ''}`
+        : 'storefront unreachable',
+    },
+    {
+      label: 'B2C old amendments',
+      value: bc ? num(bc.oldAmendedCount) : '—',
+      sub: bc
+        ? (bc.oldAmendedCount ? plural(bc.oldAmendedCount, 'older booking re-issued', 'older bookings re-issued') : 'none re-opened')
+        : 'storefront unreachable',
+    },
+  ]
+  const ground: RibbonTile[] = [
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests travelling` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} arriving in 7 days` },
   ]
@@ -2019,7 +2039,8 @@ function summaryStrip(d: ReportData): string {
   return `
   <tr><td style="background:${HERO.deep};padding:12px 13px 14px 13px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-      ${row('Intake & on the ground', intake)}
+      ${row('Intake — B2B · B2C', intake)}
+      ${row('On the ground', ground)}
       ${row('Readiness', ready)}
       ${lookAheadRow(d)}
     </table>

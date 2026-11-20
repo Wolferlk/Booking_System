@@ -56,6 +56,12 @@ import { shiftDate, type ReportWindow } from './report-window'
 
 export interface B2cDayLine {
   kind: 'New' | 'Amended' | 'Cancelled'
+  /**
+   * True for an OLD amendment — a booking first placed before the window and
+   * re-issued in it. False for the window's own orders (new, or placed and
+   * amended the same day).
+   */
+  older: boolean
   /** The booking — "AHS-16299". */
   bookingRef: string
   /** The document printed: latest invoice for a new order, the revision for an amended one. Null = not invoiced yet. */
@@ -77,6 +83,10 @@ export interface B2cDaySection {
   amendedCount: number
   /** Bookings whose latest B2C document is a cancellation — the mail's "Cancelled". */
   cancelledCount: number
+  /** Of `amendedCount`: the window's own orders placed and amended in it. */
+  sameDayAmendedCount: number
+  /** Of `amendedCount`: older bookings re-issued in the window. */
+  oldAmendedCount: number
   /** new + amended + cancelled — the mail's "Total invoices". */
   total: number
   /** Orders placed in the window with no B2C invoice — NOT counted, reported. */
@@ -88,7 +98,8 @@ export interface B2cDaySection {
 
 export function emptyB2cDay(error?: string): B2cDaySection {
   return {
-    available: false, error, newCount: 0, amendedCount: 0, cancelledCount: 0, total: 0, notInvoiced: 0,
+    available: false, error, newCount: 0, amendedCount: 0, cancelledCount: 0,
+    sameDayAmendedCount: 0, oldAmendedCount: 0, total: 0, notInvoiced: 0,
     excluded: { agent: 0, test: 0, amendmentOrders: 0 }, lines: [],
   }
 }
@@ -265,6 +276,7 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
     const lines: B2cDayLine[] = [
       ...placedLines.map(({ o, id, doc, kind }) => ({
         kind,
+        older: false,
         bookingRef: `AHS-${id}`,
         invoiceNumber: doc.invoice_number ?? null,
         guest: doc.guest_name ?? null,
@@ -276,6 +288,7 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
       })),
       ...Array.from(amended.entries()).map(([id, doc]) => ({
         kind: 'Amended' as const,
+        older: true,
         bookingRef: `AHS-${id}`,
         invoiceNumber: doc.invoice_number,
         guest: doc.guest_name,
@@ -295,6 +308,8 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
       // Same-day revisions of the window's own orders, plus older bookings re-issued in it.
       amendedCount: count('Amended'),
       cancelledCount: count('Cancelled'),
+      sameDayAmendedCount: lines.filter(l => l.kind === 'Amended' && !l.older).length,
+      oldAmendedCount: lines.filter(l => l.kind === 'Amended' && l.older).length,
       total: lines.length,
       notInvoiced,
       excluded: { agent: agent.length, test: test.length, amendmentOrders: amendmentOrders.length },
