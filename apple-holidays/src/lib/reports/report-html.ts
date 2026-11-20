@@ -1924,7 +1924,15 @@ interface RibbonTile {
   tone?: 'good' | 'warn' | 'bad'
   /** Draws a small progress bar for "x of y" tiles. */
   ratio?: { done: number; of: number }
+  /**
+   * Which business the tile counts — a coloured chip before the label and the
+   * same colour on the top edge (a status `tone` still wins the edge), so the
+   * B2B and B2C cards tell apart at a glance with short labels.
+   */
+  channel?: 'B2B' | 'B2C'
 }
+
+const CHANNEL_EDGE = { B2B: C.b2b, B2C: C.b2c } as const
 
 /** Green when nothing is open, amber while mostly there, red otherwise. */
 function ratioTone(done: number, of: number): 'good' | 'warn' | 'bad' {
@@ -1933,7 +1941,10 @@ function ratioTone(done: number, of: number): 'good' | 'warn' | 'bad' {
 }
 
 function ribbonTile(t: RibbonTile, width: number): string {
-  const edge = t.tone ? HERO[t.tone] : HERO.tileLine
+  const edge = t.tone ? HERO[t.tone] : t.channel ? CHANNEL_EDGE[t.channel] : HERO.tileLine
+  const chip = t.channel
+    ? `<span style="display:inline-block;margin-right:6px;padding:1px 6px;border-radius:999px;background:${CHANNEL_EDGE[t.channel]};color:#ffffff;font:800 9px/1.5 ${FONT};letter-spacing:.06em;vertical-align:1px;">${t.channel}</span>`
+    : ''
   const pct = t.ratio && t.ratio.of ? Math.max(0, Math.min(100, Math.round((t.ratio.done / t.ratio.of) * 100))) : null
   const bar = pct === null ? '' : `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:7px;border-collapse:separate;border-radius:999px;overflow:hidden;"><tr>${
     pct > 0 ? `<td width="${pct}%" style="background:${edge};height:5px;line-height:5px;font-size:0;">&nbsp;</td>` : ''
@@ -1941,7 +1952,7 @@ function ribbonTile(t: RibbonTile, width: number): string {
   return `<td width="${width}%" valign="top" style="padding:5px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${HERO.tile};border-top:3px solid ${edge};border-radius:10px;border-collapse:separate;">
       <tr><td style="padding:11px 12px 12px 12px;">
-        <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;">${esc(t.label)}</div>
+        <div style="font:700 10px/1.3 ${FONT};color:${HERO.eyebrow};text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;">${chip}${esc(t.label)}</div>
         <div style="font:800 24px/1.15 ${FONT};color:#ffffff;padding-top:5px;letter-spacing:-.02em;white-space:nowrap;">${t.value}</div>
         ${bar}
         <div style="font:400 11px/1.45 ${FONT};color:${HERO.soft};padding-top:5px;">${esc(t.sub)}</div>
@@ -1967,35 +1978,39 @@ function summaryStrip(d: ReportData): string {
   const bc = d.b2cDay?.available ? d.b2cDay : null
   const b2bNew = sp.files.filter(f => f.pass === 'New' && f.type === 'New').length
   const b2bSame = sp.files.filter(f => f.pass === 'New' && f.type === 'Updated').length
-  const plural = (n: number, one: string, many: string) => `${num(n)} ${n === 1 ? one : many}`
+  // Short labels + a B2B / B2C chip: the long "B2B new & same-day amended"
+  // wrapped to two lines and the four cards read alike. One-line subs keep
+  // the cards one height.
   const intake: RibbonTile[] = [
     {
-      label: 'B2B new & same-day amended',
+      channel: 'B2B',
+      label: 'New & same-day',
       value: sp.available ? num(sp.todayCount) : num(newBookingsCount(d)),
       sub: sp.available
-        ? (sp.files.length ? `${num(b2bNew)} new · ${num(b2bSame)} same-day amended` : 'this period’s own bookings')
-        : 'confirmed bookings · accounts unreachable',
+        ? (sp.files.length ? `${num(b2bNew)} new · ${num(b2bSame)} amended` : 'this period’s own')
+        : 'accounts unreachable',
     },
     {
-      label: 'B2B old amendments',
+      channel: 'B2B',
+      label: 'Old amendments',
       value: sp.available ? num(sp.oldCount) : '—',
       sub: sp.available
         ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
         : 'accounts unreachable',
     },
     {
-      label: 'B2C new & same-day amended',
+      channel: 'B2C',
+      label: 'New & same-day',
       value: bc ? num(bc.total - bc.oldAmendedCount) : '—',
       sub: bc
-        ? `${num(bc.newCount)} new · ${num(bc.sameDayAmendedCount)} same-day amended${bc.cancelledCount ? ` · ${num(bc.cancelledCount)} cancelled` : ''}`
+        ? `${num(bc.newCount)} new · ${num(bc.sameDayAmendedCount)} amended${bc.cancelledCount ? ` · ${num(bc.cancelledCount)} cxl` : ''}`
         : 'storefront unreachable',
     },
     {
-      label: 'B2C old amendments',
+      channel: 'B2C',
+      label: 'Old amendments',
       value: bc ? num(bc.oldAmendedCount) : '—',
-      sub: bc
-        ? (bc.oldAmendedCount ? plural(bc.oldAmendedCount, 'older booking re-issued', 'older bookings re-issued') : 'none re-opened')
-        : 'storefront unreachable',
+      sub: bc ? (bc.oldAmendedCount ? 'older bookings re-issued' : 'none re-opened') : 'storefront unreachable',
     },
   ]
   // The cancellation workflow: requests moved to cancel pending in the period
@@ -2005,21 +2020,20 @@ function summaryStrip(d: ReportData): string {
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests travelling` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} arriving in 7 days` },
     {
-      label: 'Moved to cancel pending',
+      // Moved to cancel pending in the period — each needs accounts approval.
+      label: 'Cancel requested',
       value: cf ? num(cf.requested) : '—',
       sub: cf
-        ? (cf.requested
-          ? `${num(cf.requestedAwaiting)} still need accounts approval`
-          : 'no cancel request')
+        ? (cf.requested ? `${num(cf.requestedAwaiting)} await accounts` : 'no cancel request')
         : 'not readable',
       tone: cf && cf.requestedAwaiting ? 'warn' : undefined,
     },
     {
-      label: 'Accounts approved cancels',
+      // Accounts approved in the period; how many were same-day, and the
+      // whole queue still waiting on accounts.
+      label: 'Cancel approved',
       value: cf ? num(cf.approved) : '—',
-      sub: cf
-        ? `${num(cf.approvedSameDay)} same-day · ${num(cf.awaitingAll)} awaiting approval in all`
-        : 'not readable',
+      sub: cf ? `${num(cf.approvedSameDay)} same-day · ${num(cf.awaitingAll)} pending` : 'not readable',
       tone: cf && cf.awaitingAll ? 'warn' : cf ? 'good' : undefined,
     },
   ]
