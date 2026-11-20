@@ -33,8 +33,11 @@
  * Read-only. Never allowed to sink the report: a failure returns
  * `available: false` and the mail prints a one-line note in place of the section.
  */
+import type { RowDataPacket } from 'mysql2/promise'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
+import { accountsQuery } from '@/lib/accounts-db'
+import { fetchOrderChainFacts } from '@/lib/b2c-order-chain'
 import { inSelectedCountries } from './booking-lines'
 import { collectOpsDay, type OpsDayRow } from './ops-day-data'
 import { callState, reconfirmState } from './ops-board-states'
@@ -151,6 +154,103 @@ export interface OpsBoardDigest {
   /** False when the TE call tables could not be read — the call cards are partial. */
   callDataAvailable: boolean
   truncated: boolean
+  /** The B2C invoice filter — see {@link b2cInvoiceFilter}. Absent on fixture runs. */
+  b2cFilter?: B2cBoardFilter
+}
+
+/**
+ * B2C files are counted only when they are the Aahaas B2C invoice mail's
+ * bookings — the same rule that took the B2C tile from 18 to 8 (b2c-day.ts):
+ * a storefront order with no B2C invoice is a checkout attempt or an unpaid
+ * link, not a booking, and an agent-portal order is the B2B Flights report's.
+ */
+export interface B2cBoardFilter {
+  /** False when the storefront or the accounts ledger could not be read — nothing was left out. */
+  checked: boolean
+  /** B2C files left off the board, by reason. */
+  notInvoiced: number
+  agent: number
+  /** Refs left out, for the workbook / a reader who wants to look. */
+  refs: string[]
+  error?: string
+}
+
+/**
+ * Storefront orders placed before this were not all invoiced — automatic B2C
+ * invoicing (B2cAutoInvoiceService) went live on 28 Oct 2026. A guest booked
+ * before then is still travelling and still counted, invoice or not.
+ */
+export const B2C_INVOICED_SINCE = '2026-10-28'
+
+interface InvKeyRow extends RowDataPacket { k: string | null }
+interface AgentRow extends RowDataPacket { checkout_id: number }
+
+/**
+ * Which B2C board files to leave out. Read-only: SELECTs on the storefront
+ * (order chain) and the accounts ledger (invoice numbers, agent markers), by
+ * exact invoice number so the ledger read is an index lookup, not a scan.
+ * Never throws — on any failure nothing is left out and `checked` is false.
+ */
+async function b2cInvoiceFilter(rows: OpsDayRow[]): Promise<{ drop: Set<string>; filter: B2cBoardFilter }> {
+  const drop = new Set<string>()
+  const filter: B2cBoardFilter = { checked: false, notInvoiced: 0, agent: 0, refs: [] }
+
+  // An OPS B2C booking's ref is its storefront order id ("16299").
+  const b2c = rows.filter(r => bookingSourceOf(r.agent) === 'B2C' && /^\d+$/.test(String(r.bookingRef).trim()))
+  if (!b2c.length) return { drop, filter: { ...filter, checked: true } }
+
+  try {
+    const orderIds = Array.from(new Set(b2c.map(r => Number(String(r.bookingRef).trim()))))
+    const facts = await fetchOrderChainFacts(orderIds)
+
+    // Only orders placed since automatic invoicing; the booking is the chain's
+    // original order (an amendment order 16294 is invoiced as AHS-15026R2).
+    const chainOf = new Map<number, number>()
+    for (const id of orderIds) {
+      const f = facts.get(id)
+      const placed = String(f?.checkoutDate ?? '').slice(0, 10)
+      if (!f || !placed || placed < B2C_INVOICED_SINCE) continue
+      chainOf.set(id, f.chainId)
+    }
+    const chains = Array.from(new Set(chainOf.values())).filter(n => Number.isInteger(n) && n > 0)
+    if (!chains.length) return { drop, filter: { ...filter, checked: true } }
+
+    // Integers only (filtered above), so the IN lists are safe literals.
+    const keys = chains.flatMap(c => [`'AHS-${c}'`, `'AHS${c}'`]).join(',')
+    const [invRows, agentRows] = await Promise.all([
+      accountsQuery<InvKeyRow>(
+        `SELECT DISTINCT COALESCE(NULLIF(gi.base_invoice_number, ''), gi.original_invoice_number, gi.invoice_number) AS k
+           FROM generated_invoices gi
+          WHERE gi.invoice_number IN (${keys})
+             OR gi.base_invoice_number IN (${keys})
+             OR gi.original_invoice_number IN (${keys})`,
+      ),
+      accountsQuery<AgentRow>(
+        `SELECT DISTINCT checkout_id FROM b2c_agent_orders WHERE checkout_id IN (${chains.join(',')})`,
+      ),
+    ])
+    const invoiced = new Set<number>()
+    for (const r of invRows) {
+      const m = String(r.k ?? '').toUpperCase().match(/^AHS-?0*(\d+)/)
+      if (m) invoiced.add(Number(m[1]))
+    }
+    const agents = new Set(agentRows.map(r => Number(r.checkout_id)))
+
+    for (const r of b2c) {
+      const chain = chainOf.get(Number(String(r.bookingRef).trim()))
+      if (chain === undefined) continue
+      if (agents.has(chain)) {
+        drop.add(r.bookingRef); filter.agent += 1; filter.refs.push(r.bookingRef)
+      } else if (!invoiced.has(chain)) {
+        drop.add(r.bookingRef); filter.notInvoiced += 1; filter.refs.push(r.bookingRef)
+      }
+    }
+    return { drop, filter: { ...filter, checked: true } }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn('[Reports] B2C invoice filter skipped — every B2C file counted:', message)
+    return { drop: new Set(), filter: { checked: false, notInvoiced: 0, agent: 0, refs: [], error: message } }
+  }
 }
 
 // ─── Vocabulary ───────────────────────────────────────────────────────────────
@@ -370,10 +470,14 @@ export async function collectOpsBoardDigest(
 
   try {
     const board = await collectOpsDay({ from, to, timezone: window.timezone })
-    return digestBoardRows(board.rows, from, countries, {
+    // B2C files that are not B2C invoice bookings leave every figure below —
+    // Today, Next 7 days, the checks and the workbook alike.
+    const { drop, filter } = await b2cInvoiceFilter(board.rows)
+    const digest = digestBoardRows(board.rows.filter(r => !drop.has(r.bookingRef)), from, countries, {
       callDataAvailable: board.callDataAvailable && board.approvalDataAvailable,
       truncated: board.truncated,
     })
+    return { ...digest, b2cFilter: filter }
   } catch (error) {
     console.warn('[Reports] ops board digest failed:', error instanceof Error ? error.message : error)
     return {

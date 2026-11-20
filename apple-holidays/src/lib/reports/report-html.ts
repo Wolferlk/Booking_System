@@ -29,7 +29,8 @@ import type {
 import { todayNewAndUpdated } from './report-data'
 import { activitySection } from './activity-html'
 import type { CountCheckSection, CountCheckTally } from './count-check'
-import type { BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
+import type { B2cBoardFilter, BoardDay, BoardRow, BoardSegment, BoardView } from './ops-board-digest'
+import { B2C_INVOICED_SINCE } from './ops-board-digest'
 import type { ReadinessCheck, ReadinessState } from '@/lib/booking-readiness'
 import { driverBriefState, qcRoundState, ticketsSentState } from './ops-board-states'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
@@ -225,7 +226,7 @@ function b2cDayBlock(d: ReportData): string {
       ? `<strong style="color:${C.ink};">${esc(l.invoiceNumber)}</strong>`
       : `<strong style="color:${C.ink};">${esc(l.bookingRef)}</strong><div style="color:${C.bad};font-size:11px;">not invoiced yet</div>`, { nowrap: true })}
     ${td(kindPill(l.kind))}
-    ${td(truncate(l.guest || l.customer, 26))}
+    ${td(truncate(l.guest || l.customer, 34))}
     ${td(`<span style="font-size:11px;">${when(l)}</span>`, { nowrap: true, color: C.muted })}
     ${td(l.amount !== null && l.currency ? money(l.amount, l.currency) : '—', { align: 'right', nowrap: true, bold: true })}
   </tr>`).join('')
@@ -1752,7 +1753,25 @@ function boardList(title: string, rows: BoardRow[], opts: { accent: string; bg: 
   </div>`
 }
 
-function boardViewBlock(title: string, tag: string, tagColor: string, v: BoardView, extra = ''): string {
+/**
+ * Under the segment table: which B2C files the board left out, so a smaller
+ * B2C figure is never read as lost bookings — the same rule as the B2C tile.
+ */
+function b2cFilterNote(f: B2cBoardFilter | undefined): string {
+  if (!f) return ''
+  if (!f.checked) {
+    return `<div class="more">B2C invoice check skipped — the storefront or accounts ledger could not be read, so every B2C file is counted.</div>`
+  }
+  const parts = [
+    f.notInvoiced ? `${num(f.notInvoiced)} with no B2C invoice (checkout attempt / unpaid link)` : '',
+    f.agent ? `${num(f.agent)} agent-portal order${f.agent === 1 ? '' : 's'} (Aahaas B2B Flights report)` : '',
+  ].filter(Boolean)
+  return `<div class="more">B2C counts only Aahaas B2C invoice bookings, as the B2C invoice mail does${
+    parts.length ? ` — left out across today and the next 7 days: ${parts.map(esc).join(' · ')}` : ' — nothing left out'
+  }. Orders placed before ${esc(formatReportDate(B2C_INVOICED_SINCE))} (before automatic invoicing) are always counted.</div>`
+}
+
+function boardViewBlock(title: string, tag: string, tagColor: string, v: BoardView, extra = '', filter?: B2cBoardFilter): string {
   return `<div style="padding:4px 0 6px 0;">
       <span class="pill" style="background:${tagColor};color:#ffffff;">${esc(tag)}</span>
       <span style="font:800 15px/1.4 ${FONT};color:${C.ink};padding-left:6px;">${esc(title)}</span>
@@ -1761,6 +1780,7 @@ function boardViewBlock(title: string, tag: string, tagColor: string, v: BoardVi
     <div style="padding-top:8px;">${boardMovementTiles(v)}</div>
     <div class="h3">B2B · B2C · Hotel Only · Cancelled</div>
     ${boardSegmentTable(v)}
+    ${b2cFilterNote(filter)}
     <div class="h3" style="padding-top:16px;">Checks</div>
     ${boardCheckTable(v)}
     ${boardReadyStrip(v)}
@@ -1814,7 +1834,7 @@ function opsBoardSection(d: ReportData): string {
     'Operations board',
     `Today and the next 7 days · B2B and B2C apart, Hotel Only and Cancelled on their own lines · same rules as the dashboard`,
     '#4f46e5',
-    boardViewBlock('Today', 'TODAY', '#4f46e5', t) +
+    boardViewBlock('Today', 'TODAY', '#4f46e5', t, '', b.b2cFilter) +
       `<div style="border-top:1px dashed ${C.line};margin:10px 0 14px 0;font-size:0;line-height:0;">&nbsp;</div>` +
       boardViewBlock('Next 7 days', 'D+1 → D+7', '#0f766e', w,
         `<div class="h3">Day by day</div>${boardPerDayTable(w.perDay)}<div style="padding-top:16px;">${countries}</div>`) +

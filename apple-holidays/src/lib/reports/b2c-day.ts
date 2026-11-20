@@ -48,7 +48,10 @@
  * unreachable database gives `available: false` and the mail says so.
  */
 import type { RowDataPacket } from 'mysql2/promise'
-import { b2cQuery } from '@/lib/b2c-db'
+import { b2cQuery, fetchFlightBookings, fetchOrderCustomers } from '@/lib/b2c-db'
+import { parseFlightBooking, type ParsedFlightBooking } from '@/lib/b2c-flight'
+import { resolveLeadPassenger } from '@/lib/b2c-booking-map'
+import { loadOrderTravellers } from '@/lib/b2c-lead-name'
 import { accountsQuery } from '@/lib/accounts-db'
 import { fetchOrderChainFacts } from '@/lib/b2c-order-chain'
 import { loadTestBookings, testBookingKey } from '@/lib/test-bookings'
@@ -179,6 +182,48 @@ const INV_COLUMNS = `gi.invoice_number, gi.base_invoice_number, gi.original_invo
        gi.is_cancellation, gi.revision_number, gi.created_at, gi.customer_name, gi.guest_name,
        gi.currency, gi.grand_total, gi.total_amount`
 
+/** A name that names somebody — "??" (AHS-16277's stored guest) and logins do not. */
+function personName(v: string | null | undefined): string | null {
+  const t = String(v ?? '').replace(/\s+/g, ' ').trim()
+  return t && /[A-Za-zÀ-ɏЀ-ӿ؀-ۿऀ-෿]/.test(t) && !/\d|@/.test(t) ? t : null
+}
+
+/**
+ * The lead passenger per order, as the importer and AahaasFlow name it
+ * (`resolveLeadPassenger`): the Confirm panel, the payment link, Flow's intake
+ * row, the flight manifest, then the checkout travellers. The store account
+ * ("admin6611") is never returned — the caller falls back to the invoice.
+ *
+ * Read-only: SELECTs on the storefront only (`loadOrderTravellers` reads;
+ * its sibling `repairB2cLeadName`, which writes, is not used here). Never
+ * throws — an unreadable store leaves the invoice's own guest name.
+ */
+async function leadNames(orderIds: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>()
+  if (!orderIds.length) return out
+  try {
+    const [customers, flightRows, travellers] = await Promise.all([
+      fetchOrderCustomers(orderIds),
+      fetchFlightBookings(orderIds),
+      loadOrderTravellers(orderIds),
+    ])
+    const customerOf = new Map(customers.map(c => [Number(c.order_id), c]))
+    const flightsOf = new Map<number, ParsedFlightBooking[]>()
+    for (const row of flightRows) {
+      const f = parseFlightBooking(row)
+      flightsOf.set(f.orderId, [...(flightsOf.get(f.orderId) ?? []), f])
+    }
+    for (const id of orderIds) {
+      const lead = resolveLeadPassenger(flightsOf.get(id) ?? [], travellers.byOrder.get(id), customerOf.get(id))
+      const name = lead.via === 'store-account' || lead.via === 'none' ? null : personName(lead.name)
+      if (name) out.set(id, name)
+    }
+  } catch (err) {
+    console.warn('[Reports] B2C lead names unavailable — invoice guest names used:', err instanceof Error ? err.message : err)
+  }
+  return out
+}
+
 export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
   try {
     const tests = await loadTestBookings()
@@ -299,6 +344,15 @@ export async function collectB2cDay(w: ReportWindow): Promise<B2cDaySection> {
         raisedAt: iso(doc.created_at),
       })),
     ]
+
+    // Guest = the order's lead passenger, not the name the invoice was raised
+    // under: a desk order on the shared login can carry "??" there (AHS-16277,
+    // whose lead is Ms Jaya Vaishnavie Sivapatham). The invoice's own name
+    // stands only when it names a person and the store names nobody.
+    const leads = await leadNames(lines.map(l => Number(l.bookingRef.replace(/\D/g, ''))).filter(n => n > 0))
+    for (const l of lines) {
+      l.guest = leads.get(Number(l.bookingRef.replace(/\D/g, ''))) ?? personName(l.guest)
+    }
 
     const count = (k: B2cDayLine['kind']) => lines.filter(l => l.kind === k).length
 
