@@ -1998,9 +1998,30 @@ function summaryStrip(d: ReportData): string {
         : 'storefront unreachable',
     },
   ]
+  // The cancellation workflow: requests moved to cancel pending in the period
+  // (they need accounts approval), and what accounts approved in it.
+  const cf = d.cancellationFlow?.available ? d.cancellationFlow : null
   const ground: RibbonTile[] = [
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests travelling` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} arriving in 7 days` },
+    {
+      label: 'Moved to cancel pending',
+      value: cf ? num(cf.requested) : '—',
+      sub: cf
+        ? (cf.requested
+          ? `${num(cf.requestedAwaiting)} still need accounts approval`
+          : 'no cancel request')
+        : 'not readable',
+      tone: cf && cf.requestedAwaiting ? 'warn' : undefined,
+    },
+    {
+      label: 'Accounts approved cancels',
+      value: cf ? num(cf.approved) : '—',
+      sub: cf
+        ? `${num(cf.approvedSameDay)} same-day · ${num(cf.awaitingAll)} awaiting approval in all`
+        : 'not readable',
+      tone: cf && cf.awaitingAll ? 'warn' : cf ? 'good' : undefined,
+    },
   ]
   const ready: RibbonTile[] = [
     {
@@ -2040,7 +2061,7 @@ function summaryStrip(d: ReportData): string {
   <tr><td style="background:${HERO.deep};padding:12px 13px 14px 13px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
       ${row('Intake — B2B · B2C', intake)}
-      ${row('On the ground', ground)}
+      ${row('On the ground · Cancellations', ground)}
       ${row('Readiness', ready)}
       ${lookAheadRow(d)}
     </table>

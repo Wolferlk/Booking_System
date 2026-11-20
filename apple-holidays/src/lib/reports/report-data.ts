@@ -678,6 +678,8 @@ export interface ReportData {
    * (B2C)" mail counts them. See `b2c-day.ts`.
    */
   b2cDay?: B2cDaySection | null
+  /** Cancel requests and accounts approvals in the period. Optional: stored / built-elsewhere data has none. */
+  cancellationFlow?: CancellationFlowSection | null
   /** Test bookings the weekly / monthly review left out, listed. See TestBookingsSection. */
   testBookings: TestBookingsSection
   /** AI-call results, guest feedback forms and desk feedback. Weekly / monthly only. */
@@ -1652,6 +1654,75 @@ async function collectComplaints(w: Pick<ReportWindow, 'start' | 'end'>, countri
 }
 
 /** Every confirmed tour that has not started yet, from tomorrow onwards. */
+/**
+ * The cancellation workflow for the period — the two summary cards.
+ *
+ * A file handler's request moves a booking to PENDING_CANCELLATION and stamps
+ * `cancelRequestedAt`; accounts then approves it (status CANCELLED,
+ * `cancelDecidedAt`) or rejects it (the request trail is cleared). See
+ * api/bookings/[ref]/cancel/decision.
+ *
+ *   • requested         — moved to cancel pending inside the window, still on
+ *                         record (a rejected request clears its own stamp)
+ *   • requestedAwaiting — of those, still waiting on accounts now
+ *   • approved          — cancellations accounts approved inside the window
+ *   • approvedSameDay   — of those, requested inside the window too
+ *   • awaitingAll       — every booking waiting on accounts now, any date
+ *
+ * Read-only, country-scoped like every other booking section. Never throws.
+ */
+export interface CancellationFlowSection {
+  available: boolean
+  requested: number
+  requestedAwaiting: number
+  approved: number
+  approvedSameDay: number
+  awaitingAll: number
+}
+
+async function collectCancellationFlow(w: ReportWindow, countries: string[]): Promise<CancellationFlowSection> {
+  const empty: CancellationFlowSection = {
+    available: false, requested: 0, requestedAwaiting: 0, approved: 0, approvedSameDay: 0, awaitingAll: 0,
+  }
+  try {
+    const scope = await reportScope(countries)
+    const select = {
+      bookingRef: true, operationCountry: true, tourDestination: true,
+      status: true, cancelRequestedAt: true, cancelDecidedAt: true,
+    } as const
+    const [requested, approved, awaiting] = await Promise.all([
+      prisma.booking.findMany({
+        where: { cancelRequestedAt: { gte: w.start, lt: w.end }, ...(scope ?? {}) },
+        select,
+      }),
+      prisma.booking.findMany({
+        where: { status: 'CANCELLED', cancelDecidedAt: { gte: w.start, lt: w.end }, ...(scope ?? {}) },
+        select,
+      }),
+      prisma.booking.findMany({
+        where: { status: 'PENDING_CANCELLATION', ...(scope ?? {}) },
+        select,
+      }),
+    ])
+    const mine = <T extends { operationCountry: string | null; bookingRef: string; tourDestination: string | null }>(rows: T[]) =>
+      rows.filter(r => inSelectedCountries(resolveCountry(r.operationCountry, r.bookingRef, r.tourDestination), countries))
+    const req = mine(requested)
+    const appr = mine(approved)
+    const inWindow = (d: Date | null) => d !== null && d >= w.start && d < w.end
+    return {
+      available: true,
+      requested: req.length,
+      requestedAwaiting: req.filter(r => r.status === 'PENDING_CANCELLATION').length,
+      approved: appr.length,
+      approvedSameDay: appr.filter(r => inWindow(r.cancelRequestedAt)).length,
+      awaitingAll: mine(awaiting).length,
+    }
+  } catch (err) {
+    console.warn('[Reports] cancellation flow unavailable:', err instanceof Error ? err.message : err)
+    return empty
+  }
+}
+
 async function collectUpcoming(w: ReportWindow, countries: string[], maxRows: number): Promise<UpcomingSection> {
   const scope = await reportScope(countries)
   const tomorrow = zonedDayStart(shiftDate(w.today, 1), w.timezone)
@@ -2016,7 +2087,7 @@ async function collectActivitySplitSection(
   const periodic = window.period !== 'DAILY'
   const cohort = await collectAppleCohort(window, { excludeTests: periodic })
 
-  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard, b2cDay] = await Promise.all([
+  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming, opsBoard, b2cDay, cancellationFlow] = await Promise.all([
     // The two figures this mail now leads with, read from the accounts ledger
     // so all three daily mails describe the day with one set of numbers.
     // `cohort.total` is the Apple System count they are checked against.
@@ -2042,6 +2113,8 @@ async function collectActivitySplitSection(
     // on the storefront and the accounts ledger; never throws. Only when the
     // report is not narrowed to a country — B2C orders carry no country scope.
     countries.length ? Promise.resolve(null) : collectB2cDay(window),
+    // Cancel requests and accounts approvals — the summary strip's two cards.
+    collectCancellationFlow(window, countries),
   ])
 
   // Only the periodic mails carry analytics, and only they pay for the extra
@@ -2093,6 +2166,7 @@ async function collectActivitySplitSection(
     upcoming,
     opsBoard,
     b2cDay,
+    cancellationFlow,
     insights,
     testBookings,
     guestVoice,
