@@ -69,7 +69,17 @@ export function message(err: unknown): string {
 export async function importFromAppleSystem(
   raw: string,
   ref: string,
-): Promise<{ booking: { id: string; bookingRef: string } | null; attempt: Attempt }> {
+): Promise<{
+  booking: { id: string; bookingRef: string } | null
+  attempt: Attempt
+  /**
+   * True only when the Apple System answered and definitively holds no booking
+   * for this ref. A failed lookup or an unmappable quote is NOT "not found" —
+   * the OneDrive monitor relies on this to decide whether it may create the
+   * booking from a TC file itself.
+   */
+  notFound?: boolean
+}> {
   let items: ASBookingListItem[]
   try {
     // No status filter: a confirmation that has moved on from status 2 is still
@@ -94,6 +104,7 @@ export async function importFromAppleSystem(
   if (!match) {
     return {
       booking: null,
+      notFound: true,
       attempt: {
         source: 'applesystem',
         ok: false,

@@ -35,6 +35,7 @@ import { statusAfterAmendment } from '@/lib/state-machine'
 import { loadChildGuard, resyncFlights, buildGuardReport } from '@/lib/data-protection-server'
 import { describeGuardReport, type ChildGuardReport } from '@/lib/data-protection'
 import type { OperationCountry } from '@prisma/client'
+import { wasImportedFromAppleSystem } from '@/lib/as-reconcile'
 
 // ── Drive config ──────────────────────────────────────────────────────────────
 
@@ -122,15 +123,54 @@ function isBookingFolder(item: DriveItem): boolean {
   return !!(item.folder && BOOKING_FOLDER_RE.test(item.name))
 }
 
-function isTCFile(name: string): boolean {
+/**
+ * How strongly a file name says "this is our Tour Confirmation" — 0 means it is
+ * not a TC at all. Higher wins when a folder holds several candidates.
+ *
+ *   3  exactly "TC.docx" / "TC.pdf"                     (VN / SG / MY standard)
+ *   2  named after the booking ref, e.g. "IS48231.docx" (SL standard)
+ *   1  "Tour Confirmation" / "Reconfirmation" in the name
+ *   1  SL drive only: any name containing "confirm"     (handles typos like "Confirmaiton")
+ *
+ * Booking folders also hold SUPPLIER confirmations — hotel / cruise vouchers
+ * such as "BOOKING CONFIRMATION - ASIA CHARM TRAVEL - 4020….pdf",
+ * "CONFIRM BOOKING_….pdf", "order-confirmation-16030.pdf". Those describe one
+ * service, not the trip; reading one as the TC rewrote the whole booking to a
+ * single hotel stay (VN40813, Nov 2026). So outside SL a bare "confirm" is not
+ * enough, and anything that reads like a supplier voucher is never a TC.
+ */
+function tcFileRank(name: string, driveKey?: string): number {
   const n = name.trim()
-  // VN format: exactly "TC.docx" or "TC.pdf"
-  if (/^TC\.(docx?|pdf)$/i.test(n)) return true
-  // SL/other format: file with "confirm" in the name (handles typos like "Confirmaiton")
-  if (/confirm/i.test(n) && /\.(docx?|pdf)$/i.test(n)) return true
-  // SL format: file named exactly as the booking ref e.g. "IS48231.docx"
-  if (/^(IS|VN|SG|MY|AH)\d+\.(docx?|pdf)$/i.test(n)) return true
-  return false
+  if (!/\.(docx?|pdf)$/i.test(n)) return 0
+  if (/^TC\.(docx?|pdf)$/i.test(n)) return 3
+  if (/^(IS|VN|SG|MY|AH)\d+\.(docx?|pdf)$/i.test(n)) return 2
+  if (!/confirm/i.test(n)) return 0
+
+  // Our own documents. "rec+onfirm" tolerates the "Final Recconfirmation" typo
+  // seen on the SG drive; checked first so "IS… Tour Confirmation Voucher" stays a TC.
+  if (/tour[\s_-]*(re)?confirm|rec+onfirm/i.test(n)) return 1
+
+  const isSupplierVoucher =
+    /booking[\s_-]*confirm|confirm[\s_-]*booking|order[\s_-]*confirm|group[\s_-]*confirm|voucher|confirmation[\s_-]*letter|confirm_\d/i.test(n)
+  if (isSupplierVoucher) return 0
+
+  if (driveKey === 'SL') return 1
+  return 0
+}
+
+function isTCFile(name: string, driveKey?: string): boolean {
+  return tcFileRank(name, driveKey) > 0
+}
+
+/** The best TC candidate in a folder, or undefined. Ties keep listing order. */
+function pickTCFile<T extends { name: string }>(files: T[], driveKey?: string): T | undefined {
+  let best: T | undefined
+  let bestRank = 0
+  for (const f of files) {
+    const r = tcFileRank(f.name, driveKey)
+    if (r > bestRank) { best = f; bestRank = r }
+  }
+  return best
 }
 
 function isPNLFile(name: string): boolean {
@@ -337,7 +377,7 @@ export async function scanDrive(cfg: DriveConfig): Promise<ScanResult> {
     const bookingRef = extractRefFromFolderName(parentName)
     if (!bookingRef) continue
 
-    const hasActionable = files.some(f => isTCFile(f.name) || isPNLFile(f.name))
+    const hasActionable = files.some(f => isTCFile(f.name, cfg.key) || isPNLFile(f.name))
     if (!hasActionable) {
       // Log non-actionable files quietly
       for (const f of files) {
@@ -390,7 +430,7 @@ async function processTCAndPNL(
     }
   }
 
-  const tcFile  = files.find(f => isTCFile(f.name))
+  const tcFile  = pickTCFile(files, cfg.key)
   const pnlFile = files.find(f => isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
 
   if (tcFile) {
@@ -424,14 +464,18 @@ async function processTCAndPNL(
         })
       }
     } catch (err) {
-      result.errors += 1
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`    ❌ TC error [${bookingRef}]: ${msg}`)
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-      })
+      if (err instanceof OneDriveSkip) {
+        await recordSkip(cfg, tcFile, bookingRef, err, result)
+      } else {
+        result.errors += 1
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`    ❌ TC error [${bookingRef}]: ${msg}`)
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+        })
+      }
     }
   }
 
@@ -449,14 +493,18 @@ async function processTCAndPNL(
         rawData: JSON.stringify({ linesProcessed: lines }),
       })
     } catch (err) {
-      result.errors += 1
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`    ❌ PNL error [${bookingRef}]: ${msg}`)
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-        itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-      })
+      if (err instanceof OneDriveSkip) {
+        await recordSkip(cfg, pnlFile, bookingRef, err, result)
+      } else {
+        result.errors += 1
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`    ❌ PNL error [${bookingRef}]: ${msg}`)
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+        })
+      }
     }
   }
 
@@ -612,6 +660,33 @@ export async function scanTodayAllDrives(): Promise<ScanResult[]> {
   return results
 }
 
+// ── Apple System first ────────────────────────────────────────────────────────
+//
+// The Apple System is the source of truth for every booking it holds. OneDrive
+// files are only a fallback for refs the Apple System does not have:
+//
+//   • A booking that was imported from the Apple System is NEVER written by a
+//     OneDrive file — not its TC data, not its P&L. (A supplier voucher read as
+//     a TC rewrote VN40813 and 1,400+ other imported bookings this way.)
+//   • A ref that is not in this system yet is looked up in the Apple System
+//     first. Only when the Apple System definitively has no such booking is it
+//     created from the OneDrive TC. If the lookup fails, or the quote cannot be
+//     mapped, nothing is created — a person imports it.
+
+/** A OneDrive file that was deliberately not applied. Logged as SKIPPED, not ERROR. */
+class OneDriveSkip extends Error {
+  constructor(message: string, public bookingCreated = false) {
+    super(message)
+    this.name = 'OneDriveSkip'
+  }
+}
+
+const AS_PROTECTED_MSG = 'Booking was created from the Apple System — OneDrive files never update it'
+
+async function assertNotAppleSystemBooking(bookingId: string): Promise<void> {
+  if (await wasImportedFromAppleSystem(bookingId)) throw new OneDriveSkip(AS_PROTECTED_MSG)
+}
+
 // ── TC processing ─────────────────────────────────────────────────────────────
 
 async function processTCFile(
@@ -622,6 +697,26 @@ async function processTCFile(
   folderUrl?:  string,
 ): Promise<{ isNew: boolean; guard?: ChildGuardReport }> {
   console.log(`[OneDrive] Processing TC: ${item.name} → ${bookingRef}`)
+
+  // Checked before the download and the AI extraction, so a protected or
+  // Apple-System-owned booking costs nothing.
+  const already = await prisma.booking.findUnique({ where: { bookingRef }, select: { id: true } })
+  if (already) {
+    await assertNotAppleSystemBooking(already.id)
+  } else {
+    // Imported lazily: booking-reconcile imports this module.
+    const { importFromAppleSystem } = await import('@/lib/booking-reconcile')
+    const as = await importFromAppleSystem(bookingRef, bookingRef)
+    if (as.booking) {
+      console.log(`[OneDrive] ${bookingRef}: ${as.attempt.detail} — TC file "${item.name}" not used`)
+      throw new OneDriveSkip(`Imported from the Apple System instead of this file — ${as.attempt.detail}`, true)
+    }
+    if (!as.notFound) {
+      console.warn(`[OneDrive] ${bookingRef}: not created — ${as.attempt.detail}`)
+      throw new OneDriveSkip(`Not created from OneDrive: the Apple System could not be checked or imported (${as.attempt.detail}). Import it from the Apple System by hand.`)
+    }
+    console.log(`[OneDrive] ${bookingRef}: not in the Apple System — creating from OneDrive TC`)
+  }
 
   const buffer = await downloadDriveItem(driveId, item.id)
   let text: string
@@ -813,6 +908,10 @@ async function processPNLFile(
     return 0
   }
 
+  // Apple System bookings keep their own P&L — checked before the download/AI.
+  const exact = await prisma.booking.findUnique({ where: { bookingRef }, select: { id: true } })
+  if (exact) await assertNotAppleSystemBooking(exact.id)
+
   const buffer = await downloadDriveItem(driveId, item.id)
 
   let parsed: Awaited<ReturnType<typeof parsePNLXlsx>>
@@ -862,6 +961,8 @@ async function processPNLFile(
   if (!booking) {
     throw new Error(`No booking found for PNL ref "${bookingRef}"`)
   }
+  // The numeric-suffix fallback can resolve a different row — check it too.
+  await assertNotAppleSystemBooking(booking.id)
 
   let lines = parsed.lineItems.map(l => ({ ...l }))
   const paxAdults   = parsed.paxAdults   || booking.paxAdults
@@ -943,6 +1044,19 @@ async function processPNLFile(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** A deliberate skip: logged as SKIPPED with its reason, never counted as an error. */
+async function recordSkip(
+  cfg: DriveConfig, file: DriveItem, bookingRef: string, skip: OneDriveSkip, result: ScanResult,
+): Promise<void> {
+  if (skip.bookingCreated) result.bookingsCreated += 1
+  console.log(`    ⏭  [${bookingRef}] "${file.name}": ${skip.message}`)
+  await upsertOneDriveEvent({
+    driveType: cfg.key, itemId: file.id, itemName: file.name,
+    itemPath: buildPath(file), webUrl: file.webUrl,
+    eventType: 'SKIPPED', bookingRef, status: 'SKIPPED', errorMessage: skip.message,
+  })
+}
 
 function noteProtection(result: ScanResult, ref: string, guard?: ChildGuardReport) {
   const note = describeGuardReport(guard)
@@ -1438,7 +1552,7 @@ async function processBookingFolderDirect(
     await prisma.booking.updateMany({ where: { bookingRef }, data: { onedriveFolderUrl: folderWebUrl } })
   }
 
-  const tcFile  = doTC  ? files.find(f => f.file && isTCFile(f.name)) : undefined
+  const tcFile  = doTC  ? pickTCFile(files.filter(f => f.file), cfg.key) : undefined
   const pnlFile = doPNL ? files.find(f => f.file && isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda')) : undefined
 
   if (tcFile) {
@@ -1456,13 +1570,17 @@ async function processBookingFolderDirect(
           eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
         })
       } catch (err) {
-        result.errors += 1
-        const msg = err instanceof Error ? err.message : String(err)
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-        })
+        if (err instanceof OneDriveSkip) {
+          await recordSkip(cfg, tcFile, bookingRef, err, result)
+        } else {
+          result.errors += 1
+          const msg = err instanceof Error ? err.message : String(err)
+          await upsertOneDriveEvent({
+            driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+            itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+            eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+          })
+        }
       }
     }
   }
@@ -1482,13 +1600,17 @@ async function processBookingFolderDirect(
           rawData: JSON.stringify({ linesProcessed: lines }),
         })
       } catch (err) {
-        result.errors += 1
-        const msg = err instanceof Error ? err.message : String(err)
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-        })
+        if (err instanceof OneDriveSkip) {
+          await recordSkip(cfg, pnlFile, bookingRef, err, result)
+        } else {
+          result.errors += 1
+          const msg = err instanceof Error ? err.message : String(err)
+          await upsertOneDriveEvent({
+            driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+            itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+            eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+          })
+        }
       }
     }
   }
