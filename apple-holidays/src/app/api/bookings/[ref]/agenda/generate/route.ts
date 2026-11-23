@@ -16,6 +16,7 @@ import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHA
 import { linkFlight, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
+import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -625,5 +626,20 @@ ${tqDocumentText
     }
   })
 
-  return buildApiSuccess({ items: finalItems }, `Generated ${finalItems.length} agenda items`)
+  // ── Confirmation descriptions ─────────────────────────────────────────────
+  // A new chart starts with the confirmation's own wording on every movement —
+  // the same text "Confirmation Descriptions" would load (confident matches
+  // only; the rest keep the generated paragraph).
+  const filled = await fillConfirmationDescriptions(params.ref, finalItems, {
+    arrivalDate: booking.arrivalDate,
+    fallback: booking.itineraryItems,
+  })
+  if (filled.replaced) {
+    console.log(`[agenda/generate] ${params.ref}: ${filled.replaced} description(s) set from the confirmation (${filled.source})`)
+  }
+
+  return buildApiSuccess(
+    { items: filled.items, confirmationDescriptions: { replaced: filled.replaced, source: filled.source } },
+    `Generated ${filled.items.length} agenda items`,
+  )
 }

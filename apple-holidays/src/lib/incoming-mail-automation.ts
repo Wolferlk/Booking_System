@@ -7,6 +7,7 @@ import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detec
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
+import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHARED_SERVICE_RE, PRIVATE_SERVICE_RE } from '@/lib/agenda-service-type'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
@@ -592,6 +593,17 @@ export async function upsertAgenda(
 
     if (detectCountryFromRef(bookingRef) === 'SRILANKA') {
       agendaItems = applySriLankaMovementDefaults(agendaItems)
+    }
+
+    // Start every movement with the confirmation's own description — the same
+    // text the agenda screen's "Confirmation Descriptions" would load.
+    const filled = await fillConfirmationDescriptions(bookingRef, agendaItems, {
+      arrivalDate: extracted.arrivalDate,
+      fallback: extracted.itineraryItems,
+    })
+    agendaItems = filled.items
+    if (filled.replaced) {
+      console.log(`[Automation] ${filled.replaced} agenda description(s) set from the confirmation for ${bookingRef} (${filled.source})`)
     }
 
     let agenda = await prisma.tourAgenda.findUnique({ where: { bookingId } })

@@ -909,6 +909,11 @@ export default function AgendaPage() {
     await Promise.all([loadAgenda(), loadWaSummary()])
   }
 
+  function confDescNote(data: { confirmationDescriptions?: { replaced?: number } } | undefined) {
+    const n = data?.confirmationDescriptions?.replaced ?? 0
+    return n ? `${n} description${n === 1 ? '' : 's'} taken from the confirmation` : undefined
+  }
+
   async function generateFromFile(file: File) {
     pendingExcel.current = null
     setGenerating(true); setShowUpload(false)
@@ -921,7 +926,7 @@ export default function AgendaPage() {
       const normalised = normaliseItems(json.data.items as AgendaItem[])
       setItems(normalised)
       await persistItems(normalised, true)
-      toast.success(`Generated & saved ${normalised.length} movement items`)
+      toast.success(`Generated & saved ${normalised.length} movement items`, { description: confDescNote(json.data) })
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Generation failed')
     } finally { setGenerating(false) }
@@ -937,7 +942,7 @@ export default function AgendaPage() {
       const normalised = normaliseItems(json.data.items as AgendaItem[])
       setItems(normalised)
       await persistItems(normalised, true)
-      toast.success(`Generated & saved ${normalised.length} movement items`)
+      toast.success(`Generated & saved ${normalised.length} movement items`, { description: confDescNote(json.data) })
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Generation failed')
     } finally { setGenerating(false) }
