@@ -9,7 +9,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import type { OperationCountry } from '@/lib/country-detection'
+import { countryLabel, type OperationCountry } from '@/lib/country-detection'
 import type { MappedBookingInput } from '@/lib/as-booking-map'
 import { saveAsExtras } from '@/lib/as-booking-extras'
 import { autoCreateTicketsOnImport } from '@/lib/as-auto-tickets'
@@ -76,6 +76,9 @@ export async function importMappedBooking(
       contactEmail: mapped.contactEmail,
       cancellationDeadline: opts.cancellationDeadline,
       operationCountry,
+      // AppleSystem sends no "Destination" line (the TC used to supply it), so
+      // derive it from the country the IS number resolved to.
+      tourDestination: operationCountry && operationCountry !== 'ALL' ? countryLabel(operationCountry) : null,
       createdById: opts.createdById,
       passengers: {
         create: mapped.passengers.map((p) => ({

@@ -22,7 +22,7 @@ import Modal from '@/components/ui/modal'
 import VerificationModal from '@/components/security/verification-modal'
 import { formatDate, formatDateTime, formatCurrency, getDaysUntilTrip, readApiResponse, cn } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
-import { countryLabel } from '@/lib/country-detection'
+import { countryLabel, type OperationCountry } from '@/lib/country-detection'
 import { getAvailableTransitions, STATUS_LABELS } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
@@ -649,6 +649,12 @@ export default function BookingDetailPage() {
   const opsReadyByEvent   = statusEvents.find(ev => ev.toState === 'OPERATIONS_READY')
   const bookingConfirmedBy = (confirmedByEvent?.actor?.name as string | undefined) || (booking.checkedBy as string | undefined) || null
   const operationReadyBy   = (opsReadyByEvent?.actor?.name as string | undefined) || (booking.reconfirmBy as string | undefined) || null
+  // Apple System imports carry no TC "Destination" line, so fall back to the
+  // booking's operation country (VN… → Vietnam) rather than showing a blank.
+  const opCountry = booking.operationCountry as OperationCountry | null | undefined
+  const tourDestination =
+    (booking.tourDestination as string | undefined)?.trim() ||
+    (opCountry && opCountry !== 'ALL' ? countryLabel(opCountry) : null)
   // Allocated drivers — unique names across all agenda assignments
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const allocatedDrivers: string[] = Array.from(new Set(
@@ -2331,8 +2337,8 @@ Wishing you a wonderful trip! ✈️
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Destination</p>
-              {booking.tourDestination
-                ? <p className="text-sm text-slate-700">{booking.tourDestination as string}</p>
+              {tourDestination
+                ? <p className="text-sm text-slate-700">{tourDestination}</p>
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             {booking.dealName && (
