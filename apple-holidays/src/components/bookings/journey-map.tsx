@@ -2017,11 +2017,18 @@ export default function JourneyMap({
   }, [fullscreen])
 
   // Keep the place strip tracking whichever card the map is on.
+  // Scrolls the strip itself only. `scrollIntoView` also scrolls every
+  // scrollable ancestor — on the agenda page that dragged the whole page up
+  // when Play was pressed, sliding the map under the sticky booking header.
   useEffect(() => {
     const focus = selectedId ?? activeId
-    if (!focus || !stripRef.current) return
-    stripRef.current.querySelector<HTMLElement>(`[data-place-id="${cssEscape(focus)}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    const strip = stripRef.current
+    if (!focus || !strip) return
+    const card = strip.querySelector<HTMLElement>(`[data-place-id="${cssEscape(focus)}"]`)
+    if (!card) return
+    const s = strip.getBoundingClientRect(), c = card.getBoundingClientRect()
+    const left = strip.scrollLeft + (c.left - s.left) - (s.width - c.width) / 2
+    strip.scrollTo({ left: Math.max(0, left), behavior: 'smooth' })
   }, [selectedId, activeId])
 
   const fitAll = useCallback(() => {

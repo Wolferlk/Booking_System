@@ -9,13 +9,13 @@
   Example: flight arrives 14:20 → meetingTime = "15:05"
 - Domestic flight: meetingTime = flight arrTime + 30 minutes  
   Example: flight arrives 10:00 → meetingTime = "10:30"
-- **serviceType = PVT_TRANSFER — ALWAYS. Airport transfers are NEVER SIC_TRANSFER or OWN_ARRANGEMENT.**
+- **serviceType = PVT_TRANSFER** — unless the confirmation title explicitly says "SIC" or "Shared" (then SIC_TRANSFER). Airport transfers are NEVER OWN_ARRANGEMENT.
 
 ### Departure
 - meetingTime = flight depTime − 3 hours  
   Example: flight departs 09:30 → meetingTime = "06:30"
 - fromPoint = hotel name
-- **serviceType = PVT_TRANSFER — ALWAYS.**
+- **serviceType = PVT_TRANSFER** — unless the confirmation title explicitly says "SIC" or "Shared" (then SIC_TRANSFER).
 
 ---
 
@@ -60,9 +60,9 @@ If the activity is entrance tickets, passes, or own-arrangement activities (no g
 
 Apply in this exact priority order:
 
-1. **Airport transfer (any item where fromPoint or toPoint is an airport, terminal, or flight)** → `PVT_TRANSFER` always, no exceptions.
-2. **Leisure day / free day / at leisure / own arrangement / hotel stay with no scheduled activity** → `OWN_ARRANGEMENT`. Set meetingTime = null.
-3. **Explicitly labelled "SIC" or "shared" tour/transfer** → `SIC_TRANSFER`.
+1. **Leisure day / free day / at leisure / own arrangement / hotel stay with no scheduled activity** → `OWN_ARRANGEMENT`. Set meetingTime = null. Never `PVT_TRANSFER`, even if fromPoint/toPoint are filled in.
+2. **Airport transfer (any item where fromPoint or toPoint is an airport, terminal, or flight)** → `PVT_TRANSFER`, unless the title explicitly says "SIC" or "Shared".
+3. **Explicitly labelled "SIC", "Shared", "Sharing" or "Seat-in-coach" tour/transfer** → `SIC_TRANSFER`.
 4. **Private tour, private transfer, cruise, inter-city transfer with a guide or vehicle** → `PVT_TRANSFER`.
 5. **Ticket only, entrance only, self-guided** → `OWN_ARRANGEMENT`.
 

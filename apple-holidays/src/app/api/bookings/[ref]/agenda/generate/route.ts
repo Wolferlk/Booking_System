@@ -12,6 +12,7 @@ import path from 'path'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { detectLeisureDay } from '@/lib/leisure-day'
+import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHARED_SERVICE_RE, PRIVATE_SERVICE_RE } from '@/lib/agenda-service-type'
 import { linkFlight, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
@@ -188,7 +189,7 @@ FIELD DEFINITIONS — READ CAREFULLY:
                 Null for OWN_ARRANGEMENT and ACCOMMODATION.
 ● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "OWN_ARRANGEMENT" | "INTERNAL_TOUR".
                   PVT_TRANSFER = Private Transfer (default when not clearly stated)
-                  SIC_TRANSFER = Shared bus/coach (mentions "SIC")
+                  SIC_TRANSFER = Shared bus/coach (title says "SIC", "Shared", "Sharing" or "Seat-in-coach")
                   OWN_ARRANGEMENT = Guest arranges own transport / free day / leisure
                   INTERNAL_TOUR = Tickets only / entry ticket / activity without transfer
 ● "timeFrom"    = For SIC_TRANSFER ONLY: earliest time guest should arrive at pickup point
@@ -254,23 +255,24 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   1. Find matching flight(s) in flights[] where flight.date = agenda item date.
   2. Include the pre-formatted flight.formatted string in the details field.
   3. meetingTime: per AIRPORT MEETING TIMES above (international vs domestic).
-  4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
+  4. serviceType MUST be PVT_TRANSFER — unless the confirmation title explicitly says "SIC" or "Shared" (then SIC_TRANSFER).
 
 ════════════════════════════════════════════════════════════════
 SERVICE TYPE RULES (use EXACTLY one of these values):
-  - The word "SIC" appears EXPLICITLY in the ACTIVITY TITLE → SIC_TRANSFER; set timeFrom/timeTo
-  - "OWN" / leisure / free day / at own pace → OWN_ARRANGEMENT; meetingTime = null
+  - The word "SIC", "Shared", "Sharing" or "Seat-in-coach" appears EXPLICITLY in the ACTIVITY TITLE → SIC_TRANSFER; set timeFrom/timeTo
+  - "OWN" / leisure / free day / at own pace → OWN_ARRANGEMENT; meetingTime = null (NEVER PVT_TRANSFER, even if fromPoint/toPoint are filled)
   - Entry tickets / sightseeing activities without vehicle / tickets only → INTERNAL_TOUR; meetingTime = null
   - ALL other transfers (airport, inter-city, road, private, cruise, waterfall, nature tour, hotel pickup) → PVT_TRANSFER
-  - Airport road transfer (arrival or departure) → ALWAYS PVT_TRANSFER
+  - Airport road transfer (arrival or departure) → PVT_TRANSFER, unless the title explicitly says "SIC" or "Shared"
   - "Private Transfer" or "Private basis" mentioned in the activity → ALWAYS PVT_TRANSFER, never SIC_TRANSFER
-  - Waterfalls, mountains, parks, nature activities WITHOUT explicit "SIC" in the title → PVT_TRANSFER
+  - Waterfalls, mountains, parks, nature activities WITHOUT explicit "SIC"/"Shared" in the title → PVT_TRANSFER
 
 FIRST AND LAST ITEM RULE (CRITICAL):
-  - The FIRST agenda item (arrival day) MUST be PVT_TRANSFER (airport → hotel)
-    unless the first day is clearly a flight or OWN_ARRANGEMENT.
-  - The LAST agenda item (departure day) MUST be PVT_TRANSFER (hotel → airport)
-    unless it is clearly a flight or OWN_ARRANGEMENT.
+  - The arrival airport transfer (airport → hotel) MUST be PVT_TRANSFER
+    unless its title explicitly says "SIC" or "Shared".
+  - The departure airport transfer (hotel → airport) MUST be PVT_TRANSFER
+    unless its title explicitly says "SIC" or "Shared".
+  - Other items on the arrival / departure day (SIC tours, flights, leisure) keep their own type.
   - If the TQ does not mention the service type for arrival/departure transfers,
     DEFAULT to PVT_TRANSFER (Private Transfer).
 
@@ -302,7 +304,7 @@ MEETING TIME DEFAULTS:
   - OWN_ARRANGEMENT: meetingTime=null, timeFrom=null, timeTo=null
 
 SERVICE TYPE DEFAULTS when not clearly mentioned:
-  - If ACTIVITY TITLE explicitly contains "SIC" → SIC_TRANSFER
+  - If ACTIVITY TITLE explicitly contains "SIC", "Shared", "Sharing" or "Seat-in-coach" → SIC_TRANSFER
   - If title mentions "OWN" or is a free/leisure day → OWN_ARRANGEMENT
   - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR; meetingTime=08:00
   - "Private" or "Private Transfer" in title/description → PVT_TRANSFER (never SIC)
@@ -373,7 +375,6 @@ ${tqDocumentText
   // ── Post-process ─────────────────────────────────────────────────────────
   const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
   const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
-  const SIC_RE           = /\bsic\b/i
   const VALID_TYPES      = new Set<string>(SERVICE_TYPE_VALUES)
 
   // Helper: subtract minutes from HH:MM string
@@ -420,9 +421,10 @@ ${tqDocumentText
     // being filed as INTERNAL_TOUR — ticket only, no driver — which is the
     // "captured as a ticket only" report. Same for a titled transfer landing on
     // OWN_ARRANGEMENT and losing its driver as a "self-transfer".
-    const TRANSFER_RE = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis|round trip|one way)\b/i
-    const hasMovement = (!!from.trim() && !!to.trim())
-      || TRANSFER_RE.test(to) || TRANSFER_RE.test(det) || TRANSFER_RE.test(from)
+    // Negated wording ("No transport or guide arranged") and a leisure title
+    // with a habitual from/to do not count — see lib/agenda-service-type.ts.
+    const hasMovement = hasVehicleMovement(item)
+    const sharedTitle = isSharedTitle(item)
 
     let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'PVT_TRANSFER'
     let meetingTime = item.meetingTime as string | null | undefined
@@ -430,28 +432,34 @@ ${tqDocumentText
     let timeTo      = item.timeTo     as string | null | undefined
 
     // Override with deterministic rules (content signals beat AI classification)
-    // OWN_ARRANGEMENT is ONLY kept when the AI explicitly set it (TC must mention it)
-    if (isAirportRoad || FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
-      // Airport or flight day → always Private Transfer
-      serviceType = 'PVT_TRANSFER'
-    } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
-      // "SIC" explicitly in location/destination → force SIC
+    if (serviceType === 'OWN_ARRANGEMENT' && !hasMovement) {
+      // The model said own arrangement and nothing is being driven — keep it.
+      // Checked first so a free day whose details mention the guest's flight
+      // ("relax before your evening flight") is not turned into a transfer.
+    } else if (isLeisureTitle(item) && !hasMovement) {
+      // Title says leisure / free time and nothing is being driven.
+      serviceType = 'OWN_ARRANGEMENT'
+    } else if (isAirportRoad) {
+      // Airport road transfer → Private, unless the confirmation itself titles
+      // it shared / SIC.
+      serviceType = sharedTitle ? 'SIC_TRANSFER' : 'PVT_TRANSFER'
+    } else if (sharedTitle) {
+      // "SIC" / "Shared" / "Seat-in-coach" in the title → SIC. Checked before
+      // the flight wording below so a shared tour whose details mention a
+      // flight stays shared.
       serviceType = 'SIC_TRANSFER'
-    } else if (serviceType === 'SIC_TRANSFER') {
-      // AI said SIC but no "SIC" in loc/to → validate against full content
-      const SHARED_RE = /\b(sic|shared|sharing)\b/i
-      if (!SHARED_RE.test(loc) && !SHARED_RE.test(to) && !SHARED_RE.test(det) && !SHARED_RE.test(from)) {
-        // No SIC/Shared signal anywhere — revert to Private
-        serviceType = 'PVT_TRANSFER'
-      }
+    } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+      // Flight day → Private Transfer
+      serviceType = 'PVT_TRANSFER'
+    } else if (serviceType === 'SIC_TRANSFER' && !hasSharedSignal(item)) {
+      // AI said SIC but no SIC/Shared signal anywhere — revert to Private
+      serviceType = 'PVT_TRANSFER'
     }
 
     // A movement with a vehicle in it is a transfer, whatever the model called
-    // it — shared when the wording says SIC, private otherwise.
+    // it — shared when the wording says SIC/shared, private otherwise.
     if (hasMovement && (serviceType === 'INTERNAL_TOUR' || serviceType === 'OWN_ARRANGEMENT')) {
-      serviceType = SIC_RE.test(to) || SIC_RE.test(loc) || SIC_RE.test(det)
-        ? 'SIC_TRANSFER'
-        : 'PVT_TRANSFER'
+      serviceType = hasSharedSignal(item) ? 'SIC_TRANSFER' : 'PVT_TRANSFER'
     }
 
     // For SIC: ensure timeFrom/timeTo (join-window) are set
@@ -554,7 +562,7 @@ ${tqDocumentText
     ...sourceAware,
     ...missing.map(src => {
       const title = String(src.title)
-      const sic   = SIC_RE.test(title)
+      const sic   = SHARED_SERVICE_RE.test(title) && !PRIVATE_SERVICE_RE.test(title)
       const moves = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis)\b/i.test(title)
       const own   = !moves && /own arrangement|own basis|at leisure|free day|leisure|free time/i.test(title)
       const serviceType = sic ? 'SIC_TRANSFER' : own ? 'OWN_ARRANGEMENT' : 'PVT_TRANSFER'
@@ -575,21 +583,22 @@ ${tqDocumentText
     }),
   ].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')))
 
-  // ── Enforce first & last items are PVT_TRANSFER ───────────────────────────
-  const NON_TRANSFER_TYPES = new Set(['OWN_ARRANGEMENT', 'INTERNAL_TOUR'])
+  // ── Enforce first & last airport transfers are PVT_TRANSFER ───────────────
+  // Only the arrival / departure AIRPORT transfer is forced private, and only
+  // when the confirmation does not title it shared. Rows are sorted by date
+  // alone, so the first / last row is often a same-day SIC tour, a flight or a
+  // hotel row — forcing those to Private Transfer was the "shared transfer
+  // shown as Private Transfer" report.
+  const KEEP_TYPES = new Set(['OWN_ARRANGEMENT', 'INTERNAL_TOUR', 'FLIGHT', 'ACCOMMODATION', 'PVT_TRANSFER'])
+  const forcePrivateIfAirport = (it: GeneratedItem): GeneratedItem => {
+    if (KEEP_TYPES.has(it.serviceType)) return it
+    const isAirport = AIRPORT_ROAD_RE.test(String(it.fromPoint ?? '')) || AIRPORT_ROAD_RE.test(String(it.toPoint ?? ''))
+    if (!isAirport || isSharedTitle(it)) return it
+    return { ...it, serviceType: 'PVT_TRANSFER', timeFrom: null, timeTo: null }
+  }
 
-  if (items.length > 0) {
-    const first = items[0]
-    if (!NON_TRANSFER_TYPES.has(first.serviceType) && first.serviceType !== 'PVT_TRANSFER') {
-      items[0] = { ...first, serviceType: 'PVT_TRANSFER', timeFrom: null, timeTo: null }
-    }
-  }
-  if (items.length > 1) {
-    const last = items[items.length - 1]
-    if (!NON_TRANSFER_TYPES.has(last.serviceType) && last.serviceType !== 'PVT_TRANSFER') {
-      items[items.length - 1] = { ...last, serviceType: 'PVT_TRANSFER', timeFrom: null, timeTo: null }
-    }
-  }
+  if (items.length > 0) items[0] = forcePrivateIfAirport(items[0])
+  if (items.length > 1) items[items.length - 1] = forcePrivateIfAirport(items[items.length - 1])
 
   const countryItems = booking.operationCountry === 'SRILANKA' ? applySriLankaMovementDefaults(items) : items
 

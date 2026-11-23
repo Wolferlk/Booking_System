@@ -8,6 +8,7 @@ import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
+import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHARED_SERVICE_RE, PRIVATE_SERVICE_RE } from '@/lib/agenda-service-type'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import { statusAfterAmendment } from '@/lib/state-machine'
 import { loadChildGuard, resyncFlights } from '@/lib/data-protection-server'
@@ -184,13 +185,13 @@ LOCATION + TITLE — MANDATORY (destination must travel with the tour title):
 
 SERVICE TYPE — MANDATORY (use exactly one of these values):
 - International/domestic flight leg → serviceType="FLIGHT", meetingTime = depTime minus 3 hours, fromPoint = "Flight <flightNo>" (e.g. "Flight VZ123"), toPoint = destination airport code
-- ARRIVAL airport road transfer (airport → hotel) → serviceType="PVT_TRANSFER", meetingTime = flight arrTime PLUS 30 minutes (NOT 45), fromPoint = "Airport" or flight number, toPoint = hotel name
-- DEPARTURE airport road transfer (hotel → airport) → serviceType="PVT_TRANSFER", meetingTime = flight depTime minus 3 hours, fromPoint = hotel name, toPoint = "Airport"
-- Internal SIC tour: the word "SIC" must be EXPLICITLY in the ACTIVITY TITLE → serviceType="SIC_TRANSFER"
+- ARRIVAL airport road transfer (airport → hotel) → serviceType="PVT_TRANSFER" (or "SIC_TRANSFER" only if its title explicitly says "SIC"/"Shared"), meetingTime = flight arrTime PLUS 30 minutes (NOT 45), fromPoint = "Airport" or flight number, toPoint = hotel name
+- DEPARTURE airport road transfer (hotel → airport) → serviceType="PVT_TRANSFER" (or "SIC_TRANSFER" only if its title explicitly says "SIC"/"Shared"), meetingTime = flight depTime minus 3 hours, fromPoint = hotel name, toPoint = "Airport"
+- Shared / SIC tour or transfer: the word "SIC", "Shared", "Sharing" or "Seat-in-coach" must be EXPLICITLY in the ACTIVITY TITLE → serviceType="SIC_TRANSFER"
 - Private tour / private transfer / waterfall / nature activity / "Private basis" → serviceType="PVT_TRANSFER"
 - Hotel check-in / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
 - Private guided day tour (not SIC) → serviceType="PVT_TRANSFER"
-- "Own Arrangement" / leisure day / free time / at leisure — PRESERVE EXACTLY, never convert to PVT_TRANSFER → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- "Own Arrangement" / leisure day / free time / at leisure — PRESERVE EXACTLY, never convert to PVT_TRANSFER (even if fromPoint/toPoint are filled) → serviceType="OWN_ARRANGEMENT", meetingTime=null
 - Ticket-only / self-guided / entrance only (no vehicle transfer) → serviceType="INTERNAL_TOUR", meetingTime=activity start time or 08:00
 
 MEAL PLAN — Always use full English names (NEVER abbreviations like B, L, D):
@@ -231,11 +232,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
 
     const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
     const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
-    const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|own arrangement|own basis|at own pace)\b/i
-    /** Wording that means a vehicle and driver are part of the service. */
-    const TRANSFER_RE      = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis|round trip|one way)\b/i
     const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay|accommodation)\b/i
-    const SIC_RE           = /\bsic\b/i
     const VALID_TYPES      = new Set<string>(SERVICE_TYPE_VALUES)
 
     const aiItems = rawItems.map((item: any) => {
@@ -246,8 +243,11 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       // Something is actually being driven: there is a pickup and a drop-off, or
       // the wording names a transfer. Used below to stop leisure/ticket wording
       // from stripping the driver off a movement that plainly has one.
-      const hasMovement = (!!from.trim() && !!to.trim())
-        || TRANSFER_RE.test(to) || TRANSFER_RE.test(det) || TRANSFER_RE.test(from)
+      // Negated wording ("No transport or guide arranged" — the leisure template
+      // in Generating_Agenda_conditions.md) and a leisure title with a habitual
+      // from/to do not count — see lib/agenda-service-type.ts.
+      const hasMovement = hasVehicleMovement(item)
+      const sharedTitle = isSharedTitle(item)
       // An item the model failed to classify defaults to a PRIVATE TRANSFER, not
       // to OWN_ARRANGEMENT. The old default meant every unclassified confirmed
       // tour landed on the chart as the guest's own arrangement — no driver, no
@@ -255,7 +255,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       // self-transfers" complaint. PVT is also what the interactive generator in
       // `api/bookings/[ref]/agenda/generate` defaults to, so the two pipelines
       // now agree. A free day still comes through: the model says so explicitly,
-      // or LEISURE_RE below reads it off the title.
+      // or isLeisureTitle() below reads it off the title.
       const aiType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'PVT_TRANSFER'
       let serviceType = aiType
 
@@ -270,19 +270,23 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       } else if (aiType === 'INTERNAL_TOUR' && !hasMovement) {
         // Genuinely ticket-only: entrance or activity with no transport.
         serviceType = 'INTERNAL_TOUR'
-      } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
-        serviceType = 'FLIGHT'
-      } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
-        serviceType = 'PVT_TRANSFER'
-      } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
-        serviceType = 'SIC_TRANSFER'
-      } else if ((LEISURE_RE.test(to) || LEISURE_RE.test(loc)) && !hasMovement) {
+      } else if (isLeisureTitle(item) && !hasMovement) {
         // Read off the movement's own title / destination, never off `details`.
         // Tour descriptions are full of "free time for shopping" and "relax on
         // the beach", and matching those turned confirmed, driven tours into
         // own-arrangement free days. A title that says leisure AND carries no
-        // pickup or drop-off is a genuine free day.
+        // pickup or drop-off is a genuine free day. Checked before the flight
+        // wording so "free time before your flight" stays a free day.
         serviceType = 'OWN_ARRANGEMENT'
+      } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
+        // Airport road transfer → Private, unless the title says shared / SIC.
+        serviceType = sharedTitle ? 'SIC_TRANSFER' : 'PVT_TRANSFER'
+      } else if (sharedTitle) {
+        // "SIC" / "Shared" / "Seat-in-coach" in the title → SIC. Before the
+        // flight wording so a shared tour mentioning a flight stays shared.
+        serviceType = 'SIC_TRANSFER'
+      } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+        serviceType = 'FLIGHT'
       } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
         serviceType = 'ACCOMMODATION'
       }
@@ -291,9 +295,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       // with a vehicle in it is a transfer, whatever the model called it. Shared
       // if the wording says SIC, private otherwise.
       if (hasMovement && (serviceType === 'OWN_ARRANGEMENT' || serviceType === 'INTERNAL_TOUR')) {
-        serviceType = SIC_RE.test(to) || SIC_RE.test(loc) || SIC_RE.test(det)
-          ? 'SIC_TRANSFER'
-          : 'PVT_TRANSFER'
+        serviceType = hasSharedSignal(item) ? 'SIC_TRANSFER' : 'PVT_TRANSFER'
       }
 
       const meetingTime = serviceType === 'OWN_ARRANGEMENT' || serviceType === 'ACCOMMODATION'
@@ -335,7 +337,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       })
       if (covered) continue
 
-      const sic = /\bsic\b/i.test(title)
+      const sic = SHARED_SERVICE_RE.test(title) && !PRIVATE_SERVICE_RE.test(title)
       // A title naming a transfer is a driven movement even when it also says
       // "leisure" ("Free day — private transfer to the beach"), so the transfer
       // wins. Same rule the classifier above applies.
