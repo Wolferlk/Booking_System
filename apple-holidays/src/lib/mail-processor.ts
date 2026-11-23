@@ -155,6 +155,18 @@ export function getConfiguredMailboxes(): MailboxConfig[] {
 
 // ── Email body pre-processing ─────────────────────────────────────────────────
 
+/**
+ * How much TC text the automatic intake (mail + OneDrive) may send to gpt-4o.
+ *
+ * These paths used to cut the TC at 12k–16k characters — roughly the first 5–8
+ * days of a MakeMyTrip TC — so any flight listed after that point (internal
+ * legs, the return flight) never reached the model and the booking came in with
+ * no / partial flights, while the same file uploaded by hand ("New Booking",
+ * extractBookingFromText: 200k) extracted them fine. gpt-4o has a 128k-token
+ * context; 120k chars ≈ 30k tokens, same ceiling as MAX_AGENDA_DOC_CHARS.
+ */
+const MAX_TC_CHARS = 120_000
+
 // Isolates the "TOUR CONFIRMATION" block from an email thread.
 // Email threads embed previous replies below the current message; the TC is
 // often in a quoted reply while the most-recent message is just "please see attached".
@@ -173,8 +185,10 @@ function extractTCSection(text: string): string {
   const boundary = afterTC.match(
     /From:\s+\S[^<\n]{0,120}[<\s][\w.+-]+@[\w.-]+[>\s]\s+(?:Sent|Date)\s*:/i
   )
-  // Allow up to 12000 chars so the full TC (hotel table, itinerary, inclusions) is captured
-  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, 12000))
+  // No fixed cut: the TC runs to the next reply boundary (or MAX_TC_CHARS). The old
+  // 12k cap dropped the later days of long MakeMyTrip TCs — and with them the
+  // internal / return flights listed there.
+  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, MAX_TC_CHARS))
 
   const section = text.slice(start, end).trim()
   return section.length > 200 ? section : text
@@ -366,10 +380,16 @@ async function runBookingCompletion(systemPrompt: string, userContent: string): 
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
+    // Same as extractBookingFromText: a long TC copied verbatim (itinerary +
+    // descriptions + flights) needs the full output budget.
+    max_tokens: 16384,
   })
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
+  if (response.choices[0]?.finish_reason === 'length') {
+    console.warn('[AI] booking extraction hit max_tokens — JSON is truncated, flights/itinerary may be incomplete')
+  }
 
   return JSON.parse(content) as Partial<ExtractedBooking>
 }
@@ -384,8 +404,8 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     : extractPNLSection(emailBody)
 
   const userContent = emailSubject
-    ? `Email Subject: ${emailSubject}\n\nExtract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
-    : `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
+    ? `Email Subject: ${emailSubject}\n\nExtract from this tour confirmation:\n\n${relevantBody.slice(0, MAX_TC_CHARS)}`
+    : `Extract from this tour confirmation:\n\n${relevantBody.slice(0, MAX_TC_CHARS)}`
 
   const parsed = await runBookingCompletion(prompt, userContent)
   return finalizeExtractedBooking(parsed, { emailBody, relevantBody, emailSubject, emailType })
@@ -406,7 +426,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
  * this function brings the scan path up to the same (or better) accuracy.
  */
 export async function extractBookingFromDocument(documentText: string, sourceName?: string): Promise<ExtractedBooking> {
-  const userContent = `Extract booking data from this tour confirmation document${sourceName ? ` (${sourceName})` : ''}:\n\n${documentText.slice(0, 16000)}`
+  const userContent = `Extract booking data from this tour confirmation document${sourceName ? ` (${sourceName})` : ''}. The itinerary and flights run to the very end of the text — extract EVERY day and EVERY flight leg, including the final ones.\n\n${documentText.slice(0, MAX_TC_CHARS)}`
   const parsed = await runBookingCompletion(BOOKING_EXTRACTION_PROMPT, userContent)
   // Clean document → run the regex overrides on the full text (no thread noise to isolate).
   return finalizeExtractedBooking(parsed, {
