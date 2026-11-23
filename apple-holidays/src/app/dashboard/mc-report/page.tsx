@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, useDeferredValue } from 'react'
 import { useSession } from 'next-auth/react'
 import {
   Loader2, Download, Filter, X, Calendar, Search,
@@ -537,6 +537,9 @@ function isDoneableRow(row: MCRow): boolean {
 
 type DoneFilter = 'all' | 'pending' | 'done'
 
+/** Chart rows mounted per batch — see `renderLimit` in the page. */
+const ROW_BATCH = 100
+
 // ─── MC columns: the viewer's own layout ──────────────────────────────────────
 
 /**
@@ -1061,6 +1064,8 @@ export default function MCReportPage() {
   const { data: session } = useSession()
   const canAssign = ASSIGN_ROLES.includes(session?.user?.role as UserRole)
   const [rows, setRows]           = useState<MCRow[]>([])
+  /** Bumped on every fresh load (not on inline edits) — resets the row batch. */
+  const [loadSeq, setLoadSeq]     = useState(0)
   const [loading, setLoading]     = useState(false)
   const [dateFrom, setDateFrom]   = useState('')
   const [dateTo, setDateTo]       = useState('')
@@ -1180,7 +1185,16 @@ export default function MCReportPage() {
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
 
+  // Clicking Today → This Week → This Month quickly used to leave several
+  // requests in flight, and whichever answered last won — often an old range,
+  // and every answer re-rendered the whole chart. Only the newest request may
+  // update the page now; earlier ones are aborted.
+  const loadAbort = useRef<AbortController | null>(null)
+
   const load = useCallback(async () => {
+    loadAbort.current?.abort()
+    const ctrl = new AbortController()
+    loadAbort.current = ctrl
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -1191,19 +1205,24 @@ export default function MCReportPage() {
       const effectiveCountry = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
       if (effectiveCountry) params.set('country', effectiveCountry)
 
-      const res  = await fetch(`/api/mc-report?${params}`)
+      const res  = await fetch(`/api/mc-report?${params}`, { signal: ctrl.signal })
       const json = await res.json()
+      if (ctrl.signal.aborted) return
       if (json.success) {
         setRows(json.data)
+        setLoadSeq(n => n + 1)
       } else {
         toast.error(json.error ?? 'Failed to load MC Report')
       }
     } catch {
+      if (ctrl.signal.aborted) return
       toast.error('Failed to load MC Report')
     } finally {
-      setLoading(false)
+      if (loadAbort.current === ctrl) setLoading(false)
     }
   }, [dateFrom, dateTo, search, svcFilter, localCountry, countryFilter])
+
+  useEffect(() => () => loadAbort.current?.abort(), [])
 
   useEffect(() => {
     const today = todayISO()
@@ -1307,15 +1326,17 @@ export default function MCReportPage() {
     }
   }), [rows, sort])
 
-  // Deep search — client-side filter on already-sorted rows
+  // Deep search — client-side filter on already-sorted rows. Filtered on a
+  // deferred copy, so the box keeps up with typing while the chart catches up.
+  const deferredDeepSearch = useDeferredValue(deepSearch)
   const preAdvancedRows = useMemo(() => {
-    const q = deepSearch.trim().toLowerCase()
+    const q = deferredDeepSearch.trim().toLowerCase()
     let base = cancelOnly ? sorted.filter(isCancelPendingRow) : sorted
     if (doneFilter === 'pending') base = base.filter(r => isDoneableRow(r) && !r.done)
     if (doneFilter === 'done')    base = base.filter(r => !!r.done)
     if (!q) return base
     return base.filter(row => rowMatchesDeep(row, q))
-  }, [sorted, deepSearch, cancelOnly, doneFilter])
+  }, [sorted, deferredDeepSearch, cancelOnly, doneFilter])
 
   // Advanced filters run last, and their chip counts are taken over the rows
   // every other filter left — so a count always says what a click would show.
@@ -1329,6 +1350,30 @@ export default function MCReportPage() {
   const advCounts     = useMemo(() => facetCounts(preAdvancedRows, effectiveAdv), [preAdvancedRows, effectiveAdv])
   const advActive     = activeFilterCount(adv)
   const isFiltered    = displayedRows.length !== rows.length
+
+  // Each chart row is a heavy block (inline editors, badges, partner cells), and
+  // a week or month across every country runs to thousands of rows. Mounting
+  // them all at once froze the tab, so the table mounts a batch at a time and
+  // adds the next as the desk scrolls near the end. Totals, exports, PDF and
+  // bulk actions still read every displayed row, not just the mounted ones.
+  // Back to the first batch on a new load or a filter / sort change — not on an
+  // inline edit (KM, done tick, supplier), which also replaces `rows` and must
+  // not unmount the row being edited.
+  const [renderLimit, setRenderLimit] = useState(ROW_BATCH)
+  useEffect(() => { setRenderLimit(ROW_BATCH) },
+    [loadSeq, sort, deferredDeepSearch, cancelOnly, doneFilter, effectiveAdv])
+  const renderedRows = useMemo(() => displayedRows.slice(0, renderLimit), [displayedRows, renderLimit])
+  const hasMoreRows  = renderLimit < displayedRows.length
+  const moreRowsRef  = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = moreRowsRef.current
+    if (!el || !hasMoreRows || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) setRenderLimit(n => n + ROW_BATCH)
+    }, { rootMargin: '600px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasMoreRows, renderedRows])
 
   // ── Report Studio wiring ─────────────────────────────────────────────────────
   const pdfRows = useMemo(() => displayedRows.map(toPdfRow), [displayedRows])
@@ -1912,7 +1957,8 @@ export default function MCReportPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
-  const q = deepSearch.trim().toLowerCase()
+  // Same deferred value the filter uses, so highlights always match the rows shown.
+  const q = deferredDeepSearch.trim().toLowerCase()
 
   return (
     <div>
@@ -2688,7 +2734,7 @@ export default function MCReportPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {displayedRows.map(row => {
+                    {renderedRows.map(row => {
                       const isExpanded = expandedRow === row.id
                       const matchedFields = q ? getMatchedFields(row, q) : []
 
@@ -3395,6 +3441,19 @@ export default function MCReportPage() {
                     })}
                   </tbody>
                 </table>
+                {hasMoreRows && (
+                  <div ref={moreRowsRef} className="flex items-center justify-center gap-3 py-4 text-xs text-slate-500">
+                    <span>Showing {renderedRows.length} of {displayedRows.length} movements</span>
+                    <button type="button" className="btn btn-secondary btn-sm"
+                      onClick={() => setRenderLimit(n => n + ROW_BATCH)}>
+                      Show {Math.min(ROW_BATCH, displayedRows.length - renderedRows.length)} more
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-sm"
+                      onClick={() => setRenderLimit(displayedRows.length)}>
+                      Show all
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </CardBody>

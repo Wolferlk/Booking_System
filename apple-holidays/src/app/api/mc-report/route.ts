@@ -305,6 +305,12 @@ export async function GET(req: NextRequest) {
 
   const bookingWhere = buildBookingWhere(search, bookingCountryWhere)
 
+  // Hotel Only stays do not depend on the agenda query — start them alongside it.
+  const hotelOnlyPromise = hotelOnlyRows(dateFilter, bookingWhere, serviceType)
+  // Its error is re-thrown where it is awaited below; this only stops an
+  // unhandled rejection if the agenda query fails first.
+  hotelOnlyPromise.catch(() => {})
+
   const items = await prisma.agendaItem.findMany({
     where: {
       ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
@@ -361,13 +367,12 @@ export async function GET(req: NextRequest) {
     orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
   })
 
-  // Tickets Control — a Vietnam-only note per movement (own table, may not exist yet).
-  const ticketsControl = await loadTicketsControl(
-    items.filter(i => i.agenda.booking.operationCountry === 'VIETNAM').map(i => i.id),
-  )
-
-  // MC Report desk figures (every country) and the booking-level context.
-  const [mcDetails, doneMarks, suppliers, context] = await Promise.all([
+  // Tickets Control (a Vietnam-only note per movement), the MC Report desk
+  // figures (every country) and the booking-level context — independent reads.
+  const [ticketsControl, mcDetails, doneMarks, suppliers, context] = await Promise.all([
+    loadTicketsControl(
+      items.filter(i => i.agenda.booking.operationCountry === 'VIETNAM').map(i => i.id),
+    ),
     loadMcDetails(items.map(i => i.id)),
     loadMcDone(items.map(i => i.id)),
     // The Accounts supplier (Suppliers Manage) each movement is paid to.
@@ -456,7 +461,7 @@ export async function GET(req: NextRequest) {
     nights:         null,
   }))
 
-  const hotelOnly = await hotelOnlyRows(dateFilter, bookingWhere, serviceType)
+  const hotelOnly = await hotelOnlyPromise
 
   // One chart, sorted as one list — a stay must sit on its date beside the
   // transfers happening the same day, not in a block of its own at the end.

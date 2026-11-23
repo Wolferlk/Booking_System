@@ -296,6 +296,8 @@ model Accommodation {
   booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId], map: "accommodations_bookingId_fkey")
+  // MC Report Hotel Only stays — see prisma/sql/2026-11-23-mc-report-date-indexes.sql
+  @@index([checkIn], map: "accommodations_checkIn_idx")
   @@map("accommodations")
 }
 
@@ -357,6 +359,8 @@ model AgendaItem {
   tickets     Ticket[]
 
   @@index([agendaId], map: "agenda_items_agendaId_fkey")
+  // MC Report reads by date range — see prisma/sql/2026-11-23-mc-report-date-indexes.sql
+  @@index([date], map: "agenda_items_date_idx")
   @@map("agenda_items")
 }
 
