@@ -147,6 +147,21 @@ function resolveActivityTitle(name: string, description: string): string {
 }
 
 /**
+ * AppleSystem fills the day-level `description` with the placeholder
+ * "Day at leisure at the Hotel!" on most days that only have sold activities.
+ * That sentence is not part of the activity's TC wording, and on a day with a
+ * tour it is simply wrong — so strip a leading leisure placeholder before the
+ * day narrative is merged into an activity's description. Real narratives
+ * ("Da Nang is a coastal city…") are untouched.
+ */
+const LEISURE_PLACEHOLDER_RE =
+  /^\s*(?:(?:a\s+)?(?:full\s+)?day\s+at\s+(?:your\s+)?leisure|(?:free\s+)?at\s+leisure|leisure\s+day|free\s+day|day\s+free)\b[^.!?\n]*[.!?]*\s*/i
+
+function stripLeisurePlaceholder(dayDescription: string): string {
+  return dayDescription.replace(LEISURE_PLACEHOLDER_RE, '').trim()
+}
+
+/**
  * Expand one AppleSystem itinerary day into the itinerary items we store.
  *
  * A day carries a generic `route`/`description` pair (often the boilerplate
@@ -174,10 +189,14 @@ function expandDay(day: {
       .filter((value, index, values) => values.indexOf(value) === index)
       .join('\n\n')
 
+  // Only days WITH activities drop the leisure placeholder; a day with no
+  // activities keeps it below, because there it is accurate.
+  const dayNarrative = stripLeisurePlaceholder(day.description)
+
   const acts = day.activities
     .map((a) => ({
       title: resolveActivityTitle(a.name, a.description),
-      description: mergeDescriptions(day.description, a.description),
+      description: mergeDescriptions(dayNarrative, a.description),
     }))
     .filter((a) => a.title || a.description)
 
