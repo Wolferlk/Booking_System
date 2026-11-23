@@ -69,9 +69,100 @@ interface SharedRow {
   body: string | null
   media_url: string | null
   media_caption: string | null
+  meta: unknown
   created_at: Date
   display_name: string | null
 }
+
+/**
+ * Body of the stand-in row the inbound signal writes when it can't find the
+ * real message yet. Sync replaces it with the real message when that arrives.
+ */
+export const INBOUND_PLACEHOLDER_BODY = '[customer replied]'
+
+// How far apart a placeholder and the real message can be and still count as
+// the same reply. The signal fires within seconds, so this is generous.
+const PLACEHOLDER_MATCH_MS = 10 * 60_000
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function parseMeta(raw: unknown): Record<string, any> | null {
+  if (!raw) return null
+  if (typeof raw === 'object') return raw as Record<string, any>
+  if (typeof raw !== 'string') return null
+  try {
+    const v = JSON.parse(raw)
+    // MariaDB can hand back JSON that was encoded twice.
+    return typeof v === 'string' ? parseMeta(v) : (v && typeof v === 'object' ? v : null)
+  } catch { return null }
+}
+
+/**
+ * A customer's answer to our "Allow WhatsApp calls?" request
+ * (`interactive.type = call_permission_reply`). Older n8n builds keep only
+ * `rawType`. Newer ones also keep the reply object, under one of the keys below.
+ */
+function callPermissionResponse(meta: Record<string, any> | null): string | null {
+  const reply =
+    meta?.callPermissionReply ??
+    meta?.call_permission_reply ??
+    meta?.interactive?.call_permission_reply ??
+    meta?.raw?.interactive?.call_permission_reply ??
+    meta?.unsupported?.raw?.interactive?.call_permission_reply
+  const response = typeof reply === 'string' ? reply : reply?.response
+  return typeof response === 'string' ? response.toLowerCase() : null
+}
+
+const MEDIA_LABEL: Record<string, string> = {
+  image:    '📷 Photo',
+  video:    '🎬 Video',
+  audio:    '🎤 Voice message',
+  document: '📄 Document',
+  sticker:  '🏷️ Sticker',
+}
+
+/**
+ * What the inbox should show for an inbound row. When the customer sent text or
+ * a caption, that text. Otherwise a short label for what they did, because a
+ * call-permission tap, a reaction or a photo with no caption has no text, and
+ * these rows used to be dropped and shown as "[customer replied]".
+ */
+export function describeInbound(row: Pick<SharedRow, 'message_type' | 'body' | 'media_caption' | 'media_url' | 'meta'>): string | null {
+  const text = (row.body ?? row.media_caption ?? '').trim()
+  if (text) return text
+
+  const meta = parseMeta(row.meta)
+  const type = String(row.message_type || meta?.rawType || '').toLowerCase()
+
+  if (MEDIA_TYPES.includes(type)) {
+    // The picture/file shows on its own once there is a link; until then, name it.
+    if (row.media_url) return null
+    const filename = typeof meta?.filename === 'string' ? meta.filename : ''
+    return type === 'document' && filename ? `📄 ${filename}` : MEDIA_LABEL[type]
+  }
+
+  if (type === 'interactive') {
+    const response = callPermissionResponse(meta)
+    if (response === 'accept') return '✅ Allowed WhatsApp calls'
+    if (response === 'reject') return '❌ Declined WhatsApp calls'
+    // With no text on it, an interactive reply is the answer to a call request:
+    // every button/list reply carries its title as the body.
+    return '📞 Answered the WhatsApp call request'
+  }
+
+  if (type === 'button')   return '🔘 Tapped a button'
+  if (type === 'reaction') return '👍 Reacted to a message'
+  if (type === 'location') return '📍 Shared a location'
+  if (type === 'contacts') return '👤 Shared a contact'
+  if (type === 'order')    return '🛒 Sent an order'
+  if (type === 'system')   return 'ℹ️ WhatsApp account update'
+  if (type === 'unsupported') {
+    const err = meta?.unsupported?.errors?.[0]
+    const why = err?.error_data?.details || err?.title || err?.message
+    return `⚠️ WhatsApp did not pass this message on (poll, OTP or other unsupported type)${why ? ` — ${why}` : ''}`
+  }
+  return type ? `💬 Sent a ${type} message` : '💬 Sent a message'
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 function resolveMediaUrl(raw: string | null): string | null {
   if (!raw) return null
@@ -100,7 +191,7 @@ export async function syncInboundForPhones(
   try {
     const [rows] = await db.query<mysql.RowDataPacket[]>(
       `SELECT m.wa_id, m.wa_message_id, m.message_type, m.body, m.media_url,
-              m.media_caption, m.created_at, c.display_name
+              m.media_caption, m.meta, m.created_at, c.display_name
        FROM tbl_whatsapp_messages m
        LEFT JOIN tbl_whatsapp_conversations c ON c.wa_id = m.wa_id
        WHERE m.direction = 'in'
@@ -119,10 +210,27 @@ export async function syncInboundForPhones(
     const existing = wamids.length
       ? await prisma.whatsAppMessage.findMany({
           where: { waMessageId: { in: wamids } },
-          select: { waMessageId: true },
+          select: { id: true, waMessageId: true, body: true, mediaUrl: true, mediaType: true },
         })
       : []
     const have = new Set(existing.map(e => e.waMessageId))
+
+    // Media we imported before n8n finished saving the file to S3 has a label and
+    // no link. Add the link now that the file is there, and drop the label.
+    const sharedByWamid = new Map(shared.filter(r => r.wa_message_id).map(r => [r.wa_message_id!, r]))
+    for (const e of existing) {
+      const r = e.waMessageId ? sharedByWamid.get(e.waMessageId) : undefined
+      if (!r || e.mediaUrl || !r.media_url || !MEDIA_TYPES.includes(r.message_type)) continue
+      const label = describeInbound({ ...r, media_url: null })
+      await prisma.whatsAppMessage.update({
+        where: { id: e.id },
+        data:  {
+          mediaUrl:  resolveMediaUrl(r.media_url),
+          mediaType: e.mediaType ?? r.message_type,
+          ...(e.body === label ? { body: describeInbound(r) } : {}),
+        },
+      })
+    }
 
     // Resolve each phone's booking once, not per message.
     const refByPhone = new Map<string, string>()
@@ -131,11 +239,12 @@ export async function syncInboundForPhones(
       refByPhone.set(phone, booking ? booking.bookingRef : `UNKNOWN:${phone}`)
     }
 
-    const toCreate = shared
+    // Every inbound is imported, including ones with no text (call-permission
+    // answers, captionless photos, reactions). describeInbound() gives each one
+    // something to show. Skipping them used to leave the signal's
+    // "[customer replied]" stand-in as the only trace of the reply.
+    const incoming = shared
       .filter(r => r.wa_message_id && !have.has(r.wa_message_id))
-      // Skip rows with nothing to show (e.g. "unsupported" reactions/locations
-      // with no text and no media) — they'd render as empty bubbles.
-      .filter(r => r.body || r.media_caption || (MEDIA_TYPES.includes(r.message_type) && r.media_url))
       .map(r => {
         const phone = normalisePhone(r.wa_id)
         const isMedia = MEDIA_TYPES.includes(r.message_type)
@@ -143,7 +252,7 @@ export async function syncInboundForPhones(
           bookingRef:  refByPhone.get(phone) ?? `UNKNOWN:${phone}`,
           phone,
           direction:   'inbound',
-          body:        r.body ?? r.media_caption ?? null,
+          body:        describeInbound(r),
           waMessageId: r.wa_message_id,
           status:      'received',
           senderName:  r.display_name ?? null,
@@ -154,10 +263,45 @@ export async function syncInboundForPhones(
         }
       })
 
-    if (toCreate.length === 0) return 0
-    await prisma.whatsAppMessage.createMany({ data: toCreate })
-    console.log(`[WA SharedSync] imported ${toCreate.length} inbound message(s) for ${targets.length} phone(s)`)
-    return toCreate.length
+    if (incoming.length === 0) return 0
+
+    // Replace "[customer replied]" stand-ins with the message they stood for
+    // (nearest in time, same phone) instead of adding a second bubble beside them.
+    const placeholders = await prisma.whatsAppMessage.findMany({
+      where: {
+        phone:       { in: Array.from(new Set(incoming.map(r => r.phone))) },
+        direction:   'inbound',
+        waMessageId: null,
+        body:        INBOUND_PLACEHOLDER_BODY,
+        createdAt:   { gte: new Date(since.getTime() - PLACEHOLDER_MATCH_MS) },
+      },
+      select: { id: true, phone: true, createdAt: true, read: true },
+    })
+    const unclaimed = new Set(placeholders.map(p => p.id))
+    const toCreate: typeof incoming = []
+    let replaced = 0
+    for (const row of incoming) {
+      let best: (typeof placeholders)[number] | null = null
+      for (const p of placeholders) {
+        if (!unclaimed.has(p.id) || p.phone !== row.phone) continue
+        const gap = Math.abs(p.createdAt.getTime() - row.createdAt.getTime())
+        if (gap > PLACEHOLDER_MATCH_MS) continue
+        if (!best || gap < Math.abs(best.createdAt.getTime() - row.createdAt.getTime())) best = p
+      }
+      if (!best) { toCreate.push(row); continue }
+      unclaimed.delete(best.id)
+      // Keep the stand-in's read flag: staff may already have opened the chat.
+      await prisma.whatsAppMessage.update({
+        where: { id: best.id },
+        data:  { ...row, read: best.read },
+      })
+      replaced++
+    }
+
+    if (toCreate.length) await prisma.whatsAppMessage.createMany({ data: toCreate })
+    console.log(`[WA SharedSync] imported ${incoming.length} inbound message(s) for ${targets.length} phone(s)` +
+      (replaced ? ` (${replaced} replaced a "customer replied" placeholder)` : ''))
+    return incoming.length
   } catch (err) {
     console.error('[WA SharedSync] sync failed:', err instanceof Error ? err.message : err)
     return 0

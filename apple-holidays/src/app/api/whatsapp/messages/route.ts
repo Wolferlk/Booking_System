@@ -11,7 +11,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES, canAccessWhatsAppPhone } from '@/lib/whatsapp'
-import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor, businessNumbersForInbound } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundForPhone, syncDeliveryReceiptsForPhone, failureReasonsFor, businessNumbersForInbound, INBOUND_PLACEHOLDER_BODY } from '@/lib/whatsapp-shared-inbox-sync'
 import { businessKeyForId } from '@/lib/whatsapp-business-numbers'
 import type { UserRole } from '@prisma/client'
 
@@ -36,10 +36,19 @@ export async function GET(req: NextRequest) {
   // sent come back the same way — that is what moves the ✓ / ✓✓ / blue ✓✓.
   await Promise.all([syncInboundForPhone(phone), syncDeliveryReceiptsForPhone(phone)])
 
-  const rows = await prisma.whatsAppMessage.findMany({
+  const allRows = await prisma.whatsAppMessage.findMany({
     where:   { phone },
     orderBy: { createdAt: 'asc' },
   })
+  // Older "[customer replied]" stand-ins whose real message was imported as a
+  // separate row: show only the real message. (New ones are replaced in sync.)
+  const realInboundAt = allRows
+    .filter(m => m.direction === 'inbound' && m.waMessageId)
+    .map(m => m.createdAt.getTime())
+  const rows = allRows.filter(m =>
+    !(m.direction === 'inbound' && !m.waMessageId && m.body === INBOUND_PLACEHOLDER_BODY &&
+      realInboundAt.some(t => Math.abs(t - m.createdAt.getTime()) <= 10 * 60_000)),
+  )
 
   // A red "!" alone says nothing — attach Meta's reason to every failed send.
   const reasons = await failureReasonsFor(

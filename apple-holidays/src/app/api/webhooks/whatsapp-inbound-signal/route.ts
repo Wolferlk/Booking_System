@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone } from '@/lib/whatsapp'
 import { flushPendingConfirmations } from '@/lib/booking-whatsapp-delivery'
-import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundForPhone, INBOUND_PLACEHOLDER_BODY } from '@/lib/whatsapp-shared-inbox-sync'
 
 export const dynamic = 'force-dynamic'
 
@@ -57,7 +57,8 @@ export async function POST(req: NextRequest) {
         bookingRef: booking?.bookingRef ?? `UNKNOWN:${phone}`,
         phone,
         direction:  'inbound',
-        body:       '[customer replied]',
+        // Replaced by the real message on the next sync (see syncInboundForPhones).
+        body:       INBOUND_PLACEHOLDER_BODY,
         status:     'received',
         senderName: body.name ?? null,
         read:       false,
