@@ -26,15 +26,23 @@ export function CardHeader({
   children,
   className,
   action,
+  wrapAction = false,
 }: {
   children: React.ReactNode
   className?: string
   action?: React.ReactNode
+  /**
+   * Narrow cards: when the title and the action buttons don't fit on one
+   * line, drop the buttons to their own line instead of letting the title
+   * shrink to nothing and slide underneath them. (With the default
+   * `flex-1 min-w-0` the title's flex-basis is 0, so the row never wraps.)
+   */
+  wrapAction?: boolean
 }) {
   return (
     <div className={cn('flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4 border-b border-slate-100', className)}>
-      <div className="flex-1 min-w-0">{children}</div>
-      {action && <div className="flex-shrink-0 ml-auto">{action}</div>}
+      <div className={wrapAction ? 'flex-[1_0_auto] max-w-full' : 'flex-1 min-w-0'}>{children}</div>
+      {action && <div className={wrapAction ? 'ml-auto max-w-full' : 'flex-shrink-0 ml-auto'}>{action}</div>}
     </div>
   )
 }

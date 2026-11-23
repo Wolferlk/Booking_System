@@ -2623,6 +2623,7 @@ Wishing you a wonderful trip! ✈️
           {/* Passengers + Meal Preferences */}
           <Card>
             <CardHeader
+              wrapAction
               action={
                 canEditPassengers ? (
                   <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2843,8 +2844,9 @@ Wishing you a wonderful trip! ✈️
           ) : (
           <Card>
             <CardHeader
+              wrapAction
               action={canEditFlights ? (
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center justify-end gap-3">
                   <button
                     onClick={() => setAiFlightOpen(true)}
                     disabled={flightScanLoading}
@@ -2899,8 +2901,9 @@ Wishing you a wonderful trip! ✈️
           {/* Hotels */}
           <Card>
             <CardHeader
+              wrapAction
               action={canEditBooking ? (
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center justify-end gap-3">
                   <button onClick={() => setAiAccomOpen(true)} className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1">
                     <Wand2 className="w-3 h-3" /> AI Auto-fill
                   </button>
