@@ -13,6 +13,7 @@ import type { OperationCountry } from '@/lib/country-detection'
 import type { MappedBookingInput } from '@/lib/as-booking-map'
 import { saveAsExtras } from '@/lib/as-booking-extras'
 import { autoCreateTicketsOnImport } from '@/lib/as-auto-tickets'
+import { withOwnStayHotels } from '@/lib/own-stay-hotels'
 
 export class AlreadyImportedError extends Error {
   constructor(public bookingRef: string, public bookingId: string) {
@@ -46,6 +47,11 @@ export async function importMappedBooking(
     select: { id: true, bookingRef: true },
   })
   if (existing) return { booking: existing, alreadyExists: true }
+
+  // AppleSystem sends own-arrangement stays with no hotel name; the AI Quotation
+  // system (SME / Corporate) may know it. Fills blanks only, never throws, and
+  // makes no call at all when no stay is blank. See own-stay-hotels.ts.
+  const accommodations = await withOwnStayHotels(mapped.source?.quotationNo, mapped.accommodations)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const booking = await (prisma.booking.create as any)({
@@ -82,7 +88,7 @@ export async function importMappedBooking(
         })),
       },
       accommodations: {
-        create: mapped.accommodations.map((a) => ({
+        create: accommodations.map((a) => ({
           city: a.city,
           hotel: a.hotel,
           checkIn: new Date(a.checkIn),

@@ -29,12 +29,16 @@ export class FlowError extends Error {
 }
 
 /** The raw response, for documents (HTML / PDF). Throws FlowError on a non-2xx. */
-export async function flowFetch(path: string, actor?: string | null): Promise<Response> {
+export async function flowFetch(
+  path: string,
+  actor?: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<Response> {
   if (!isFlowConfigured()) {
     throw new FlowError('Aahaas Flow is not connected — set AAHAAS_FLOW_SERVICE_KEY on the OPS server.', 503)
   }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? TIMEOUT_MS)
   try {
     const res = await fetch(`${FLOW_BASE}/${path.replace(/^\//, '')}`, {
       headers: {
@@ -63,8 +67,12 @@ export async function flowFetch(path: string, actor?: string | null): Promise<Re
 }
 
 /** A JSON read — Flow wraps every answer as `{ success, data }`. */
-export async function flowGet<T>(path: string, actor?: string | null): Promise<T> {
-  const res = await flowFetch(path, actor)
+export async function flowGet<T>(
+  path: string,
+  actor?: string | null,
+  opts: { timeoutMs?: number } = {},
+): Promise<T> {
+  const res = await flowFetch(path, actor, opts)
   const json = (await res.json()) as { success?: boolean; data?: T; message?: string }
   if (json.success === false) throw new FlowError(json.message ?? 'Aahaas Flow could not read this order.', 502)
   return (json.data ?? json) as T
