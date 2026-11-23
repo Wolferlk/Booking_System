@@ -29,6 +29,7 @@ import { flightLine, linkFlight, transferDescription, type LinkableFlight } from
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { customerEmailForDisplay } from '@/lib/booking-source'
 import { guestDriver } from '@/lib/guest-driver'
+import { countryLabel, type OperationCountry } from '@/lib/country-detection'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -250,6 +251,13 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
   )
 
   // ── BOOKING SUMMARY STRIP ─────────────────────────────────────────────────
+  // Apple System imports carry no TC "Destination" line (null or ""), so fall
+  // back to the operation country — same rule as the PDF agenda.
+  const opCountry = booking.operationCountry as OperationCountry | null
+  const destination =
+    ((booking as any).tourDestination as string | null)?.trim() ||
+    (opCountry && opCountry !== 'ALL' ? countryLabel(opCountry) : '—')
+
   children.push(
     new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
@@ -259,7 +267,7 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
           children: [
             dCell((booking as any).agent ?? '—', { bold: true }),
             dCell((booking as any).fileHandler ?? '—', { bold: true }),
-            dCell((booking as any).tourDestination ?? '—', { bold: true }),
+            dCell(destination, { bold: true }),
             dCell(lead?.name ?? '—', { bold: true }),
           ],
         }),

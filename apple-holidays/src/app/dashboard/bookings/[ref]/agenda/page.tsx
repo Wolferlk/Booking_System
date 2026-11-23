@@ -44,6 +44,7 @@ import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 import SectionLogsButton from '@/components/logs/section-logs-button'
 import ExcelMcGenerate, { type ExcelMcApply } from '@/components/agenda/excel-mc-generate'
 import { itemFromLine, type McSheetLine } from '@/lib/vn-mc-import/shared'
+import { countryLabel, type OperationCountry } from '@/lib/country-detection'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
 function normalizeMealPlan(raw: string | null | undefined): string {
@@ -1738,7 +1739,7 @@ export default function AgendaPage() {
                 {booking.operationCountry && (
                   <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
                     <CountryFlag country={booking.operationCountry} className="w-4 h-3" />
-                    {booking.tourDestination || ''}
+                    {booking.tourDestination?.trim() || (booking.operationCountry !== 'ALL' ? countryLabel(booking.operationCountry as OperationCountry) : '')}
                   </span>
                 )}
               </div>
