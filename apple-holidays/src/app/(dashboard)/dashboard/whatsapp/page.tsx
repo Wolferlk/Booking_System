@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
-  AlertCircle, ArrowDown, ArrowLeft, BarChart3, Briefcase, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
+  AlertCircle, ArrowDown, ArrowLeft, BarChart3, Briefcase, Car, Check, CheckCheck, ChevronDown, ChevronUp, Clock,
   Copy, CornerDownLeft, Download, ExternalLink, FileText, FolderSearch, Hash, Inbox, Keyboard, LayoutTemplate,
   Loader2, Luggage, MessageCircle, MessageSquarePlus, Paperclip, Phone, Pin, PinOff, Plus, RefreshCw, Reply, RotateCcw, Search,
   Send, Smile, Sparkles, Trash2, User, WifiOff, X, Zap,
@@ -30,9 +30,21 @@ import { RelatedThreadsStrip } from '@/components/whatsapp-inbox/related-threads
 import {
   BUSINESS_NUMBERS, DEFAULT_BUSINESS_NUMBER, businessNumber, type BusinessNumberKey,
 } from '@/lib/whatsapp-business-numbers'
+import { hasFile, parseAutoTag } from '@/lib/whatsapp-auto-tags'
 
 type ListTab = 'all' | 'unread' | 'pinned' | 'country' | 'groups'
 type NumberFilter = BusinessNumberKey | 'all'
+/** Narrow the chat list to driver chats / chats with automatic sends / chats with files. */
+type KindFilter = 'drivers' | 'auto' | 'files' | null
+/** Which messages the open thread shows. */
+type ThreadView = 'all' | 'auto' | 'files'
+
+const KIND_KEY = 'wa-inbox:kind-filter'
+
+/** The name a chat is shown under: the guest's WhatsApp name, else the driver's. */
+function chatName(c: Conversation): string | null {
+  return c.displayName || c.driver?.name || null
+}
 
 /** Chats from an older API response carry no numbers — they were all Operations. */
 function chatNumbers(c: Conversation): BusinessNumberKey[] {
@@ -127,6 +139,8 @@ function WhatsAppInboxInner() {
   const [countryFilter, setCountryFilter] = useState<string | null>(null)
   // Which Aahaas business number's chats to show. Always opens on Operations.
   const [numberFilter, setNumberFilter] = useState<NumberFilter>(DEFAULT_BUSINESS_NUMBER)
+  const [kindFilter, setKindFilterState] = useState<KindFilter>(null)
+  const [threadView, setThreadView] = useState<ThreadView>('all')
   const [groupId, setGroupId] = useState<string | null>(null)
   const [groupsVersion, setGroupsVersion] = useState(0)
   const groupState = useGroupDetail(tab === 'groups' ? groupId : null)
@@ -199,6 +213,8 @@ function WhatsAppInboxInner() {
   useEffect(() => {
     setPins(readLocal<string[]>(PINS_KEY, []))
     setQuickReplies(readLocal<QuickReply[]>(QR_KEY, DEFAULT_QUICK_REPLIES))
+    const savedKind = readLocal<KindFilter>(KIND_KEY, null)
+    if (savedKind === 'drivers' || savedKind === 'auto' || savedKind === 'files') setKindFilterState(savedKind)
     setTripPanelOpen(window.innerWidth >= TRIP_PANEL_INLINE_PX && readLocal<boolean>(TRIP_PANEL_KEY, true))
     setOnline(navigator.onLine)
     const on = () => setOnline(true)
@@ -358,6 +374,7 @@ function WhatsAppInboxInner() {
     setThreadQuery('')
     setEmojiOpen(false)
     setQrManual(false)
+    setThreadView(kindFilter === 'auto' ? 'auto' : kindFilter === 'files' ? 'files' : 'all')
     loadMessages(phone, { initial: true })
     setConversations(cs => cs.map(c => (c.phone === phone ? { ...c, unreadCount: 0 } : c)))
   }
@@ -638,7 +655,34 @@ function WhatsAppInboxInner() {
   const displayName =
     selectedConv?.displayName ??
     messages.find(m => m.direction === 'inbound' && m.senderName)?.senderName ??
+    selectedConv?.driver?.name ??
     null
+
+  function setKindFilter(next: KindFilter) {
+    setKindFilterState(next)
+    writeLocal(KIND_KEY, next)
+    // Opening the list on "Auto-sent" / "Files" should show those in the open chat too.
+    setThreadView(next === 'auto' ? 'auto' : next === 'files' ? 'files' : 'all')
+  }
+
+  // Automatic sends and file messages in the open thread.
+  const threadCounts = useMemo(() => ({
+    auto:  messages.filter(m => parseAutoTag(m.senderName, m.direction)).length,
+    files: messages.filter(hasFile).length,
+  }), [messages])
+  const shownMessages = useMemo(() => {
+    if (threadView === 'auto') return messages.filter(m => parseAutoTag(m.senderName, m.direction))
+    if (threadView === 'files') return messages.filter(hasFile)
+    return messages
+  }, [messages, threadView])
+
+  // Switching the view re-flows the thread — land on the newest message.
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      const box = boxRef.current
+      if (box) box.scrollTop = box.scrollHeight
+    })
+  }, [threadView])
 
   function exportChat() {
     if (!selected || messages.length === 0) return
@@ -710,9 +754,18 @@ function WhatsAppInboxInner() {
     if (tab === 'pinned') list = list.filter(c => pins.includes(c.phone))
     if (tab === 'country' && countryFilter) list = list.filter(c => countryGroupKey(c.booking?.operationCountry) === countryFilter)
     if (matchFilter) list = list.filter(c => c.match?.field === matchFilter)
+    if (kindFilter === 'drivers') list = list.filter(c => !!c.driver || c.phone === selected)
+    if (kindFilter === 'auto') list = list.filter(c => (c.autoCount ?? 0) > 0 || c.phone === selected)
+    if (kindFilter === 'files') list = list.filter(c => (c.fileCount ?? 0) > 0 || c.phone === selected)
     if (!pins.length) return list
     return [...list.filter(c => pins.includes(c.phone)), ...list.filter(c => !pins.includes(c.phone))]
-  }, [numberScoped, tab, countryFilter, pins, selected, matchFilter])
+  }, [numberScoped, tab, countryFilter, pins, selected, matchFilter, kindFilter])
+
+  const kindCounts = useMemo(() => ({
+    drivers: numberScoped.filter(c => !!c.driver).length,
+    auto:    numberScoped.filter(c => (c.autoCount ?? 0) > 0).length,
+    files:   numberScoped.filter(c => (c.fileCount ?? 0) > 0).length,
+  }), [numberScoped])
 
   // "9 by IS no. · 3 by message" — what the search actually hit, as filters.
   const matchCounts = useMemo(() => {
@@ -767,9 +820,9 @@ function WhatsAppInboxInner() {
   // Day groups with "run" info so consecutive bubbles from one side stack tightly.
   const messageGroups = useMemo(() => {
     const groups: { dayLabel: string; items: { m: WaMessage; first: boolean; last: boolean }[] }[] = []
-    messages.forEach((m, i) => {
-      const prev = messages[i - 1]
-      const next = messages[i + 1]
+    shownMessages.forEach((m, i) => {
+      const prev = shownMessages[i - 1]
+      const next = shownMessages[i + 1]
       const label = fmtDayLabel(m.createdAt)
       const sameAsPrev = !!prev && prev.direction === m.direction && fmtDayLabel(prev.createdAt) === label &&
         new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
@@ -781,7 +834,7 @@ function WhatsAppInboxInner() {
       else groups.push({ dayLabel: label, items: [entry] })
     })
     return groups
-  }, [messages])
+  }, [shownMessages])
 
   // ── global keyboard shortcuts ────────────────────────────────────────────
   useEffect(() => {
@@ -1015,6 +1068,10 @@ function WhatsAppInboxInner() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {tab !== 'groups' && (
+            <KindFilterBar value={kindFilter} onChange={setKindFilter} counts={kindCounts} />
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
@@ -1042,10 +1099,16 @@ function WhatsAppInboxInner() {
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-6 rounded-2xl border border-dashed border-slate-200 px-5 py-10 text-center">
               {tab === 'pinned' ? <Pin className="mx-auto mb-2 h-8 w-8 text-slate-300" /> : <Inbox className="mx-auto mb-2 h-8 w-8 text-slate-300" />}
               <p className="text-sm font-semibold text-slate-500">
-                {search ? 'No matches' : tab === 'unread' ? 'All caught up 🎉' : tab === 'pinned' ? 'No pinned chats' : tab === 'country' ? 'No chats for this country' : 'No conversations yet'}
+                {search ? 'No matches'
+                  : kindFilter === 'drivers' ? 'No driver chats here'
+                  : kindFilter === 'auto' ? 'No automatic sends here'
+                  : kindFilter === 'files' ? 'No files sent or received here'
+                  : tab === 'unread' ? 'All caught up 🎉' : tab === 'pinned' ? 'No pinned chats' : tab === 'country' ? 'No chats for this country' : 'No conversations yet'}
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                {numberFilter !== 'all' && numberScoped.length < conversations.length
+                {kindFilter && !search
+                  ? 'Clear the Drivers / Auto-sent / Files filter above to see every chat.'
+                  : numberFilter !== 'all' && numberScoped.length < conversations.length
                   ? `Showing ${businessNumber(numberFilter).label} only — ${conversations.length - numberScoped.length} more chat${conversations.length - numberScoped.length === 1 ? '' : 's'} on other numbers. Pick “All” above to see them.`
                   : search ? 'Try an IS number (VN12345), booking ref, guest name, phone or message text.' : tab === 'pinned' ? 'Hover a chat and press the pin to keep it on top.' : 'Incoming WhatsApp messages will appear here.'}
               </p>
@@ -1121,7 +1184,14 @@ function WhatsAppInboxInner() {
                 </button>
                 <Avatar seed={selected} name={displayName} phone={selected} size={42} ring={windowOpen === true} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[15px] font-bold leading-tight text-slate-900">{displayName || `+${selected}`}</p>
+                  <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-bold leading-tight text-slate-900">
+                    <span className="truncate">{displayName || `+${selected}`}</span>
+                    {selectedConv?.driver && (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-800" title="This number is a driver">
+                        <Car className="h-3 w-3" /> Driver
+                      </span>
+                    )}
+                  </p>
                   <p className="flex items-center gap-1.5 truncate text-[11.5px] text-slate-400">
                     <button onClick={() => copyText(`+${selected}`)} className="transition hover:text-emerald-600" title="Copy number">+{selected}</button>
                     {lastSynced && <span>· synced {fmtAgo(now - lastSynced)}</span>}
@@ -1214,6 +1284,10 @@ function WhatsAppInboxInner() {
                 ) : windowOpen !== null && (
                   <span className="rounded-full border border-dashed border-slate-200 px-2.5 py-0.5 text-[11px] text-slate-400">No booking linked</span>
                 )}
+
+                {(threadCounts.auto > 0 || threadCounts.files > 0 || threadView !== 'all') && (
+                  <ThreadViewSwitch value={threadView} onChange={setThreadView} total={messages.length} counts={threadCounts} />
+                )}
               </div>
 
               {/* The guest wrote to another Aahaas number. OPS can only send from
@@ -1262,6 +1336,16 @@ function WhatsAppInboxInner() {
                         <button onClick={() => setTemplatesOpen(true)} className="font-semibold text-emerald-600 underline">Pick a template</button>
                       </p>
                     </motion.div>
+                  </div>
+                ) : shownMessages.length === 0 && threadView !== 'all' ? (
+                  <div className="flex h-full flex-col items-center justify-center text-center">
+                    <div className="rounded-2xl bg-white/85 px-6 py-5 shadow-sm backdrop-blur">
+                      {threadView === 'auto' ? <Zap className="mx-auto mb-2 h-7 w-7 text-amber-500" /> : <Paperclip className="mx-auto mb-2 h-7 w-7 text-slate-400" />}
+                      <p className="text-sm font-semibold text-slate-700">
+                        {threadView === 'auto' ? 'No automatic sends in this chat' : 'No files in this chat'}
+                      </p>
+                      <button onClick={() => setThreadView('all')} className="mt-2 text-xs font-semibold text-emerald-600 underline">Show every message</button>
+                    </div>
                   </div>
                 ) : (
                   <div key={selected}>
@@ -1836,6 +1920,72 @@ function NumberSwitcher({ value, onChange, buckets, total, totalUnread }: {
   )
 }
 
+/** Drivers / Auto-sent / Files — narrows the chat list. Tap the active one to clear it. */
+function KindFilterBar({ value, onChange, counts }: {
+  value: KindFilter
+  onChange: (v: KindFilter) => void
+  counts: { drivers: number; auto: number; files: number }
+}) {
+  const items: { key: Exclude<KindFilter, null>; label: string; icon: typeof Car; n: number; title: string; on: string }[] = [
+    { key: 'drivers', label: 'Drivers',   icon: Car,       n: counts.drivers, title: 'Only driver chats — assignments, driver docs, advance sheets, daily trips', on: 'bg-amber-500 text-white shadow-sm shadow-amber-500/30' },
+    { key: 'auto',    label: 'Auto-sent', icon: Zap,       n: counts.auto,    title: 'Only chats with automatic sends, and show just those messages', on: 'bg-violet-600 text-white shadow-sm shadow-violet-600/30' },
+    { key: 'files',   label: 'Files',     icon: Paperclip, n: counts.files,   title: 'Only chats with documents / photos, and show just those messages', on: 'bg-slate-800 text-white shadow-sm' },
+  ]
+  return (
+    <div className="mt-2 flex items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none]" role="group" aria-label="Filter chats">
+      {items.map(it => {
+        const active = value === it.key
+        const Icon = it.icon
+        return (
+          <button
+            key={it.key}
+            onClick={() => onChange(active ? null : it.key)}
+            title={active ? 'Clear filter' : it.title}
+            aria-pressed={active}
+            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${active ? it.on : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+          >
+            <Icon className="h-3 w-3" /> {it.label} <span className="opacity-70">({it.n})</span>
+            {active && <X className="h-3 w-3" />}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** All / Auto-sent / Files — which messages the open thread shows. */
+function ThreadViewSwitch({ value, onChange, total, counts }: {
+  value: ThreadView
+  onChange: (v: ThreadView) => void
+  total: number
+  counts: { auto: number; files: number }
+}) {
+  const items: { key: ThreadView; label: string; icon?: typeof Zap; n: number }[] = [
+    { key: 'all',   label: 'All',       n: total },
+    { key: 'auto',  label: 'Auto-sent', icon: Zap,       n: counts.auto },
+    { key: 'files', label: 'Files',     icon: Paperclip, n: counts.files },
+  ]
+  return (
+    <div className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-full bg-slate-100 p-0.5" role="tablist" aria-label="Show messages">
+      {items.map(it => {
+        const active = value === it.key
+        const Icon = it.icon
+        return (
+          <button
+            key={it.key}
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(it.key)}
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold transition ${active ? 'bg-white text-slate-900 shadow-sm ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-800'}`}
+          >
+            {Icon && <Icon className="h-3 w-3" />} {it.label} <span className="opacity-60">{it.n}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
   c: Conversation
   query: string
@@ -1865,11 +2015,11 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
         }`}
       >
         {active && <motion.span layoutId="wa-active-bar" className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-emerald-500" />}
-        <Avatar seed={c.phone} name={c.displayName} phone={c.phone} />
+        <Avatar seed={c.phone} name={chatName(c)} phone={c.phone} />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className={`min-w-0 flex-1 truncate text-[13.5px] ${hasUnread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
-              <MatchHighlight text={c.displayName || `+${c.phone}`} query={query} />
+              <MatchHighlight text={chatName(c) || `+${c.phone}`} query={query} />
             </span>
             {pinned && <Pin className="h-3 w-3 shrink-0 rotate-45 text-emerald-500" />}
             <span className={`shrink-0 text-[11px] ${hasUnread ? 'font-bold text-emerald-600' : 'text-slate-400'}`}>{fmtListStamp(c.updatedAt)}</span>
@@ -1921,8 +2071,15 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
               </span>
             )
           })()}
+          {(c.booking || c.driver || (c.autoCount ?? 0) > 0 || (c.fileCount ?? 0) > 0) && (
+          <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
+          {c.driver && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800" title={c.driver.name ? `Driver · ${c.driver.name}` : 'Driver'}>
+              <Car className="h-2.5 w-2.5" /> Driver
+            </span>
+          )}
           {c.booking && (
-            <span className="mt-1 inline-flex max-w-full items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
+            <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
               {c.booking.operationCountry && <span>{countryFlag(c.booking.operationCountry)}</span>}
               {c.booking.isNumber && (
                 <span className="font-mono text-emerald-700"><MatchHighlight text={c.booking.isNumber} query={query} /></span>
@@ -1931,6 +2088,21 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
               <span className="truncate"><MatchHighlight text={c.booking.bookingRef} query={query} /></span>
               <span className={`ml-0.5 shrink-0 rounded-full px-1 ${STATUS_COLORS[c.booking.status]}`}>{STATUS_LABELS[c.booking.status]}</span>
             </span>
+          )}
+          {(c.autoCount ?? 0) > 0 && (
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700"
+              title={`${c.autoCount} automatic send${c.autoCount === 1 ? '' : 's'}${c.autoTags?.length ? ` · ${c.autoTags.join(', ')}` : ''}`}
+            >
+              <Zap className="h-2.5 w-2.5" /> {c.autoCount}
+            </span>
+          )}
+          {(c.fileCount ?? 0) > 0 && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-600" title={`${c.fileCount} file${c.fileCount === 1 ? '' : 's'} in this chat`}>
+              <Paperclip className="h-2.5 w-2.5" /> {c.fileCount}
+            </span>
+          )}
+          </span>
           )}
         </span>
       </button>
@@ -2005,6 +2177,7 @@ function MessageBubble({ m, first, last, query, isActiveMatch, onImage, onMediaL
   onQuote: () => void
 }) {
   const isOut = m.direction === 'outbound'
+  const auto = parseAutoTag(m.senderName, m.direction)
   const tail = first ? (isOut ? 'rounded-tr-md' : 'rounded-tl-md') : ''
   return (
     <motion.div
@@ -2020,7 +2193,14 @@ function MessageBubble({ m, first, last, query, isActiveMatch, onImage, onMediaL
         } ${m.status === 'failed' ? 'ring-1 ring-rose-300' : ''} ${isActiveMatch ? 'ring-2 ring-amber-400' : ''}`}
       >
         {m.senderName && first && (
-          <p className={`mb-0.5 text-[11px] font-bold ${isOut ? 'text-emerald-700' : 'text-blue-600'}`}>{m.senderName}</p>
+          <p className={`mb-0.5 flex items-center gap-1 text-[11px] font-bold ${isOut ? 'text-emerald-700' : 'text-blue-600'}`}>
+            {auto && (
+              <span className={`inline-flex shrink-0 items-center gap-0.5 rounded px-1 py-px text-[9.5px] uppercase ${auto.driver ? 'bg-amber-100 text-amber-800' : 'bg-violet-100 text-violet-700'}`} title="Sent automatically by the system">
+                {auto.driver ? <Car className="h-2.5 w-2.5" /> : <Zap className="h-2.5 w-2.5" />} Auto
+              </span>
+            )}
+            <span className="min-w-0 truncate">{m.senderName}</span>
+          </p>
         )}
         {!isOut && m.number && m.number !== 'ops' && (() => {
           const n = businessNumber(m.number)

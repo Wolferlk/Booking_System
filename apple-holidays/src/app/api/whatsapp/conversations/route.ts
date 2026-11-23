@@ -16,6 +16,7 @@ import {
   FIELD_RANK, digitsOf, findBookingsForSearch, looksLikePhone, messageExcerpt, phoneKey,
   type SearchMatch,
 } from '@/lib/whatsapp-inbox-search'
+import { parseAutoTag } from '@/lib/whatsapp-auto-tags'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -26,6 +27,32 @@ const MEDIA_LABEL: Record<string, string> = {
   audio:    '🎤 Voice message',
   video:    '🎥 Video',
   sticker:  '🩶 Sticker',
+}
+
+/**
+ * Driver numbers from the drivers table, keyed by their last 9 digits so a
+ * number stored locally ("0771234567") still meets its international form
+ * ("94771234567"). Small table, but the inbox polls every few seconds — so
+ * it is read at most once every five minutes.
+ */
+const DRIVER_DIR_TTL_MS = 5 * 60_000
+let driverDir: { at: number; byTail: Map<string, string> } | null = null
+
+async function driverDirectory(): Promise<Map<string, string>> {
+  if (driverDir && Date.now() - driverDir.at < DRIVER_DIR_TTL_MS) return driverDir.byTail
+  const byTail = new Map<string, string>()
+  try {
+    const drivers = await prisma.driver.findMany({ select: { name: true, phone: true } })
+    for (const d of drivers) {
+      const digits = (d.phone ?? '').replace(/\D/g, '')
+      if (digits.length >= 9 && !byTail.has(digits.slice(-9))) byTail.set(digits.slice(-9), d.name)
+    }
+  } catch {
+    // Tags alone still identify drivers; keep whatever we had.
+    if (driverDir) return driverDir.byTail
+  }
+  driverDir = { at: Date.now(), byTail }
+  return byTail
 }
 
 export async function GET(req: NextRequest) {
@@ -52,9 +79,10 @@ export async function GET(req: NextRequest) {
     take: 5000,
     select: {
       phone: true, bookingRef: true, direction: true, body: true, mediaType: true,
-      senderName: true, read: true, status: true, createdAt: true, waMessageId: true,
+      senderName: true, read: true, status: true, createdAt: true, waMessageId: true, mediaUrl: true,
     },
   })
+  const drivers = await driverDirectory()
 
   // Which business number each reply came in on (OPS's own sends are always
   // Aahaas Operations). Lets the desk filter the inbox per number.
@@ -72,6 +100,7 @@ export async function GET(req: NextRequest) {
   const byPhone = new Map<string, {
     last: Row; unread: number; displayName: string | null; ref: string | null
     refs: Set<string>; bodyHit: string | null; numbers: BusinessNumberKey[]
+    driverName: string | null; isDriver: boolean; autoCount: number; fileCount: number; autoTags: string[]
   }>()
   // Message text is only searched for 3+ characters — "VN" would hit half the inbox.
   const bodyNeedle = search.length >= 3 && !looksLikePhone(rawSearch) ? search : ''
@@ -79,9 +108,23 @@ export async function GET(req: NextRequest) {
   for (const row of rows) {
     let entry = byPhone.get(row.phone)
     if (!entry) {
-      entry = { last: row, unread: 0, displayName: null, ref: null, refs: new Set(), bodyHit: null, numbers: [] }
+      entry = {
+        last: row, unread: 0, displayName: null, ref: null, refs: new Set(), bodyHit: null, numbers: [],
+        driverName: null, isDriver: false, autoCount: 0, fileCount: 0, autoTags: [],
+      }
       byPhone.set(row.phone, entry)
     }
+    // Automatic sends (driver briefs, docs, daily briefings …) and attachments.
+    const auto = parseAutoTag(row.senderName, row.direction)
+    if (auto) {
+      entry.autoCount += 1
+      if (!entry.autoTags.includes(auto.tag)) entry.autoTags.push(auto.tag) // newest first
+      if (auto.driver) {
+        entry.isDriver = true
+        if (!entry.driverName && auto.name) entry.driverName = auto.name
+      }
+    }
+    if (row.mediaUrl) entry.fileCount += 1
     if (row.bookingRef) entry.refs.add(row.bookingRef)
     const number = numberOfRow(row)
     if (!entry.numbers.includes(number)) entry.numbers.push(number) // newest first
@@ -94,6 +137,15 @@ export async function GET(req: NextRequest) {
     if (!entry.ref && row.bookingRef && !row.bookingRef.startsWith('UNKNOWN:')) entry.ref = row.bookingRef
     if (row.direction === 'inbound' && !row.read) entry.unread += 1
     if (!entry.displayName && row.direction === 'inbound' && row.senderName) entry.displayName = row.senderName
+  }
+
+  // Numbers in the drivers table count as drivers even before any tagged send.
+  for (const [phone, entry] of Array.from(byPhone)) {
+    const listed = phone.length >= 9 ? drivers.get(phone.slice(-9)) : undefined
+    if (listed) {
+      entry.isDriver = true
+      entry.driverName = listed
+    }
   }
 
   // Search: which chats match, and why. A file number / ref / guest name hits
@@ -121,6 +173,7 @@ export async function GET(req: NextRequest) {
       if (qDigits && phone.includes(qDigits)) found.push({ field: 'phone', text: `+${phone}` })
       else if (phone.includes(search)) found.push({ field: 'phone', text: `+${phone}` })
       if (entry.displayName?.toLowerCase().includes(search)) found.push({ field: 'name', text: entry.displayName })
+      else if (entry.driverName?.toLowerCase().includes(search)) found.push({ field: 'name', text: entry.driverName })
       if (entry.bodyHit) found.push({ field: 'message', text: entry.bodyHit })
       if (found.length) matchByPhone.set(phone, found.sort((a, b) => FIELD_RANK[a.field] - FIELD_RANK[b.field])[0])
     }
@@ -196,6 +249,10 @@ export async function GET(req: NextRequest) {
       updatedAt: last.createdAt,
       unreadCount: entry.unread,
       numbers: entry.numbers,
+      driver: entry.isDriver ? { name: entry.driverName } : null,
+      autoCount: entry.autoCount,
+      fileCount: entry.fileCount,
+      autoTags: entry.autoTags.slice(0, 4),
       booking: booking ? {
         bookingRef:       booking.bookingRef,
         isNumber:         booking.isNumber,
