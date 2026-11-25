@@ -23,6 +23,7 @@ import type {
   B2cOrderCustomer,
   B2cOrderHeader,
   B2cOrderProduct,
+  B2cTransportLeg,
 } from './b2c-db'
 
 /**
@@ -314,6 +315,62 @@ export function resolvePaymentStatus(customer: B2cOrderCustomer | undefined): Pa
   return 'PENDING'
 }
 
+// ─── Transport (category 7) legs ──────────────────────────────────────────────
+
+const LEG_KIND_LABEL: Record<string, string> = {
+  airport: 'Airport transfer',
+  intercity: 'Inter-city transfer',
+  local: 'Local transfer',
+  day_use: 'Day use',
+}
+
+const sameLabel = (a: string, b: string) =>
+  a.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === b.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+/**
+ * One itinerary row per chauffeur leg, so the agenda generator sees every
+ * movement the customer bought: "Private transfer: Sapphire Hotel to Pinnawala
+ * Elephant Orphanage, Pinnawala". A leg that starts and ends at the same label
+ * is a local run (a city tour) and keeps that label as its title, the way an
+ * activity line does.
+ *
+ * Only stable store values go into the text — the Update Booking sync compares
+ * rows by title and description.
+ */
+export function transportItineraryRows(legs: B2cTransportLeg[]): { date: string; title: string; description: string | null }[] {
+  return legs
+    .filter((l) => l.travel_date && (l.from_label?.trim() || l.to_label?.trim()))
+    .map((l) => {
+      const from = (l.from_label ?? '').trim()
+      const to = (l.to_label ?? '').trim()
+      const shared = (l.transfer_basis ?? '').toLowerCase() === 'sic'
+      const basis = shared ? 'SIC' : 'Private'
+      const local = !from || !to || sameLabel(from, to)
+      const title = local
+        ? `${from || to}${shared ? ' (SIC)' : ' (Private vehicle)'}`
+        : `${basis} transfer: ${from} to ${to}`
+      const km = num(l.distance_km)
+      // The label usually already holds the model ("Van - High Roof · Premium").
+      const label = l.vehicle_label?.trim() ?? ''
+      const model = l.vehicle_model?.trim() ?? ''
+      const vehicle = !model || label.toLowerCase().includes(model.toLowerCase()) ? label : !label ? model : `${label} (${model})`
+      // The store tags some ordinary drives as 'airport'; only call it an
+      // airport transfer when an end actually is one.
+      const kind = l.kind === 'airport' && !/airport/i.test(`${from} ${to}`) ? 'intercity' : l.kind
+      const bits = [
+        'Transport',
+        LEG_KIND_LABEL[kind] ?? null,
+        vehicle ? `Vehicle: ${vehicle}` : null,
+        l.depart_time ? `Time: ${String(l.depart_time).slice(0, 5)}` : null,
+        km > 0 ? `${km.toFixed(0)} km` : null,
+        l.stop_kind === 'wait' && num(l.wait_hours) > 0 ? `Wait ${num(l.wait_hours)} h` : null,
+        l.supplier_name?.trim() ? `Supplier: ${l.supplier_name.trim()}` : null,
+        `Aahaas transport #${l.transport_booking_id} leg ${l.seq}`,
+      ].filter(Boolean)
+      return { date: String(l.travel_date).slice(0, 10), title: title.slice(0, 1000), description: bits.join(' · ') }
+    })
+}
+
 // ─── Main mapping ─────────────────────────────────────────────────────────────
 
 export function mapB2cOrder(input: {
@@ -323,16 +380,31 @@ export function mapB2cOrder(input: {
   flights: ParsedFlightBooking[]
   /** Names typed in at checkout; omitted when the lookup was unavailable. */
   travellers?: OrderTravellers
+  /** Chauffeur legs of the order's Transport (category 7) lines. */
+  transportLegs?: B2cTransportLeg[]
 }): MapResult {
-  const { header, products, customer, flights, travellers } = input
-  const orderId = Number(header.order_id)
+  const { header: storeHeader, products, customer, flights, travellers } = input
+  const transportRows = transportItineraryRows(input.transportLegs ?? [])
+  const orderId = Number(storeHeader.order_id)
 
   if (products.length === 0) {
     return { ok: false, orderId, reason: 'no-travel-products', detail: 'order has no travel-category lines' }
   }
-  if (!header.arrival || !header.departure) {
+  if (!storeHeader.arrival || !storeHeader.departure) {
     return { ok: false, orderId, reason: 'missing-dates', detail: 'no service_date on any line' }
   }
+
+  // The header only knows `checkouts_more_data` dates. Transport often runs a
+  // day past the last hotel/activity (the departure airport drop), so the trip
+  // is widened to cover it.
+  const transportDates = transportRows.map((r) => r.date).sort()
+  const header: B2cOrderHeader = transportDates.length === 0 ? storeHeader : {
+    ...storeHeader,
+    arrival: transportDates[0] < storeHeader.arrival ? transportDates[0] : storeHeader.arrival,
+    departure: transportDates[transportDates.length - 1] > storeHeader.departure
+      ? transportDates[transportDates.length - 1]
+      : storeHeader.departure,
+  } as B2cOrderHeader
 
   const { country, via: countryVia, destinationLabel } = resolveOrderCountry(products, flights)
   const { paxAdults, paxChildren, paxInfants, paxSource } = resolvePax(products, flights)
@@ -359,7 +431,7 @@ export function mapB2cOrder(input: {
     return (p.sku && p.sku !== 'N/A' ? p.sku : p.maincat_type || `Line ${i + 1}`).slice(0, 1000)
   }
 
-  const itineraryItems: MappedB2cItineraryItem[] = products.map((p, i) => {
+  const productItems: MappedB2cItineraryItem[] = products.map((p, i) => {
     const flight = flightForLine(p)
     // Flight lines have no service_date; the ticket's own date is the real one.
     const date = p.service_date ?? (flight ? flightDateSpan(flight)?.first : null) ?? header.arrival
@@ -379,6 +451,18 @@ export function mapB2cOrder(input: {
       description: bits.length > 0 ? bits.join(' · ') : null,
     }
   })
+
+  // Transport legs slot in by date after the day's products (stable sort), so an
+  // order without transport keeps exactly the rows it always had.
+  const itineraryItems: MappedB2cItineraryItem[] = [
+    ...productItems,
+    ...transportRows.map((r) => ({
+      dayNo: Math.max(1, dayOffset(header.arrival, r.date) + 1),
+      date: r.date,
+      title: r.title,
+      description: r.description,
+    })),
+  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
 
   const pnlLines: MappedB2cPnlLine[] = products.map((p, i) => {
     const { adEntrance, chEntrance, otherRate, basis } = mapCostToRates(p, paxAdults, paxChildren)
@@ -470,6 +554,8 @@ export function mapB2cOrder(input: {
         accountName: customer?.customer_name?.trim() || null,
         travellers: travellers?.adults ?? [],
         productLines: products.length,
+        transportLegs: transportRows.length,
+        transportBookings: Array.from(new Set((input.transportLegs ?? []).map((l) => Number(l.transport_booking_id)))),
         flightBookings: flights.length,
         flightRoutes: flights.map((f) => describeRoute(f)).filter(Boolean),
         flightPnrs: flights.map((f) => f.pnr).filter(Boolean),

@@ -20,6 +20,7 @@ import {
   fetchOrderCustomers,
   fetchOrderHeaders,
   fetchOrderProducts,
+  fetchOrderTransportLegs,
   isB2cConfigured,
 } from './b2c-db'
 import { mapB2cOrder } from './b2c-booking-map'
@@ -289,17 +290,24 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   const orderIds = headers.map((h) => Number(h.order_id))
 
   // Three bulk reads rather than per-order queries — one round trip each.
-  const [products, customers, flightRows, travellers] = await Promise.all([
+  const [products, customers, flightRows, travellers, transportLegs] = await Promise.all([
     fetchOrderProducts(orderIds),
     fetchOrderCustomers(orderIds),
     fetchFlightBookings(orderIds),
     loadOrderTravellers(orderIds),
+    // Transport (category 7) legs. Optional: a failed read costs the transfer
+    // rows, never the import.
+    fetchOrderTransportLegs(orderIds).catch((err) => {
+      summary.warnings!.push(`Transport legs unavailable, imported without them: ${err instanceof Error ? err.message : String(err)}`)
+      return []
+    }),
   ])
   if (travellers.error) {
     summary.warnings!.push(`Traveller names unavailable, used store account names: ${travellers.error}`)
   }
 
   const productsByOrder = groupBy(products, (p) => Number(p.order_id))
+  const transportByOrder = groupBy(transportLegs, (l) => Number(l.order_id))
   const customerByOrder = new Map(customers.map((c) => [Number(c.order_id), c]))
   const flightsByOrder = groupBy(
     flightRows.map((r) => parseFlightBooking(r)),
@@ -319,6 +327,7 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         customer: customerByOrder.get(orderId),
         flights: flightsByOrder.get(orderId) ?? [],
         travellers: travellers.byOrder.get(orderId),
+        transportLegs: transportByOrder.get(orderId) ?? [],
       })
 
       if (!result.ok) {

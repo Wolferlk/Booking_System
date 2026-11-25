@@ -16,6 +16,7 @@ import {
   fetchOrderCustomers,
   fetchOrderHeaders,
   fetchOrderProducts,
+  fetchOrderTransportLegs,
   isB2cConfigured,
 } from '@/lib/b2c-db'
 import { mapB2cOrder } from '@/lib/b2c-booking-map'
@@ -48,13 +49,15 @@ export async function GET(req: NextRequest) {
       return buildApiSuccess({ upcomingFrom, orders: [], skipped: [], counts: zeroCounts() })
     }
 
-    const [products, customers, flightRows] = await Promise.all([
+    const [products, customers, flightRows, transportLegs] = await Promise.all([
       fetchOrderProducts(orderIds),
       fetchOrderCustomers(orderIds),
       fetchFlightBookings(orderIds),
+      fetchOrderTransportLegs(orderIds).catch(() => []),
     ])
 
     const productsByOrder = groupBy(products, (p) => Number(p.order_id))
+    const transportByOrder = groupBy(transportLegs, (l) => Number(l.order_id))
     const customerByOrder = new Map(customers.map((c) => [Number(c.order_id), c]))
     const flightsByOrder = groupBy(flightRows.map(parseFlightBooking), (f) => f.orderId)
 
@@ -81,6 +84,7 @@ export async function GET(req: NextRequest) {
         products: productsByOrder.get(id) ?? [],
         customer: customerByOrder.get(id),
         flights: flightsByOrder.get(id) ?? [],
+        transportLegs: transportByOrder.get(id) ?? [],
       })
 
       if (!result.ok) {

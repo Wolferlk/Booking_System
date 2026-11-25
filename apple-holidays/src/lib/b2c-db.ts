@@ -30,6 +30,12 @@ export const TRAVEL_CATEGORY_IDS = [3, 4, 5, 6] as const
  *  flight booking instead (see {@link fetchUndatedFlightHeaders}). */
 export const FLIGHT_CATEGORY_ID = 6
 
+/** Transport (the AI chauffeur planner). Not in `tbl_maincategory` and never in
+ *  `checkouts_more_data`: the order line is a `tbl_checkouts` row whose
+ *  `related_order_id` is an `ai_transport_booking.booking_id`, and the movements
+ *  are that booking's `ai_transport_leg` rows. See {@link fetchOrderTransportLegs}. */
+export const TRANSPORT_CATEGORY_ID = 7
+
 /** How far back the full sweep looks, by booked date, for flight orders with no
  *  `service_date`. Airlines sell about 11 months ahead, so a year covers every
  *  ticket that can still be in the future. */
@@ -270,6 +276,35 @@ export interface B2cOrderLineBookingNames extends mysql.RowDataPacket {
   student_name: string | null
   /** Hotels: `bookingdataset.paxDetails`, as JSON text. */
   hotel_pax: string | null
+}
+
+/**
+ * One movement of a Transport (category 7) order line: a leg of the chauffeur
+ * plan in `ai_transport_leg`, with its vehicle from `ai_transport_booking`.
+ * A leg whose from and to labels are the same is a local run, e.g.
+ * "Colombo Half Day City Tour".
+ */
+export interface B2cTransportLeg extends mysql.RowDataPacket {
+  order_id: number
+  /** `tbl_checkouts.id` of the transport line. */
+  checkout_line_id: number
+  transport_booking_id: number
+  leg_id: number
+  seq: number
+  travel_date: string          // 'YYYY-MM-DD'
+  depart_time: string | null   // 'HH:MM:SS'
+  from_label: string
+  to_label: string
+  distance_km: string | null
+  /** 'airport' | 'intercity' | 'local' | 'day_use' */
+  kind: string
+  /** 'none' | 'entrance' | 'wait' */
+  stop_kind: string
+  wait_hours: string | null
+  transfer_basis: string | null   // 'private' | 'sic'
+  vehicle_label: string | null
+  vehicle_model: string | null
+  supplier_name: string | null
 }
 
 /** A row of `aahaas_passenger_details` — the names typed in at checkout. */
@@ -530,6 +565,44 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
         AND m.category_id IN (${CATEGORY_LIST})
         ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
+  )
+}
+
+/**
+ * The chauffeur legs of every Transport (category 7) line on the given orders.
+ *
+ * Transport lines exist only in `tbl_checkouts` (no `checkouts_more_data` row),
+ * so {@link fetchOrderProducts} never sees them and their airport pickups,
+ * inter-city drives and city tours used to be missing from the itinerary and the
+ * agenda. The line's `related_order_id` is the `ai_transport_booking`; its legs
+ * carry the date, from/to and kind of every movement.
+ *
+ * The store leaves an ordered transport booking at `booking_status = 'quoted'`,
+ * so only `cancelled`, deleted rows and `stale` legs are left out.
+ */
+export async function fetchOrderTransportLegs(orderIds: number[]): Promise<B2cTransportLeg[]> {
+  if (orderIds.length === 0) return []
+  const ids = sanitizeIds(orderIds)
+  const liveLine = (await hasLineVersionColumn()) ? 'AND c.removed_in_version IS NULL' : ''
+  return b2cQuery<B2cTransportLeg>(
+    `SELECT c.checkout_id       AS order_id,
+            c.id                AS checkout_line_id,
+            b.booking_id        AS transport_booking_id,
+            l.leg_id, l.seq, l.travel_date, l.depart_time,
+            l.from_label, l.to_label, l.distance_km,
+            l.kind, l.stop_kind, l.wait_hours,
+            b.transfer_basis, b.vehicle_label, b.vehicle_model, b.supplier_name
+       FROM tbl_checkouts c
+       JOIN ai_transport_booking b ON b.booking_id = c.related_order_id
+       JOIN ai_transport_leg     l ON l.booking_id = b.booking_id
+      WHERE c.checkout_id IN (${ids})
+        AND c.main_category_id = ${TRANSPORT_CATEGORY_ID}
+        AND c.deleted_at IS NULL
+        AND b.deleted_at IS NULL
+        AND b.booking_status <> 'cancelled'
+        AND l.status <> 'stale'
+        ${liveLine}
+      ORDER BY c.checkout_id, l.travel_date, l.seq, l.leg_id`,
   )
 }
 

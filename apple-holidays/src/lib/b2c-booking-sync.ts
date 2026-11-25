@@ -58,8 +58,10 @@ import {
   fetchOrderCustomers,
   fetchOrderHeaderById,
   fetchOrderProducts,
+  fetchOrderTransportLegs,
   isB2cConfigured,
   type B2cOrderProduct,
+  type B2cTransportLeg,
 } from '@/lib/b2c-db'
 import { mapB2cOrder, mapCostToRates, type MappedB2cBooking, type MappedB2cPnlLine } from '@/lib/b2c-booking-map'
 import { parseFlightBooking } from '@/lib/b2c-flight'
@@ -422,13 +424,17 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
 
   // ── Read the store (read-only) ─────────────────────────────────────────────
   let header, products: B2cOrderProduct[], customers, flightRows, travellers
+  // Transport (category 7) legs. Unlike the importer, a failed read fails the
+  // sync: an itinerary built without them would offer to wipe the transfer rows.
+  let transportLegs: B2cTransportLeg[]
   try {
-    ;[header, products, customers, flightRows, travellers] = await Promise.all([
+    ;[header, products, customers, flightRows, travellers, transportLegs] = await Promise.all([
       fetchOrderHeaderById(orderId),
       fetchOrderProducts([orderId]),
       fetchOrderCustomers([orderId]),
       fetchFlightBookings([orderId]),
       loadOrderTravellers([orderId]),
+      fetchOrderTransportLegs([orderId]),
     ])
   } catch (err) {
     throw new B2cSyncError(`Could not read the Aahaas store: ${err instanceof Error ? err.message : String(err)}`, 502)
@@ -448,6 +454,7 @@ export async function syncB2cBooking(bookingRef: string, opts: B2cSyncOptions): 
     customer,
     flights: flightRows.map((r) => parseFlightBooking(r)),
     travellers: travellers.byOrder.get(orderId),
+    transportLegs,
   })
   if (!mappedResult.ok) {
     throw new B2cSyncError(`Store order ${orderId} cannot be mapped (${mappedResult.detail}). Nothing was changed.`, 422)
