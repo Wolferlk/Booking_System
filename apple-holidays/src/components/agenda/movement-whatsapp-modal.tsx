@@ -38,7 +38,12 @@ interface Recipient {
 }
 
 interface HistoryRow { id: string; phone: string; role: string; name: string; status: string; body: string | null; createdAt: string }
-interface SendResult { role: MovementRole; name: string; phone: string; ok: boolean; reason?: string; redirectedTo?: string; followUpSent?: boolean }
+export type SavedPhoneField = 'driverPhone' | 'guidePhone' | 'tourVendorPhone'
+interface SendResult {
+  role: MovementRole; name: string; phone: string; ok: boolean; reason?: string; redirectedTo?: string; followUpSent?: boolean
+  savedToMovement?: { field: SavedPhoneField; phone: string }
+  saveSkipped?: string
+}
 interface TemplateStatus { name: string; status: string; mismatch?: string; error?: string }
 
 interface Loaded {
@@ -125,7 +130,7 @@ function ago(iso: string) {
 }
 
 export default function MovementWhatsAppModal({
-  bookingRef, itemId, local, isAdmin, onClose, onSent,
+  bookingRef, itemId, local, isAdmin, onClose, onSent, onNumbersSaved,
 }: {
   bookingRef: string
   itemId: string
@@ -134,6 +139,8 @@ export default function MovementWhatsAppModal({
   isAdmin: boolean
   onClose: () => void
   onSent: () => void
+  /** "Also save this number" was written to the database — the chart must patch its own copy. */
+  onNumbersSaved?: (saved: { field: SavedPhoneField; phone: string }[]) => void
 }) {
   const [data, setData]         = useState<Loaded | null>(null)
   const [error, setError]       = useState<string | null>(null)
@@ -244,6 +251,19 @@ export default function MovementWhatsAppModal({
       if (ok) toast.success(`Movement sent to ${ok} recipient${ok === 1 ? '' : 's'} on WhatsApp`)
       if (dup) toast.warning(`${dup} already received this exact message recently — confirm to send again`)
       if (r.some(x => !x.ok && x.reason !== 'duplicate')) toast.error('Some messages were not sent — see the details below')
+
+      const saved = r.flatMap(x => (x.savedToMovement ? [x.savedToMovement] : []))
+      if (saved.length) {
+        // The saved number is now the movement's number: no longer "changed".
+        setRows(rs => rs.map(row => {
+          const hit = r.find(x => x.savedToMovement && x.role === row.role && digits(x.phone) === digits(row.phone))
+          return hit ? { ...row, originalPhone: hit.savedToMovement!.phone, phone: hit.savedToMovement!.phone, saveToMovement: false, source: 'Movement assignment' } : row
+        }))
+        onNumbersSaved?.(saved)
+        toast.success(`New number saved on the movement (+${saved.map(s => s.phone).join(', +')})`)
+      }
+      for (const x of r) if (x.saveSkipped) toast.warning(`${x.name}: ${x.saveSkipped}`)
+
       if (ok) onSent()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Send failed')

@@ -39,6 +39,15 @@ export async function loadPassengerNotes(bookingRef: string): Promise<Record<str
   return out
 }
 
+/**
+ * passenger name → note text, for renderers (agenda PDF / Word). Read-only and
+ * never throws — a missing table just means no notes.
+ */
+export async function passengerNoteLookup(bookingRef: string): Promise<(name: string) => string | null> {
+  const notes = await loadPassengerNotes(bookingRef)
+  return (name: string) => notes[passengerNameKey(name)]?.note ?? null
+}
+
 /** Set (or, with an empty note, clear) one passenger's note. Throws when the table is missing. */
 export async function setPassengerNote(
   bookingRef: string,

@@ -28,6 +28,8 @@ import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { customerEmailForDisplay } from '@/lib/booking-source'
+import { passengerNoteLookup } from '@/lib/passenger-notes'
+import { mealCellText } from '@/lib/passenger-meal'
 import { guestDriver } from '@/lib/guest-driver'
 import { countryLabel, type OperationCountry } from '@/lib/country-detection'
 
@@ -300,6 +302,8 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
   }
 
   // ── PASSENGERS ────────────────────────────────────────────────────────────
+  // Meal Preference = the meal chips plus a dietary Special Note ("Only veg").
+  const noteFor = await passengerNoteLookup(ref)
   if (booking.passengers.length > 0) {
     children.push(sectionHeading('👥', `Passengers — ${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? ` · ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''}`))
     children.push(new Table({
@@ -314,7 +318,7 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             dCell(p.name + (p.isLead ? ' [LEAD]' : ''), { bold: true, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(p.type ?? 'ADULT', { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(p.contact ?? '—', { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
-            dCell(p.mealPreference ?? '—', { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
+            dCell(mealCellText(p.mealPreference, noteFor(p.name)) || '—', { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
           ],
         })),
       ],

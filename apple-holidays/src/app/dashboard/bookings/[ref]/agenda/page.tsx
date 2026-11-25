@@ -34,6 +34,8 @@ import JourneyMap from '@/components/bookings/journey-map'
 import { ComboInput } from '@/components/ui/combo-input'
 import { TimeInput } from '@/components/ui/time-input'
 import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions, mealPlanFullName } from '@/lib/agenda-suggestions'
+import { passengerNameKey } from '@/lib/passenger-note-key'
+import { isDietaryNote, mealPreferenceList } from '@/lib/passenger-meal'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, removeTransferDescription, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { DEFAULT_FLIGHT_PICKUP_RULES, type FlightPickupRules } from '@/lib/flight-pickup-rules'
@@ -680,6 +682,60 @@ export default function AgendaPage() {
       setLoading(false)
     }
   }, [ref])
+
+  // ── Passenger meal needs ───────────────────────────────────────────────────
+  // Meal chips (passenger.mealPreference) and Special Notes ("Only veg") are
+  // edited on the booking page. Read both, and re-read them whenever this tab
+  // comes back into focus, so a change made on the booking page shows here
+  // without a manual reload. Read-only, and only the light passengers route.
+  const [passengerNotes, setPassengerNotes] = useState<Record<string, { note: string; updatedByName: string | null; updatedAt: string }>>({})
+  const lastPaxRefresh = useRef(0)
+  const refreshPassengers = useCallback(async () => {
+    lastPaxRefresh.current = Date.now()
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/passengers`)
+      const json = await res.json()
+      if (!json.success || !json.data) return
+      setPassengerNotes(json.data.notes ?? {})
+      if (Array.isArray(json.data.passengers)) {
+        setBooking(b => b ? { ...b, passengers: json.data.passengers } : b)
+      }
+    } catch { /* non-fatal — the chart works without it */ }
+  }, [ref])
+
+  useEffect(() => {
+    void refreshPassengers()
+    const onFocus = () => {
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastPaxRefresh.current < 10_000) return
+      void refreshPassengers()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [refreshPassengers])
+
+  /** Each passenger's meal chips, Special Note, and whether the note is about food. */
+  const paxMeals = (booking?.passengers ?? []).map(p => {
+    const note = passengerNotes[passengerNameKey(p.name)]?.note ?? null
+    return { id: p.id, name: p.name, prefs: mealPreferenceList(p.mealPreference), note, dietNote: isDietaryNote(note) ? note : null }
+  })
+  const paxWithDiet = paxMeals.filter(g => g.prefs.length > 0 || g.dietNote)
+  /** "Vegetarian ×2 · Only veg" — shown on meal movements so nobody plans a meal blind. */
+  const dietTally = (() => {
+    const counts = new Map<string, number>()
+    for (const g of paxWithDiet) for (const label of [...g.prefs, ...(g.dietNote ? [g.dietNote] : [])]) {
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+    return Array.from(counts, ([label, n]) => (n > 1 ? `${label} ×${n}` : label))
+  })()
+  const dietBadgeText = dietTally.slice(0, 2).join(' · ') + (dietTally.length > 2 ? ` +${dietTally.length - 2}` : '')
+  const dietTooltip = paxWithDiet
+    .map(g => `${g.name}: ${[...g.prefs, ...(g.dietNote ? [g.dietNote] : [])].join(', ')}`)
+    .join('\n')
 
   // VN Vendor Sync wrote (or undid) a tour vendor on the server: carry it into
   // the chart's own state, so it shows at once and the next Save keeps it.
@@ -1808,6 +1864,21 @@ export default function AgendaPage() {
                   )}
                   {expandedSection === 'passengers' ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                 </div>
+                {/* Dietary needs — always visible, even with the card collapsed */}
+                {paxWithDiet.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 px-4 py-2 border-t border-emerald-100 bg-gradient-to-r from-emerald-50 via-lime-50 to-amber-50">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 mr-1">
+                      <Utensils className="w-3.5 h-3.5" />
+                      {paxWithDiet.length} guest{paxWithDiet.length !== 1 ? 's' : ''} with meal needs
+                    </span>
+                    {paxWithDiet.map(g => (
+                      <span key={g.id} className="inline-flex items-center gap-1 text-[11px] bg-white/80 border border-emerald-200 rounded-full px-2 py-0.5 text-slate-700">
+                        <span className="font-semibold">{g.name}</span>
+                        <span className="text-emerald-700">{[...g.prefs, ...(g.dietNote ? [g.dietNote] : [])].join(' · ')}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {expandedSection === 'passengers' && (
                   <div className="border-t border-slate-100 overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1836,9 +1907,27 @@ export default function AgendaPage() {
                               </td>
                             )}
                             <td className="px-4 py-2.5 text-slate-500">
-                              {p.mealPreference && p.mealPreference.trim() !== ''
-                                ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">{p.mealPreference}</span>
-                                : '—'}
+                              {(() => {
+                                const m = paxMeals.find(x => x.id === p.id)
+                                if (!m || (m.prefs.length === 0 && !m.note)) return '—'
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    {m.prefs.length > 0 && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {m.prefs.map(v => (
+                                          <span key={v} className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">{v}</span>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {m.note && (
+                                      <span className="inline-flex items-start gap-1 text-xs text-amber-800 bg-gradient-to-r from-amber-50 to-rose-50 border border-amber-200 px-1.5 py-0.5 rounded max-w-xs whitespace-pre-line">
+                                        <Sparkles className="w-3 h-3 mt-0.5 flex-shrink-0 text-amber-500" />
+                                        <span><span className="font-semibold">Special note:</span> {m.note}</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                )
+                              })()}
                             </td>
                           </tr>
                         ))}
@@ -2462,6 +2551,16 @@ export default function AgendaPage() {
                           {normalizeMealPlan(item.mealPlan) && (
                             <Badge color="amber">{normalizeMealPlan(item.mealPlan)}</Badge>
                           )}
+                          {/* Meal movement → remind whoever books it about the guests' diets */}
+                          {paxWithDiet.length > 0 && (normalizeMealPlan(item.mealPlan) || /MEAL/.test(item.serviceType ?? '')) && (
+                            <span
+                              title={dietTooltip}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200"
+                            >
+                              <Utensils className="w-3 h-3" />
+                              {dietBadgeText}
+                            </span>
+                          )}
                           {item.meetingTime && (
                             <span className="text-xs text-slate-500">Meet: {to12h(item.meetingTime)}</span>
                           )}
@@ -2656,6 +2755,18 @@ export default function AgendaPage() {
           isAdmin={isAdmin}
           onClose={() => setWaItemIdx(null)}
           onSent={() => void loadWaSummary()}
+          onNumbersSaved={saved => {
+            // The number is already in the database — carry it into the chart's
+            // own copy so it shows at once and the next Save does not write the
+            // old number back. Only this movement's phone fields are touched.
+            const id = items[waItemIdx].id
+            setItems(is => is.map(x => {
+              if (!id || x.id !== id || !x.assignment) return x
+              const patch: Partial<NonNullable<AgendaItem['assignment']>> = {}
+              for (const s of saved) patch[s.field] = s.phone
+              return { ...x, assignment: { ...x.assignment, ...patch } }
+            }))
+          }}
         />
       )}
 

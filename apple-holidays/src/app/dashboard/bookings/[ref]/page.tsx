@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -296,6 +296,11 @@ export default function BookingDetailPage() {
   const [mealPrefs, setMealPrefs] = useState<Record<string, string>>({})
   const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
   const [savingMealPrefs, setSavingMealPrefs] = useState(false)
+  // Meal chips save themselves (debounced per passenger, one request at a time)
+  // so a preference can't be "set" on screen yet never reach the agenda.
+  const mealSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const mealSaveChain = useRef<Promise<void>>(Promise.resolve())
+  const [mealSaveState, setMealSaveState] = useState<Record<string, 'saving' | 'saved' | 'error'>>({})
   const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
   const passengerNotes = usePassengerNotes(ref)
 
@@ -1314,6 +1319,33 @@ Wishing you a wonderful trip! ✈️
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSavingContact(false) }
+  }
+
+  /** Auto-save one passenger's meal chips ~0.6s after the last tap. */
+  function queueMealPrefSave(passengerId: string, value: string) {
+    clearTimeout(mealSaveTimers.current[passengerId])
+    setMealSaveState(s => ({ ...s, [passengerId]: 'saving' }))
+    mealSaveTimers.current[passengerId] = setTimeout(() => {
+      delete mealSaveTimers.current[passengerId]
+      mealSaveChain.current = mealSaveChain.current.then(async () => {
+        try {
+          const res = await fetch(`/api/bookings/${ref}/passengers`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [{ id: passengerId, mealPreference: value || null }] }),
+          })
+          const json = await res.json()
+          if (!json.success) throw new Error(json.error)
+          setMealSaveState(s => ({ ...s, [passengerId]: 'saved' }))
+          toast.success('Meal preference saved — agenda updated', { id: `meal-pref-${passengerId}` })
+          // Only clear the manual Save button when nothing else is still pending.
+          if (Object.keys(mealSaveTimers.current).length === 0) setMealPrefsDirty(false)
+        } catch (err) {
+          setMealSaveState(s => ({ ...s, [passengerId]: 'error' }))
+          toast.error(`Meal preference not saved — ${err instanceof Error ? err.message : 'try Save Meal Prefs'}`)
+        }
+      })
+    }, 600)
   }
 
   async function saveMealPreferences() {
@@ -2678,14 +2710,13 @@ Wishing you a wonderful trip! ✈️
                 ]
 
                 function togglePref(passengerId: string, value: string) {
-                  setMealPrefs(prev => {
-                    const current = (prev[passengerId] ?? '').split(',').map(s => s.trim()).filter(Boolean)
-                    const next = current.includes(value)
-                      ? current.filter(v => v !== value)
-                      : [...current, value]
-                    return { ...prev, [passengerId]: next.join(', ') }
-                  })
+                  const current = (mealPrefs[passengerId] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                  const next = (current.includes(value)
+                    ? current.filter(v => v !== value)
+                    : [...current, value]).join(', ')
+                  setMealPrefs(prev => ({ ...prev, [passengerId]: next }))
                   setMealPrefsDirty(true)
+                  queueMealPrefSave(passengerId, next)
                 }
 
                 return passengers.map((p) => {
@@ -2760,7 +2791,12 @@ Wishing you a wonderful trip! ✈️
                       {/* Expandable meal preference chips */}
                       {isOpen && (
                         <div className="px-4 pb-3 ml-11">
-                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">🍽 Meal Preferences</p>
+                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2 flex items-center gap-2">
+                            🍽 Meal Preferences
+                            {mealSaveState[pid] === 'saving' && <span className="normal-case tracking-normal font-medium text-slate-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</span>}
+                            {mealSaveState[pid] === 'saved' && <span className="normal-case tracking-normal font-medium text-emerald-600">✓ Saved · shows on agenda</span>}
+                            {mealSaveState[pid] === 'error' && <span className="normal-case tracking-normal font-medium text-rose-600">Not saved — use Save Meal Prefs</span>}
+                          </p>
                           {canEditPassengers ? (
                             <div className="flex flex-wrap gap-1.5">
                               {MEAL_OPTIONS.map(opt => {

@@ -20,6 +20,8 @@ import {
 } from './ticket-notes'
 import { customerEmailForDisplay } from './booking-source'
 import { guestDriver } from '@/lib/guest-driver'
+import { passengerNoteLookup } from '@/lib/passenger-notes'
+import { mealCellText } from '@/lib/passenger-meal'
 
 // ── Palette (matches generate-booking-pdf.ts) ────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -214,6 +216,9 @@ export async function generateAgendaPdf(
     const size = fitImage(imageDimensions(buffer), { width: CONTENT_W - 30, height: 300 })
     ticketImages.set(ticket.id, { buffer, ...size })
   }))
+
+  // Same reason: load passenger Special Notes before rendering starts.
+  const noteFor = await passengerNoteLookup(ref)
 
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -419,7 +424,11 @@ export async function generateAgendaPdf(
     }
 
     // ── Passengers ─────────────────────────────────────────────────────────
-    const passengers = booking.passengers ?? []
+    // Meal Preference = the meal chips plus a dietary Special Note ("Only veg"),
+    // so a need typed as a note on the booking page still reaches the agenda.
+    const passengers = (booking.passengers ?? []).map(p => ({
+      ...p, mealPreference: mealCellText(p.mealPreference, noteFor(p.name)) || null,
+    }))
     if (passengers.length > 0) {
       const paxSummary = `${booking.paxAdults ?? 0} adult${(booking.paxAdults ?? 0) !== 1 ? 's' : ''}`
         + ((booking.paxChildren ?? 0) > 0 ? ` · ${booking.paxChildren} child${(booking.paxChildren ?? 0) !== 1 ? 'ren' : ''}` : '')

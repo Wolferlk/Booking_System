@@ -288,6 +288,10 @@ export interface SendResult {
   redirectedTo?: string
   followUpSent?: boolean
   waMessageId?: string | null
+  /** The corrected number was written onto the movement's assignment (driverPhone / guidePhone / tourVendorPhone). */
+  savedToMovement?: { field: 'driverPhone' | 'guidePhone' | 'tourVendorPhone'; phone: string }
+  /** "Also save" was ticked but the number was not saved — why. */
+  saveSkipped?: string
 }
 
 export async function sendMovementBrief(params: {
@@ -358,13 +362,34 @@ export async function sendMovementBrief(params: {
         }
       }
 
-      if (r.saveToMovement && !redirect && (role === 'driver' || role === 'guide' || role === 'tourVendor')) {
-        const field = role === 'driver' ? 'driverPhone' : role === 'guide' ? 'guidePhone' : 'tourVendorPhone'
-        await prisma.assignment.updateMany({ where: { agendaItemId: movement.itemId }, data: { [field]: phone } })
+      // Write the corrected number back. The result says what happened so the
+      // chart can patch its own copy — otherwise the chart keeps showing the old
+      // number and its next Save writes the old number straight back.
+      let savedToMovement: SendResult['savedToMovement']
+      let saveSkipped: string | undefined
+      if (r.saveToMovement && (role === 'driver' || role === 'guide' || role === 'tourVendor')) {
+        if (redirect) {
+          saveSkipped = 'Test mode is on — the number was not saved on the movement'
+        } else {
+          const field = role === 'driver' ? 'driverPhone' : role === 'guide' ? 'guidePhone' : 'tourVendorPhone'
+          try {
+            const { count } = await prisma.assignment.updateMany({ where: { agendaItemId: movement.itemId }, data: { [field]: phone } })
+            if (count > 0) savedToMovement = { field, phone }
+            else saveSkipped = 'This movement has no assignment to save the number on'
+          } catch (err) {
+            console.error(`[MovementWA] save number failed ${movement.bookingRef}/${movement.itemId}:`, err)
+            saveSkipped = 'Sent, but the number could not be saved on the movement'
+          }
+        }
       }
 
-      console.log(`[MovementWA] ${movement.bookingRef}/${movement.itemId} → ${MOVEMENT_ROLE_LABEL[role]} ${name} (${to}) by ${params.sentBy}`)
-      results.push({ ...base, ok: true, waMessageId, followUpSent, ...(redirect ? { redirectedTo: redirect } : {}) })
+      console.log(`[MovementWA] ${movement.bookingRef}/${movement.itemId} → ${MOVEMENT_ROLE_LABEL[role]} ${name} (${to}) by ${params.sentBy}${savedToMovement ? ` · saved ${savedToMovement.field}` : ''}`)
+      results.push({
+        ...base, ok: true, waMessageId, followUpSent,
+        ...(redirect ? { redirectedTo: redirect } : {}),
+        ...(savedToMovement ? { savedToMovement } : {}),
+        ...(saveSkipped ? { saveSkipped } : {}),
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[MovementWA] send failed ${movement.bookingRef}/${movement.itemId} → ${to}:`, msg)
