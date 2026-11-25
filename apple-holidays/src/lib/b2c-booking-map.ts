@@ -371,6 +371,73 @@ export function transportItineraryRows(legs: B2cTransportLeg[]): { date: string;
     })
 }
 
+// ─── Per-line labels, outbound / return ───────────────────────────────────────
+
+const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+/** "X to Y – Private Transfer" → { from: 'X', to: 'Y' }. Null when the label is not a route. */
+export function splitRouteLabel(label: string): { from: string; to: string } | null {
+  // Drop a trailing service qualifier: " – Private Transfer", " - SIC", "| Private".
+  const core = label.replace(/\s*[–—|-]\s*(private|sic|shared|seat[\s-]*in[\s-]*coach)\b.*$/i, '').trim()
+  const m = /^(.+?)\s+(?:to|→|->)\s+(.+)$/i.exec(core)
+  if (!m) return null
+  const from = m[1].trim()
+  const to = m[2].trim()
+  return from && to && normKey(from) !== normKey(to) ? { from, to } : null
+}
+
+const MOVEMENT_RE = /\b(transfer|transport|pick\s*-?\s*up|drop\s*-?\s*off|chauffeur)\b/i
+
+/**
+ * Make every movement on a day its own, recognisable itinerary row.
+ *
+ * The storefront sells a generic transfer product once per movement, so an
+ * outbound and its return arrive as two rows with the same name, date and time.
+ * Identical rows read as one to the agenda generator (and to anyone scanning the
+ * itinerary), which is how a return transfer went missing from the agenda.
+ *
+ *  1. A row whose line label is a route that reverses an earlier row's route on
+ *     the same date is marked "Return transfer" in its description.
+ *  2. Rows that are still identical (no per-line label on the store) get a
+ *     suffix: "(Outbound)" / "(Return)" for a pair of transfers, "(k of n)" for
+ *     anything else. Order is the store's line order, so the outbound comes first.
+ */
+export function distinguishRepeatedRows<T extends { date: string; title: string; description: string | null }>(rows: T[]): T[] {
+  const out = rows.map((r) => ({ ...r }))
+
+  // 1 — reversed routes on the same date
+  const routes = out.map((r) => splitRouteLabel(r.title))
+  out.forEach((r, i) => {
+    const route = routes[i]
+    if (!route) return
+    const outbound = out.findIndex((o, j) => j < i && o.date === r.date && routes[j]
+      && normKey(routes[j]!.from) === normKey(route.to) && normKey(routes[j]!.to) === normKey(route.from))
+    if (outbound < 0) return
+    const note = `Return transfer (outbound: ${routes[outbound]!.from} → ${routes[outbound]!.to})`
+    r.description = r.description ? `${note} · ${r.description}` : note
+  })
+
+  // 2 — rows that are still exact twins
+  const groups = new Map<string, number[]>()
+  out.forEach((r, i) => {
+    const key = `${r.date}|${normKey(r.title)}`
+    groups.set(key, [...(groups.get(key) ?? []), i])
+  })
+  for (const idx of Array.from(groups.values())) {
+    if (idx.length < 2) continue
+    const pairOfMoves = idx.length === 2 && MOVEMENT_RE.test(out[idx[0]].title)
+    idx.forEach((i, k) => {
+      const tag = pairOfMoves ? (k === 0 ? 'Outbound' : 'Return') : `${k + 1} of ${idx.length}`
+      out[i].title = `${out[i].title} (${tag})`.slice(0, 1000)
+      if (pairOfMoves && k === 1) {
+        const note = 'Return transfer — reverse of the outbound movement above'
+        out[i].description = out[i].description ? `${note} · ${out[i].description}` : note
+      }
+    })
+  }
+  return out
+}
+
 // ─── Main mapping ─────────────────────────────────────────────────────────────
 
 export function mapB2cOrder(input: {
@@ -431,12 +498,23 @@ export function mapB2cOrder(input: {
     return (p.sku && p.sku !== 'N/A' ? p.sku : p.maincat_type || `Line ${i + 1}`).slice(0, 1000)
   }
 
+  // The storefront's own label for this one booked line, when it says more than
+  // the product name — "Hotel to Gardens by the Bay & Singapore Flyer – Private
+  // Transfer" rather than the generic point-to-point product both legs share.
+  const lineLabel = (p: B2cOrderProduct): string | null => {
+    const label = (p.line_label ?? '').replace(/\s+/g, ' ').trim()
+    if (!label) return null
+    return normKey(label) === normKey(p.product_name ?? '') ? null : label
+  }
+
   const productItems: MappedB2cItineraryItem[] = products.map((p, i) => {
     const flight = flightForLine(p)
     // Flight lines have no service_date; the ticket's own date is the real one.
     const date = p.service_date ?? (flight ? flightDateSpan(flight)?.first : null) ?? header.arrival
+    const label = lineLabel(p)
     const bits = [
       p.maincat_type,
+      label && p.product_name?.trim() ? `Product: ${p.product_name.trim()}` : null,
       p.vendor_name ? `Vendor: ${p.vendor_name}` : null,
       p.time_slot ? `Time: ${p.time_slot}` : null,
       p.service_location ? `Location: ${p.service_location}` : null,
@@ -447,7 +525,7 @@ export function mapB2cOrder(input: {
     return {
       dayNo: Math.max(1, dayOffset(header.arrival, date) + 1),
       date,
-      title: lineTitle(p, i),
+      title: label ? label.slice(0, 1000) : lineTitle(p, i),
       description: bits.length > 0 ? bits.join(' · ') : null,
     }
   })
@@ -455,7 +533,7 @@ export function mapB2cOrder(input: {
   // Transport legs slot in by date after the day's products (stable sort), so an
   // order without transport keeps exactly the rows it always had.
   const itineraryItems: MappedB2cItineraryItem[] = [
-    ...productItems,
+    ...distinguishRepeatedRows(productItems),
     ...transportRows.map((r) => ({
       dayNo: Math.max(1, dayOffset(header.arrival, r.date) + 1),
       date: r.date,

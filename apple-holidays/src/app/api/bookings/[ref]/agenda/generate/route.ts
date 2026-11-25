@@ -17,6 +17,7 @@ import { linkFlight, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
+import { splitRouteLabel } from '@/lib/b2c-booking-map'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -286,6 +287,16 @@ NO DUPLICATE MOVEMENTS (CRITICAL):
   - Never put a whole route inside toPoint ("X Airport to Hotel city center"). Split it:
     fromPoint = "PQC Airport", toPoint = "Night Sea Hotel".
 
+OUTBOUND + RETURN TRANSFERS (CRITICAL):
+  - An outbound transfer and its return are TWO movements and TWO agenda items, even when
+    they share a product name, date and time. Never merge them and never treat the return as a duplicate.
+  - itineraryItems marks them: titles such as "Hotel to Gardens by the Bay – Private Transfer" and
+    "Gardens by the Bay to Hotel – Private Transfer", or a "(Outbound)" / "(Return)" suffix, or a
+    description starting "Return transfer".
+  - Outbound: fromPoint = the guest's hotel that night (use the accommodation name, not the word "Hotel"),
+    toPoint = the attraction. Return: fromPoint = the attraction, toPoint = the hotel.
+  - The return's meetingTime is after the outbound's (after the day's activities), never the same time.
+
 MULTI-TRANSFER DAYS:
   - A single day can have MULTIPLE agenda items (e.g., airport arrival transfer + hotel check-in,
     or a morning tour + evening dinner transfer).
@@ -540,20 +551,70 @@ ${tqDocumentText
   // email pipeline has always had (see `lib/incoming-mail-automation.ts`).
   const normText = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const covered = sourceAware.map(it => normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
+  const tokensOf = (key: string) => key.split(' ').filter(t => t.length > 3)
+  // A title is "covered" when it appears verbatim on some row, or when most of
+  // its distinctive words do — the model routinely re-words the middle of a
+  // title while keeping the landmarks.
+  const covers = (h: string, key: string, tokens: string[]) =>
+    h.includes(key) || (tokens.length > 0 && tokens.filter(t => h.includes(t)).length / tokens.length >= 0.6)
 
-  const missing = structuredData.itineraryItems.filter(src => {
-    const key = normText(src.title)
-    if (!key || !src.date) return false
-    // A title is "covered" when it appears verbatim on some row, or when most of
-    // its distinctive words do — the model routinely re-words the middle of a
-    // title while keeping the landmarks.
-    const tokens = key.split(' ').filter(t => t.length > 3)
-    return !covered.some(h => {
-      if (h.includes(key)) return true
-      if (!tokens.length) return false
-      return tokens.filter(t => h.includes(t)).length / tokens.length >= 0.6
+  // TWINS: an outbound and its return ("Hotel to Gardens…" / "Gardens… to Hotel",
+  // or the same product booked twice) share every distinctive word, so one row
+  // used to "cover" both and the return silently vanished. Sources with the same
+  // date and word set must each be matched by a DIFFERENT row; the row going the
+  // source's own direction is preferred, so the leg the model dropped is the one
+  // put back.
+  const sources = structuredData.itineraryItems
+    .map(src => ({ src, key: normText(src.title) }))
+    .filter(s => s.key && s.src.date)
+  const twinKey = (s: { src: { date: string }; key: string }) =>
+    `${s.src.date}|${Array.from(new Set(tokensOf(s.key))).sort().join(' ')}`
+  const twinCount = new Map<string, number>()
+  for (const s of sources) twinCount.set(twinKey(s), (twinCount.get(twinKey(s)) ?? 0) + 1)
+
+  const usedByGroup = new Map<string, Set<number>>()
+  const missing = sources.filter(s => {
+    const tokens = tokensOf(s.key)
+    const group = twinKey(s)
+    if ((twinCount.get(group) ?? 0) < 2) return !covered.some(h => covers(h, s.key, tokens))
+
+    const used = usedByGroup.get(group) ?? new Set<number>()
+    usedByGroup.set(group, used)
+    const route = splitRouteLabel(String(s.src.title).replace(/\s*\((outbound|return|\d+ of \d+)\)\s*$/i, ''))
+    const firstWord = (text: string) => tokensOf(normText(text))[0] ?? ''
+    let best = -1
+    let bestScore = -1
+    sourceAware.forEach((row, i) => {
+      if (used.has(i) || !covers(covered[i], s.key, tokens)) return
+      let score = 0
+      if (String(row.date ?? '').slice(0, 10) === s.src.date) score += 2
+      if (covered[i].includes(s.key)) score += 2
+      if (route) {
+        // "Hotel" → "Value Hotel Thomson": the first distinctive word of each end.
+        const from = normText(row.fromPoint), to = normText(row.toPoint)
+        if (firstWord(route.from) && from.includes(firstWord(route.from))) score += 1
+        if (firstWord(route.to) && to.includes(firstWord(route.to))) score += 1
+      }
+      if (score > bestScore) { best = i; bestScore = score }
     })
-  })
+    if (best < 0) return true
+    used.add(best)
+    return false
+  }).map(s => s.src)
+
+  // The guest's hotel on a date — what "Hotel" means in a B2C route label.
+  const hotelOn = (date: string): string | null => {
+    const stays = booking.accommodations.map(a => ({
+      hotel: a.hotel,
+      inDay: new Date(a.checkIn).toISOString().slice(0, 10),
+      outDay: new Date(a.checkOut).toISOString().slice(0, 10),
+    }))
+    return (stays.find(a => a.inDay <= date && date < a.outDay) ?? stays.find(a => a.outDay === date))?.hotel ?? null
+  }
+  const pointFor = (label: string, date: string): string => {
+    if (!/^(the\s+)?hotel$/i.test(label.trim())) return label
+    return hotelOn(date) ?? label
+  }
 
   if (missing.length > 0) {
     console.warn(`[agenda/generate] ${params.ref}: appended ${missing.length} itinerary item(s) the model dropped`)
@@ -567,14 +628,18 @@ ${tqDocumentText
       const moves = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis)\b/i.test(title)
       const own   = !moves && /own arrangement|own basis|at leisure|free day|leisure|free time/i.test(title)
       const serviceType = sic ? 'SIC_TRANSFER' : own ? 'OWN_ARRANGEMENT' : 'PVT_TRANSFER'
+      // A route title ("Gardens by the Bay & Singapore Flyer to Hotel – Private
+      // Transfer") becomes a real From/To, with "Hotel" resolved to that night's
+      // hotel, so a re-added return leg is ready for a driver as it stands.
+      const route = moves ? splitRouteLabel(title.replace(/\s*\((outbound|return|\d+ of \d+)\)\s*$/i, '')) : null
       return {
         date:        src.date,
         location:    booking.tourDestination ?? '',
-        fromPoint:   null,
-        // The complete confirmed title, verbatim — this row exists precisely
-        // because the model would not copy it.
-        toPoint:     title,
-        details:     src.description ?? null,
+        fromPoint:   route ? pointFor(route.from, src.date) : null,
+        // Otherwise the complete confirmed title, verbatim — this row exists
+        // precisely because the model would not copy it.
+        toPoint:     route ? pointFor(route.to, src.date) : title,
+        details:     route ? [title, src.description].filter(Boolean).join(' · ') : (src.description ?? null),
         mealPlan:    null,
         meetingTime: serviceType === 'OWN_ARRANGEMENT' ? null : '08:00',
         timeFrom:    null,

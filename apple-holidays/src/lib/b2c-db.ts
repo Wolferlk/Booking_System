@@ -68,6 +68,31 @@ async function hasLineVersionColumn(): Promise<boolean> {
   }
 }
 
+/**
+ * `tbl_lifestyle_bookings.display_label` — the label the storefront showed for ONE
+ * booked line, e.g. "Hotel to Gardens by the Bay & Singapore Flyer – Private
+ * Transfer". A generic product ("Private One-Way Point-to-Point Transfer") is
+ * booked once per movement, so the outbound and the return share every
+ * `checkouts_more_data` field; this label is the only thing telling them apart.
+ * Probed like {@link hasLineVersionColumn} so a store without it reads as before.
+ */
+let lifestyleLabelColumn: { at: number; present: boolean } | null = null
+
+async function hasLifestyleLabelColumn(): Promise<boolean> {
+  const ttl = lifestyleLabelColumn?.present ? 30 * 60_000 : 5 * 60_000
+  if (lifestyleLabelColumn && Date.now() - lifestyleLabelColumn.at < ttl) return lifestyleLabelColumn.present
+  try {
+    const rows = await b2cQuery<mysql.RowDataPacket & { n: number }>(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tbl_lifestyle_bookings' AND COLUMN_NAME = 'display_label'`,
+    )
+    lifestyleLabelColumn = { at: Date.now(), present: Number(rows[0]?.n ?? 0) > 0 }
+    return lifestyleLabelColumn.present
+  } catch {
+    return false
+  }
+}
+
 /** Keeps `checkouts_more_data` rows of lines still on the order. `alias` is a constant at every call. */
 async function liveLineClause(alias: string): Promise<string> {
   if (!(await hasLineVersionColumn())) return ''
@@ -211,6 +236,12 @@ export interface B2cOrderProduct extends mysql.RowDataPacket {
   // Resolved product country (ISO alpha-2) — only Lifestyle-backed products have one.
   product_country: string | null
   product_city: string | null
+  /**
+   * What the storefront called this one booked line (`tbl_lifestyle_bookings.display_label`),
+   * e.g. "Gardens by the Bay & Singapore Flyer to Hotel – Private Transfer". Null for
+   * non-Lifestyle lines and stores without the column.
+   */
+  line_label?: string | null
 }
 
 export interface B2cOrderCustomer extends mysql.RowDataPacket {
@@ -546,7 +577,14 @@ export async function fetchOrdersBookedBetween(opts: {
 export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderProduct[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
-  const liveLines = await liveLineClause('m')
+  const [liveLines, withLabel] = await Promise.all([liveLineClause('m'), hasLifestyleLabelColumn()])
+  // One booked line's own label (see hasLifestyleLabelColumn). Both hops are
+  // primary keys, and the category guard stops a hotel/education id colliding.
+  const labelCol = withLabel ? 'lb.display_label AS line_label' : 'NULL AS line_label'
+  const labelJoin = withLabel
+    ? `LEFT JOIN tbl_checkouts          lc ON lc.id = m.checkout_id AND lc.main_category_id = 3
+       LEFT JOIN tbl_lifestyle_bookings lb ON lb.lifestyle_booking_id = lc.related_order_id`
+    : ''
   return b2cQuery<B2cOrderProduct>(
     `SELECT m.id, m.order_id, m.checkout_id, m.category_id, mc.maincat_type,
             m.product_id, m.product_name, m.vendor_name,
@@ -557,10 +595,12 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
             m.discount_amount, m.tax_amount,
             m.base_currency, m.paid_currency,
             l.country       AS product_country,
-            l.lifestyle_city AS product_city
+            l.lifestyle_city AS product_city,
+            ${labelCol}
        FROM checkouts_more_data m
        LEFT JOIN tbl_lifestyle    l  ON l.lifestyle_id = m.product_id
        LEFT JOIN tbl_maincategory mc ON mc.id          = m.category_id
+       ${labelJoin}
       WHERE m.order_id IN (${ids})
         AND m.category_id IN (${CATEGORY_LIST})
         ${liveLines}
