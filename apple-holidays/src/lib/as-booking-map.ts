@@ -17,7 +17,8 @@
  *   agentBookingId    ← relevant_parties.agent_ref     (the operator's own ref)
  *   agentId           ← relevant_parties.agent_id      (stored via as-booking-extras)
  *   salesPerson       ← relevant_parties.sales_person  (stored via as-booking-extras)
- *   dayRoutes         ← itinerary[].route              (stored via as-booking-extras)
+ *   dayRoutes         ← itinerary[].route + the day's narrative as `overview`
+ *                       (stored via as-booking-extras; never merged into activities)
  *   agentEmail        ← relevant_parties.agent_email
  *   fileHandler       ← confirmation_voucher.file_handler_name
  *   arrival/departure ← first / last itinerary date
@@ -151,7 +152,7 @@ function resolveActivityTitle(name: string, description: string): string {
  * "Day at leisure at the Hotel!" on most days that only have sold activities.
  * That sentence is not part of the activity's TC wording, and on a day with a
  * tour it is simply wrong — so strip a leading leisure placeholder before the
- * day narrative is merged into an activity's description. Real narratives
+ * day narrative is kept as that day's overview (`dayOverview`). Real narratives
  * ("Da Nang is a coastal city…") are untouched.
  */
 const LEISURE_PLACEHOLDER_RE =
@@ -178,25 +179,20 @@ function expandDay(day: {
   description: string
   activities: { name: string; description: string }[]
 }): MappedItineraryItem[] {
-  // AppleSystem keeps the useful prose in two places: the day's narrative
-  // (route context, sights and destination overview) and each sold activity's
-  // own description. Keep both when creating the local itinerary item so the
-  // movement chart can reproduce the confirmation/mail wording instead of
-  // silently dropping the day narrative whenever activities[] is present.
-  const mergeDescriptions = (dayDescription: string, activityDescription: string) =>
-    [dayDescription.trim(), activityDescription.trim()]
-      .filter(Boolean)
-      .filter((value, index, values) => values.indexOf(value) === index)
-      .join('\n\n')
-
-  // Only days WITH activities drop the leisure placeholder; a day with no
-  // activities keeps it below, because there it is accurate.
-  const dayNarrative = stripLeisurePlaceholder(day.description)
-
+  // AppleSystem keeps prose in two places: the day's narrative (a destination
+  // overview — "The Republic of Singapore…") and each sold activity's own
+  // description. The confirmation voucher prints them separately: the narrative
+  // once under the DAY header, then each activity with ONLY its own text. So an
+  // activity row carries only its own description. Gluing the day narrative on
+  // front of every activity was the "activity description mismatch" report: the
+  // Gardens by the Bay row (and the agenda movement built from it) opened with
+  // the Singapore city overview. The narrative is not lost — it travels as the
+  // day's `overview` in `dayRoutes` (see `dayOverview`) and is shown once per
+  // day on the booking page.
   const acts = day.activities
     .map((a) => ({
       title: resolveActivityTitle(a.name, a.description),
-      description: mergeDescriptions(dayNarrative, a.description),
+      description: a.description.trim(),
     }))
     .filter((a) => a.title || a.description)
 
@@ -213,8 +209,19 @@ function expandDay(day: {
     dayNo: day.dayNo,
     date: day.date,
     title: (a.title || day.route || `Day ${day.dayNo}`).slice(0, 1000),
-      description: a.description,
+    description: a.description,
   }))
+}
+
+/**
+ * The day-level narrative to keep beside the activities, or '' when there is
+ * nothing to add. Only days that sell activities need it: a day without any
+ * already stores its description as the itinerary item itself (`expandDay`).
+ * The leisure placeholder is dropped — on a day with a tour it is simply wrong.
+ */
+function dayOverview(day: { description: string; activities: unknown[] }): string {
+  if (day.activities.length === 0) return ''
+  return stripLeisurePlaceholder(day.description)
 }
 
 export interface MappedEmergencyContact {
@@ -233,7 +240,7 @@ export interface MappedBookingInput {
   /** relevant_parties.sales_person. No column — see as-booking-extras. */
   salesPerson: string | null
   /** Each day's route line ("Hanoi -> Da Nang( City Center)"). No column — see as-booking-extras. */
-  dayRoutes: { dayNo: number; date: string; route: string }[]
+  dayRoutes: { dayNo: number; date: string; route: string; overview?: string }[]
   operationCountry: OperationCountry | null
   agent: string | null
   agentEmail: string | null
@@ -389,8 +396,9 @@ export function mapQuoteToBooking(
     agentId: usable(agentId) ? agentId : null,
     salesPerson: usable(salesPerson) ? salesPerson : null,
     dayRoutes: days
-      .filter((d) => d.route)
-      .map((d) => ({ dayNo: d.dayNo, date: d.date, route: d.route.slice(0, 500) })),
+      .map((d) => ({ dayNo: d.dayNo, date: d.date, route: d.route.slice(0, 500), overview: dayOverview(d).slice(0, 4000) }))
+      .filter((d) => d.route || d.overview)
+      .map(({ overview, ...d }) => (overview ? { ...d, overview } : d)),
     operationCountry: detectCountryFromBookingIdentifiers(bookingRef, bookingRef),
     agent: usable(agentName) ? agentName : null,
     agentEmail: usable(agentEmail) ? agentEmail : null,

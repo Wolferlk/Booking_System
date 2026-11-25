@@ -27,6 +27,12 @@ export interface AsDayRoute {
   dayNo: number
   date: string
   route: string
+  /**
+   * The day's narrative ("The Republic of Singapore…") on a day that sells
+   * activities. Kept here, once per day, rather than glued onto every
+   * activity's description — see `expandDay` in as-booking-map.
+   */
+  overview?: string
 }
 
 export interface AsBookingExtras {

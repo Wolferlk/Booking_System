@@ -504,11 +504,11 @@ export default function BookingDetailPage() {
   // once if nothing has been detected yet, so the card fills in on open.
   useEffect(() => {
     let active = true
-    fetch(`/api/bookings/${ref}/origin`)
+    fetch(`/api/bookings/${ref}/customer-origin`)
       .then(r => r.json())
       .then(j => {
         if (!active) return
-        if (j.success && j.data) setOrigin(j.data)
+        if (j.success && j.data?.country) setOrigin(j.data)
         else detectOrigin(true) // no cache yet → detect silently in the background
       })
       .catch(() => { /* non-critical */ })
@@ -530,9 +530,13 @@ export default function BookingDetailPage() {
   async function detectOrigin(auto = false) {
     setOriginLoading(true)
     try {
-      const res = await fetch(`/api/bookings/${ref}/origin`, { method: 'POST' })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error || 'Detection failed')
+      const res = await fetch(`/api/bookings/${ref}/customer-origin`, { method: 'POST' })
+      const text = await res.text()
+      let json: { success?: boolean; error?: string; data?: CustomerOrigin } = {}
+      try { json = text ? JSON.parse(text) : {} } catch { /* non-JSON body — handled below */ }
+      if (!res.ok || !json.success || !json.data) {
+        throw new Error(json.error || `Origin detection failed (HTTP ${res.status})`)
+      }
       setOrigin(json.data)
       if (!auto) toast.success(`Origin detected: ${json.data.country}`)
     } catch (err) {
@@ -639,10 +643,13 @@ export default function BookingDetailPage() {
   const itinerary: any[] = booking.itineraryItems ?? []
   // AppleSystem fields with no column (agent id, sales person, day routes).
   const asExtras = (booking as any).asExtras as
-    | { agentId: string | null; salesPerson: string | null; dayRoutes: { dayNo: number; date: string; route: string }[] }
+    | { agentId: string | null; salesPerson: string | null; dayRoutes: { dayNo: number; date: string; route: string; overview?: string }[] }
     | null
     | undefined
   const routeByDay = new Map<number, string>((asExtras?.dayRoutes ?? []).map(d => [d.dayNo, d.route]))
+  const overviewByDay = new Map<number, string>(
+    (asExtras?.dayRoutes ?? []).filter(d => d.overview?.trim()).map(d => [d.dayNo, d.overview!.trim()]),
+  )
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const changeRequests: any[] = booking.changeRequests ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3323,9 +3330,14 @@ Wishing you a wonderful trip! ✈️
                     // A day with several activities is several rows; show its
                     // route once, on the first row, and not when it is the title.
                     const route = routeByDay.get(item.dayNo as number)
+                    const firstOfDay = idx === 0 || itinerary[idx - 1].dayNo !== item.dayNo
                     const showRoute = !!route
-                      && (idx === 0 || itinerary[idx - 1].dayNo !== item.dayNo)
+                      && firstOfDay
                       && route.trim().toLowerCase() !== String(item.title ?? '').trim().toLowerCase()
+                    // The day's destination overview, once per day and kept
+                    // apart from the activity's own description — the same
+                    // layout as the confirmation voucher.
+                    const overview = firstOfDay ? overviewByDay.get(item.dayNo as number) : undefined
                     return (
                     <div key={item.id as string} className="flex gap-4 px-6 py-4">
                       <div className="flex-shrink-0 text-center">
@@ -3343,6 +3355,14 @@ Wishing you a wonderful trip! ✈️
                             <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mr-1">Route</span>
                             {route}
                           </p>
+                        )}
+                        {overview && (
+                          <details className="mt-1 group">
+                            <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-slate-400 font-semibold hover:text-slate-600">
+                              Day overview
+                            </summary>
+                            <p className="text-xs text-slate-400 italic mt-1 whitespace-pre-line">{overview}</p>
+                          </details>
                         )}
                         {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
                       </div>

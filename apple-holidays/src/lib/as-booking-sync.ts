@@ -70,6 +70,7 @@ import {
   type PackageNoteField,
   type SyncConflict,
 } from '@/lib/booking-field-edits'
+import { recordAsUpdate, clearPendingUpdate } from '@/lib/as-update-log'
 
 // ── Sync state (system_settings KV, one row per booking) ─────────────────────
 
@@ -84,7 +85,8 @@ export interface AsSyncState {
   at: string
   /** Display name of whoever ran it, or 'Automatic (pre-arrival)'. */
   by: string
-  mode: 'manual' | 'prearrival'
+  /** 'upcoming' = the daily Upcoming Arrivals update check. */
+  mode: 'manual' | 'prearrival' | 'upcoming'
   quotationNo: string | null
   revision: number | null
   /** Field / section names that actually changed on that run. */
@@ -275,7 +277,7 @@ export interface SyncOptions {
   actorId?: string | null
   /** Display name recorded in the sync marker. */
   actorName: string
-  mode: 'manual' | 'prearrival'
+  mode: 'manual' | 'prearrival' | 'upcoming'
   /** Compute and return the proposed changes without writing anything. */
   preview?: boolean
   /** Apply only these changes. Omitted → apply every change (automated runs). */
@@ -861,6 +863,34 @@ export async function syncBookingFromAs(
     changed,
     ...(parkConflicts.length > 0 && { pending: parkConflicts.map((c) => c.field) }),
   })
+
+  // Day-by-day update log (drives the "Updated from AS" filter on All
+  // Bookings) with the before-value of everything this run replaced. Any
+  // "update found, not applied" marker is cleared: this apply has now looked at
+  // AppleSystem's current copy, and the next daily check re-raises it if a
+  // difference remains. Both helpers swallow their own errors — the booking
+  // write above has already committed and must not be reported as failed.
+  await recordAsUpdate({
+    bookingRef: booking.bookingRef,
+    by: opts.actorName,
+    mode: opts.mode,
+    quotationNo: nonEmpty(row.quotation_no),
+    revision: mapped.source.revision,
+    changed,
+    fields,
+    at: syncedAt,
+    before: {
+      ...(itinChanged && {
+        itinerary: prevItin.map((i) => ({ dayNo: i.dayNo, date: i.date, title: i.title })),
+      }),
+      ...(accChanged && {
+        accommodations: prevAcc.map((a) => ({
+          city: a.city, hotel: a.hotel, checkIn: a.checkIn, checkOut: a.checkOut, nights: a.nights,
+        })),
+      }),
+    },
+  })
+  await clearPendingUpdate(booking.bookingRef)
 
   // Activity log, never a StatusEvent — the status timeline is the append-only
   // record of workflow transitions, and a content refresh is not one.
