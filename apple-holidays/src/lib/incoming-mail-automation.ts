@@ -6,6 +6,8 @@ import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
+import { isUntimedAirportTransfer, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
@@ -593,6 +595,22 @@ export async function upsertAgenda(
 
     if (detectCountryFromRef(bookingRef) === 'SRILANKA') {
       agendaItems = applySriLankaMovementDefaults(agendaItems)
+    }
+
+    // An airport transfer with no flight to time it from stays blank — not the
+    // model's guess, and not the 09:00 default above. Same rule as AI Generate.
+    {
+      const flights = (extracted.flights ?? []) as unknown as LinkableFlight[]
+      const pickupRules = await loadFlightPickupRules()
+      agendaItems = agendaItems.map(item =>
+        item.meetingTime && isUntimedAirportTransfer({
+          date: String(item.date ?? ''),
+          fromPoint: item.fromPoint, toPoint: item.toPoint,
+          location: item.location, details: item.details, serviceType: item.serviceType,
+        }, flights, pickupRules)
+          ? { ...item, meetingTime: null }
+          : item,
+      )
     }
 
     // Start every movement with the confirmation's own description — the same

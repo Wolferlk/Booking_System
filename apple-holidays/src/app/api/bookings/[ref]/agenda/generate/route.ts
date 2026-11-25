@@ -13,7 +13,7 @@ import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { detectLeisureDay } from '@/lib/leisure-day'
 import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHARED_SERVICE_RE, PRIVATE_SERVICE_RE } from '@/lib/agenda-service-type'
-import { linkFlight, type LinkableFlight } from '@/lib/agenda-flight-link'
+import { isUntimedAirportTransfer, linkFlight, type LinkableAgendaItem, type LinkableFlight } from '@/lib/agenda-flight-link'
 import { durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
@@ -728,12 +728,17 @@ ${tqDocumentText
   // "Use as meeting time" button uses (lib/agenda-flight-link.ts).
   const flightRows = booking.flights as unknown as LinkableFlight[]
   const finalItems = countryItems.map(item => {
-    const link = linkFlight({
+    const row: LinkableAgendaItem = {
       date: String(item.date ?? ''),
       fromPoint: item.fromPoint, toPoint: item.toPoint,
       location: item.location, details: item.details, serviceType: item.serviceType,
-    }, flightRows, pickupRules)
-    const meetingTime = link?.suggestedPickup && link.role !== 'sector' ? link.suggestedPickup : item.meetingTime
+    }
+    const link = linkFlight(row, flightRows, pickupRules)
+    // An airport transfer with no flight to time it from stays blank — never
+    // the model's guess (a no-flight B2C arrival came out as 00:30) or 09:00.
+    const meetingTime = link?.suggestedPickup && link.role !== 'sector'
+      ? link.suggestedPickup
+      : isUntimedAirportTransfer(row, flightRows, pickupRules) ? null : item.meetingTime
     return {
       ...item,
       meetingTime,

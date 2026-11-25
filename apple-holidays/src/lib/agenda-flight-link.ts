@@ -317,6 +317,28 @@ export function linkFlights<T extends LinkableAgendaItem>(
   return out
 }
 
+/** An airport by name — not "terminal", which is just as often a bus or ferry one. */
+const AIRPORT_POINT = /\b(airport|airfield|aerodrome)\b/i
+
+/**
+ * An airport transfer whose pickup time has nothing to come from: no flight on
+ * that day matches it, or the matched flight has no usable time. Its meeting
+ * time is left blank rather than guessed — the AI otherwise invents one (a
+ * no-flight B2C arrival came out as 00:30) and the Sri Lanka 09:00 default is
+ * no better. The flight row itself (a sector) keeps its own time.
+ */
+export function isUntimedAirportTransfer(
+  item: LinkableAgendaItem,
+  flights: LinkableFlight[],
+  rules: FlightPickupRules = DEFAULT_FLIGHT_PICKUP_RULES,
+): boolean {
+  if (item.serviceType === 'FLIGHT') return false
+  if (!AIRPORT_POINT.test(`${item.fromPoint ?? ''} ${item.toPoint ?? ''}`)) return false
+  const link = linkFlight(item, flights ?? [], rules)
+  if (link?.role === 'sector') return false
+  return !link?.suggestedPickup
+}
+
 /**
  * Undo of "Add to details": strips the flight's transfer sentences from a
  * movement's details text, plus any other sentence naming the flight number
