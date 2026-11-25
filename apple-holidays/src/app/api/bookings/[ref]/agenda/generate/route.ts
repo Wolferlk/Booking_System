@@ -18,6 +18,8 @@ import { durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 import { splitRouteLabel } from '@/lib/b2c-booking-map'
+import { arrangeTransferChains, matchLegRows, transferLegsOf, type TransferLeg } from '@/lib/agenda-transfer-chain'
+import { isB2cBooking } from '@/lib/booking-source'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -297,6 +299,15 @@ OUTBOUND + RETURN TRANSFERS (CRITICAL):
     toPoint = the attraction. Return: fromPoint = the attraction, toPoint = the hotel.
   - The return's meetingTime is after the outbound's (after the day's activities), never the same time.
 
+MULTI-STOP ONE-WAY CHAINS (CRITICAL):
+  - A day out is often several one-way transfers in a row, e.g. "Hotel to Night Safari", "Night Safari to
+    Jumbo Seafood", "Jumbo Seafood to Hotel". Every leg is its own agenda item — never merge legs, never
+    skip the middle ones, even when they share the same transfer product.
+  - Keep them in travel order: each leg's fromPoint is the previous leg's toPoint, and each meetingTime is
+    later than the previous leg's.
+  - Tickets, restaurants and activities on that route stay separate INTERNAL_TOUR items (no vehicle of
+    their own) — the transfer legs carry the driving.
+
 MULTI-TRANSFER DAYS:
   - A single day can have MULTIPLE agenda items (e.g., airport arrival transfer + hotel check-in,
     or a morning tour + evening dinner transfer).
@@ -516,24 +527,53 @@ ${tqDocumentText
   // ── Drop movements the AI listed twice (structured transfer + TQ line) ────
   const deduped: GeneratedItem[] = dedupeAgendaItems(mapped)
 
+  // The guest's hotel on a date — what "Hotel" means in a B2C route label.
+  const hotelOn = (date: string): string | null => {
+    const stays = booking.accommodations.map(a => ({
+      hotel: a.hotel,
+      inDay: new Date(a.checkIn).toISOString().slice(0, 10),
+      outDay: new Date(a.checkOut).toISOString().slice(0, 10),
+    }))
+    return (stays.find(a => a.inDay <= date && date < a.outDay) ?? stays.find(a => a.outDay === date))?.hotel ?? null
+  }
+  const pointFor = (label: string, date: string): string => {
+    if (!/^(the\s+)?hotel$/i.test(label.trim())) return label
+    return hotelOn(date) ?? label
+  }
+
+  // B2C sells transport as one-way, spot-to-spot legs (Hotel → activity →
+  // restaurant → hotel). Each leg is matched to its own row by direction —
+  // see lib/agenda-transfer-chain.ts. Other channels keep the title matching.
+  const isB2c = isB2cBooking(booking.agent)
+  const legs: TransferLeg[] = isB2c ? transferLegsOf(structuredData.itineraryItems) : []
+  const legSources = new Set(legs.map(l => l.src))
+  const legOfRow = new Map<number, TransferLeg>()
+  matchLegRows(deduped, legs, pointFor).forEach((row, k) => legOfRow.set(row, legs[k]))
+
   // Keep the official AppleSystem wording in the saved movement details. The
   // model may improve grammar or summarise despite the prompt; that is useful
   // for the operational paragraph, but the source description must remain
   // auditable and must match the confirmation/mail output. This is additive and
   // does not replace pickup or driver instructions produced by the model.
   const sourceDescriptionRows = structuredData.itineraryItems
-    .map(source => ({
+    .map((source, idx) => ({
       ...source,
+      idx,
       titleKey: String(source.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
       description: String(source.description ?? '').trim(),
     }))
     .filter(source => source.description)
-  const sourceAware = deduped.map(item => {
+  const sourceAware = deduped.map((item, rowIdx) => {
     const date = String(item.date ?? '').slice(0, 10)
     const titleKey = String(item.toPoint ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-    const sameDate = sourceDescriptionRows.filter(source => source.date === date)
-    const source = sameDate.find(row => row.titleKey === titleKey)
-      ?? sameDate.find(row => row.titleKey && titleKey && (row.titleKey.includes(titleKey) || titleKey.includes(row.titleKey)))
+    // A leg row takes its own leg's wording — never the ticket or restaurant at
+    // the place it drives to ("Bird Paradise" is inside "Bird Paradise Admission").
+    const leg = legOfRow.get(rowIdx)
+    const sameDate = sourceDescriptionRows.filter(source => source.date === date && !legSources.has(source.idx))
+    const source = leg
+      ? sourceDescriptionRows.find(row => row.idx === leg.src)
+      : sameDate.find(row => row.titleKey === titleKey)
+        ?? sameDate.find(row => row.titleKey && titleKey && (row.titleKey.includes(titleKey) || titleKey.includes(row.titleKey)))
     if (!source) return item
 
     const current = String(item.details ?? '').trim()
@@ -564,9 +604,12 @@ ${tqDocumentText
   // date and word set must each be matched by a DIFFERENT row; the row going the
   // source's own direction is preferred, so the leg the model dropped is the one
   // put back.
+  // One-way legs are checked by direction instead (below): "Hotel to Zoo",
+  // "Zoo to Bird Paradise", "Bird Paradise to Hotel" share most of their words,
+  // so one row could "cover" a neighbour and the middle leg vanished.
   const sources = structuredData.itineraryItems
-    .map(src => ({ src, key: normText(src.title) }))
-    .filter(s => s.key && s.src.date)
+    .map((src, idx) => ({ src, idx, key: normText(src.title) }))
+    .filter(s => s.key && s.src.date && !legSources.has(s.idx))
   const twinKey = (s: { src: { date: string }; key: string }) =>
     `${s.src.date}|${Array.from(new Set(tokensOf(s.key))).sort().join(' ')}`
   const twinCount = new Map<string, number>()
@@ -602,26 +645,33 @@ ${tqDocumentText
     return false
   }).map(s => s.src)
 
-  // The guest's hotel on a date — what "Hotel" means in a B2C route label.
-  const hotelOn = (date: string): string | null => {
-    const stays = booking.accommodations.map(a => ({
-      hotel: a.hotel,
-      inDay: new Date(a.checkIn).toISOString().slice(0, 10),
-      outDay: new Date(a.checkOut).toISOString().slice(0, 10),
-    }))
-    return (stays.find(a => a.inDay <= date && date < a.outDay) ?? stays.find(a => a.outDay === date))?.hotel ?? null
-  }
-  const pointFor = (label: string, date: string): string => {
-    if (!/^(the\s+)?hotel$/i.test(label.trim())) return label
-    return hotelOn(date) ?? label
-  }
+  // Every one-way leg needs its own row going its own direction.
+  const legsWithRow = new Set(Array.from(legOfRow.values()))
+  const missingLegs = legs.filter(l => !legsWithRow.has(l))
 
-  if (missing.length > 0) {
-    console.warn(`[agenda/generate] ${params.ref}: appended ${missing.length} itinerary item(s) the model dropped`)
+  if (missing.length + missingLegs.length > 0) {
+    console.warn(`[agenda/generate] ${params.ref}: appended ${missing.length + missingLegs.length} itinerary item(s) the model dropped (${missingLegs.length} transfer leg(s))`)
   }
 
   const items: GeneratedItem[] = [
     ...sourceAware,
+    ...missingLegs.map(leg => {
+      const src = structuredData.itineraryItems[leg.src]
+      // A single departure time ("Time: 18:30"), not an opening window ("10:00-17:00").
+      const time = /\bTime:\s*(\d{1,2}:\d{2})(?!\s*[-–]\s*\d)/.exec(String(src.description ?? ''))?.[1]
+      return {
+        date:        leg.date,
+        location:    booking.tourDestination ?? '',
+        fromPoint:   pointFor(leg.from, leg.date),
+        toPoint:     pointFor(leg.to, leg.date),
+        details:     [src.title, src.description].filter(Boolean).join(' · '),
+        mealPlan:    null,
+        meetingTime: time ? time.padStart(5, '0') : '08:00',
+        timeFrom:    null,
+        timeTo:      null,
+        serviceType: leg.basis === 'SIC' ? 'SIC_TRANSFER' : 'PVT_TRANSFER',
+      } as GeneratedItem
+    }),
     ...missing.map(src => {
       const title = String(src.title)
       const sic   = SHARED_SERVICE_RE.test(title) && !PRIVATE_SERVICE_RE.test(title)
@@ -703,8 +753,19 @@ ${tqDocumentText
     console.log(`[agenda/generate] ${params.ref}: ${filled.replaced} description(s) set from the confirmation (${filled.source})`)
   }
 
+  // ── B2C one-way transfer chains ───────────────────────────────────────────
+  // Each day's legs in travel order with the ticket / restaurant after the leg
+  // that reaches it, and remarks naming the transfers booked to and from each
+  // product. Runs last so the confirmation wording above cannot overwrite them.
+  const chained = isB2c
+    ? arrangeTransferChains(filled.items, structuredData.itineraryItems, pointFor)
+    : { items: filled.items, legs: 0, legRows: 0, productsNoted: 0 }
+  if (chained.legs) {
+    console.log(`[agenda/generate] ${params.ref}: ${chained.legRows}/${chained.legs} transfer leg(s) on the chart, remark on ${chained.productsNoted} product(s)`)
+  }
+
   return buildApiSuccess(
-    { items: filled.items, confirmationDescriptions: { replaced: filled.replaced, source: filled.source } },
-    `Generated ${filled.items.length} agenda items`,
+    { items: chained.items, confirmationDescriptions: { replaced: filled.replaced, source: filled.source } },
+    `Generated ${chained.items.length} agenda items`,
   )
 }
