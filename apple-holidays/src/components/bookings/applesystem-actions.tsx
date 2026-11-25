@@ -140,7 +140,7 @@ function defaultPicks(type: FetchType, r: FullSyncResult): Picks {
 interface LastSync {
   at: string
   by: string
-  mode: 'manual' | 'prearrival'
+  mode: 'manual' | 'prearrival' | 'upcoming'
   quotationNo: string | null
   revision: number | null
   changed: string[]
@@ -432,7 +432,9 @@ export default function AppleSystemActions({
           <RefreshCw className="w-3 h-3 text-slate-400" />
           <span>
             API updated <span className="font-semibold text-slate-700">{relTimeAgo(lastSync.at)}</span>
-            {lastSync.mode === 'prearrival' && <span className="ml-1 text-slate-400">(auto)</span>}
+            {lastSync.mode !== 'manual' && (
+              <span className="ml-1 text-slate-400">{lastSync.mode === 'upcoming' ? '(auto · daily check)' : '(auto)'}</span>
+            )}
           </span>
         </span>
       )}

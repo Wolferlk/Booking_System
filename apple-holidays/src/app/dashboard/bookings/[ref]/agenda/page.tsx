@@ -575,6 +575,10 @@ export default function AgendaPage() {
     const recipient = sendMode === 'whatsapp' ? normalizeWhatsApp(sendTo) : sendTo.trim()
     if (!recipient) { toast.error(sendMode === 'whatsapp' ? 'Enter a WhatsApp number' : 'Enter an email address'); return }
     if (sendMode === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { toast.error('Enter a valid email address'); return }
+    if (sendMode === 'whatsapp' && recipient.startsWith('0')) {
+      toast.error('WhatsApp number needs the country code instead of the leading 0 (e.g. 60… Malaysia, 65… Singapore).')
+      return
+    }
 
     const subject = sendMode === 'email'
       ? (sendSubject.trim() || `Tour Confirmation — ${ref}`)   // auto subject fallback
@@ -598,13 +602,19 @@ export default function AgendaPage() {
       // The server may return an empty/non-JSON body on a hard failure (timeout, crash) —
       // read the text first and only then attempt to parse, so we surface a real message.
       const raw = await res.text()
-      let json: { success?: boolean; error?: string; data?: { includesWarning?: string | null } } = {}
+      let json: { success?: boolean; error?: string; data?: { includesWarning?: string | null; via?: string } } = {}
       if (raw) { try { json = JSON.parse(raw) } catch { /* non-JSON body */ } }
 
       if (!res.ok || !json.success) {
         throw new Error(json.error || `Send failed (${res.status} ${res.statusText})`)
       }
-      toast.success(`Agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'} sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
+      if (json.data?.via === 'template-word-link') {
+        toast.success('Sent via WhatsApp: PDF movement chart + Word download link', {
+          description: 'The guest has not messaged in the last 24 hours, so WhatsApp cannot carry the .docx itself.',
+        })
+      } else {
+        toast.success(`Agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'} sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
+      }
       setSendModal(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
@@ -1682,7 +1692,7 @@ export default function AgendaPage() {
                   || booking?.passengers.find(p => p.isLead)?.contact
                   || ''
                 ))
-                setSendMessage(`📋 Movement Chart for your booking ${ref}. Please find the agenda PDF attached.`)
+                setSendMessage(`📋 Movement Chart for your booking ${ref}. Please find the agenda attached.`)
                 setSendSubject('')
                 setSendModal(true)
               }}
@@ -3335,9 +3345,9 @@ export default function AgendaPage() {
             <div className={`rounded-xl border px-3 py-2.5 ${sendFormat === 'word' ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
               {sendFormat === 'word' ? (
                 <p className="text-xs text-amber-800 leading-relaxed">
-                  <strong>Word can&apos;t use the template.</strong> WhatsApp only carries a PDF in a template
-                  attachment, so a Word send only reaches someone who has messaged us in the last 24 hours.
-                  Switch to PDF to send it to anyone, any time.
+                  <strong>Word always delivers.</strong> If the guest messaged us in the last 24 hours they get the
+                  .docx file itself. Otherwise WhatsApp can&apos;t carry a .docx, so the guest gets the PDF movement chart
+                  on the approved template with a download link to the Word file in the message.
                 </p>
               ) : (
                 <p className="text-xs text-green-800 leading-relaxed">

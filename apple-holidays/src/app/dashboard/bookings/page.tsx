@@ -129,6 +129,19 @@ interface Booking {
     activeRef: string | null
     replacedRefs: string[]
   } | null
+  /** Refreshed from AppleSystem in the last 7 days / waiting for review (see as-update-log). */
+  asUpdate?: {
+    date?: string
+    when?: 'today' | 'yesterday' | 'earlier'
+    at?: string
+    by?: string
+    mode?: 'manual' | 'prearrival' | 'upcoming'
+    changed?: string[]
+    pendingReason?: 'auto-apply-off' | 'large-change' | 'breaker'
+    pendingChanged?: string[]
+    pendingNotes?: string[]
+    conflict?: boolean
+  } | null
   guestFeedback: { submittedAt: string } | null
   tourAgenda: {
     id: string
@@ -265,6 +278,51 @@ const SWITCH_TONE = {
  * ambiguously among the dropdowns beside it. Off is deliberately quiet — the
  * unfiltered list is the normal state and should not look filtered.
  */
+const AS_FIELD_LABEL: Record<string, string> = {
+  arrivalDate: 'arrival', departureDate: 'departure', paxAdults: 'adults', paxChildren: 'children',
+  quotedTotal: 'total', agent: 'agent', fileHandler: 'file handler', itinerary: 'itinerary',
+  accommodations: 'hotels', passengers: 'guests', terms: 'terms', packageIncludes: 'includes',
+  packageExcludes: 'excludes', valueAddedServices: 'value-added', contactEmail: 'contact email',
+}
+
+/**
+ * "Updated from AS" row badge: when the booking was last refreshed from the
+ * API (and what changed), or that an update is waiting for someone. Absent when
+ * neither is true — the unremarkable default.
+ */
+function AsUpdateBadge({ u }: { u: Booking['asUpdate'] }) {
+  if (!u) return null
+  const names = (xs?: string[]) => (xs ?? []).map(x => AS_FIELD_LABEL[x] ?? x).join(', ')
+  const waiting = !!u.pendingReason || !!u.conflict
+  return (
+    <>
+      {u.when && (
+        <span
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide border ${
+            u.when === 'earlier' ? 'bg-sky-50 text-sky-600 border-sky-200' : 'bg-sky-600 text-white border-sky-600'
+          }`}
+          title={`Refreshed from AppleSystem ${u.at ? formatDateTime(u.at) : ''} by ${u.by ?? 'the system'} — changed: ${names(u.changed) || 'content'}`}
+        >
+          <RefreshCw className="w-2.5 h-2.5" />
+          AS updated · {u.when === 'earlier' ? u.date : u.when}
+        </span>
+      )}
+      {waiting && (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-300"
+          title={
+            u.pendingReason
+              ? `AppleSystem has an update that was not applied (${u.pendingReason === 'auto-apply-off' ? 'auto-apply is off' : u.pendingReason === 'breaker' ? 'held by the safety breaker' : 'large change'}): ${names(u.pendingChanged)}${u.pendingNotes?.length ? ` — ${u.pendingNotes.join('; ')}` : ''}. Open the booking → Fetch Data from API to review.`
+              : 'A hand-edited field differs from AppleSystem — open the booking to Replace or Skip.'
+          }
+        >
+          <AlertTriangle className="w-2.5 h-2.5" /> AS update · review
+        </span>
+      )}
+    </>
+  )
+}
+
 function FilterSwitch({
   on, onChange, icon, label, tone, title,
 }: {
@@ -325,6 +383,12 @@ function BookingsPageInner() {
   // Test bookings (shared Test Bookings register) are hidden by default; this
   // switch lists only them. `testHidden` is how many the filters left out.
   const [testsOnly, setTestsOnly] = useState(searchParams.get('tests') === 'only')
+  // "Updated from AppleSystem" — today / yesterday / last 7 days / needs review.
+  // Seeded from the URL so the Upcoming Updates tab can deep-link here.
+  const [asUpdated, setAsUpdated] = useState<string>(() => {
+    const v = searchParams.get('asUpdated') ?? ''
+    return ['today', 'yesterday', '7d', 'review'].includes(v) ? v : ''
+  })
   const [testHidden, setTestHidden] = useState(0)
   /** False when the Accounts DB could not be reached on the last fetch. */
   const [pnlChecked, setPnlChecked] = useState(true)
@@ -409,6 +473,7 @@ function BookingsPageInner() {
     if (hotelOnlyFilter)                                params.set('hotelOnly',     '1')
     if (detailedPnlFilter)                              params.set('detailedPnl',   '1')
     if (testsOnly)                                      params.set('tests',         'only')
+    if (asUpdated)                                      params.set('asUpdated',     asUpdated)
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
     // The cohort *is* a date question, asked of the accounts ledger rather than
     // of this column — so it replaces the date filters instead of intersecting
@@ -445,7 +510,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, agents, hotelOnlyFilter, detailedPnlFilter, testsOnly, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
+  }, [search, refSearch, contentSearch, status, source, agents, hotelOnlyFilter, detailedPnlFilter, testsOnly, asUpdated, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
 
   // Card counts follow the scope filters only (country + channel) — never the
   // search box — so the row of numbers stays a steady operational readout.
@@ -915,6 +980,20 @@ function BookingsPageInner() {
               <option value="B2B">B2B — Agents</option>
               <option value="B2C">B2C — Aahaas</option>
             </select>
+            {/* Updated from AppleSystem — fed by every API refresh path (daily
+                upcoming check, pre-arrival, parity check, manual Fetch). */}
+            <select
+              value={asUpdated}
+              onChange={e => { setAsUpdated(e.target.value); setPage(1) }}
+              className={`form-select w-full sm:w-52 ${asUpdated ? 'border-sky-400 bg-sky-50 text-sky-800 font-semibold' : ''}`}
+              title="Bookings refreshed from AppleSystem (API), or waiting for someone to review an update"
+            >
+              <option value="">AS updates: all</option>
+              <option value="yesterday">Updated from AS · Yesterday</option>
+              <option value="today">Updated from AS · Today</option>
+              <option value="7d">Updated from AS · Last 7 days</option>
+              <option value="review">AS update · Needs review</option>
+            </select>
 
             {/* Two narrowing switches. Deliberately toggles, not dropdown
                 entries: each answers "show me only these", and as options in the
@@ -1044,7 +1123,7 @@ function BookingsPageInner() {
                 preset={quick === 'created_today' ? 'today' : quick === 'created_yesterday' ? 'yesterday' : null}
                 from={!quick && dateBasis === 'createdAt' ? (dateFrom || null) : null}
                 to={!quick && dateBasis === 'createdAt' ? (dateTo || dateFrom || null) : null}
-                narrowed={!!(search || refSearch || contentSearch || status || source || agents.length || hotelOnlyFilter || detailedPnlFilter || (countryFilter && countryFilter !== 'ALL'))}
+                narrowed={!!(search || refSearch || contentSearch || status || source || agents.length || hotelOnlyFilter || detailedPnlFilter || asUpdated || (countryFilter && countryFilter !== 'ALL'))}
                 cohortActive={!!cohort}
                 onViewCohort={(from, to) => {
                   setCohort(prev => (prev && prev.from === from && prev.to === to ? null : { from, to }))
@@ -1540,6 +1619,7 @@ function BookingsPageInner() {
                                 Cancelled
                               </span>
                             )}
+                            <AsUpdateBadge u={b.asUpdate} />
                             {/* Only B2C is badged — B2B is the unremarkable default. */}
                             {isB2cBooking(b.agent) && (
                               <span

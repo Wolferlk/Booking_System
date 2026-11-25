@@ -2,18 +2,19 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding, Radar, CalendarClock, ShieldCheck, BarChart3, Ban } from 'lucide-react'
+import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding, Radar, CalendarClock, ShieldCheck, BarChart3, Ban, CalendarSearch } from 'lucide-react'
 import Header from '@/components/layout/header'
 import SearchImportTab from '@/components/as-bookings/search-import-tab'
 import RangeImportTab from '@/components/as-bookings/range-import-tab'
 import AutoImportTab from '@/components/as-bookings/auto-import-tab'
 import WatchTab from '@/components/as-bookings/watch-tab'
 import PreArrivalTab from '@/components/as-bookings/prearrival-tab'
+import UpcomingSyncTab from '@/components/as-bookings/upcoming-sync-tab'
 import ReconcileTab from '@/components/as-bookings/reconcile-tab'
 import CreatedDaysTab from '@/components/as-bookings/created-days-tab'
 import CancellationsTab from '@/components/as-bookings/cancellations-tab'
 
-type TabKey = 'search' | 'range' | 'arrival' | 'auto' | 'watch' | 'reconcile' | 'presync' | 'days' | 'cancel'
+type TabKey = 'search' | 'range' | 'arrival' | 'auto' | 'watch' | 'reconcile' | 'upcoming' | 'presync' | 'days' | 'cancel'
 
 const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] = [
   { key: 'search',  label: 'Search & Import',   icon: Search,        hint: 'Find one confirmation by IS / quotation number' },
@@ -23,6 +24,7 @@ const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] 
   { key: 'watch',   label: 'Live Watch',        icon: Radar,         hint: 'Check for new confirmations every few minutes' },
   { key: 'cancel',  label: 'Cancellations',     icon: Ban,           hint: 'Find AppleSystem cancellations and request to cancel' },
   { key: 'reconcile', label: 'Parity Check',  icon: ShieldCheck,   hint: 'Every 15 min: prove no confirmation was missed' },
+  { key: 'upcoming', label: 'Upcoming Updates', icon: CalendarSearch, hint: 'Daily: find and apply AppleSystem amendments for every upcoming arrival' },
   { key: 'presync', label: 'Pre-Arrival Sync',  icon: CalendarClock, hint: 'Refresh bookings from the API a few days before arrival' },
   { key: 'days',    label: 'Created by Day',    icon: BarChart3,     hint: 'How many bookings were filed each day, and which ones' },
 ]
@@ -83,6 +85,7 @@ function NewASBookingInner() {
         {tab === 'auto' && <AutoImportTab />}
         {tab === 'watch' && <WatchTab />}
         {tab === 'reconcile' && <ReconcileTab />}
+        {tab === 'upcoming' && <UpcomingSyncTab />}
         {tab === 'presync' && <PreArrivalTab />}
         {tab === 'days' && <CreatedDaysTab />}
         {tab === 'cancel' && <CancellationsTab />}

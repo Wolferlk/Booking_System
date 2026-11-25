@@ -40,6 +40,13 @@ export async function register() {
       const { startPreArrivalSyncScheduler } = await import('@/lib/as-prearrival-scheduler')
       void startPreArrivalSyncScheduler()
 
+      // Upcoming Arrivals update check — daily (default 04:30), finds every
+      // upcoming booking amended in AppleSystem and refreshes it through the
+      // same safe path as "Fetch Data from API". Ships ON; switch and
+      // auto-apply toggle live in New AS Booking → Upcoming Updates.
+      const { startUpcomingSyncScheduler } = await import('@/lib/as-upcoming-scheduler')
+      void startUpcomingSyncScheduler()
+
       // Checklist VN 2.1v — mirrors the VN desk's Excel checklist into OPS every
       // 2 hours (a setting). Read-only towards the workbook; a no-op until the
       // vn_sheet_checklist_* tables exist.

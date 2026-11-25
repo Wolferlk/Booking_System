@@ -14,6 +14,10 @@ import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/
 import { cohortBookingRefs } from '@/lib/reports/created-reconcile'
 import { testBookingWhere } from '@/lib/test-bookings'
 import { getVersionLinks, versionListContext } from '@/lib/b2c-version-links'
+import {
+  dateInTz, shiftDay, refsUpdatedBetween, refsNeedingReview,
+  latestUpdatesFor, getPendingUpdates, refsWithConflicts,
+} from '@/lib/as-update-log'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -360,6 +364,38 @@ export async function GET(req: NextRequest) {
   }
 
   /**
+   * "Updated from AppleSystem" filter — bookings whose content was refreshed
+   * from the API (daily upcoming check, pre-arrival, parity check or manual
+   * Fetch Data from API) on the given day(s), or that are waiting for a person
+   * to review an update. Resolved from the update log (`as-update-log.ts`) to a
+   * ref set, the same shape as the Detailed P&L filter. Read-only.
+   *
+   *   asUpdated=today | yesterday | 7d | review
+   */
+  const asUpdated = searchParams.get('asUpdated')
+  if (asUpdated === 'today' || asUpdated === 'yesterday' || asUpdated === '7d' || asUpdated === 'review') {
+    if (session.user.role === 'CLIENT') return buildApiError('Forbidden', 403)
+    let refs: string[]
+    try {
+      if (asUpdated === 'review') {
+        refs = await refsNeedingReview()
+      } else {
+        const today = dateInTz()
+        const [from, to] =
+          asUpdated === 'today' ? [today, today]
+            : asUpdated === '7d' ? [shiftDay(today, -6), today]
+            : [shiftDay(today, -1), shiftDay(today, -1)]
+        refs = await refsUpdatedBetween(from, to)
+      }
+    } catch (err) {
+      console.error('[bookings] AS update log lookup failed:', err)
+      return buildApiError('Could not read the AppleSystem update log', 503)
+    }
+    // An empty list must still filter — `{ in: [] }` correctly matches nothing.
+    andClauses.push({ bookingRef: { in: refs } })
+  }
+
+  /**
    * Test bookings — marked on the shared register (src/lib/test-bookings.ts)
    * — are kept out of the list and every count by default. `tests=only` lists
    * just them (the "Test bookings" chip), `tests=include` shows everything.
@@ -458,6 +494,19 @@ export async function GET(req: NextRequest) {
 
   const versionLinks = await getVersionLinks(bookings.map(b => b.bookingRef)).catch(() => new Map())
 
+  // "Updated from AS" badges for the rows on this page — exact-key reads,
+  // bounded by the page size. Decorative: a failed lookup shows no badge.
+  const pageRefs = bookings.map(b => b.bookingRef)
+  const [asUpdates, asPending, asConflicts] = session.user.role === 'CLIENT'
+    ? [new Map(), new Map(), new Set<string>()]
+    : await Promise.all([
+        latestUpdatesFor(pageRefs, 7).catch(() => new Map()),
+        getPendingUpdates(pageRefs).catch(() => new Map()),
+        refsWithConflicts(pageRefs).catch(() => new Set<string>()),
+      ])
+  const today = dateInTz()
+  const yesterday = shiftDay(today, -1)
+
   const decorated = bookings.map(b => {
     const l = versionLinks.get(b.bookingRef)
     return {
@@ -476,6 +525,25 @@ export async function GET(req: NextRequest) {
       ? pnlAvailable.has(normaliseRef(b.isNumber)) || pnlAvailable.has(normaliseRef(b.bookingRef))
       : null,
     invoicePayment: invoiceSummaries?.get(b.bookingRef) ?? null,
+    /** Latest refresh from AppleSystem in the last 7 days, and anything waiting for review. */
+    asUpdate: (() => {
+      const u = asUpdates.get(b.bookingRef)
+      const p = asPending.get(b.bookingRef)
+      const conflict = asConflicts.has(b.bookingRef)
+      if (!u && !p && !conflict) return null
+      return {
+        ...(u && {
+          date: u.date,
+          when: u.date === today ? 'today' : u.date === yesterday ? 'yesterday' : 'earlier',
+          at: u.at,
+          by: u.by,
+          mode: u.mode,
+          changed: u.changed,
+        }),
+        ...(p && { pendingReason: p.reason, pendingChanged: p.changed, pendingNotes: p.notes ?? [] }),
+        ...(conflict && { conflict: true }),
+      }
+    })(),
   }
   })
 

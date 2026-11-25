@@ -24,6 +24,23 @@ import { AGENDA_INCLUDE, buildAgendaEmailHtml, buildAgendaFileName } from '@/lib
 import { sendMailViaGraph } from '@/lib/send-mail'
 import { sendBookingDocTemplate } from '@/lib/booking-details-template'
 import { isWithin24hWindow, sendViaMetaApi } from '@/lib/whatsapp'
+import { putUpload } from '@/lib/storage'
+import { randomBytes } from 'crypto'
+
+/**
+ * The template's {{6}} line when a Word file rides along as a link: the desk's
+ * own note first, then the link. Meta caps a parameter (and `param()` in
+ * booking-details-template cuts at 300 chars), so the NOTE is shortened — never
+ * the link, which would stop working.
+ */
+function wordLinkNote(note: string | undefined, url: string): string {
+  const suffix = `Editable Word copy: ${url}`
+  const room = 295 - suffix.length
+  const clean = String(note ?? '').replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
+  if (!clean || room < 20) return suffix
+  const head = clean.length > room ? `${clean.slice(0, room - 3).trimEnd()}...` : clean
+  return `${head} ${suffix}`
+}
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 120
@@ -113,11 +130,23 @@ async function handleSend(
   // Through the approved `aahaas_booking_details` template, with the movement
   // chart in its DOCUMENT header, so it delivers whether or not the customer
   // has messaged us in the last 24 hours. Meta accepts only a PDF in a template
-  // header, so a Word send still needs the 24h window and says so.
+  // header, so Word goes as the file inside the 24h window, and outside it as
+  // the PDF template plus a download link to the Word file.
   if (mode === 'whatsapp') {
     // Normalise to digits only — "+91 7715805191" → "917715805191".
     const normPhone = (to ?? '').replace(/\D/g, '')
     if (!normPhone) return buildApiError('WhatsApp number required', 400)
+    // An international number never starts with 0. "0164…" is a local number
+    // with the country code missing — Meta cannot route it, and the 24h-window
+    // lookup never matches it (inbound rows are stored as "60164…").
+    if (normPhone.startsWith('0')) {
+      return buildApiError(
+        `The WhatsApp number ${normPhone} starts with 0 — it needs the country code instead of the 0 ` +
+        '(e.g. 60… Malaysia, 65… Singapore, 94… Sri Lanka, 84… Vietnam, 91… India).',
+        400,
+      )
+    }
+    if (normPhone.length < 8) return buildApiError(`The WhatsApp number ${normPhone} is too short.`, 400)
 
     const baseUrl = (
       process.env.NEXT_PUBLIC_APP_URL?.trim() ||
@@ -144,15 +173,55 @@ async function handleSend(
       }
     }
 
-    // Word: no template can carry it, so it only reaches a customer whose 24h
-    // window is open. Say so rather than reporting a send Meta silently drops.
+    // Word: no template can carry a .docx. Inside the guest's 24h window it goes
+    // free-form as the file itself (below). Outside it — the usual case, a guest
+    // who was just quoted has rarely messaged us — a free-form send is refused
+    // by Meta, so the chart goes out on the approved template as the PDF
+    // (delivers cold) with a private download link to the Word file in the
+    // message. The guest gets both; the desk no longer has to switch to PDF.
     const waMessage = message ?? `📋 Movement Chart — ${params.ref}\n\nPlease find the attached agenda Word document for your reference.`
     if (!(await isWithin24hWindow(normPhone))) {
-      return buildApiError(
+      const closedError = buildApiError(
         'WhatsApp only accepts a PDF in a template attachment, and this number has not messaged us in the last ' +
         '24 hours, so a Word file cannot be delivered. Switch the format to PDF to send it now.',
         409,
       )
+
+      // The Word copy, at an unguessable path (/api/uploads is public, and the
+      // chart carries guest and driver details). No link → no fallback.
+      let wordUrl: string | null = null
+      try {
+        const safeName = filename.replace(/[^A-Za-z0-9._-]+/g, '_')
+        const stored = await putUpload(`whatsapp/${randomBytes(16).toString('hex')}/${safeName}`, docBuffer, contentType)
+        wordUrl = stored.startsWith('http') ? stored : `${baseUrl}${stored}`
+      } catch (err) {
+        console.error('[agenda/send] storing the Word copy failed:', err instanceof Error ? err.message : err)
+      }
+      if (!wordUrl) return closedError
+
+      let pdfBuffer: Buffer
+      try {
+        pdfBuffer = await generateAgendaPdf(params.ref, booking as never, agendaItems as never, showDrivers)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return buildApiError(`PDF generation failed (needed to carry the Word link): ${msg}`, 500)
+      }
+
+      try {
+        const sent = await sendBookingDocTemplate({
+          bookingRef:    params.ref,
+          to:            normPhone,
+          document:      { buffer: pdfBuffer, filename: buildAgendaFileName(booking as never, 'pdf'), mimeType: 'application/pdf' },
+          attachedLabel: `Movement Chart${showDrivers ? ' with driver allocation' : ''} (PDF + Word link)`,
+          note:          wordLinkNote(message, wordUrl),
+          senderName,
+          baseUrl,
+        })
+        return buildApiSuccess({ sent: true, via: 'template-word-link', waMessageId: sent.waMessageId, wordUrl })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return buildApiError(`WhatsApp send failed: ${msg}`, 422)
+      }
     }
 
     try {
