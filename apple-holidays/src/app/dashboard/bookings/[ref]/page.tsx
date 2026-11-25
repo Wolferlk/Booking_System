@@ -2199,7 +2199,7 @@ Wishing you a wonderful trip! ✈️
             status={status}
             hasPnl={!!(pnl && (booking.pnl as any)?.lineItems?.length > 0)}
             extPnlLinked={extPnlLinked}
-            ticketCount={(booking.tickets as any[])?.length ?? 0}
+            tickets={(booking.tickets as any[]) ?? []}
             agendaItems={(booking.tourAgenda as any)?.items ?? []}
             hotelOnly={hotelOnly}
             accommodationCount={accommodations.length}
@@ -5072,12 +5072,47 @@ interface OpChecklistProps {
   status: BookingStatus
   hasPnl: boolean
   extPnlLinked: boolean
-  ticketCount: number
+  /** The booking's ticket rows — only `activated` and `status` are read. */
+  tickets: { activated?: boolean | null; status?: string | null }[]
   agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
   /** Accommodation-only file — the checklist collapses to what it actually owns. */
   hotelOnly?: boolean
   /** How many stays are loaded; a Hotel Only booking with none is not started. */
   accommodationCount?: number
+}
+
+interface ChecklistItem {
+  /** A function when the rung renames itself as it progresses. */
+  label: string | ((p: OpChecklistProps) => string)
+  key: string
+  icon: string
+  done: (p: OpChecklistProps) => boolean
+  active: (p: OpChecklistProps) => boolean
+  /** Small progress counter shown on the rung, e.g. "2/5". */
+  counter?: (p: OpChecklistProps) => string | null
+  link?: string
+}
+
+/**
+ * Ticket progress, counted exactly as the Tickets & Vouchers page counts it.
+ *
+ * Ticket rows are created automatically as DRAFT placeholders the moment a
+ * P&L lands (upload, OneDrive, mailbox, B2C placement) — one per ticketable
+ * P&L line. So "a ticket exists" only means "a ticket is needed"; it is not
+ * progress. Progress is: GT activates each needed ticket, then each activated
+ * ticket is purchased (status PURCHASED / PAID).
+ */
+function ticketProgress(p: OpChecklistProps) {
+  const total     = p.tickets.length
+  const activated = p.tickets.filter(t => t.activated === true)
+  const issued    = activated.filter(t => t.status === 'PURCHASED' || t.status === 'PAID').length
+  return {
+    total,
+    activated:    activated.length,
+    issued,
+    allActivated: total > 0 && activated.length === total,
+    allIssued:    total > 0 && activated.length === total && issued === total,
+  }
 }
 
 /**
@@ -5089,13 +5124,7 @@ interface OpChecklistProps {
  * still owed, and the waived modules are shown separately, greyed, so nobody
  * wonders whether they were forgotten.
  */
-const HOTEL_ONLY_CHECKLIST: {
-  label: string
-  key: string
-  icon: string
-  done: (p: OpChecklistProps) => boolean
-  active: (p: OpChecklistProps) => boolean
-}[] = [
+const HOTEL_ONLY_CHECKLIST: ChecklistItem[] = [
   {
     label:  'Booking Confirmed',
     key:    'ho-confirmed',
@@ -5142,14 +5171,7 @@ const HOTEL_ONLY_CHECKLIST: {
   },
 ]
 
-const CHECKLIST: {
-  label: string
-  key: string
-  icon: string
-  done: (p: OpChecklistProps) => boolean
-  active: (p: OpChecklistProps) => boolean
-  link?: string
-}[] = [
+const CHECKLIST: ChecklistItem[] = [
   {
     label:  'Need Review by TE Team',
     key:    'te-review',
@@ -5191,11 +5213,33 @@ const CHECKLIST: {
     active: p => p.status === 'DRIVER_ALLOCATED',
   },
   {
-    label:  'Tickets Activated',
+    // Two phases on one rung: "Tickets Activated" (n/total activated by GT)
+    // until every needed ticket is activated, then "Tickets Issued"
+    // (n/total purchased). Green only when every needed ticket is issued.
+    // Auto-created DRAFT placeholders no longer tick it.
+    label:  p => {
+      const t = ticketProgress(p)
+      return t.allActivated ? 'Tickets Issued' : 'Tickets Activated'
+    },
     key:    'tickets',
     icon:   '🎫',
-    done:   p => getCurrentStep(p.status) >= 12 || p.ticketCount > 0,
-    active: p => p.status === 'QC1_PASS',
+    done:   p => {
+      const t = ticketProgress(p)
+      // No tickets on the file: nothing to issue, so it follows the status.
+      if (t.total === 0) return getCurrentStep(p.status) >= 12
+      return t.allIssued
+    },
+    active: p => {
+      const t = ticketProgress(p)
+      // Its own stage, or purchasing has started. Not merely "tickets exist":
+      // placeholders appear at intake and some paths default them to activated.
+      return p.status === 'QC1_PASS' || t.issued > 0
+    },
+    counter: p => {
+      const t = ticketProgress(p)
+      if (t.total === 0) return null
+      return t.allActivated ? `${t.issued}/${t.total}` : `${t.activated}/${t.total}`
+    },
   },
   {
     label:  'QC2 Pass',
@@ -5258,12 +5302,15 @@ function OperationChecklist(props: OpChecklistProps) {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {list.map(c => {
-          const done   = c.done(props)
-          const active = !done && c.active(props)
+          const done    = c.done(props)
+          const active  = !done && c.active(props)
+          const label   = typeof c.label === 'function' ? c.label(props) : c.label
+          const counter = c.counter?.(props) ?? null
 
           return (
             <div
               key={c.key}
+              title={counter ? `${label}: ${counter}` : undefined}
               className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-medium transition-all ${
                 done
                   ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
@@ -5273,7 +5320,20 @@ function OperationChecklist(props: OpChecklistProps) {
               }`}
             >
               <span className="text-base leading-none flex-shrink-0">{c.icon}</span>
-              <span className="leading-tight flex-1 min-w-0">{c.label}</span>
+              <span className="leading-tight flex-1 min-w-0">{label}</span>
+              {counter && (
+                <span
+                  className={`flex-shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-bold tabular-nums ${
+                    done
+                      ? 'bg-emerald-100 text-emerald-700'
+                      : active
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-slate-100 text-slate-500'
+                  }`}
+                >
+                  {counter}
+                </span>
+              )}
               {done ? (
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
               ) : active ? (
