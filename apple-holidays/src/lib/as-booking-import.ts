@@ -14,6 +14,7 @@ import type { MappedBookingInput } from '@/lib/as-booking-map'
 import { saveAsExtras } from '@/lib/as-booking-extras'
 import { autoCreateTicketsOnImport } from '@/lib/as-auto-tickets'
 import { withOwnStayHotels } from '@/lib/own-stay-hotels'
+import { withFlowParties } from '@/lib/flow-parties'
 
 export class AlreadyImportedError extends Error {
   constructor(public bookingRef: string, public bookingId: string) {
@@ -47,6 +48,11 @@ export async function importMappedBooking(
     select: { id: true, bookingRef: true },
   })
   if (existing) return { booking: existing, alreadyExists: true }
+
+  // Agent ID, Sales Person and Guest as the confirmation voucher prints them.
+  // Apple drops them on every re-save; the AI Quotation system keeps them.
+  // Never throws, and Flow down = import exactly as before. See flow-parties.ts.
+  mapped = await withFlowParties(mapped)
 
   // AppleSystem sends own-arrangement stays with no hotel name; the AI Quotation
   // system (SME / Corporate) may know it. Fills blanks only, never throws, and

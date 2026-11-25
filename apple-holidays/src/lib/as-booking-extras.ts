@@ -4,8 +4,9 @@
  * The quote template carries a few things ops want on the booking page that the
  * `bookings` / `itinerary_items` tables cannot hold:
  *
- *   agentId      ← relevant_parties.agent_id      ("NL2200266119598")
- *   salesPerson  ← relevant_parties.sales_person  ("MMT")
+ *   agentId      ← AI Quotation's agency reference, else relevant_parties.agent_id ("NL2200266119598")
+ *   salesPerson  ← AI Quotation's sales person,     else relevant_parties.sales_person ("MMT")
+ *                  (Apple drops both on every re-save — see flow-parties.ts)
  *   dayRoutes    ← itinerary[].route              ("Hanoi -> Da Nang( City Center)")
  *
  * They live in `system_settings` under `as_extras:<bookingRef>` as one JSON
@@ -20,6 +21,7 @@
 
 import { prisma } from '@/lib/prisma'
 import type { MappedBookingInput } from '@/lib/as-booking-map'
+import { withFlowParties } from '@/lib/flow-parties'
 
 export const AS_EXTRAS_PREFIX = 'as_extras:'
 
@@ -69,6 +71,10 @@ export async function getAsExtras(bookingRef: string): Promise<AsBookingExtras |
  */
 export async function saveAsExtras(bookingRef: string, mapped: MappedBookingInput): Promise<void> {
   try {
+    // Agent ID / Sales Person as the voucher prints them, for callers that did
+    // not already ask the AI Quotation system (refetch, public API). Import and
+    // sync ask first, and this then makes no second call. See flow-parties.ts.
+    mapped = await withFlowParties(mapped)
     const prev = await getAsExtras(bookingRef)
     const next: AsBookingExtras = {
       agentId: mapped.agentId ?? prev?.agentId ?? null,

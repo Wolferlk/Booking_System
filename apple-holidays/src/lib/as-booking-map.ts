@@ -263,6 +263,17 @@ export interface MappedBookingInput {
   flights: never[]
   /** Source references, kept for auditing / linking back to AppleSystem. */
   source: { quotationNo: string; referenceId: string; revision: number | null }
+  /**
+   * Set once the AI Quotation system (Flow) has been asked for the voucher's
+   * Agent ID / Sales Person / Guest — see `lib/flow-parties.ts`. Never set by
+   * this mapper, which stays pure.
+   */
+  flowParties?: {
+    checked: true
+    parties: import('./flow-parties').FlowParties | null
+    /** AppleSystem's own lead guest name, before Flow's replaced it. */
+    appleGuestName: string | null
+  }
 }
 
 export class ASMappingError extends Error {}

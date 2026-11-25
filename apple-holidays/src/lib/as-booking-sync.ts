@@ -61,6 +61,7 @@ import { prisma } from '@/lib/prisma'
 import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { saveAsExtras } from '@/lib/as-booking-extras'
+import { withFlowParties, correctLeadGuestFromFlow } from '@/lib/flow-parties'
 import { logActivity, ACTION } from '@/lib/activity'
 import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
 import {
@@ -384,6 +385,11 @@ export async function syncBookingFromAs(
       409,
     )
   }
+
+  // Agent ID, Sales Person and Guest as the confirmation voucher prints them —
+  // Apple drops them on every re-save, the AI Quotation system keeps them.
+  // Never throws; Flow down = the sync behaves exactly as before.
+  mapped = await withFlowParties(mapped)
 
   // Which package/notes fields a human has edited by hand. These are the only
   // fields a sync is not allowed to decide on its own — see `setGuardedText`.
@@ -827,6 +833,10 @@ export async function syncBookingFromAs(
   // Agent id, sales person and day routes have no column — refreshed every
   // sync so a booking imported before they were read picks them up.
   await saveAsExtras(booking.bookingRef, mapped)
+
+  // The lead guest on a booking imported before Flow was read — only while it
+  // still holds AppleSystem's own name; a name typed in OPS is left alone.
+  if (!doSeedPassengers) await correctLeadGuestFromFlow(booking.id, mapped)
 
   // ── Marker + audit trail ──────────────────────────────────────────────────
   const changed = [
