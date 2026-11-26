@@ -20,6 +20,7 @@ import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 import { splitRouteLabel } from '@/lib/b2c-booking-map'
 import { arrangeTransferChains, matchLegRows, transferLegsOf, type TransferLeg } from '@/lib/agenda-transfer-chain'
 import { isB2cBooking } from '@/lib/booking-source'
+import { cityForDate, isTripCity, loadDestinationPlan } from '@/lib/b2c-destination-ai'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -101,8 +102,27 @@ export async function POST(
     }
   }
 
+  // ── B2C destination plan ──────────────────────────────────────────────────
+  // The AI's day-by-day city plan made at import (lib/b2c-destination-ai.ts).
+  // It decides every row's Location, so a store field like "Negombo" on a
+  // Vietnam trip can no longer leak into the chart.
+  const isB2c = isB2cBooking(booking.agent)
+  const destPlan = isB2c ? await loadDestinationPlan(booking.bookingRef) : null
+  const b2cLocation = (date: string, current?: unknown): string => {
+    if (!destPlan) return String(current ?? '')
+    if (isTripCity(destPlan, String(current ?? ''))) return String(current)
+    return cityForDate(destPlan, date) ?? ''
+  }
+
   // ── Structured booking context ────────────────────────────────────────────
   const structuredData = {
+    ...(destPlan && {
+      destinationPlan: {
+        country: destPlan.operationCountry,
+        stops: destPlan.stops.map(s => ({ city: s.city, from: s.from, to: s.to, nights: s.nights })),
+        dayCities: destPlan.dayCities,
+      },
+    }),
     bookingRef:    booking.bookingRef,
     arrivalDate:   booking.arrivalDate,
     departureDate: booking.departureDate,
@@ -338,6 +358,9 @@ ADDITIONAL RULES:
   - Split multi-city days as separate items (each movement = one item)
   - Meals: only set if explicitly included in the package for that day
   - Never leave location empty — always put the city/area name
+${destPlan ? `  - structured_booking_data.destinationPlan is the verified city plan for this trip. Every item's
+    "location" MUST be the dayCities city for its date (or, for a day trip, that base city). Never use a
+    city that is not in destinationPlan, even if an accommodation or itinerary field names one.` : ''}
   - NEVER include passenger names, passport numbers, guest ages, or personal guest details in ANY field (details, fromPoint, toPoint, location). The movement chart is operational — it must not contain personal guest data.
   - Package Includes service type mapping: if an item says "on Private Basis" or "Private Transfer" → PVT_TRANSFER; "Shared Transfers" or "SIC" → SIC_TRANSFER; "Half-day tour" or "Full-day" with no qualifier → PVT_TRANSFER by default.
   - For days where the day-by-day section is in image format (not extracted), RECONSTRUCT the itinerary using Package Includes — map each Package Include line to the correct date based on hotel city and check-in/check-out dates.
@@ -544,7 +567,6 @@ ${tqDocumentText
   // B2C sells transport as one-way, spot-to-spot legs (Hotel → activity →
   // restaurant → hotel). Each leg is matched to its own row by direction —
   // see lib/agenda-transfer-chain.ts. Other channels keep the title matching.
-  const isB2c = isB2cBooking(booking.agent)
   const legs: TransferLeg[] = isB2c ? transferLegsOf(structuredData.itineraryItems) : []
   const legSources = new Set(legs.map(l => l.src))
   const legOfRow = new Map<number, TransferLeg>()
@@ -661,7 +683,7 @@ ${tqDocumentText
       const time = /\bTime:\s*(\d{1,2}:\d{2})(?!\s*[-–]\s*\d)/.exec(String(src.description ?? ''))?.[1]
       return {
         date:        leg.date,
-        location:    booking.tourDestination ?? '',
+        location:    destPlan ? b2cLocation(leg.date) : booking.tourDestination ?? '',
         fromPoint:   pointFor(leg.from, leg.date),
         toPoint:     pointFor(leg.to, leg.date),
         details:     [src.title, src.description].filter(Boolean).join(' · '),
@@ -684,7 +706,7 @@ ${tqDocumentText
       const route = moves ? splitRouteLabel(title.replace(/\s*\((outbound|return|\d+ of \d+)\)\s*$/i, '')) : null
       return {
         date:        src.date,
-        location:    booking.tourDestination ?? '',
+        location:    destPlan ? b2cLocation(src.date) : booking.tourDestination ?? '',
         fromPoint:   route ? pointFor(route.from, src.date) : null,
         // Otherwise the complete confirmed title, verbatim — this row exists
         // precisely because the model would not copy it.
@@ -741,6 +763,9 @@ ${tqDocumentText
       : isUntimedAirportTransfer(row, flightRows, pickupRules) ? null : item.meetingTime
     return {
       ...item,
+      // B2C: a location outside the verified trip cities is replaced by that
+      // day's city from the plan (empty if the plan has none for the date).
+      ...(destPlan && { location: b2cLocation(String(item.date ?? ''), item.location) }),
       meetingTime,
       isLeisure: detectLeisureDay(item),
     }

@@ -243,7 +243,7 @@ export interface B2cOrderProduct extends mysql.RowDataPacket {
   // Lifestyle lines, from `hotels` / the booked stay for hotel lines.
   product_country: string | null
   product_city: string | null
-  /** `hotels.hotel_address` for Aahaas-contracted hotel lines; null otherwise. */
+  /** Hotel lines: `hotels.hotel_address`, or the booked stay's address (Ratehawk / TBO). */
   hotel_address?: string | null
   /**
    * What the storefront called this one booked line (`tbl_lifestyle_bookings.display_label`),
@@ -680,6 +680,7 @@ async function resolveHotelPlaces(rows: B2cOrderProduct[]): Promise<B2cOrderProd
       const region = stay.hid !== null ? regions.get(stay.hid) : undefined
       r.product_country = r.product_country || stay.country || region?.country || null
       r.product_city = r.product_city || stay.city || region?.city || cityFromAddress(stay.address)
+      r.hotel_address = r.hotel_address || stay.address
     }
   } catch (err) {
     console.error('[b2c-db] hotel place lookup failed (non-fatal):', err instanceof Error ? err.message : err)

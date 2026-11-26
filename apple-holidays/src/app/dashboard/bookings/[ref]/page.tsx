@@ -340,6 +340,8 @@ export default function BookingDetailPage() {
 
   // TC identifier inline editing (IS Number / Reference Number / Tour Ref)
   const [tcEditOpen,    setTcEditOpen]    = useState(false)
+  // B2C: AI destination detection (country + destination + hotel cities)
+  const [destBusy,      setDestBusy]      = useState(false)
   const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', cntlNumber: '', bookingRef: '' })
   const [tcEditSaving,  setTcEditSaving]  = useState(false)
 
@@ -2239,6 +2241,61 @@ Wishing you a wonderful trip! ✈️
             )}
             {/* Inline country selector — always editable */}
             <div className="ml-auto flex items-center gap-1.5">
+              {(booking as any).isB2c && canEditBooking && (
+                <button
+                  type="button"
+                  disabled={destBusy}
+                  title="Read every line of the store order (products, hotels, transfers, flights) and let AI work out the real country and cities"
+                  onClick={async () => {
+                    setDestBusy(true)
+                    try {
+                      const res = await fetch(`/api/bookings/${ref}/b2c-destination`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'detect' }),
+                      })
+                      const json = await res.json()
+                      if (!json.success) throw new Error(json.error)
+                      const p = json.data
+                      if (!p.ok) { toast.error(`AI could not decide: ${p.reason}`); return }
+                      const lines = [
+                        `AI destination (${Math.round(p.plan.confidence * 100)}% confident)`,
+                        '',
+                        `Country:     ${p.current.operationCountry ?? '— not set —'}  →  ${p.plan.operationCountry ?? '— none —'}`,
+                        `Destination: ${p.current.tourDestination ?? '—'}  →  ${p.plan.tourDestination ?? '—'}`,
+                        '',
+                        'Route: ' + p.plan.stops.map((s: any) => `${s.city}${s.nights ? ` (${s.nights}n)` : ''}`).join(' → '),
+                        ...(p.hotelChanges.length
+                          ? ['', p.hotelsLocked ? 'Hotel cities (LOCKED — will not change):' : 'Hotel cities:',
+                             ...p.hotelChanges.map((h: any) => `  ${h.hotel}: ${h.from || '—'} → ${h.to}`)]
+                          : []),
+                        ...(p.plan.conflicts.length
+                          ? ['', 'Store data that looked wrong:', ...p.plan.conflicts.slice(0, 5).map((c: any) => `  • ${c.issue}`)]
+                          : []),
+                        '', p.plan.reasoning, '', 'Apply these changes?',
+                      ]
+                      if (!window.confirm(lines.join('\n'))) return
+                      const applyRes = await fetch(`/api/bookings/${ref}/b2c-destination`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: 'apply' }),
+                      })
+                      const applied = await applyRes.json()
+                      if (!applied.success) throw new Error(applied.error)
+                      toast.success(applied.message ?? 'Destination updated')
+                      await load()
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : 'Destination detection failed')
+                    } finally {
+                      setDestBusy(false)
+                    }
+                  }}
+                  className="flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 border border-violet-500/30 bg-violet-500/10 text-violet-500 hover:bg-violet-500/20 disabled:opacity-50"
+                >
+                  {destBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                  {destBusy ? 'Detecting…' : 'Detect destination'}
+                </button>
+              )}
               <select
                 value={(booking.operationCountry as string) ?? ''}
                 onChange={async (e) => {

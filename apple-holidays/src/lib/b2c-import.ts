@@ -22,9 +22,18 @@ import {
   fetchOrderProducts,
   fetchOrderTransportLegs,
   isB2cConfigured,
+  type B2cOrderProduct,
+  type B2cTransportLeg,
 } from './b2c-db'
 import { mapB2cOrder } from './b2c-booking-map'
-import { parseFlightBooking } from './b2c-flight'
+import { parseFlightBooking, type ParsedFlightBooking } from './b2c-flight'
+import {
+  buildDestinationEvidence,
+  describePlan,
+  resolveDestinationWithAI,
+  saveDestination,
+  type DestinationOutcome,
+} from './b2c-destination-ai'
 import { isB2cBooking } from './booking-source'
 import { getAutomationUserId } from './as-booking-import'
 import type { B2cSkipReason, MappedB2cBooking } from './b2c-booking-map'
@@ -364,7 +373,19 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         continue
       }
 
-      const outcome = await persistB2cBooking(result.booking, automationUserId)
+      // Destination by AI from every line of the order — asked only when the
+      // booking is actually being created, never for one already in ops.
+      const destination = () => resolveImportDestination({
+        mapped: result.booking,
+        orderId,
+        bookingRef: result.booking.bookingRef,
+        arrival: result.booking.arrivalDate,
+        departure: result.booking.departureDate,
+        products: productsByOrder.get(orderId) ?? [],
+        transportLegs: transportByOrder.get(orderId) ?? [],
+        flights: flightsByOrder.get(orderId) ?? [],
+      })
+      const outcome = await persistB2cBooking(result.booking, automationUserId, destination, summary)
       // Tickets, hotels and flights into their own places — once per booking,
       // bounded per run so a backlog cannot stretch a run. Never throws.
       if ((outcome === 'created' || outcome === 'exists') && placements < MAX_PLACEMENTS_PER_RUN) {
@@ -541,6 +562,8 @@ type PersistOutcome = 'created' | 'exists' | 'conflict'
 async function persistB2cBooking(
   mapped: MappedB2cBooking,
   createdById: string,
+  resolveDestination: () => Promise<ImportDestination>,
+  summary: B2cImportSummary,
 ): Promise<PersistOutcome> {
   const existing = await prisma.booking.findUnique({
     where: { bookingRef: mapped.bookingRef },
@@ -551,8 +574,13 @@ async function persistB2cBooking(
   const arrival = new Date(`${mapped.arrivalDate}T00:00:00Z`)
   const departure = new Date(`${mapped.departureDate}T00:00:00Z`)
 
+  const destination = await resolveDestination()
+  if (!destination.ok && destination.source === 'ai') {
+    summary.warnings!.push(`${mapped.bookingRef}: destination left empty — ${destination.note}`)
+  }
+
   try {
-    await createB2cBooking(mapped, createdById, arrival, departure)
+    await createB2cBooking(mapped, createdById, arrival, departure, destination)
   } catch (err) {
     // Two runs (watch + nightly, or two server instances) raced on the same
     // order: the unique bookingRef rejected the second insert, so nothing was
@@ -567,7 +595,66 @@ async function persistB2cBooking(
     throw err
   }
 
+  // Placement and agenda generation read the same plan. Best effort: the
+  // booking already carries the country and destination.
+  if (destination.outcome) {
+    await saveDestination(mapped.bookingRef, destination.outcome).catch((err) =>
+      console.error(`[b2c-import] ${mapped.bookingRef}: destination plan not saved:`, err))
+  }
   return 'created'
+}
+
+// ─── Destination ──────────────────────────────────────────────────────────────
+
+interface ImportDestination {
+  ok: boolean
+  /** 'ai' normally; 'rules' only when the AI step is switched off. */
+  source: 'ai' | 'rules'
+  operationCountry: MappedB2cBooking['operationCountry']
+  tourDestination: string | null
+  /** For the status event: what decided it, or why it is empty. */
+  note: string
+  outcome: DestinationOutcome | null
+}
+
+/**
+ * Country + destination for a new B2C booking, decided by the AI from every
+ * line of the order (see `b2c-destination-ai.ts`). When the AI fails or its
+ * answer does not validate, both are left EMPTY — a visible "Country not set"
+ * that someone fixes, rather than a confident wrong country that routes the
+ * file to another team. `B2C_DESTINATION_AI_DISABLED=true` switches back to the
+ * rule-based mapping.
+ */
+async function resolveImportDestination(input: {
+  mapped: MappedB2cBooking
+  orderId: number
+  bookingRef: string
+  arrival: string
+  departure: string
+  products: B2cOrderProduct[]
+  transportLegs: B2cTransportLeg[]
+  flights: ParsedFlightBooking[]
+}): Promise<ImportDestination> {
+  if (process.env.B2C_DESTINATION_AI_DISABLED === 'true') {
+    return {
+      ok: true, source: 'rules', outcome: null, note: 'rule-based (AI switched off)',
+      operationCountry: input.mapped.operationCountry,
+      tourDestination: input.mapped.tourDestination,
+    }
+  }
+  const evidence = buildDestinationEvidence(input)
+  const outcome = await resolveDestinationWithAI(evidence, { bookingRef: input.bookingRef })
+  if (!outcome.ok) {
+    return { ok: false, source: 'ai', outcome, operationCountry: null, tourDestination: null, note: outcome.reason }
+  }
+  return {
+    ok: true,
+    source: 'ai',
+    outcome,
+    operationCountry: outcome.plan.operationCountry,
+    tourDestination: outcome.plan.tourDestination,
+    note: `AI: ${describePlan(outcome.plan)}`,
+  }
 }
 
 async function createB2cBooking(
@@ -575,6 +662,7 @@ async function createB2cBooking(
   createdById: string,
   arrival: Date,
   departure: Date,
+  destination: ImportDestination,
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.create({
@@ -589,8 +677,8 @@ async function createB2cBooking(
         paxInfants: mapped.paxInfants,
         quotedTotal: mapped.quotedTotal,
         currency: mapped.currency,
-        operationCountry: mapped.operationCountry,
-        tourDestination: mapped.tourDestination,
+        operationCountry: destination.operationCountry,
+        tourDestination: destination.tourDestination,
         contactEmail: mapped.contactEmail,
         contactPhone: mapped.contactPhone,
         // The store's WhatsApp number is the same contact number.
@@ -645,7 +733,8 @@ async function createB2cBooking(
         bookingId: booking.id,
         toState: 'DRAFT',
         actorId: createdById,
-        note: `Imported from Aahaas B2C (order ${mapped.bookingRef}, ${mapped.pnlLines.length} product line(s))`,
+        note: `Imported from Aahaas B2C (order ${mapped.bookingRef}, ${mapped.pnlLines.length} product line(s)). ` +
+          (destination.ok ? `Destination — ${destination.note}` : `Destination left empty — ${destination.note}`),
       },
     })
   })

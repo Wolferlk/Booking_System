@@ -38,6 +38,7 @@ import { ticketDataFromRow } from '@/lib/flight-ticket/store-ticket'
 import { loadChildGuard } from '@/lib/data-protection-server'
 import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
 import { cityFromAddress, cleanCity } from '@/lib/b2c-hotel-place'
+import { cityForLine, loadDestinationPlan } from '@/lib/b2c-destination-ai'
 
 export class B2cPlacementError extends Error {
   constructor(message: string, public status = 422) { super(message) }
@@ -232,6 +233,7 @@ export async function placeB2cOrder(bookingRef: string): Promise<PlacementReport
   ])
   const hotelLines = products.filter(p => p.category_id === HOTEL_CATEGORY_ID)
   const warnings: string[] = []
+  const plan = hotelLines.length ? await loadDestinationPlan(booking.bookingRef) : null
   const stays = new Map<number, ReturnType<typeof stayFromBlob>>()
   if (hotelLines.length) {
     try {
@@ -287,9 +289,11 @@ export async function placeB2cOrder(bookingRef: string): Promise<PlacementReport
         data: {
           bookingId: booking.id,
           hotel,
-          // The booking's destination is the last resort only: it is one city for
-          // a multi-city trip, and must never stand in for a hotel's own place.
-          city: (stay?.city ?? str(p.product_city) ?? cityFromAddress(stay?.address) ?? str(p.service_location) ?? booking.tourDestination ?? '—').slice(0, 191),
+          // AI plan first (it reads every line of the order), then the store's own
+          // facts. Never the booking's destination: that is the whole trip, not
+          // this hotel — it is how a Da Nang homestay was filed under Negombo.
+          // Empty when nothing knows; staff fill it in.
+          city: (cityForLine(plan, p.id) ?? stay?.city ?? str(p.product_city) ?? cityFromAddress(stay?.address) ?? '').slice(0, 191),
           checkIn: new Date(`${checkIn}T00:00:00Z`),
           checkOut: new Date(`${checkOut}T00:00:00Z`),
           nights: daysBetween(checkIn, checkOut) || nights,
