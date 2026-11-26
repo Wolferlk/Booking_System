@@ -68,6 +68,12 @@ export async function register() {
       // touches drivers or sends WhatsApp. See lib/vn-mc-import/auto.ts.
       const { startMcAutoScheduler } = await import('@/lib/vn-mc-import/scheduler')
       startMcAutoScheduler()
+
+      // MC Excel Feed — OPS movements → one Excel workbook (OPS columns only;
+      // desk columns and rows are never touched). Ships OFF: a no-op until an
+      // admin switches it on in Settings. See lib/mc-excel-feed/sync.ts.
+      const { startMcExcelFeedScheduler } = await import('@/lib/mc-excel-feed/scheduler')
+      startMcExcelFeedScheduler()
     }
   }
 }

@@ -1,0 +1,289 @@
+/**
+ * MC Excel Feed — OPS → Excel movement chart, shared definitions.
+ *
+ * Every movement (agenda line) of every booking arriving on or after a start
+ * date (1 Dec 2026 by default) is written into one SharePoint / OneDrive
+ * workbook, one row per movement, ordered by arrival date, and kept up to date
+ * as bookings are created and charts change.
+ *
+ * Two kinds of column, and the whole design rests on keeping them apart:
+ *
+ *   OPS columns  — filled from the booking and its agenda. OPS owns them and
+ *                  rewrites them whenever OPS changes (edit them in OPS).
+ *   Desk columns — Meeting Time, Vendor, Type of Car, QC… typed by the desk.
+ *                  OPS NEVER writes a single cell in them, not even a blank.
+ *
+ * A row is tied to its movement by "Agenda Line ID". A chart save recreates
+ * agenda lines under new ids, so the save records old → new pairs
+ * (`carryMcExcelFeed`) and the sync also re-attaches rows by content — the
+ * desk's typing stays on the row of the movement it was typed for.
+ *
+ * Client-safe: no Prisma, no Graph.
+ */
+
+export type ColumnSource = 'ops' | 'desk'
+export type ListKey = 'channel' | 'serviceType' | 'mealPlan' | 'location' | 'car' | 'qc' | 'tickets' | 'mealPref'
+
+export interface FeedColumn {
+  key: string
+  header: string
+  source: ColumnSource
+  /** Normalised header spellings that map to this column (header text, not position). */
+  aliases: string[]
+  width: number
+  kind?: 'date' | 'int' | 'text' | 'id'
+  list?: ListKey
+  hint: string
+}
+
+/** Normalise a header for matching: lower case, letters and digits only. */
+export const normHeader = (v: unknown): string => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+export const FEED_COLUMNS: FeedColumn[] = [
+  { key: 'arrival',     header: 'Booking Arrival Date', source: 'ops',  width: 14, kind: 'date', aliases: ['bookingarrivaldate', 'arrivaldate', 'arrival', 'bookingarrival'], hint: 'Booking arrival date — rows are ordered by it' },
+  { key: 'channel',     header: 'B2B / B2C',            source: 'ops',  width: 9,  list: 'channel', aliases: ['b2bb2c', 'b2borb2c', 'channel', 'b2bc'], hint: 'B2C = Aahaas storefront order, B2B = agent booking' },
+  { key: 'ref',         header: 'VN Number',            source: 'ops',  width: 12, aliases: ['vnnumber', 'vnno', 'isnumber', 'bookingref', 'tourref', 'bookingno', 'refno'], hint: 'IS / tour reference' },
+  { key: 'cntl',        header: 'CNTL Number',          source: 'ops',  width: 13, aliases: ['cntlnumber', 'cntlno', 'cntl'], hint: 'AppleSystem control number' },
+  { key: 'lineId',      header: 'Agenda Line ID',       source: 'ops',  width: 28, kind: 'id', aliases: ['agendalineid', 'lineid', 'agendaid', 'agendaitemid', 'movementid'], hint: 'Ties the row to its OPS movement — do not edit or clear' },
+  { key: 'date',        header: 'Movement Date',        source: 'ops',  width: 14, kind: 'date', aliases: ['movementdate', 'date', 'servicedate', 'day'], hint: 'Date of this movement' },
+  { key: 'guest',       header: 'Name of Guests',       source: 'ops',  width: 22, aliases: ['nameofguests', 'nameofguest', 'guestname', 'guestnames', 'guests', 'leadguest'], hint: 'Lead guest' },
+  { key: 'adults',      header: 'Adult Count',          source: 'ops',  width: 8,  kind: 'int', aliases: ['adultcount', 'adults', 'adult', 'adt'], hint: 'Adults on the booking' },
+  { key: 'children',    header: 'Child Count',          source: 'ops',  width: 8,  aliases: ['childcount', 'child', 'children', 'chd'], hint: 'Children (infants shown as "+ n Infant")' },
+  { key: 'location',    header: 'Location',             source: 'ops',  width: 14, list: 'location', aliases: ['location', 'city'], hint: 'Agenda Location' },
+  { key: 'from',        header: 'From',                 source: 'ops',  width: 22, aliases: ['from', 'pickup', 'pickupfrom'], hint: 'Agenda From' },
+  { key: 'to',          header: 'To/Tours',             source: 'ops',  width: 34, aliases: ['totours', 'to', 'tours', 'toactivity', 'totour'], hint: 'Agenda To / Activity' },
+  { key: 'description', header: 'Tour Description',     source: 'ops',  width: 48, aliases: ['tourdescription', 'description', 'details', 'tourdetails'], hint: 'Agenda Details / Timings' },
+  { key: 'meal',        header: 'Meal Plan',            source: 'ops',  width: 14, list: 'mealPlan', aliases: ['mealplan', 'meal', 'meals'], hint: 'Agenda Meal Plan' },
+  { key: 'meetingTime', header: 'Meeting Time',         source: 'desk', width: 11, aliases: ['meetingtime', 'pickuptime'], hint: 'Desk column — OPS never writes here' },
+  { key: 'serviceType', header: 'Service Type',         source: 'ops',  width: 20, list: 'serviceType', aliases: ['servicetype', 'service'], hint: 'Agenda Service Type' },
+  { key: 'vendor',      header: 'Vendor',               source: 'desk', width: 18, aliases: ['vendor', 'vendors', 'supplier'], hint: 'Desk column — OPS never writes here' },
+  { key: 'agentId',     header: 'Agent - ID',           source: 'ops',  width: 18, aliases: ['agentid'], hint: 'Agency id (AppleSystem)' },
+  { key: 'agentName',   header: 'Agent - Name',         source: 'ops',  width: 18, aliases: ['agentname', 'agent', 'touroperator'], hint: 'Agent / tour operator' },
+  { key: 'car',         header: 'Type of Car',          source: 'desk', width: 12, list: 'car', aliases: ['typeofcar', 'cartype', 'vehicle', 'vehicletype'], hint: 'Desk column — OPS never writes here' },
+  { key: 'textMessage', header: 'Text Message',         source: 'desk', width: 14, aliases: ['textmessage', 'message', 'sms'], hint: 'Desk column — OPS never writes here' },
+  { key: 'localContact',header: 'Local Contact',        source: 'desk', width: 16, aliases: ['localcontact'], hint: 'Desk column — OPS never writes here' },
+  { key: 'qc',          header: 'QC Checked',           source: 'desk', width: 10, list: 'qc', aliases: ['qcchecked', 'qc', 'qccheck'], hint: 'Desk column — OPS never writes here' },
+  { key: 'tickets',     header: 'TICKETS',              source: 'desk', width: 12, list: 'tickets', aliases: ['tickets', 'ticket'], hint: 'Desk column — OPS never writes here' },
+  { key: 'mealPref',    header: 'Meal Preference',      source: 'desk', width: 14, list: 'mealPref', aliases: ['mealpreference', 'mealpref'], hint: 'Desk column — OPS never writes here' },
+  { key: 'specialNote', header: 'SPECIAL NOTE',         source: 'desk', width: 20, aliases: ['specialnote', 'specialnotes'], hint: 'Desk column — OPS never writes here' },
+  { key: 'note',        header: 'Note',                 source: 'desk', width: 20, aliases: ['note', 'notes'], hint: 'Desk column — OPS never writes here' },
+  { key: 'issues',      header: 'Issues',               source: 'desk', width: 18, aliases: ['issues', 'issue'], hint: 'Desk column — OPS never writes here' },
+  { key: 'issuesResp',  header: 'Issues Responsible',   source: 'desk', width: 16, aliases: ['issuesresponsible', 'issueresponsible', 'responsible'], hint: 'Desk column — OPS never writes here' },
+  { key: 'dinner',      header: 'Dinner',               source: 'desk', width: 12, aliases: ['dinner'], hint: 'Desk column — OPS never writes here' },
+  { key: 'total',       header: 'Total',                source: 'desk', width: 10, aliases: ['total'], hint: 'Desk column — OPS never writes here' },
+  { key: 'xe',          header: 'XE',                   source: 'desk', width: 10, aliases: ['xe'], hint: 'Desk column — OPS never writes here' },
+  { key: 'guide',       header: 'Guide',                source: 'desk', width: 14, aliases: ['guide', 'guides'], hint: 'Desk column — OPS never writes here' },
+  { key: 'status',      header: 'OPS Status',           source: 'ops',  width: 18, aliases: ['opsstatus', 'opssync', 'syncstatus'], hint: 'Active / Leisure day / Removed in OPS / Cancelled — rows are never deleted' },
+]
+
+export const OPS_KEYS = FEED_COLUMNS.filter(c => c.source === 'ops').map(c => c.key)
+export const COLUMN_BY_KEY = new Map(FEED_COLUMNS.map(c => [c.key, c]))
+
+/** Columns a sync cannot run without: without them rows cannot be tied to movements. */
+export const REQUIRED_KEYS = ['lineId', 'ref', 'date'] as const
+
+/** The cell values OPS owns for one movement. Dates are yyyy-mm-dd here. */
+export interface FeedRow {
+  lineId: string
+  bookingRef: string
+  arrival: string
+  channel: 'B2B' | 'B2C'
+  ref: string
+  cntl: string
+  date: string
+  guest: string
+  adults: number
+  children: number | string
+  location: string
+  from: string
+  to: string
+  description: string
+  meal: string
+  serviceType: string
+  agentId: string
+  agentName: string
+  status: string
+  /** A cancelled booking: existing rows get the status, no new rows are added. */
+  noInsert: boolean
+  sortOrder: number
+}
+
+export type FeedCellValue = string | number
+
+export const STATUS = {
+  active: 'Active',
+  leisure: 'Leisure day',
+  hotelOnly: 'Hotel only',
+  removed: 'Removed in OPS',
+  cancelled: 'Booking cancelled',
+  cancelRequested: 'Cancellation requested',
+} as const
+
+/** Statuses that grey the row out. */
+export const INACTIVE_STATUSES: string[] = [STATUS.removed, STATUS.cancelled]
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+
+export const FEED_SETTINGS = {
+  config: 'mc_xl_feed_config',
+  state: 'mc_xl_feed_state',
+  runs: 'mc_xl_feed_runs',
+  lock: 'mc_xl_feed_lock',
+  sheetRef: 'mc_xl_feed_sheet_ref',
+  /** Per booking: the line ids on (or deliberately deleted from) the sheet. */
+  rowsPrefix: 'mc_xl_feed_rows:',
+  /** Per booking: agenda line ids carried by chart saves, sheet id → current id. */
+  aliasPrefix: 'mc_xl_feed_alias:',
+} as const
+
+export const DEFAULT_FEED_URL =
+  'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQA-0icZdwz8QI67NC707tEXAVX3Fh9Wk8LJnEI516QQDOU?e=I8OmbZ'
+
+export type FeedCountry = 'VIETNAM' | 'SRILANKA' | 'SINGAPORE_MALAYSIA'
+
+export interface FeedConfig {
+  sheetUrl: string
+  tabName: string
+  /** yyyy-mm-dd — bookings arriving on or after this date are in the feed. */
+  startDate: string
+  countries: FeedCountry[]
+  /** Automatic sync. Ships OFF: nothing is written until an admin switches it on. */
+  enabled: boolean
+  intervalMin: number
+  /** sorted: new rows are inserted at their arrival-date position; append: added at the bottom. */
+  placement: 'sorted' | 'append'
+  /** Grey out rows whose movement was removed / booking cancelled. */
+  greyInactive: boolean
+}
+
+export const DEFAULT_FEED_CONFIG: FeedConfig = {
+  sheetUrl: DEFAULT_FEED_URL,
+  tabName: 'Movements',
+  startDate: '2026-12-01',
+  countries: ['VIETNAM'],
+  enabled: false,
+  intervalMin: 10,
+  placement: 'sorted',
+  greyInactive: true,
+}
+
+export const FEED_COUNTRIES: { value: FeedCountry; label: string }[] = [
+  { value: 'VIETNAM', label: 'Vietnam' },
+  { value: 'SRILANKA', label: 'Sri Lanka' },
+  { value: 'SINGAPORE_MALAYSIA', label: 'Singapore / Malaysia' },
+]
+
+// ── Runs ─────────────────────────────────────────────────────────────────────
+
+export interface FeedCounts {
+  feedRows: number
+  sheetRows: number
+  added: number
+  updatedRows: number
+  updatedCells: number
+  rekeyed: number
+  markedInactive: number
+  deletedInExcel: number
+  duplicates: number
+  unchanged: number
+}
+
+export interface FeedRun {
+  id: string
+  at: string
+  finishedAt: string | null
+  trigger: 'CRON' | 'MANUAL' | 'PREVIEW'
+  by: string | null
+  status: 'SUCCESS' | 'NO_CHANGE' | 'FAILED' | 'SKIPPED'
+  counts: FeedCounts | null
+  error: string | null
+  warnings: string[]
+  durationMs: number | null
+}
+
+export const EMPTY_COUNTS: FeedCounts = {
+  feedRows: 0, sheetRows: 0, added: 0, updatedRows: 0, updatedCells: 0, rekeyed: 0,
+  markedInactive: 0, deletedInExcel: 0, duplicates: 0, unchanged: 0,
+}
+
+/** What the preview shows for one planned change. */
+export interface PlanSample {
+  kind: 'add' | 'update' | 'inactive' | 'rekey' | 'deleted'
+  row: number | null
+  bookingRef: string
+  date: string
+  label: string
+  changes?: { column: string; from: string; to: string }[]
+}
+
+export function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return 'never'
+  const ms = Date.now() - Date.parse(iso)
+  if (!Number.isFinite(ms)) return '—'
+  if (ms < 60_000) return 'just now'
+  const m = Math.round(ms / 60_000)
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h} h ago`
+  return `${Math.round(h / 24)} days ago`
+}
+
+// ── Excel cell helpers ───────────────────────────────────────────────────────
+
+const EXCEL_EPOCH = Date.UTC(1899, 11, 30)
+
+/** yyyy-mm-dd → Excel date serial. */
+export function toSerial(ymd: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd)
+  if (!m) return null
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - EXCEL_EPOCH) / 86_400_000)
+}
+
+/** A sheet date cell (serial, or typed text) → yyyy-mm-dd, or null. */
+export function cellToYmd(v: unknown): string | null {
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(EXCEL_EPOCH + Math.round(v) * 86_400_000)
+    return d.toISOString().slice(0, 10)
+  }
+  const s = String(v ?? '').trim()
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})/.exec(s)
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  const months: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 }
+  m = /^(\d{1,2})[\s-]+([a-z]{3})[a-z]*[\s,-]+(\d{4})/i.exec(s)
+  if (m && months[m[2].toLowerCase()]) return `${m[3]}-${String(months[m[2].toLowerCase()]).padStart(2, '0')}-${m[1].padStart(2, '0')}`
+  return null
+}
+
+/** Excel's per-cell limit is 32,767 characters. */
+const MAX_CELL = 32_000
+
+/**
+ * A text value as it must be sent to Excel: a leading = + - @ would be read as
+ * a formula ("- Pick up at 8" → #NAME?), so it is written as literal text.
+ */
+export function excelText(s: string): string {
+  const t = s.length > MAX_CELL ? `${s.slice(0, MAX_CELL)}…` : s
+  return /^[=+\-@]/.test(t) ? `'${t}` : t
+}
+
+/** Compare form of a cell: what Excel shows, line endings and spacing evened out. */
+export function cellKey(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(Math.round(v * 1e6) / 1e6)
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+  return String(v).replace(/\r\n?/g, '\n').replace(/^'/, '').replace(/[ \t]+$/gm, '').trim()
+}
+
+/** Column index (0-based) → letters. */
+export function colLetter(index: number): string {
+  let n = index + 1
+  let s = ''
+  while (n > 0) {
+    const r = (n - 1) % 26
+    s = String.fromCharCode(65 + r) + s
+    n = Math.floor((n - 1) / 26)
+  }
+  return s
+}

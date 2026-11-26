@@ -29,6 +29,7 @@ import { carryMcDetails } from '@/lib/mc-details'
 import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
 import { carryMcSupplier } from '@/lib/mc-supplier'
+import { carryMcExcelFeed } from '@/lib/mc-excel-feed/config'
 import type { UserRole } from '@prisma/client'
 import { logAgendaSave, logAssignment, logMovementEdit, snapshotAgenda, type AgendaSaveOrigin } from '@/lib/booking-logs-agenda'
 
@@ -380,6 +381,9 @@ export async function POST(
   await carryMcSupplier(booking.bookingRef, movedIds)
   // Trans-Reconsultation lines point at movements the same way.
   await carryTransRecon(booking.bookingRef, movedIds)
+  // MC Excel Feed rows are tied to movements by id — record where each went so
+  // the desk's typing on the Excel row follows it. Non-fatal by design.
+  await carryMcExcelFeed(booking.bookingRef, movedIds)
   // Movement WhatsApp history is tagged by agenda item id too — move it across
   // so the chart's "sent" badges and the duplicate guard survive a Save.
   try {

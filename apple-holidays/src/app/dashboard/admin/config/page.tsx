@@ -15,6 +15,7 @@ import FileHandlerResolveSettings from '@/components/settings/file-handler-resol
 import CancellationRecoveryCard from '@/components/settings/cancellation-recovery-card'
 import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
+import McExcelFeedCard from '@/components/settings/mc-excel-feed-card'
 import AirportPickupCard from '@/components/settings/airport-pickup-card'
 import GuestEmergencyContactsCard from '@/components/settings/guest-emergency-contacts-card'
 import { GUEST_EMERGENCY_KEY, parseGuestEmergencyPolicy } from '@/lib/emergency-contacts'
@@ -342,7 +343,8 @@ const SECTIONS: SectionMeta[] = [
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
   { id: 'vn-products',    title: 'Vietnam Product Sheet',        group: 'Operations',      icon: Store,        keywords: 'includes agenda sic transfer private tour product list sharepoint excel link manual payable split vietnam' },
   { id: 'vn-checklist21', title: 'Checklist VN 2.1v (Excel)',   group: 'Operations',      icon: FileSpreadsheet, keywords: 'checklist vietnam excel sharepoint sync mirror 2 hours download tour payment paid act tina link' },
-  { id: 'cancel-recovery',title: 'Cancellation Recovery',        group: 'Operations',      icon: RotateCcw,    keywords: 'recover restore reinstate undo reverse revive cancelled booking full cancel permanent sealed irreversible window days audience' },
+  { id: 'mc-excel-feed',  title: 'MC Excel Feed (Movements → Excel)', group: 'Operations', icon: FileSpreadsheet, keywords: 'movement chart mc excel sharepoint onedrive workbook feed sync agenda line arrival date vn number cntl agent vendor meeting time type of car qc tickets dropdown export write' },
+  { id: 'cancel-recovery',title: 'Cancellation Recovery',       group: 'Operations',      icon: RotateCcw,    keywords: 'recover restore reinstate undo reverse revive cancelled booking full cancel permanent sealed irreversible window days audience' },
 
   { id: 'automation',     title: 'Automation Settings',          group: 'Automation & AI', icon: Zap,          keywords: 'auto mail inbox polling onedrive scheduled background critical password pause' },
   { id: 'ai-feedback-cc', title: 'AI Call Bot Summary Email',    group: 'Automation & AI', icon: Bot,          keywords: 'feedback cc recipients agent summary transcript sentiment' },
@@ -1547,6 +1549,11 @@ export default function ConfigPage() {
             <Section id="vn-checklist21" visible={show('vn-checklist21')} flashed={flashId === 'vn-checklist21'}>
               {/* The VN desk's Excel checklist mirrored into OPS — link, sync, downloads */}
               <VnChecklistSheetCard />
+            </Section>
+
+            <Section id="mc-excel-feed" visible={show('mc-excel-feed')} flashed={flashId === 'mc-excel-feed'}>
+              {/* Every movement from the start date written into one Excel — OPS columns only, desk columns untouched */}
+              <McExcelFeedCard />
             </Section>
 
             <Section id="cancel-recovery" visible={show('cancel-recovery')} flashed={flashId === 'cancel-recovery'}>
