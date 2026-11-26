@@ -9,7 +9,7 @@ import {
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
   Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
   PlaneLanding, PlaneTakeoff, Plane, Car, Gauge, Wallet, MessageSquareText, Utensils,
-  Columns3, Check, CheckCircle2, Circle, Undo2, Building2, Eye, Send, MessageCircle, AlertTriangle,
+  Columns3, Check, CheckCircle2, Circle, Undo2, Building2, Eye, Send, MessageCircle, AlertTriangle, FlaskConical,
 } from 'lucide-react'
 import { checkPhone } from '@/lib/phone-intl'
 import Header from '@/components/layout/header'
@@ -38,6 +38,7 @@ import {
 } from '@/lib/mc-report-filters'
 import type { McSheetRow } from '@/lib/mc-report-workbook'
 import ReportStudio, { downloadMcPdf, type SavedTemplate } from '@/components/mc-report/report-studio'
+import TestSendStudio, { type TestSendRow } from '@/components/mc-report/test-send-studio'
 import { SupplierPicker, type PickedSupplier } from '@/components/suppliers/supplier-picker'
 import {
   DEFAULT_CONFIG, describeFilters,
@@ -1083,6 +1084,7 @@ export default function MCReportPage() {
   // slice of the chart to show.
   const [selected, setSelected]     = useState<Set<string>>(new Set())
   const [selectedDaily, setSelectedDaily] = useState<Set<string>>(new Set())
+  const [showTestSend, setShowTestSend] = useState(false)
   const [dailyPreview, setDailyPreview] = useState<{ row: MCRow; text: string; attachments: number } | null>(null)
   const [dailyBusy, setDailyBusy] = useState(false)
   const [doneFilter, setDoneFilter] = useState<DoneFilter>('all')
@@ -1462,6 +1464,11 @@ export default function MCReportPage() {
   // A send goes out once per guest per day, so show how many messages it really is.
   const dailyMessageCount = useMemo(
     () => new Set(dailyPickable.filter(r => selectedDaily.has(r.id)).map(r => `${r.vnCode}|${r.date}`)).size,
+    [dailyPickable, selectedDaily],
+  )
+  // The same picked plans, for "Test send" to staff numbers instead of guests.
+  const dailyTestRows = useMemo<TestSendRow[]>(
+    () => dailyPickable.filter(r => selectedDaily.has(r.id)).map(r => ({ bookingRef: r.vnCode, date: r.date, leadGuest: r.leadGuest, location: r.location })),
     [dailyPickable, selectedDaily],
   )
 
@@ -3597,7 +3604,7 @@ export default function MCReportPage() {
       })()}
 
       {selectedDaily.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-32px)] max-w-2xl -translate-x-1/2">
+        <div className="fixed bottom-6 left-1/2 z-50 w-[calc(100%-32px)] max-w-3xl -translate-x-1/2">
           <div className="animate-slide-up flex flex-wrap items-center gap-2 rounded-2xl bg-slate-950/95 px-4 py-3 text-white shadow-2xl ring-1 ring-emerald-400/30 backdrop-blur-md">
             <span className="mr-auto flex items-center gap-2.5 text-sm font-semibold">
               <ProgressRing value={dailyPickedInView} total={dailyPickable.length} />
@@ -3612,6 +3619,11 @@ export default function MCReportPage() {
               <button type="button" onClick={() => pickDaily('all')} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Select all {dailyPickable.length}</button>
             )}
             <button type="button" onClick={() => pickDaily('invert')} title="Swap picked and unpicked rows" className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold hover:bg-white/20">Invert</button>
+            <button type="button" disabled={dailyBusy || !dailyMessageCount} onClick={() => setShowTestSend(true)}
+              title="Send these daily plans to your saved test number(s) instead of the guests"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-violet-500/90 px-3 py-2 text-xs font-bold hover:bg-violet-400 disabled:opacity-40">
+              <FlaskConical className="h-3.5 w-3.5" />Test send
+            </button>
             <button type="button" disabled={dailyBusy} onClick={() => void sendSelectedDaily()} className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-bold hover:bg-emerald-400 disabled:opacity-40">{dailyBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}Send {dailyMessageCount}</button>
             <button type="button" aria-label="Clear selection" onClick={() => setSelectedDaily(new Set())} className="rounded-lg p-2 text-slate-300 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>
           </div>
@@ -3627,6 +3639,8 @@ export default function MCReportPage() {
           </div>
         </div>
       )}
+
+      <TestSendStudio open={showTestSend} onClose={() => setShowTestSend(false)} rows={dailyTestRows} />
 
       <ReportStudio
         open={showStudio}

@@ -44,6 +44,12 @@ export const SETTING_DAILY_BRIEFING_TIME = 'auto_whatsapp_daily_briefing_time'
 export const SETTING_BRIEFING_TIME_PREFIX = 'daily_briefing_time:'
 
 export const TAG_DAILY_BRIEFING = '[DAILY-BRIEFING]'
+/**
+ * Test copies of a daily plan sent to a staff number (MC Report → Test send).
+ * Deliberately NOT prefixed with TAG_DAILY_BRIEFING: `alreadySentForDay` must
+ * never mistake a test copy for the guest's real plan and skip the guest.
+ */
+export const TAG_DAILY_BRIEFING_TEST = '[DAILY-BRIEFING-TEST]'
 export const TAG_FEEDBACK_REQUEST = '[FEEDBACK-REQUEST]'
 
 export interface AutomationRunResult {
@@ -287,12 +293,27 @@ export interface SingleSendResult {
  * opts.allowEmpty — still send even if that day has nothing scheduled
  * opts.dryRun    — build and return the message without sending or logging it
  * opts.to        — send to this number instead of the booking's own contact
+ * opts.test      — a staff test copy: needs `to`, logged under TAG_DAILY_BRIEFING_TEST
+ *                  (so the guest's real send is never deduped away) and kept out of
+ *                  the Booking Logs. `test.banner` adds a "TEST COPY" header;
+ *                  `test.attachments: false` skips the ticket files.
  */
+export interface DailyBriefingOpts {
+  force?: boolean
+  allowEmpty?: boolean
+  dryRun?: boolean
+  to?: string
+  test?: { banner?: boolean; attachments?: boolean }
+}
+
 async function sendDailyBriefingForBookingInner(
   bookingRef: string,
   targetDateStr: string,
-  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean; to?: string } = {},
+  opts: DailyBriefingOpts = {},
 ): Promise<SingleSendResult> {
+  if (opts.test && !opts.dryRun && !(opts.to && normalisePhone(opts.to))) {
+    return { ok: false, reason: 'A test send needs a test number' }
+  }
   const b = await prisma.booking.findUnique({
     where: { bookingRef },
     include: {
@@ -393,7 +414,8 @@ async function sendDailyBriefingForBookingInner(
   // Ticket/voucher files to send as media right after the text. fileUrl is a
   // relative /api/uploads/... path served publicly, so Meta can fetch it by link.
   const appUrl = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
-  const attachments = appUrl
+  const skipFiles = opts.test?.attachments === false
+  const attachments = appUrl && !skipFiles
     ? dayTickets
         .filter(t => t.fileUrl)
         .map(t => ({
@@ -435,25 +457,40 @@ async function sendDailyBriefingForBookingInner(
 
   if (opts.dryRun) return { ok: true, message: msg, attachments: attachments.length }
 
-  const phone = opts.to || b.contactWhatsapp || b.contactPhone
+  const phone = opts.test ? opts.to! : (opts.to || b.contactWhatsapp || b.contactPhone)
   if (!phone || !normalisePhone(phone)) {
     return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
   }
 
-  const tag = `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`
+  // A test copy says whose plan it is and where the real one would go, so a
+  // tester receiving 100+ plans on one phone can check each against its guest.
+  const guestNo = normalisePhone(b.contactWhatsapp || b.contactPhone || '')
+  const body = opts.test?.banner
+    ? [
+        `🧪 *TEST COPY* — not sent to the guest`,
+        `${b.bookingRef} · ${b.passengers[0]?.name ?? 'Guest'} · ${targetDateStr}`,
+        guestNo ? `Guest WhatsApp: +${guestNo}` : `⚠️ No guest WhatsApp on this booking — the real plan cannot go out`,
+        `──────────────`,
+        msg,
+      ].join('\n')
+    : msg
+
+  const guestName = b.passengers[0]?.name ?? 'Guest'
+  const tag = `${opts.test ? TAG_DAILY_BRIEFING_TEST : TAG_DAILY_BRIEFING} ${guestName}`
   const sent = await deliverToGuest({
-    phone, text: msg, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag, audience: brandAudience,
+    phone, text: body, guestName: b.passengers[0]?.name ?? null, bookingRef: b.bookingRef, tag, audience: brandAudience,
   })
-  if (!sent.ok) return { ok: false, reason: sent.reason, message: msg }
+  if (!sent.ok) return { ok: false, reason: sent.reason, message: body }
 
   // Logged as the plan itself (not the template wording) — alreadySentForDay
-  // and the booking's customer panel both read this body.
+  // and the booking's customer panel both read this body. Test copies carry
+  // their own tag, so neither of those ever counts them.
   await prisma.whatsAppMessage.create({
     data: {
       bookingRef:  b.bookingRef,
       phone:       normalisePhone(phone),
       direction:   'outbound',
-      body:        msg,
+      body,
       waMessageId: sent.waMessageId,
       status:      'sent',
       senderName:  tag,
@@ -474,7 +511,7 @@ async function sendDailyBriefingForBookingInner(
     }
   }
 
-  return { ok: true, message: msg, unconfirmed: sent.unconfirmed }
+  return { ok: true, message: msg, unconfirmed: sent.unconfirmed, attachments: attachments.length }
 }
 
 /** First real phone number among the candidates ("—" and blanks are placeholders). */
@@ -771,9 +808,10 @@ async function logGuestSendOutcome(bookingRef: string, kind: 'Daily trip plan' |
 export async function sendDailyBriefingForBooking(
   bookingRef: string,
   targetDateStr: string,
-  opts: { force?: boolean; allowEmpty?: boolean; dryRun?: boolean; to?: string } = {},
+  opts: DailyBriefingOpts = {},
 ): Promise<SingleSendResult> {
-  if (opts.dryRun) return sendDailyBriefingForBookingInner(bookingRef, targetDateStr, opts)
+  // Dry runs and staff test copies say nothing about the guest — keep them out of the Booking Logs.
+  if (opts.dryRun || opts.test) return sendDailyBriefingForBookingInner(bookingRef, targetDateStr, opts)
   try {
     const r = await sendDailyBriefingForBookingInner(bookingRef, targetDateStr, opts)
     await logGuestSendOutcome(bookingRef, 'Daily trip plan', targetDateStr, r).catch(() => undefined)

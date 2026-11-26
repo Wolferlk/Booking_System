@@ -182,6 +182,7 @@ function toneOfAction(a: string): LogTone {
 
 const MSG_TAGS: [string, string][] = [
   ['[DAILY-BRIEFING]', 'Daily trip plan'],
+  ['[DAILY-BRIEFING-TEST]', 'Daily plan — staff test copy'],
   ['[FEEDBACK-REQUEST]', 'Feedback request'],
   ['[CALL-APPROVAL-REMINDER]', 'Call-permission reminder'],
   ['[PORTAL-REMINDER]', 'Portal reminder'],

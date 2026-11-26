@@ -2196,8 +2196,20 @@ export default function JourneyMap({
           <div className="jm-vignette pointer-events-none absolute inset-0 z-[450]" />
         </div>
 
-        {/* ── Top-left: what this journey is ── */}
-        <div className="pointer-events-none absolute top-3 left-3 z-[500] flex flex-col gap-2">
+        {/* ── Top-left: what this journey is ──
+            Stood down while the fly-through runs or a stop's drawer is open.
+            The drawer takes the right half, so the controls slide into the
+            left half alongside this card and the now-playing HUD — three
+            things fighting over one narrow top edge, with this card running
+            on underneath the drawer. The HUD and the drawer already say where
+            the guests are; the trip summary comes back when the map is idle. */}
+        <div
+          className={cn(
+            'pointer-events-none absolute top-3 left-3 z-[500] flex flex-col gap-2 transition-[opacity,visibility] duration-200',
+            (playing || sideOpen) && 'opacity-0 invisible',
+          )}
+          aria-hidden={playing || sideOpen || undefined}
+        >
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
             // Capped on a phone so the transport chips wrap inside the card
@@ -2331,8 +2343,15 @@ export default function JourneyMap({
               initial={{ opacity: 0, y: -10, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -10, scale: 0.97 }}
-              className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-[520] w-[min(92%,420px)]"
-              style={{ marginLeft: 'calc(var(--jm-card) / -2)' }}
+              // Below the control row, not level with it: with the drawer open
+              // the controls sit in the same left half, and at the top edge the
+              // two overlapped. Sized from the free width (not the whole panel)
+              // so it can never run underneath the drawer.
+              className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 z-[520]"
+              style={{
+                marginLeft: 'calc(var(--jm-card) / -2)',
+                width: 'min(calc(100% - var(--jm-card) - 1.5rem), 420px)',
+              }}
             >
               <div className={cn('jm-hud rounded-2xl backdrop-blur-xl shadow-2xl ring-1 px-3 py-2', skin.glassSolid)}>
                 <div className="flex items-center gap-2">
@@ -2380,9 +2399,11 @@ export default function JourneyMap({
           )}
         </AnimatePresence>
 
-        {/* ── Top-right: controls ── */}
+        {/* ── Top-right: controls ──
+            Above the now-playing HUD (z-520) so the day/speed/basemap menus
+            drop open over it rather than behind it; still under the drawer. */}
         <div
-          className="absolute top-3 z-[500] flex items-center gap-1.5 transition-[right] duration-300"
+          className="absolute top-3 z-[530] flex items-center gap-1.5 transition-[right] duration-300"
           style={{ right: 'calc(var(--jm-card) + 0.75rem)' }}
         >
           {!fullscreen && (
