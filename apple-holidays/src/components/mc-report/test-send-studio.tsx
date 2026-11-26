@@ -46,7 +46,6 @@ export default function TestSendStudio({ open, onClose, rows }: {
   const [saving, setSaving] = useState(false)
 
   // ── Options ───────────────────────────────────────────────────────────────
-  const [banner, setBanner] = useState(true)
   const [files, setFiles] = useState(false)
 
   // ── Run state ─────────────────────────────────────────────────────────────
@@ -149,7 +148,7 @@ export default function TestSendStudio({ open, onClose, rows }: {
       try {
         const res = await fetch('/api/mc-report/whatsapp-daily/test', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: chunk.map(r => ({ bookingRef: r.bookingRef, date: r.date })), phones, banner, attachments: files }),
+          body: JSON.stringify({ rows: chunk.map(r => ({ bookingRef: r.bookingRef, date: r.date })), phones, attachments: files }),
         })
         const json = await res.json()
         if (!json.success) throw new Error(json.error ?? 'Send failed')
@@ -307,7 +306,13 @@ export default function TestSendStudio({ open, onClose, rows }: {
 
               {/* Options */}
               <section className="grid gap-3 sm:grid-cols-2">
-                <Toggle on={banner} onChange={setBanner} title="TEST COPY header" hint="Each plan opens with the booking, guest and the guest's WhatsApp, so you can check it against the right guest." />
+                <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-3">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+                  <span>
+                    <span className="block text-xs font-bold text-slate-800">Exactly the guest’s message</span>
+                    <span className="block text-[11px] leading-snug text-slate-500">Word-for-word the daily plan each guest receives — no test labels added.</span>
+                  </span>
+                </div>
                 <Toggle on={files} onChange={setFiles} title="Include ticket files" hint="Also send each day's ticket/voucher photos & PDFs — more messages, but the full guest experience." />
               </section>
 

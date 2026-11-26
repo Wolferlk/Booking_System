@@ -295,7 +295,7 @@ export interface SingleSendResult {
  * opts.to        — send to this number instead of the booking's own contact
  * opts.test      — a staff test copy: needs `to`, logged under TAG_DAILY_BRIEFING_TEST
  *                  (so the guest's real send is never deduped away) and kept out of
- *                  the Booking Logs. `test.banner` adds a "TEST COPY" header;
+ *                  the Booking Logs. The text is identical to the guest's;
  *                  `test.attachments: false` skips the ticket files.
  */
 export interface DailyBriefingOpts {
@@ -303,7 +303,7 @@ export interface DailyBriefingOpts {
   allowEmpty?: boolean
   dryRun?: boolean
   to?: string
-  test?: { banner?: boolean; attachments?: boolean }
+  test?: { attachments?: boolean }
 }
 
 async function sendDailyBriefingForBookingInner(
@@ -462,18 +462,8 @@ async function sendDailyBriefingForBookingInner(
     return { ok: false, reason: 'No WhatsApp/phone contact on this booking' }
   }
 
-  // A test copy says whose plan it is and where the real one would go, so a
-  // tester receiving 100+ plans on one phone can check each against its guest.
-  const guestNo = normalisePhone(b.contactWhatsapp || b.contactPhone || '')
-  const body = opts.test?.banner
-    ? [
-        `🧪 *TEST COPY* — not sent to the guest`,
-        `${b.bookingRef} · ${b.passengers[0]?.name ?? 'Guest'} · ${targetDateStr}`,
-        guestNo ? `Guest WhatsApp: +${guestNo}` : `⚠️ No guest WhatsApp on this booking — the real plan cannot go out`,
-        `──────────────`,
-        msg,
-      ].join('\n')
-    : msg
+  // A test copy is word-for-word the guest's message — only the log tag differs.
+  const body = msg
 
   const guestName = b.passengers[0]?.name ?? 'Guest'
   const tag = `${opts.test ? TAG_DAILY_BRIEFING_TEST : TAG_DAILY_BRIEFING} ${guestName}`

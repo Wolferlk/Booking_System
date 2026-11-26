@@ -4,7 +4,8 @@
  *
  *  GET  — the caller's saved test numbers.
  *  PUT  — save them ({ numbers: [{ label, phone }] }, max 2).
- *  POST — send one chunk ({ rows: [{ bookingRef, date }], phones, banner, attachments }).
+ *  POST — send one chunk ({ rows: [{ bookingRef, date }], phones, attachments }).
+ *         Each message is word-for-word what the guest gets.
  *         The page calls this in small chunks so it can show live progress and stop
  *         mid-run. Only numbers on the caller's saved list are accepted.
  *
@@ -86,7 +87,6 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as {
     rows?: { bookingRef: string; date: string }[]
     phones?: string[]
-    banner?: boolean
     attachments?: boolean
   } | null
 
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
           force: true,
           allowEmpty: true,
           to: phone,
-          test: { banner: body?.banner !== false, attachments: body?.attachments !== false },
+          test: { attachments: body?.attachments !== false },
         })
         results.push({
           bookingRef: row.bookingRef, date: row.date, phone, ok: r.ok,
