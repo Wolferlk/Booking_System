@@ -17,7 +17,7 @@
  */
 import { getGraphToken, graphFetch } from '@/lib/graph-client'
 import { cacheSheetRef, getCachedSheetRef, protectedWorkbookIds, type CachedSheetRef } from './config'
-import { colLetter, type FeedCellValue } from './shared'
+import { colLetter, LAYOUT_NAME, PALETTE, STAMP_NAME, type ColumnSource, type FeedCellValue } from './shared'
 
 const GRAPH = 'https://graph.microsoft.com/v1.0'
 const RETRYABLE = new Set([429, 503, 509])
@@ -175,6 +175,11 @@ export async function plainRows(ref: CachedSheetRef, tab: string, firstRow: numb
   await call(`${rng(ref, tab, address)}/format/font`, { method: 'PATCH', session, body: JSON.stringify({ bold: false, italic: false, color: '#000000' }) }).catch(() => undefined)
 }
 
+/** Drop every cell format on rows OPS just inserted under the header (they copied the header's style). */
+export async function clearRowFormats(ref: CachedSheetRef, tab: string, firstRow: number, lastRow: number, lastCol: number, session: string | null): Promise<void> {
+  await call(`${rng(ref, tab, `A${firstRow}:${colLetter(lastCol)}${lastRow}`)}/clear`, { method: 'POST', session, body: JSON.stringify({ applyTo: 'Formats' }) }).catch(() => undefined)
+}
+
 /** Grey (inactive) or back to normal. Cosmetic — a failure never fails the sync. */
 export async function greyRows(ref: CachedSheetRef, tab: string, rows: number[], lastCol: number, on: boolean, session: string | null): Promise<void> {
   const sorted = Array.from(new Set(rows)).sort((a, b) => a - b)
@@ -194,20 +199,79 @@ export async function addTab(ref: CachedSheetRef, tab: string, session: string |
   await call(`${wb(ref)}/worksheets/add`, { method: 'POST', session, body: JSON.stringify({ name: tab }) })
 }
 
-/** Header cells: OPS columns teal, desk columns amber, so ownership is visible on the sheet itself. */
+/** Header cells coloured by owner — OPS teal, desk amber, both-ways violet — so ownership is visible on the sheet itself. */
 export async function writeHeader(
   ref: CachedSheetRef, tab: string, row: number, firstCol: number,
-  cells: { header: string; source: 'ops' | 'desk' }[], session: string | null,
+  cells: { header: string; source: ColumnSource }[], session: string | null,
 ): Promise<void> {
   if (!cells.length) return
   const address = `${colLetter(firstCol)}${row}:${colLetter(firstCol + cells.length - 1)}${row}`
   await call(rng(ref, tab, address), { method: 'PATCH', session, body: JSON.stringify({ values: [cells.map(c => c.header)] }) })
+  await call(`${rng(ref, tab, address)}/format`, { method: 'PATCH', session, body: JSON.stringify({ horizontalAlignment: 'Center', verticalAlignment: 'Center', wrapText: true, rowHeight: 32 }) }).catch(() => undefined)
   for (let i = 0; i < cells.length; i++) {
     const a = `${colLetter(firstCol + i)}${row}`
-    const ops = cells[i].source === 'ops'
-    await call(`${rng(ref, tab, a)}/format/fill`, { method: 'PATCH', session, body: JSON.stringify({ color: ops ? '#0F766E' : '#FDE68A' }) }).catch(() => undefined)
-    await call(`${rng(ref, tab, a)}/format/font`, { method: 'PATCH', session, body: JSON.stringify({ bold: true, color: ops ? '#FFFFFF' : '#78350F' }) }).catch(() => undefined)
+    const s = cells[i].source
+    const fill = s === 'ops' ? PALETTE.ops : s === 'both' ? PALETTE.both : PALETTE.desk
+    await call(`${rng(ref, tab, a)}/format/fill`, { method: 'PATCH', session, body: JSON.stringify({ color: fill }) }).catch(() => undefined)
+    await call(`${rng(ref, tab, a)}/format/font`, { method: 'PATCH', session, body: JSON.stringify({ bold: true, color: s === 'desk' ? PALETTE.deskText : '#FFFFFF' }) }).catch(() => undefined)
   }
+}
+
+// ── The OPS layout ───────────────────────────────────────────────────────────
+
+/** True when the workbook carries the OPS layout (it then colours bookings itself, by conditional formatting). */
+export async function hasLayout(ref: CachedSheetRef, session: string | null): Promise<boolean> {
+  const r = await call<{ value?: { name: string }[] }>(`${wb(ref)}/names?$select=name`, { session }).catch(() => ({ value: [] }))
+  return (r.value ?? []).some(n => n.name === LAYOUT_NAME)
+}
+
+/** Write the banner's "last synced" line. Cosmetic: any failure is ignored. */
+export async function writeStamp(ref: CachedSheetRef, text: string, session: string | null): Promise<void> {
+  try {
+    const r = await call<{ address?: string }>(`${wb(ref)}/names('${STAMP_NAME}')/range?$select=address`, { session })
+    const [sheet, cell] = String(r.address ?? '').replace(/\$/g, '').split('!')
+    if (!sheet || !cell) return
+    const tab = sheet.replace(/^'|'$/g, '').replace(/''/g, "'")
+    await call(rng(ref, tab, cell.split(':')[0]), { method: 'PATCH', session, body: JSON.stringify({ values: [[text]] }) })
+  } catch { /* no stamp cell — not the OPS layout */ }
+}
+
+/** Read one column's values for rows first…last. */
+export async function readColumn(ref: CachedSheetRef, tab: string, col: number, first: number, last: number, session: string | null): Promise<unknown[]> {
+  const out: unknown[] = []
+  for (let r = first; r <= last; r += 3000) {
+    const end = Math.min(last, r + 2999)
+    const part = await call<{ values?: unknown[][] }>(`${rng(ref, tab, `${colLetter(col)}${r}:${colLetter(col)}${end}`)}?$select=values`, { session })
+    out.push(...(part.values ?? []).map(v => v[0]))
+  }
+  return out
+}
+
+/**
+ * Fill row blocks with a colour, 20 per Graph $batch, one after another inside
+ * each batch (dependsOn) so the workbook never sees parallel writes. Cosmetic:
+ * failures are counted, never thrown.
+ */
+export async function fillBlocks(
+  ref: CachedSheetRef, tab: string, blocks: { first: number; last: number; color: string }[], lastCol: number, session: string | null,
+): Promise<number> {
+  let failed = 0
+  for (let i = 0; i < blocks.length; i += 20) {
+    const slice = blocks.slice(i, i + 20)
+    const requests = slice.map((b, j) => ({
+      id: String(j + 1),
+      method: 'PATCH',
+      url: `${rng(ref, tab, `A${b.first}:${colLetter(lastCol)}${b.last}`)}/format/fill`,
+      headers: { 'Content-Type': 'application/json', ...(session ? { 'workbook-session-id': session } : {}) },
+      body: { color: b.color },
+      ...(j ? { dependsOn: [String(j)] } : {}),
+    }))
+    try {
+      const r = await call<{ responses?: { status: number }[] }>('/$batch', { method: 'POST', body: JSON.stringify({ requests }) })
+      failed += (r.responses ?? []).filter(x => x.status >= 400).length
+    } catch { failed += slice.length }
+  }
+  return failed
 }
 
 export async function freezeHeader(ref: CachedSheetRef, tab: string, rows: number, session: string | null): Promise<void> {

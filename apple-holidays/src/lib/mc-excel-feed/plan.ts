@@ -2,25 +2,31 @@
  * MC Excel Feed — the planner. Pure: no Prisma, no Graph, no clock.
  *
  * Given what the sheet holds now and what OPS says, decide — cell by cell —
- * what to write. The executor (sync.ts) only carries the plan out, and the
- * preview shows the very same plan without carrying it out.
+ * what to write, and (for the two-way columns) what to send back to OPS. The
+ * executor (sync.ts) only carries the plan out; the preview shows the very same
+ * plan without carrying it out.
  *
  * Rules, in the order they matter:
- *   1. Only OPS columns are ever written. A desk column is not in any write,
- *      not even as a blank — the runs below are built from OPS columns only.
- *   2. A row is never deleted. A movement that left OPS keeps its row (and the
- *      desk's notes on it) and gets "Removed in OPS" in OPS Status.
- *   3. A row the desk deleted is not put back (it was written before — the
- *      per-booking `written` set remembers), unless asked to restore.
- *   4. Rows are re-attached to their movement when a chart save gave it a new
- *      id: first through the ids the save recorded (aliases), then by content
- *      (same booking + date, then To/From/service), then by position in the day.
- *   5. A plan that would flag an implausible share of the sheet as removed is
- *      not trusted: the flags are skipped and a warning is raised instead.
+ *   1. OPS columns are written from OPS. Desk columns are never in any write.
+ *   2. Two-way columns (Meeting Time, Driver Details) are a three-way merge
+ *      against the value both sides agreed on at the last sync ("base"):
+ *        only OPS changed   → Excel is updated
+ *        only Excel changed → OPS is updated (write-back; its own switch)
+ *        both changed       → a conflict: neither side is touched, a person settles it
+ *      A cell the desk blanked never clears OPS — the OPS value is put back.
+ *      A two-way cell is only ever written on its own (never as part of an OPS
+ *      run), so writing OPS columns can never overwrite a desk edit in it.
+ *   3. A row is never deleted. A movement that left OPS keeps its row and gets
+ *      "Removed in OPS"; a row the desk deleted is not put back unless asked.
+ *   4. Rows follow their movement across chart saves (new ids): aliases first,
+ *      then content (same booking + date + To/From/service), then position.
+ *   5. Implausible plans are not trusted: mass flags and mass write-backs are
+ *      held back with a warning.
  */
 import {
-  cellKey, cellToYmd, excelText, FEED_COLUMNS, INACTIVE_STATUSES, normHeader, OPS_KEYS, REQUIRED_KEYS, STATUS, toSerial,
-  type FeedCellValue, type FeedCounts, type FeedRow, type PlanSample,
+  cellKey, cellToYmd, colLetter, driverKey, driverText, excelText, FEED_COLUMNS, INACTIVE_STATUSES, normHeader,
+  OPS_KEYS, REQUIRED_KEYS, splitDriverText, STATUS, timeCell, timeKey, toSerial, TWO_WAY_KEYS,
+  type FeedCellValue, type FeedCounts, type FeedRow, type PlanSample, type TwoWayKey,
 } from './shared'
 
 // ── Header ───────────────────────────────────────────────────────────────────
@@ -28,13 +34,10 @@ import {
 export interface HeaderMap {
   /** column key → 0-based column index on the sheet */
   cols: Record<string, number>
-  /** Feed columns with no header on the sheet. */
   missing: string[]
-  /** OPS columns missing — never written until the header has them. */
+  /** OPS / two-way columns missing — never written until the header has them. */
   missingOps: string[]
-  /** Required columns missing — no sync can run. */
   missingRequired: string[]
-  /** Header cells that appear twice (first one wins). */
   duplicateHeaders: string[]
 }
 
@@ -42,24 +45,25 @@ export function mapHeader(header: unknown[]): HeaderMap {
   const cols: Record<string, number> = {}
   const duplicateHeaders: string[] = []
   header.forEach((h, i) => {
-    const n = normHeader(h)
+    const raw = String(h ?? '').trim()
+    const n = raw === '#' ? '#' : normHeader(raw)
     if (!n) return
     const col = FEED_COLUMNS.find(c => c.aliases.includes(n))
     if (!col) return
-    if (cols[col.key] !== undefined) { duplicateHeaders.push(String(h)); return }
+    if (cols[col.key] !== undefined) { duplicateHeaders.push(raw); return }
     cols[col.key] = i
   })
   const missing = FEED_COLUMNS.filter(c => cols[c.key] === undefined).map(c => c.key)
   return {
     cols,
     missing,
-    missingOps: missing.filter(k => OPS_KEYS.includes(k)),
+    missingOps: missing.filter(k => FEED_COLUMNS.find(c => c.key === k)!.source !== 'desk'),
     missingRequired: REQUIRED_KEYS.filter(k => cols[k] === undefined),
     duplicateHeaders,
   }
 }
 
-/** The header is the first of the top 10 rows that names the Agenda Line ID column. */
+/** The header is the first of the top 10 rows that names the Agenda Line ID and VN Number columns. */
 export function findHeaderRow(grid: unknown[][]): number {
   for (let r = 0; r < Math.min(10, grid.length); r++) {
     const m = mapHeader(grid[r] ?? [])
@@ -70,14 +74,35 @@ export function findHeaderRow(grid: unknown[][]): number {
 
 // ── Cell values ──────────────────────────────────────────────────────────────
 
-export const DATE_FORMAT = 'dd-mmm-yyyy'
+export const DATE_FORMAT = 'ddd dd mmm yyyy'
+
+/** Per-sheet values that do not depend on the movement. */
+export interface CellContext { bandFormula: string }
+
+/**
+ * "#": the booking's running number on this sheet. ROW()-relative INDEX, so it
+ * stays right when rows are inserted, sorted or filtered — and its odd / even
+ * drives the two booking colours.
+ */
+export function cellContext(header: HeaderMap, headerRow: number): CellContext {
+  const band = header.cols.band
+  const ref = header.cols.ref
+  if (band === undefined || ref === undefined) return { bandFormula: '' }
+  const A = colLetter(band)
+  const R = colLetter(ref)
+  const first = headerRow + 1
+  return {
+    bandFormula: `=IF(ROW()<=${first},1,IF(INDEX($${R}:$${R},ROW())=INDEX($${R}:$${R},ROW()-1),INDEX($${A}:$${A},ROW()-1),INDEX($${A}:$${A},ROW()-1)+1))`,
+  }
+}
 
 /** Text that Excel would turn into a number or date if written plainly ("2203856209750", "12/01"). */
 const looksNumeric = (s: string) => /^[\d\s.,/:-]+$/.test(s) && /\d/.test(s)
 
-/** The value OPS writes for one column of one movement. */
-export function desiredCell(row: FeedRow, key: string): { value: FeedCellValue; format: string; compare: string } {
+/** The value OPS writes for one one-way column of one movement. */
+export function desiredCell(row: FeedRow, key: string, ctx: CellContext = { bandFormula: '' }): { value: FeedCellValue; format: string; compare: string } {
   const col = FEED_COLUMNS.find(c => c.key === key)!
+  if (col.kind === 'formula') return { value: ctx.bandFormula, format: '0', compare: '#formula' }
   if (col.kind === 'date') {
     const ymd = key === 'arrival' ? row.arrival : row.date
     const serial = toSerial(ymd)
@@ -90,14 +115,70 @@ export function desiredCell(row: FeedRow, key: string): { value: FeedCellValue; 
   return { value, format: 'General', compare: cellKey(s) }
 }
 
-/** Does the sheet already hold what OPS would write? */
+/** What OPS holds for a two-way column, as an Excel cell and as a compare key. */
+export function twoWayCell(row: FeedRow, key: TwoWayKey): { value: FeedCellValue; format: string; key: string; shown: string } {
+  if (key === 'meetingTime') {
+    const c = timeCell(row.meetingTime ?? '')
+    return { ...c, key: timeKey(row.meetingTime), shown: row.meetingTime ?? '' }
+  }
+  const text = driverText(row.driverName ?? '', row.driverPhone ?? '')
+  return { value: looksNumeric(text) ? `'${text}` : excelText(text), format: 'General', key: driverKey(row.driverName ?? '', row.driverPhone ?? ''), shown: text }
+}
+
+/** The compare key of what the sheet holds in a two-way column. */
+export function sheetTwoWayKey(key: TwoWayKey, v: unknown): { key: string; shown: string } {
+  if (key === 'meetingTime') { const k = timeKey(v); return { key: k, shown: typeof v === 'number' ? k : cellKey(v) } }
+  const text = cellKey(v)
+  const d = splitDriverText(text)
+  return { key: driverKey(d.name, d.phone), shown: text }
+}
+
 function sameCell(key: string, sheet: unknown, want: { compare: string }): boolean {
   const col = FEED_COLUMNS.find(c => c.key === key)!
+  if (col.kind === 'formula') return typeof sheet === 'number' && sheet >= 1
   if (col.kind === 'date') return (cellToYmd(sheet) ?? '') === want.compare
   return cellKey(sheet) === want.compare
 }
 
+export type TwoWayDecision = 'same' | 'toExcel' | 'toOps' | 'conflict'
+
+/** The three-way merge for one two-way cell. Pure and exported for tests. */
+export function decideTwoWay(opsKey: string, xlKey: string, base: string | undefined): TwoWayDecision {
+  if (opsKey === xlKey) return 'same'
+  if (base === undefined) {
+    // Never synced: an empty side takes the other's value; two different values are a conflict.
+    if (!xlKey) return 'toExcel'
+    if (!opsKey) return 'toOps'
+    return 'conflict'
+  }
+  const opsChanged = opsKey !== base
+  const xlChanged = xlKey !== base
+  if (!xlChanged) return 'toExcel'
+  // The desk blanked the cell: a blank never clears OPS — the OPS value goes back.
+  if (!opsChanged) return xlKey ? 'toOps' : 'toExcel'
+  return 'conflict'
+}
+
 // ── Plan ─────────────────────────────────────────────────────────────────────
+
+export type BaseEntry = { t?: string; d?: string }
+const BASE_FIELD: Record<TwoWayKey, 't' | 'd'> = { meetingTime: 't', driver: 'd' }
+
+export interface Writeback {
+  lineId: string
+  bookingRef: string
+  field: TwoWayKey
+  /** What OPS holds now (compare-and-set: applied only if OPS still holds it). */
+  opsMeetingTime: string
+  opsDriver: { name: string; phone: string }
+  /** What Excel says. */
+  meetingTime: string
+  driver: { name: string; phone: string }
+  xlKey: string
+  baseBefore: string | undefined
+  label: string
+  date: string
+}
 
 export interface PlanInput {
   header: HeaderMap
@@ -105,23 +186,27 @@ export interface PlanInput {
   headerRow: number
   /** Data rows below the header: rows[i] is sheet row headerRow + 1 + i. */
   rows: unknown[][]
-  /** The feed, in the order the sheet should read. */
   feed: FeedRow[]
   /** bookingRef → line ids on the sheet (or deliberately deleted from it) after the last sync. */
   written: Map<string, Set<string>>
   /** Agenda line id carried by a chart save: old id → new id. */
   alias: Map<string, string>
+  /** Two-way values agreed at the last sync, by the line id the sheet row carried. */
+  base?: Map<string, BaseEntry>
   placement: 'sorted' | 'append'
-  /** Put back rows the desk deleted. */
   restoreDeleted: boolean
   greyInactive: boolean
+  /** Excel → OPS switched on. */
+  writeBack?: boolean
+  /** Send a write-back batch larger than the safety limit (a person looked at it). */
+  allowBulkWriteBack?: boolean
 }
 
 export interface RowWrite {
-  /** 1-based sheet rows, inclusive. Before any insert of this plan (updates) or after (insert blocks). */
+  /** 1-based sheet rows, inclusive (pre-insert numbering for updates). */
   firstRow: number
   lastRow: number
-  /** 0-based column indexes, inclusive — always a run of OPS columns only. */
+  /** 0-based column indexes, inclusive — an OPS run, or a single two-way / status cell. */
   firstCol: number
   lastCol: number
   values: FeedCellValue[][]
@@ -138,26 +223,28 @@ export interface InsertBlock {
 
 export interface FeedPlan {
   ok: boolean
-  /** Why nothing may be written (missing required columns, an empty feed…). */
   blocked: string | null
   updates: RowWrite[]
   inserts: InsertBlock[]
-  /** Rows to grey out / back to normal (1-based, pre-insert). */
+  writebacks: Writeback[]
   grey: number[]
   ungrey: number[]
   counts: FeedCounts
   samples: PlanSample[]
   warnings: string[]
-  /** The per-booking written sets to store once the plan has been carried out. */
   nextWritten: Map<string, string[]>
+  /** Two-way base to store after the plan, by (new) line id — assumes every write-back succeeds. */
+  nextBase: Map<string, BaseEntry>
   lastDataRow: number
-  /** OPS column runs: contiguous OPS-column ranges on this sheet (0-based, inclusive). */
+  headerRow: number
   runs: { first: number; last: number; keys: string[] }[]
+  ctx: CellContext
 }
 
 const MAX_SAMPLES = 60
+export const WRITEBACK_LIMIT = 60
 
-/** Contiguous stretches of OPS columns on this sheet. A desk column always breaks a run. */
+/** Contiguous stretches of one-way OPS columns on this sheet. A desk or two-way column always breaks a run. */
 export function opsRuns(header: HeaderMap): { first: number; last: number; keys: string[] }[] {
   const byIndex = new Map<number, string>()
   for (const key of OPS_KEYS) {
@@ -190,7 +277,7 @@ const label = (r: Pick<FeedRow, 'from' | 'to' | 'location'>) =>
   [r.from, r.to].filter(Boolean).join(' → ').replace(/\n/g, ', ').slice(0, 140) || r.location || '—'
 
 interface SheetLine {
-  row: number            // 1-based sheet row
+  row: number
   cells: unknown[]
   lineId: string
   bookingRef: string | null
@@ -199,28 +286,47 @@ interface SheetLine {
   status: string
 }
 
+type Piece = { row: number; first: number; last: number; values: FeedCellValue[]; formats: string[] }
+
+/** Stack pieces of the same columns on consecutive rows into one write. */
+function coalesce(pieces: Piece[]): RowWrite[] {
+  const out: RowWrite[] = []
+  const sorted = [...pieces].sort((a, b) => a.first - b.first || a.last - b.last || a.row - b.row)
+  for (const p of sorted) {
+    const w = out[out.length - 1]
+    if (w && w.firstCol === p.first && w.lastCol === p.last && w.lastRow === p.row - 1 && w.values.length < 400) {
+      w.lastRow = p.row; w.values.push(p.values); w.formats.push(p.formats)
+    } else {
+      out.push({ firstRow: p.row, lastRow: p.row, firstCol: p.first, lastCol: p.last, values: [p.values], formats: [p.formats] })
+    }
+  }
+  return out
+}
+
 export function buildPlan(input: PlanInput): FeedPlan {
   const { header, headerRow, rows, feed, written, alias } = input
+  const base = input.base ?? new Map<string, BaseEntry>()
   const c = header.cols
   const counts: FeedCounts = {
     feedRows: feed.length, sheetRows: 0, added: 0, updatedRows: 0, updatedCells: 0, rekeyed: 0,
-    markedInactive: 0, deletedInExcel: 0, duplicates: 0, unchanged: 0,
+    markedInactive: 0, deletedInExcel: 0, duplicates: 0, unchanged: 0, toOps: 0, toOpsWaiting: 0, conflicts: 0,
   }
   const samples: PlanSample[] = []
   const warnings: string[] = []
   const sample = (s: PlanSample) => { if (samples.filter(x => x.kind === s.kind).length < MAX_SAMPLES) samples.push(s) }
   const runs = opsRuns(header)
+  const ctx = cellContext(header, headerRow)
+  const twoWayCols = TWO_WAY_KEYS.filter(k => c[k] !== undefined)
 
   const empty = (blocked: string): FeedPlan => ({
-    ok: false, blocked, updates: [], inserts: [], grey: [], ungrey: [], counts, samples, warnings,
-    nextWritten: new Map(), lastDataRow: headerRow, runs,
+    ok: false, blocked, updates: [], inserts: [], writebacks: [], grey: [], ungrey: [], counts, samples, warnings,
+    nextWritten: new Map(), nextBase: new Map(), lastDataRow: headerRow, headerRow, runs, ctx,
   })
   if (header.missingRequired.length) {
     const names = header.missingRequired.map(k => FEED_COLUMNS.find(x => x.key === k)!.header)
     return empty(`The header row has no ${names.join(', ')} column — press "Prepare sheet" (or add the header) first`)
   }
 
-  // Booking lookup: the sheet shows the IS number; either spelling finds the booking.
   const refLookup = new Map<string, string>()
   for (const f of feed) {
     refLookup.set(f.bookingRef.toUpperCase(), f.bookingRef)
@@ -246,10 +352,7 @@ export function buildPlan(input: PlanInput): FeedPlan {
     if (!lineId) return
     if (seenIds.has(lineId)) { counts.duplicates++; return }
     seenIds.add(lineId)
-    lines.push({
-      row, cells, lineId, bookingRef, date, arrival,
-      status: c.status !== undefined ? cellKey(cells[c.status]) : '',
-    })
+    lines.push({ row, cells, lineId, bookingRef, date, arrival, status: c.status !== undefined ? cellKey(cells[c.status]) : '' })
   })
   counts.sheetRows = lines.length
   if (counts.duplicates) warnings.push(`${counts.duplicates} row(s) repeat an Agenda Line ID already on the sheet (a copied row?) — only the first is kept in step; the copies are left alone`)
@@ -259,8 +362,8 @@ export function buildPlan(input: PlanInput): FeedPlan {
   }
 
   // ── Match sheet rows to movements ─────────────────────────────────────────
-  const matched = new Map<number, FeedRow>()     // sheet row → feed row
-  const claimed = new Set<string>()               // feed line ids already matched
+  const matched = new Map<number, FeedRow>()
+  const claimed = new Set<string>()
   const rekeyedRows = new Set<number>()
 
   for (const l of lines) {
@@ -274,7 +377,6 @@ export function buildPlan(input: PlanInput): FeedPlan {
     if (f && !claimed.has(f.lineId)) { matched.set(l.row, f); claimed.add(f.lineId); rekeyedRows.add(l.row) }
   }
 
-  // By content, within the same booking and date.
   const orphans = lines.filter(l => !matched.has(l.row))
   const openByDay = new Map<string, FeedRow[]>()
   for (const f of feed) {
@@ -302,7 +404,6 @@ export function buildPlan(input: PlanInput): FeedPlan {
       pool.splice(pool.indexOf(best), 1)
     }
   }
-  // Same number of unmatched rows and movements on a day: pair them in order.
   const leftByDay = new Map<string, SheetLine[]>()
   for (const l of orphans) {
     if (matched.has(l.row) || !l.bookingRef || !l.date) continue
@@ -319,33 +420,82 @@ export function buildPlan(input: PlanInput): FeedPlan {
     pool.length = 0
   }
 
-  // ── Updates for matched rows, flags for the rest ──────────────────────────
-  type RowChange = { row: number; values: Map<string, { value: FeedCellValue; format: string }>; changedKeys: Set<string> }
-  const changes: RowChange[] = []
+  // ── Matched rows: one-way updates + two-way merge ─────────────────────────
+  const pieces: Piece[] = []
   const grey: number[] = []
   const ungrey: number[] = []
+  const nextBase = new Map<string, BaseEntry>()
+  const writebacks: Writeback[] = []
+  const pendingToOps: { wb: Writeback; sample: PlanSample }[] = []
 
   for (const l of lines) {
     const f = matched.get(l.row)
     if (!f) continue
-    const values = new Map<string, { value: FeedCellValue; format: string }>()
-    const changedKeys = new Set<string>()
     const diffs: { column: string; from: string; to: string }[] = []
+    const changedKeys = new Set<string>()
+    const values = new Map<string, { value: FeedCellValue; format: string }>()
     for (const key of OPS_KEYS) {
       if (c[key] === undefined) continue
-      const want = desiredCell(f, key)
+      const want = desiredCell(f, key, ctx)
       values.set(key, { value: want.value, format: want.format })
       if (!sameCell(key, l.cells[c[key]], want)) {
         changedKeys.add(key)
-        diffs.push({ column: FEED_COLUMNS.find(x => x.key === key)!.header, from: cellKey(l.cells[c[key]]).slice(0, 120), to: want.compare.slice(0, 120) })
+        if (key !== 'band') diffs.push({ column: FEED_COLUMNS.find(x => x.key === key)!.header, from: cellKey(l.cells[c[key]]).slice(0, 120), to: want.compare.slice(0, 120) })
       }
     }
+    for (const run of runs) {
+      if (!run.keys.some(k => changedKeys.has(k))) continue
+      pieces.push({ row: l.row, first: run.first, last: run.last, values: run.keys.map(k => values.get(k)!.value), formats: run.keys.map(k => values.get(k)!.format) })
+    }
+
+    // Two-way cells
+    const prevBase = base.get(l.lineId) ?? {}
+    const entry: BaseEntry = {}
+    for (const key of twoWayCols) {
+      const ops = twoWayCell(f, key)
+      const xl = sheetTwoWayKey(key, l.cells[c[key]])
+      const baseKey = prevBase[BASE_FIELD[key]]
+      const decision = decideTwoWay(ops.key, xl.key, baseKey)
+      const column = FEED_COLUMNS.find(x => x.key === key)!.header
+      if (decision === 'same') { entry[BASE_FIELD[key]] = ops.key; continue }
+      if (decision === 'toExcel') {
+        entry[BASE_FIELD[key]] = ops.key
+        changedKeys.add(key)
+        diffs.push({ column, from: xl.shown.slice(0, 120), to: ops.shown.slice(0, 120) })
+        pieces.push({ row: l.row, first: c[key], last: c[key], values: [ops.value], formats: [ops.format] })
+        continue
+      }
+      const s: PlanSample = {
+        kind: decision === 'conflict' ? 'conflict' : 'toOps', row: l.row, bookingRef: f.bookingRef, date: f.date, label: label(f),
+        changes: [{ column, from: ops.shown.slice(0, 120) || '—', to: xl.shown.slice(0, 120) || '—' }],
+        field: key, sheetLineId: l.lineId, opsKey: ops.key, xlKey: xl.key,
+      }
+      if (baseKey !== undefined) entry[BASE_FIELD[key]] = baseKey
+      if (decision === 'conflict') { counts.conflicts++; sample(s); continue }
+      // Excel → OPS
+      const waiting = !input.writeBack ? 'Excel → OPS is switched off'
+        : key === 'driver' && f.driverLock ? `${f.driverLock} — no driver is written to this movement`
+        : null
+      if (waiting) { counts.toOpsWaiting++; sample({ ...s, waiting }); continue }
+      const parsed = splitDriverText(xl.shown)
+      const tk = timeKey(xl.shown)
+      const wb: Writeback = {
+        lineId: f.lineId, bookingRef: f.bookingRef, field: key,
+        opsMeetingTime: f.meetingTime, opsDriver: { name: f.driverName, phone: f.driverPhone },
+        meetingTime: /^\d{2}:\d{2}$/.test(tk) ? tk : xl.shown.slice(0, 100),
+        driver: { name: parsed.name.slice(0, 120), phone: parsed.phone.slice(0, 40) },
+        xlKey: xl.key, baseBefore: baseKey, label: label(f), date: f.date,
+      }
+      entry[BASE_FIELD[key]] = xl.key        // provisional — the executor reverts it if OPS refuses
+      pendingToOps.push({ wb, sample: s })
+    }
+    nextBase.set(f.lineId, entry)
+
     if (rekeyedRows.has(l.row)) {
       counts.rekeyed++
       sample({ kind: 'rekey', row: l.row, bookingRef: f.bookingRef, date: f.date, label: label(f), changes: diffs })
     }
     if (!changedKeys.size) { counts.unchanged++; continue }
-    changes.push({ row: l.row, values, changedKeys })
     counts.updatedRows++
     counts.updatedCells += changedKeys.size
     if (!rekeyedRows.has(l.row)) sample({ kind: 'update', row: l.row, bookingRef: f.bookingRef, date: f.date, label: label(f), changes: diffs })
@@ -357,21 +507,28 @@ export function buildPlan(input: PlanInput): FeedPlan {
     }
   }
 
-  // Rows whose movement is gone.
-  const toFlag: { l: SheetLine; status: string }[] = []
-  for (const l of lines) {
-    if (matched.has(l.row)) continue
-    const status = STATUS.removed
-    if (l.status === status) continue
-    toFlag.push({ l, status })
+  // Write-backs: held back when implausibly many arrive at once.
+  if (pendingToOps.length > WRITEBACK_LIMIT && !input.allowBulkWriteBack) {
+    warnings.push(`${pendingToOps.length} Meeting Time / Driver changes came from the Excel at once — more than ${WRITEBACK_LIMIT} looks like a paste or a moved column, so none were sent to OPS. Check the preview, then use "Send all to OPS".`)
+    for (const { wb, sample: s } of pendingToOps) {
+      counts.toOpsWaiting++
+      sample({ ...s, waiting: 'Held back — too many at once' })
+      const e = nextBase.get(wb.lineId)!
+      if (wb.baseBefore === undefined) delete e[BASE_FIELD[wb.field]]; else e[BASE_FIELD[wb.field]] = wb.baseBefore
+    }
+  } else {
+    for (const { wb, sample: s } of pendingToOps) { counts.toOps++; writebacks.push(wb); sample(s) }
   }
+
+  // Rows whose movement is gone.
+  const toFlag = lines.filter(l => !matched.has(l.row) && l.status !== STATUS.removed)
   const flagLimit = Math.max(20, Math.ceil(lines.length * 0.3))
   if (toFlag.length > flagLimit && c.status !== undefined) {
     warnings.push(`${toFlag.length} sheet rows no longer match an OPS movement — more than looks right for one sync, so none were flagged. Check the start date / countries, then run again.`)
   } else if (c.status !== undefined) {
-    for (const { l, status } of toFlag) {
-      const v = desiredCell({ status } as FeedRow, 'status')
-      changes.push({ row: l.row, values: new Map([['status', { value: v.value, format: v.format }]]), changedKeys: new Set(['status']) })
+    const v = desiredCell({ status: STATUS.removed } as FeedRow, 'status')
+    for (const l of toFlag) {
+      pieces.push({ row: l.row, first: c.status, last: c.status, values: [v.value], formats: [v.format] })
       counts.markedInactive++
       if (input.greyInactive && !INACTIVE_STATUSES.includes(l.status)) grey.push(l.row)
       const known = l.bookingRef && bookingsInFeed.has(l.bookingRef)
@@ -381,41 +538,11 @@ export function buildPlan(input: PlanInput): FeedPlan {
       })
     }
   }
-
-  // ── Coalesce updates into block writes over OPS runs only ─────────────────
-  const updates: RowWrite[] = []
-  changes.sort((a, b) => a.row - b.row)
-  for (const run of runs) {
-    let block: { first: number; last: number; values: FeedCellValue[][]; formats: string[][] } | null = null
-    const flush = () => {
-      if (block) updates.push({ firstRow: block.first, lastRow: block.last, firstCol: run.first, lastCol: run.last, values: block.values, formats: block.formats })
-      block = null
-    }
-    for (const ch of changes) {
-      if (!run.keys.some(k => ch.changedKeys.has(k))) { flush(); continue }
-      // A status-only flag carries no other values: write just that cell.
-      const onlyStatus = ch.values.size === 1 && ch.values.has('status')
-      if (onlyStatus) {
-        flush()
-        const col = c.status
-        const v = ch.values.get('status')!
-        updates.push({ firstRow: ch.row, lastRow: ch.row, firstCol: col, lastCol: col, values: [[v.value]], formats: [[v.format]] })
-        continue
-      }
-      const vals = run.keys.map(k => ch.values.get(k)?.value ?? '')
-      const fmts = run.keys.map(k => ch.values.get(k)?.format ?? 'General')
-      const b = block as { first: number; last: number; values: FeedCellValue[][]; formats: string[][] } | null
-      if (b && b.last === ch.row - 1 && b.values.length < 400) { b.last = ch.row; b.values.push(vals); b.formats.push(fmts) }
-      else { flush(); block = { first: ch.row, last: ch.row, values: [vals], formats: [fmts] } }
-    }
-    flush()
-  }
+  const updates = coalesce(pieces)
 
   // ── New rows ──────────────────────────────────────────────────────────────
   const deleted: FeedRow[] = []
   const toInsert: FeedRow[] = []
-  // A tab with no feed rows at all was cleared or replaced as a whole — that is a
-  // fresh start, not thousands of individual deletions.
   const memory = lines.length === 0 ? new Map<string, Set<string>>() : written
   if (lines.length === 0 && written.size > 0) warnings.push('The tab holds no feed rows any more (cleared or replaced?) — it is filled again from the start')
   for (const f of feed) {
@@ -456,14 +583,16 @@ export function buildPlan(input: PlanInput): FeedPlan {
     ;(blocks.get(at) ?? blocks.set(at, []).get(at)!).push(f)
   }
   const inserts: InsertBlock[] = Array.from(blocks.entries())
-    .sort((a, b) => b[0] - a[0])                               // bottom-up: earlier anchors keep their numbers
+    .sort((a, b) => b[0] - a[0])
     .map(([after, fs]) => ({ after, feed: fs, atEnd: after >= lastDataRow }))
   for (const b of inserts) for (const f of b.feed) {
     counts.added++
     sample({ kind: 'add', row: b.after + 1, bookingRef: f.bookingRef, date: f.date, label: label(f) })
+    const entry: BaseEntry = {}
+    for (const key of twoWayCols) entry[BASE_FIELD[key]] = twoWayCell(f, key).key
+    nextBase.set(f.lineId, entry)
   }
 
-  // ── What the sheet holds after this plan, per booking ─────────────────────
   const nextWritten = new Map<string, string[]>()
   const add = (ref: string, id: string) => { (nextWritten.get(ref) ?? nextWritten.set(ref, []).get(ref)!).push(id) }
   matched.forEach(f => add(f.bookingRef, f.lineId))
@@ -471,16 +600,27 @@ export function buildPlan(input: PlanInput): FeedPlan {
   for (const f of deleted) add(f.bookingRef, f.lineId)
 
   return {
-    ok: true, blocked: null, updates, inserts, grey, ungrey, counts, samples, warnings,
-    nextWritten, lastDataRow, runs,
+    ok: true, blocked: null, updates, inserts, writebacks, grey, ungrey, counts, samples, warnings,
+    nextWritten, nextBase, lastDataRow, headerRow, runs, ctx,
   }
 }
 
 /** The cell blocks for an insert block's rows, starting at sheet row `firstRow`. */
-export function insertWrites(block: InsertBlock, firstRow: number, header: HeaderMap): RowWrite[] {
-  return opsRuns(header).map(run => ({
-    firstRow, lastRow: firstRow + block.feed.length - 1, firstCol: run.first, lastCol: run.last,
-    values: block.feed.map(f => run.keys.map(k => desiredCell(f, k).value)),
-    formats: block.feed.map(f => run.keys.map(k => desiredCell(f, k).format)),
+export function insertWrites(block: InsertBlock, firstRow: number, header: HeaderMap, ctx: CellContext): RowWrite[] {
+  const lastRow = firstRow + block.feed.length - 1
+  const out: RowWrite[] = opsRuns(header).map(run => ({
+    firstRow, lastRow, firstCol: run.first, lastCol: run.last,
+    values: block.feed.map(f => run.keys.map(k => desiredCell(f, k, ctx).value)),
+    formats: block.feed.map(f => run.keys.map(k => desiredCell(f, k, ctx).format)),
   }))
+  for (const key of TWO_WAY_KEYS) {
+    const col = header.cols[key]
+    if (col === undefined) continue
+    out.push({
+      firstRow, lastRow, firstCol: col, lastCol: col,
+      values: block.feed.map(f => [twoWayCell(f, key).value]),
+      formats: block.feed.map(f => [twoWayCell(f, key).format]),
+    })
+  }
+  return out
 }

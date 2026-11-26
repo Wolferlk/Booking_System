@@ -21,7 +21,13 @@
  * Client-safe: no Prisma, no Graph.
  */
 
-export type ColumnSource = 'ops' | 'desk'
+/**
+ *   ops  — OPS writes, the desk reads (edit in OPS).
+ *   desk — the desk types, OPS never writes.
+ *   both — Meeting Time and Driver Details: whichever side changed since the
+ *          last sync wins; a change on both sides is a conflict a person settles.
+ */
+export type ColumnSource = 'ops' | 'desk' | 'both'
 export type ListKey = 'channel' | 'serviceType' | 'mealPlan' | 'location' | 'car' | 'qc' | 'tickets' | 'mealPref'
 
 export interface FeedColumn {
@@ -31,22 +37,28 @@ export interface FeedColumn {
   /** Normalised header spellings that map to this column (header text, not position). */
   aliases: string[]
   width: number
-  kind?: 'date' | 'int' | 'text' | 'id'
+  kind?: 'date' | 'int' | 'text' | 'id' | 'formula' | 'time'
   list?: ListKey
   hint: string
 }
+
+/** The two-way columns, and the FeedRow fields they compare. */
+export const TWO_WAY_KEYS = ['meetingTime', 'driver'] as const
+export type TwoWayKey = (typeof TWO_WAY_KEYS)[number]
 
 /** Normalise a header for matching: lower case, letters and digits only. */
 export const normHeader = (v: unknown): string => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 
 export const FEED_COLUMNS: FeedColumn[] = [
-  { key: 'arrival',     header: 'Booking Arrival Date', source: 'ops',  width: 14, kind: 'date', aliases: ['bookingarrivaldate', 'arrivaldate', 'arrival', 'bookingarrival'], hint: 'Booking arrival date — rows are ordered by it' },
+  { key: 'band',        header: '#',                    source: 'ops',  width: 5,  kind: 'formula', aliases: ['#', 'bkg', 'bkgno', 'bookingnumber'], hint: 'Booking number on this sheet — a formula that drives the two booking colours. Do not type here' },
+  { key: 'arrival',    header: 'Booking Arrival Date', source: 'ops',  width: 14, kind: 'date', aliases: ['bookingarrivaldate', 'arrivaldate', 'arrival', 'bookingarrival'], hint: 'Booking arrival date — rows are ordered by it' },
   { key: 'channel',     header: 'B2B / B2C',            source: 'ops',  width: 9,  list: 'channel', aliases: ['b2bb2c', 'b2borb2c', 'channel', 'b2bc'], hint: 'B2C = Aahaas storefront order, B2B = agent booking' },
   { key: 'ref',         header: 'VN Number',            source: 'ops',  width: 12, aliases: ['vnnumber', 'vnno', 'isnumber', 'bookingref', 'tourref', 'bookingno', 'refno'], hint: 'IS / tour reference' },
   { key: 'cntl',        header: 'CNTL Number',          source: 'ops',  width: 13, aliases: ['cntlnumber', 'cntlno', 'cntl'], hint: 'AppleSystem control number' },
-  { key: 'lineId',      header: 'Agenda Line ID',       source: 'ops',  width: 28, kind: 'id', aliases: ['agendalineid', 'lineid', 'agendaid', 'agendaitemid', 'movementid'], hint: 'Ties the row to its OPS movement — do not edit or clear' },
+  { key: 'lineId',      header: 'Agenda Line ID',       source: 'ops',  width: 12, kind: 'id', aliases: ['agendalineid', 'lineid', 'agendaid', 'agendaitemid', 'movementid'], hint: 'Ties the row to its OPS movement — do not edit or clear' },
   { key: 'date',        header: 'Movement Date',        source: 'ops',  width: 14, kind: 'date', aliases: ['movementdate', 'date', 'servicedate', 'day'], hint: 'Date of this movement' },
   { key: 'guest',       header: 'Name of Guests',       source: 'ops',  width: 22, aliases: ['nameofguests', 'nameofguest', 'guestname', 'guestnames', 'guests', 'leadguest'], hint: 'Lead guest' },
+  { key: 'guestContact',header: 'Guest Contact',        source: 'ops',  width: 17, aliases: ['guestcontact', 'guestcontactnumber', 'guestphone', 'contact', 'contactnumber', 'guestmobile'], hint: 'Lead guest phone (else the booking contact number)' },
   { key: 'adults',      header: 'Adult Count',          source: 'ops',  width: 8,  kind: 'int', aliases: ['adultcount', 'adults', 'adult', 'adt'], hint: 'Adults on the booking' },
   { key: 'children',    header: 'Child Count',          source: 'ops',  width: 8,  aliases: ['childcount', 'child', 'children', 'chd'], hint: 'Children (infants shown as "+ n Infant")' },
   { key: 'location',    header: 'Location',             source: 'ops',  width: 14, list: 'location', aliases: ['location', 'city'], hint: 'Agenda Location' },
@@ -54,9 +66,10 @@ export const FEED_COLUMNS: FeedColumn[] = [
   { key: 'to',          header: 'To/Tours',             source: 'ops',  width: 34, aliases: ['totours', 'to', 'tours', 'toactivity', 'totour'], hint: 'Agenda To / Activity' },
   { key: 'description', header: 'Tour Description',     source: 'ops',  width: 48, aliases: ['tourdescription', 'description', 'details', 'tourdetails'], hint: 'Agenda Details / Timings' },
   { key: 'meal',        header: 'Meal Plan',            source: 'ops',  width: 14, list: 'mealPlan', aliases: ['mealplan', 'meal', 'meals'], hint: 'Agenda Meal Plan' },
-  { key: 'meetingTime', header: 'Meeting Time',         source: 'desk', width: 11, aliases: ['meetingtime', 'pickuptime'], hint: 'Desk column — OPS never writes here' },
+  { key: 'meetingTime', header: 'Meeting Time',         source: 'both', width: 11, kind: 'time', aliases: ['meetingtime', 'pickuptime'], hint: 'Both ways — from the agenda; a change typed here goes back to the agenda' },
   { key: 'serviceType', header: 'Service Type',         source: 'ops',  width: 20, list: 'serviceType', aliases: ['servicetype', 'service'], hint: 'Agenda Service Type' },
   { key: 'vendor',      header: 'Vendor',               source: 'desk', width: 18, aliases: ['vendor', 'vendors', 'supplier'], hint: 'Desk column — OPS never writes here' },
+  { key: 'driver',      header: 'Driver Details',       source: 'both', width: 26, aliases: ['driverdetails', 'driver', 'drivers', 'driverinfo', 'drivername', 'drivercontact'], hint: 'Both ways — "Name · phone" from the agenda; a driver typed here goes back to the agenda' },
   { key: 'agentId',     header: 'Agent - ID',           source: 'ops',  width: 18, aliases: ['agentid'], hint: 'Agency id (AppleSystem)' },
   { key: 'agentName',   header: 'Agent - Name',         source: 'ops',  width: 18, aliases: ['agentname', 'agent', 'touroperator'], hint: 'Agent / tour operator' },
   { key: 'car',         header: 'Type of Car',          source: 'desk', width: 12, list: 'car', aliases: ['typeofcar', 'cartype', 'vehicle', 'vehicletype'], hint: 'Desk column — OPS never writes here' },
@@ -92,6 +105,14 @@ export interface FeedRow {
   cntl: string
   date: string
   guest: string
+  guestContact: string
+  /** The agenda's stored meeting time ("07:30", or free text like "on arrival"). */
+  meetingTime: string
+  /** The movement's driver as stored on its assignment. */
+  driverName: string
+  driverPhone: string
+  /** Why a driver typed in Excel may not be written to this movement (null = it may). */
+  driverLock: string | null
   adults: number
   children: number | string
   location: string
@@ -134,6 +155,24 @@ export const FEED_SETTINGS = {
   rowsPrefix: 'mc_xl_feed_rows:',
   /** Per booking: agenda line ids carried by chart saves, sheet id → current id. */
   aliasPrefix: 'mc_xl_feed_alias:',
+  /** Booking colours OPS painted on a workbook without the OPS layout. */
+  paint: 'mc_xl_feed_paint',
+} as const
+
+/** Workbook names the OPS layout defines: its presence means the sheet colours itself. */
+export const LAYOUT_NAME = 'OPS_FEED_LAYOUT'
+/** The banner cell the sync stamps with "last synced …". */
+export const STAMP_NAME = 'OPS_FEED_STAMP'
+
+/** The two booking colours (and the header colours) — one palette for the layout and for OPS painting. */
+export const PALETTE = {
+  bandA: '#EEF2FF',     // soft indigo
+  bandB: '#ECFDF5',     // soft mint
+  ops: '#0F766E',       // teal — OPS writes
+  desk: '#FEF3C7',      // amber — desk types
+  deskText: '#92400E',
+  both: '#6D28D9',      // violet — both ways
+  banner: '#0F172A',
 } as const
 
 export const DEFAULT_FEED_URL =
@@ -154,6 +193,14 @@ export interface FeedConfig {
   placement: 'sorted' | 'append'
   /** Grey out rows whose movement was removed / booking cancelled. */
   greyInactive: boolean
+  /**
+   * Excel → OPS for Meeting Time and Driver Details. Writes to the live agenda,
+   * so it has its own switch and ships OFF; while off, Excel edits are shown in
+   * the preview as "waiting" and left in the sheet untouched.
+   */
+  writeBack: boolean
+  /** Two booking colours painted by OPS on a workbook without the OPS layout (the layout colours itself). */
+  bandColors: boolean
 }
 
 export const DEFAULT_FEED_CONFIG: FeedConfig = {
@@ -165,6 +212,8 @@ export const DEFAULT_FEED_CONFIG: FeedConfig = {
   intervalMin: 10,
   placement: 'sorted',
   greyInactive: true,
+  writeBack: false,
+  bandColors: true,
 }
 
 export const FEED_COUNTRIES: { value: FeedCountry; label: string }[] = [
@@ -186,6 +235,12 @@ export interface FeedCounts {
   deletedInExcel: number
   duplicates: number
   unchanged: number
+  /** Excel → OPS changes (Meeting Time / Driver Details) planned or applied. */
+  toOps: number
+  /** Excel edits not applied: write-back switched off, or a row that takes no driver. */
+  toOpsWaiting: number
+  /** Changed on both sides since the last sync — left alone until settled. */
+  conflicts: number
 }
 
 export interface FeedRun {
@@ -203,17 +258,88 @@ export interface FeedRun {
 
 export const EMPTY_COUNTS: FeedCounts = {
   feedRows: 0, sheetRows: 0, added: 0, updatedRows: 0, updatedCells: 0, rekeyed: 0,
-  markedInactive: 0, deletedInExcel: 0, duplicates: 0, unchanged: 0,
+  markedInactive: 0, deletedInExcel: 0, duplicates: 0, unchanged: 0, toOps: 0, toOpsWaiting: 0, conflicts: 0,
 }
 
 /** What the preview shows for one planned change. */
 export interface PlanSample {
-  kind: 'add' | 'update' | 'inactive' | 'rekey' | 'deleted'
+  kind: 'add' | 'update' | 'inactive' | 'rekey' | 'deleted' | 'toOps' | 'conflict'
   row: number | null
   bookingRef: string
   date: string
   label: string
   changes?: { column: string; from: string; to: string }[]
+  /** toOps / conflict: which cell, and the two sides' compare keys (used to settle a conflict). */
+  field?: TwoWayKey
+  sheetLineId?: string
+  opsKey?: string
+  xlKey?: string
+  /** toOps that will not be applied, and why. */
+  waiting?: string
+}
+
+// ── Two-way values ───────────────────────────────────────────────────────────
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** A time as the agenda stores it ("HH:MM"), from an Excel time, "7.30 pm", "0730"… else the text itself. */
+export function timeKey(v: unknown): string {
+  if (v === null || v === undefined || v === '') return ''
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+    // "0730" typed into a General cell arrives as the number 730.
+    if (v >= 1 && Number.isInteger(v) && v <= 2359 && v % 100 < 60) return `${pad2(Math.floor(v / 100))}:${pad2(v % 100)}`
+    const mins = Math.round((v % 1) * 1440) % 1440
+    return `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`
+  }
+  const s = String(v).trim().replace(/^'/, '')
+  if (!s) return ''
+  const m = /^(\d{1,2})(?:\s*[:.hH]\s*(\d{2}))?\s*([ap])\.?\s*m?\.?$/i.exec(s)
+    ?? /^(\d{1,2})\s*[:.hH]\s*(\d{2})$/.exec(s)
+    ?? /^(\d{2})(\d{2})$/.exec(s)
+  if (m) {
+    let h = Number(m[1])
+    const min = Number(m[2] ?? 0)
+    const ap = (m[3] ?? '').toLowerCase()
+    if (ap === 'p' && h < 12) h += 12
+    if (ap === 'a' && h === 12) h = 0
+    if (h < 24 && min < 60) return `${pad2(h)}:${pad2(min)}`
+  }
+  return s.toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** "HH:MM" → the Excel time value (a day fraction); anything else is written as text. */
+export function timeCell(stored: string): { value: FeedCellValue; format: string } {
+  const k = timeKey(stored)
+  const m = /^(\d{2}):(\d{2})$/.exec(k)
+  if (m) return { value: (Number(m[1]) * 60 + Number(m[2])) / 1440, format: 'h:mm AM/PM' }
+  return { value: excelText(stored.trim()), format: 'General' }
+}
+
+/** Phone numbers inside free text: runs of 8+ digits, spaces / dashes / dots / brackets allowed, optional +. */
+const PHONE_RE = /\+?\(?\d[\d\s().-]{6,}\d/g
+
+export function splitDriverText(text: string): { name: string; phone: string } {
+  const s = String(text ?? '').replace(/^'/, '').replace(/\r?\n/g, ' ').trim()
+  const phones = (s.match(PHONE_RE) ?? []).filter(p => p.replace(/\D/g, '').length >= 8)
+  const phone = phones[0]?.trim() ?? ''
+  let name = s
+  for (const p of phones) name = name.replace(p, ' ')
+  name = name.replace(/\b(tel|ph|phone|mob|mobile|hp|sdt|zalo|whatsapp|wa)\b\.?:?/gi, ' ')
+    .replace(/[·|,;/:()[\]-]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return { name, phone }
+}
+
+const last9 = (phone: string) => phone.replace(/\D/g, '').slice(-9)
+
+/** Compare form of a driver: name (letters/digits, lower case) + the phone's last 9 digits (so +84 / 0 prefixes match). */
+export function driverKey(name: string, phone: string): string {
+  const n = String(name ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+  const p = last9(phone ?? '')
+  return n || p ? `${n}|${p}` : ''
+}
+
+export function driverText(name: string, phone: string): string {
+  return [name.trim(), phone.trim()].filter(Boolean).join(' · ')
 }
 
 export function timeAgo(iso: string | null | undefined): string {

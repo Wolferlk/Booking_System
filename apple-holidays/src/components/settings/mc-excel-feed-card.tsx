@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import {
   FileSpreadsheet, Loader2, RefreshCw, Save, ExternalLink, Download, CheckCircle2, AlertTriangle, Clock,
   MinusCircle, ShieldCheck, Eye, Wand2, Plus, PencilLine, Link2, EyeOff, Trash2, Zap, Info, ArrowRight, ListChecks,
+  Undo2, GitMerge, Palette,
 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -37,6 +38,7 @@ interface SheetStatus {
   headerRow: number | null
   header: { missing: string[]; missingOps: string[]; missingRequired: string[]; duplicateHeaders: string[] } | null
   dataRows: number
+  layout: boolean
   error: string | null
 }
 
@@ -59,10 +61,15 @@ const RUN_STYLE: Record<FeedRun['status'], { icon: typeof CheckCircle2; tone: st
 const SAMPLE_KIND: Record<PlanSample['kind'], { label: string; icon: typeof Plus; tone: string }> = {
   add:      { label: 'New rows',            icon: Plus,       tone: 'text-emerald-700 bg-emerald-50 ring-emerald-200' },
   update:   { label: 'Updated',             icon: PencilLine, tone: 'text-amber-700 bg-amber-50 ring-amber-200' },
+  toOps:    { label: 'Excel → OPS',         icon: Undo2,      tone: 'text-violet-700 bg-violet-50 ring-violet-200' },
+  conflict: { label: 'Conflicts',           icon: GitMerge,   tone: 'text-orange-700 bg-orange-50 ring-orange-200' },
   rekey:    { label: 'Re-attached',         icon: Link2,      tone: 'text-indigo-700 bg-indigo-50 ring-indigo-200' },
   inactive: { label: 'Flagged',             icon: EyeOff,     tone: 'text-slate-600 bg-slate-100 ring-slate-200' },
   deleted:  { label: 'Deleted in Excel',    icon: Trash2,     tone: 'text-rose-700 bg-rose-50 ring-rose-200' },
 }
+
+const KIND_ORDER: PlanSample['kind'][] = ['add', 'update', 'toOps', 'conflict', 'rekey', 'inactive', 'deleted']
+const fieldName = (f?: string) => (f === 'meetingTime' ? 'Meeting Time' : f === 'driver' ? 'Driver Details' : '')
 
 const fmtDay = (ymd: string) => {
   const d = new Date(`${ymd}T00:00:00`)
@@ -75,7 +82,7 @@ export default function McExcelFeedCard() {
   const [sheet, setSheet] = useState<SheetStatus | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [tab, setTab] = useState<PlanSample['kind']>('add')
-  const [busy, setBusy] = useState<null | 'load' | 'save' | 'check' | 'preview' | 'sync' | 'prepare' | 'restore'>('load')
+  const [busy, setBusy] = useState<null | 'load' | 'save' | 'check' | 'preview' | 'sync' | 'prepare' | 'restore' | 'settle' | 'bulk'>('load')
 
   const apply = useCallback((d: Snapshot) => {
     setSnap(d)
@@ -144,28 +151,49 @@ export default function McExcelFeedCard() {
       setPreview(p)
       setSheet(p.sheet)
       const c = p.run.counts
-      const first = (['add', 'update', 'rekey', 'inactive', 'deleted'] as const).find(k => p.samples.some(s => s.kind === k))
+      const first = (['conflict', ...KIND_ORDER] as const).find(k => p.samples.some(s => s.kind === k))
       if (first) setTab(first)
       toast.success(c && (c.added + c.updatedRows + c.markedInactive) ? 'Preview ready — nothing has been written' : 'The workbook already matches OPS')
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Preview failed') } finally { setBusy(null) }
   }
 
-  async function sync(restoreDeleted = false) {
+  async function sync(restoreDeleted = false, allowBulkWriteBack = false) {
     const c = preview?.run.counts
+    const toOps = c && c.toOps ? `\n${c.toOps} Meeting Time / Driver change(s) from the Excel will be written to the OPS agenda (no WhatsApp is sent).` : ''
     const msg = restoreDeleted
       ? `Put back the ${c?.deletedInExcel ?? ''} row(s) the desk deleted from the Excel?`
-      : c
-        ? `Write to the workbook now?\n\n+${c.added} new rows · ${c.updatedRows} rows updated · ${c.markedInactive} flagged\n\nOnly OPS columns are written; desk columns and rows are never touched or deleted.`
-        : 'Write to the workbook now? (Tip: press Preview first to see exactly what will change.)\n\nOnly OPS columns are written; desk columns and rows are never touched or deleted.'
+      : allowBulkWriteBack
+        ? `Send ALL ${c?.toOpsWaiting ?? ''} held-back Meeting Time / Driver changes from the Excel to the OPS agenda?\n\nEach is checked against OPS first (compare-and-set) and logged on the booking. No WhatsApp is sent.`
+        : c
+          ? `Write now?\n\nExcel: +${c.added} new rows · ${c.updatedRows} rows updated · ${c.markedInactive} flagged${toOps}\n\nDesk columns and rows are never touched or deleted.`
+          : 'Write now? (Tip: press Preview first to see exactly what will change.)\n\nDesk columns and rows are never touched or deleted.'
     if (!window.confirm(msg)) return
-    setBusy(restoreDeleted ? 'restore' : 'sync')
+    setBusy(restoreDeleted ? 'restore' : allowBulkWriteBack ? 'bulk' : 'sync')
     try {
-      const j = await post({ action: 'sync', restoreDeleted })
+      const j = await post({ action: 'sync', restoreDeleted, allowBulkWriteBack })
       setSnap(s => ({ ...(s as Snapshot), ...(j.data as unknown as Snapshot) }))
       setPreview(null)
       toast.success(j.message || 'Synced')
       void reload()
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Sync failed'); void reload() } finally { setBusy(null) }
+  }
+
+  /** Settle conflicts (keep OPS or Excel); the next sync carries the chosen side across. */
+  async function settle(items: PlanSample[], keep: 'ops' | 'excel') {
+    if (!items.length) return
+    setBusy('settle')
+    try {
+      const j = await post({
+        action: 'settle',
+        items: items.map(s => ({ bookingRef: s.bookingRef, sheetLineId: s.sheetLineId, field: s.field, keep, opsKey: s.opsKey, xlKey: s.xlKey })),
+      })
+      toast.success(j.message || 'Settled')
+      setPreview(p => p && {
+        ...p,
+        samples: p.samples.filter(s => !items.includes(s)),
+        run: { ...p.run, counts: p.run.counts && { ...p.run.counts, conflicts: Math.max(0, p.run.counts.conflicts - items.length) } },
+      })
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Could not settle') } finally { setBusy(null) }
   }
 
   async function prepare() {
@@ -185,6 +213,7 @@ export default function McExcelFeedCard() {
     return a.sheetUrl !== form.sheetUrl || a.tabName !== form.tabName || a.startDate !== form.startDate
       || a.countries.join() !== form.countries.join() || String(a.intervalMin) !== form.intervalMin
       || a.enabled !== form.enabled || a.placement !== form.placement || a.greyInactive !== form.greyInactive
+      || a.writeBack !== form.writeBack || a.bandColors !== form.bandColors
   }, [snap, form])
 
   const last = snap?.runs.find(r => r.trigger !== 'PREVIEW') ?? null
@@ -225,9 +254,9 @@ export default function McExcelFeedCard() {
             <div className="flex items-start gap-2 rounded-lg bg-emerald-50/60 px-3 py-2 text-[11px] leading-relaxed text-emerald-900 ring-1 ring-emerald-100">
               <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>
-                OPS writes <b>only the teal OPS columns</b>. The amber desk columns are never written — not even blanked. Rows are <b>never deleted</b>:
-                a movement removed in OPS is flagged &ldquo;Removed in OPS&rdquo; and greyed, keeping the desk&apos;s notes. A row the desk deletes is not put back.
-                Nothing in the OPS database is changed by this feed.
+                <b className="text-teal-700">Teal</b> columns come from OPS; <b className="text-amber-700">amber</b> desk columns are never written — not even blanked;
+                <b className="text-violet-700"> violet</b> Meeting Time and Driver Details go both ways (Excel → OPS only while its switch is on; a change on both sides waits for you).
+                Rows are <b>never deleted</b>: a movement removed in OPS is flagged &ldquo;Removed in OPS&rdquo; and greyed, keeping the desk&apos;s notes. A row the desk deletes is not put back.
               </span>
             </div>
 
@@ -307,11 +336,32 @@ export default function McExcelFeedCard() {
                   <input type="checkbox" checked={form.greyInactive} disabled={!snap.canAdmin} onChange={e => setForm(f => f && ({ ...f, greyInactive: e.target.checked }))} />
                   Grey out removed / cancelled rows
                 </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5" title="On a workbook without the OPS layout, OPS paints the two booking colours itself (the layout colours itself)">
+                  <input type="checkbox" checked={form.bandColors} disabled={!snap.canAdmin} onChange={e => setForm(f => f && ({ ...f, bandColors: e.target.checked }))} />
+                  <Palette className="h-3.5 w-3.5 text-indigo-500" /> Two booking colours
+                </label>
                 <label className="inline-flex cursor-pointer items-center gap-1.5 font-semibold text-slate-700">
                   <input type="checkbox" checked={form.enabled} disabled={!snap.canAdmin} onChange={e => setForm(f => f && ({ ...f, enabled: e.target.checked }))} />
                   Automatic sync on
                 </label>
               </div>
+              <label className={cn('flex cursor-pointer items-start gap-2 rounded-lg px-3 py-2 text-xs ring-1 transition',
+                form.writeBack ? 'bg-violet-50 text-violet-900 ring-violet-200' : 'bg-slate-50 text-slate-600 ring-slate-200')}>
+                <input type="checkbox" className="mt-0.5 accent-violet-600" checked={form.writeBack} disabled={!snap.canAdmin}
+                  onChange={e => {
+                    const on = e.target.checked
+                    if (on && !window.confirm('Switch ON Excel → OPS?\n\nMeeting Time and Driver Details typed in the Excel will update the live OPS agenda on each sync:\n• only the side that changed since the last sync wins — a change on both sides is a conflict you settle;\n• every write is checked against OPS first and logged on the booking;\n• a blank cell never clears OPS; no driver on leisure / hotel-only / cancelled movements;\n• no WhatsApp is sent to drivers.')) return
+                    setForm(f => f && ({ ...f, writeBack: on }))
+                  }} />
+                <span>
+                  <b className="inline-flex items-center gap-1"><Undo2 className="h-3.5 w-3.5" /> Excel → OPS for Meeting Time and Driver Details</b>
+                  <span className="block text-[11px] opacity-80">
+                    {form.writeBack
+                      ? 'On — desk edits in those two violet columns update the agenda (checked, logged, no WhatsApp).'
+                      : 'Off — OPS still fills those columns; desk edits are shown in the preview as waiting and left in the sheet.'}
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Actions */}
@@ -358,6 +408,10 @@ export default function McExcelFeedCard() {
                       <span className="font-semibold text-slate-800">{sheet.file?.name}</span>
                       <span>tabs: {sheet.tabs.join(', ') || '—'}</span>
                       {sheet.file?.lastModified && <span>edited {timeAgo(sheet.file.lastModified)}</span>}
+                      <span className={cn('rounded-full px-2 py-px text-[10px] font-semibold ring-1', sheet.layout ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-slate-100 text-slate-500 ring-slate-200')}
+                        title={sheet.layout ? 'Dropdowns, booking colours, today highlight and status colours run inside Excel' : 'Plain workbook: OPS paints the booking colours on each sync; no dropdowns'}>
+                        {sheet.layout ? 'OPS layout' : 'Plain layout'}
+                      </span>
                     </div>
                     {!sheet.tabExists
                       ? <p className="text-amber-700">The &ldquo;{snap.config.tabName}&rdquo; tab does not exist yet — Prepare sheet (or the first sync) creates it.</p>
@@ -378,10 +432,8 @@ export default function McExcelFeedCard() {
                   <b>Preview</b> — computed {timeAgo(preview.run.at)}, nothing written.
                   <span className="text-indigo-700/70">{counts.feedRows.toLocaleString()} OPS movements · {counts.sheetRows.toLocaleString()} rows on the sheet · {counts.unchanged.toLocaleString()} already in step</span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                  {([
-                    ['add', counts.added], ['update', counts.updatedRows], ['rekey', counts.rekeyed], ['inactive', counts.markedInactive], ['deleted', counts.deletedInExcel],
-                  ] as const).map(([k, n]) => {
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {KIND_ORDER.map(k => [k, countOf(counts, k)] as const).map(([k, n]) => {
                     const K = SAMPLE_KIND[k]; const Icon = K.icon
                     return (
                       <button key={k} onClick={() => setTab(k)}
@@ -396,12 +448,19 @@ export default function McExcelFeedCard() {
                 {preview.run.warnings.map((w, i) => (
                   <p key={i} className="flex items-start gap-1.5 text-[11px] text-amber-700"><AlertTriangle className="mt-px h-3 w-3 shrink-0" />{w}</p>
                 ))}
-                <SampleList samples={preview.samples.filter(s => s.kind === tab)} kind={tab} total={
-                  tab === 'add' ? counts.added : tab === 'update' ? counts.updatedRows : tab === 'rekey' ? counts.rekeyed : tab === 'inactive' ? counts.markedInactive : counts.deletedInExcel
-                } />
+                {tab === 'conflict' && snap.canAdmin && preview.samples.some(s => s.kind === 'conflict') && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg bg-orange-50 px-2.5 py-1.5 text-[11px] text-orange-800 ring-1 ring-orange-100">
+                    <GitMerge className="h-3.5 w-3.5" /> Changed in OPS <i>and</i> in the Excel since the last sync — neither side is touched until you choose.
+                    <span className="flex-1" />
+                    <button onClick={() => settle(preview.samples.filter(s => s.kind === 'conflict'), 'ops')} disabled={busy !== null} className="rounded-md bg-white px-2 py-0.5 font-semibold text-teal-700 ring-1 ring-teal-200 hover:bg-teal-50">Keep OPS for all shown</button>
+                    <button onClick={() => settle(preview.samples.filter(s => s.kind === 'conflict'), 'excel')} disabled={busy !== null} className="rounded-md bg-white px-2 py-0.5 font-semibold text-violet-700 ring-1 ring-violet-200 hover:bg-violet-50">Keep Excel for all shown</button>
+                  </div>
+                )}
+                <SampleList samples={preview.samples.filter(s => s.kind === tab)} kind={tab} total={countOf(counts, tab)}
+                  onSettle={snap.canAdmin && busy === null ? settle : undefined} />
                 {snap.canAdmin && (
                   <div className="flex flex-wrap items-center gap-2 border-t border-indigo-100 pt-2">
-                    <button onClick={() => sync(false)} disabled={busy !== null || snap.running || !(counts.added + counts.updatedRows + counts.markedInactive)}
+                    <button onClick={() => sync(false)} disabled={busy !== null || snap.running || !(counts.added + counts.updatedRows + counts.markedInactive + counts.toOps)}
                       className="btn btn-sm flex items-center gap-1.5 border border-emerald-700 bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
                       {busy === 'sync' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ListChecks className="h-3.5 w-3.5" />} Write these changes
                     </button>
@@ -409,6 +468,12 @@ export default function McExcelFeedCard() {
                       <button onClick={() => sync(true)} disabled={busy !== null || snap.running} className="btn btn-ghost btn-sm text-xs text-rose-700"
                         title="Rows the desk deleted are normally left out. This puts them back once.">
                         {busy === 'restore' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Put back {counts.deletedInExcel} deleted row(s)
+                      </button>
+                    )}
+                    {preview.samples.some(s => s.waiting?.startsWith('Held back')) && (
+                      <button onClick={() => sync(false, true)} disabled={busy !== null || snap.running} className="btn btn-ghost btn-sm text-xs text-violet-700"
+                        title="More Excel → OPS changes arrived at once than the safety limit. Sends them all (each still checked against OPS first).">
+                        {busy === 'bulk' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />} Send all {counts.toOpsWaiting} to OPS
                       </button>
                     )}
                   </div>
@@ -419,13 +484,13 @@ export default function McExcelFeedCard() {
             {/* Columns */}
             <details className="group rounded-lg border border-slate-200">
               <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-600">
-                Columns ({FEED_COLUMNS.filter(c => c.source === 'ops').length} from OPS · {FEED_COLUMNS.filter(c => c.source === 'desk').length} typed by the desk) and dropdowns
+                Columns ({FEED_COLUMNS.filter(c => c.source === 'ops').length} from OPS · {FEED_COLUMNS.filter(c => c.source === 'both').length} both ways · {FEED_COLUMNS.filter(c => c.source === 'desk').length} typed by the desk), colours and dropdowns
               </summary>
               <div className="space-y-3 border-t border-slate-100 px-3 py-3">
                 <div className="flex flex-wrap gap-1.5">
                   {FEED_COLUMNS.map(c => (
                     <span key={c.key} title={c.hint}
-                      className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', c.source === 'ops' ? 'bg-teal-700 text-white' : 'bg-amber-200 text-amber-900')}>
+                      className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', c.source === 'ops' ? 'bg-teal-700 text-white' : c.source === 'both' ? 'bg-violet-700 text-white' : 'bg-amber-200 text-amber-900')}>
                       {c.header}{c.list ? ' ▾' : ''}
                     </span>
                   ))}
@@ -478,15 +543,32 @@ export default function McExcelFeedCard() {
   )
 }
 
-function SampleList({ samples, kind, total }: { samples: PlanSample[]; kind: PlanSample['kind']; total: number }) {
+function countOf(c: FeedCounts, k: PlanSample['kind']): number {
+  switch (k) {
+    case 'add': return c.added
+    case 'update': return c.updatedRows
+    case 'toOps': return c.toOps + c.toOpsWaiting
+    case 'conflict': return c.conflicts
+    case 'rekey': return c.rekeyed
+    case 'inactive': return c.markedInactive
+    case 'deleted': return c.deletedInExcel
+  }
+}
+
+function SampleList({ samples, kind, total, onSettle }: {
+  samples: PlanSample[]; kind: PlanSample['kind']; total: number
+  onSettle?: (items: PlanSample[], keep: 'ops' | 'excel') => void
+}) {
   if (!total) return <p className="py-3 text-center text-xs text-slate-400">Nothing in this group.</p>
+  const twoWay = kind === 'toOps' || kind === 'conflict'
   return (
     <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
       {samples.map((s, i) => (
-        <div key={i} className="rounded-lg bg-white px-2.5 py-1.5 text-xs ring-1 ring-slate-100">
+        <div key={i} className={cn('rounded-lg bg-white px-2.5 py-1.5 text-xs ring-1', s.waiting ? 'ring-slate-200 opacity-80' : 'ring-slate-100')}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono font-semibold text-slate-800">{s.bookingRef}</span>
             {s.date && <span className="text-slate-500">{fmtDay(s.date)}</span>}
+            {s.field && <span className="rounded bg-violet-100 px-1.5 py-px text-[10px] font-semibold text-violet-700">{fieldName(s.field)}</span>}
             <span className="min-w-0 flex-1 truncate text-slate-600">{s.label}</span>
             {s.row !== null && <span className="font-mono text-[10px] text-slate-400">{kind === 'add' ? 'at row ' : 'row '}{s.row}</span>}
           </div>
@@ -494,12 +576,19 @@ function SampleList({ samples, kind, total }: { samples: PlanSample[]; kind: Pla
             <div className="mt-1 space-y-0.5 pl-1">
               {s.changes.slice(0, 6).map((c, j) => (
                 <div key={j} className="flex items-start gap-1.5 text-[11px]">
-                  <span className="w-28 shrink-0 font-semibold text-slate-500">{c.column}</span>
-                  <span className="truncate text-rose-600 line-through decoration-rose-300">{c.from || '—'}</span>
-                  <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-slate-300" />
-                  <span className="truncate text-emerald-700">{c.to || '—'}</span>
+                  <span className="w-28 shrink-0 font-semibold text-slate-500">{twoWay ? (kind === 'conflict' ? 'OPS / Excel' : 'OPS → Excel value') : c.column}</span>
+                  <span className={cn('truncate', twoWay ? 'font-medium text-teal-700' : 'text-rose-600 line-through decoration-rose-300')}>{c.from || '—'}</span>
+                  {kind === 'conflict' ? <span className="text-slate-300">vs</span> : <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-slate-300" />}
+                  <span className={cn('truncate', twoWay ? 'font-medium text-violet-700' : 'text-emerald-700')}>{c.to || '—'}</span>
                 </div>
               ))}
+            </div>
+          )}
+          {s.waiting && <p className="mt-0.5 pl-1 text-[11px] italic text-slate-500">Waiting: {s.waiting}</p>}
+          {kind === 'conflict' && onSettle && (
+            <div className="mt-1 flex gap-1.5 pl-1">
+              <button onClick={() => onSettle([s], 'ops')} className="rounded bg-teal-50 px-2 py-0.5 text-[11px] font-semibold text-teal-700 ring-1 ring-teal-200 hover:bg-teal-100">Keep OPS</button>
+              <button onClick={() => onSettle([s], 'excel')} className="rounded bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-700 ring-1 ring-violet-200 hover:bg-violet-100">Keep Excel</button>
             </div>
           )}
         </div>

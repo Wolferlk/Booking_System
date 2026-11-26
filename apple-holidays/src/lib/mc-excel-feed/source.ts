@@ -10,6 +10,7 @@ import { B2C_IMPORT_NOTE_PREFIX, isB2cOrigin } from '@/lib/booking-source'
 import { mealPlanFullName } from '@/lib/agenda-suggestions'
 import { serviceTypeLabel } from '@/lib/service-types'
 import { resolveIsLeisure } from '@/lib/leisure-day'
+import { isAssignLocked } from '@/lib/booking-assign-lock'
 import { STATUS, type FeedConfig, type FeedCountry, type FeedRow } from './shared'
 
 const COUNTRY_WHERE: Record<FeedCountry, { values: string[]; prefixes: string[] }> = {
@@ -65,8 +66,8 @@ export async function loadFeed(config: Pick<FeedConfig, 'startDate' | 'countries
     orderBy: [{ arrivalDate: 'asc' }, { bookingRef: 'asc' }],
     select: {
       bookingRef: true, isNumber: true, cntlNumber: true, agent: true, status: true, arrivalDate: true,
-      paxAdults: true, paxChildren: true, paxInfants: true,
-      passengers: { select: { name: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
+      paxAdults: true, paxChildren: true, paxInfants: true, contactPhone: true, contactWhatsapp: true,
+      passengers: { select: { name: true, contact: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
       statusEvents: { where: { note: { startsWith: B2C_IMPORT_NOTE_PREFIX } }, select: { note: true }, take: 1 },
       tourAgenda: {
         select: {
@@ -75,6 +76,8 @@ export async function loadFeed(config: Pick<FeedConfig, 'startDate' | 'countries
             select: {
               id: true, date: true, location: true, fromPoint: true, toPoint: true, details: true,
               mealPlan: true, serviceType: true, sortOrder: true, isLeisure: true, isHotelOnly: true,
+              meetingTime: true,
+              assignment: { select: { driverName: true, driverPhone: true } },
             },
           },
         },
@@ -95,13 +98,20 @@ export async function loadFeed(config: Pick<FeedConfig, 'startDate' | 'countries
       ? `${b.paxChildren} + ${b.paxInfants} Infant${b.paxInfants === 1 ? '' : 's'}`
       : b.paxChildren
     const cancelled = b.status === 'CANCELLED'
+    const guestContact = clean(b.passengers[0]?.contact) || clean(b.contactPhone) || clean(b.contactWhatsapp)
+    const locked = isAssignLocked(b.status)
     // Items come back by (date, sortOrder); the chart's own order within a day is sortOrder.
     for (const it of items) {
+      const leisure = it.isHotelOnly !== true && resolveIsLeisure({ ...it, isLeisure: it.isLeisure })
       const status = cancelled ? STATUS.cancelled
         : b.status === 'PENDING_CANCELLATION' ? STATUS.cancelRequested
         : it.isHotelOnly === true ? STATUS.hotelOnly
-        : resolveIsLeisure({ ...it, isLeisure: it.isLeisure }) ? STATUS.leisure
+        : leisure ? STATUS.leisure
         : STATUS.active
+      const driverLock = locked ? 'The booking is cancelled or being cancelled'
+        : it.isHotelOnly === true ? 'Hotel-only movement'
+        : leisure ? 'Leisure day'
+        : null
       rows.push({
         lineId: it.id,
         bookingRef: b.bookingRef,
@@ -111,6 +121,11 @@ export async function loadFeed(config: Pick<FeedConfig, 'startDate' | 'countries
         cntl: clean(b.cntlNumber),
         date: ymd(it.date),
         guest: clean(b.passengers[0]?.name),
+        guestContact,
+        meetingTime: clean(it.meetingTime),
+        driverName: clean(it.assignment?.driverName),
+        driverPhone: clean(it.assignment?.driverPhone),
+        driverLock,
         adults: b.paxAdults,
         children,
         location: clean(it.location),

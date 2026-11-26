@@ -12,8 +12,9 @@
 import { prisma } from '@/lib/prisma'
 import {
   DEFAULT_FEED_CONFIG, FEED_COUNTRIES, FEED_SETTINGS,
-  type FeedConfig, type FeedCountry, type FeedRun,
+  type FeedConfig, type FeedCountry, type FeedRun, type TwoWayKey,
 } from './shared'
+import type { BaseEntry } from './plan'
 
 async function getSetting(key: string): Promise<string | null> {
   const row = await prisma.systemSetting.findUnique({ where: { key } })
@@ -49,6 +50,8 @@ function normaliseConfig(c: FeedConfig): FeedConfig {
     intervalMin: Number.isFinite(interval) ? Math.min(240, Math.max(5, Math.round(interval))) : DEFAULT_FEED_CONFIG.intervalMin,
     placement: c.placement === 'append' ? 'append' : 'sorted',
     greyInactive: c.greyInactive !== false,
+    writeBack: c.writeBack === true,
+    bandColors: c.bandColors !== false,
   }
 }
 
@@ -170,15 +173,28 @@ async function readPrefixed(prefix: string): Promise<Map<string, string>> {
  */
 export const sheetKeyOf = (itemId: string, tab: string) => `${itemId}|${tab.trim().toLowerCase()}`
 
-interface WrittenValue { s: string; ids: string[] }
+/** Per booking: the sheet it belongs to, the line ids on it, and the two-way values both sides agreed on. */
+interface WrittenValue { s: string; ids: string[]; b?: Record<string, BaseEntry> }
 
-export async function readWritten(sheetKey: string): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>()
+export interface FeedMemory {
+  written: Map<string, Set<string>>
+  base: Map<string, BaseEntry>
+  /** The stored JSON per booking, to write only what changed. */
+  raw: Map<string, string>
+}
+
+export async function readMemory(sheetKey: string): Promise<FeedMemory> {
+  const written = new Map<string, Set<string>>()
+  const base = new Map<string, BaseEntry>()
+  const raw = new Map<string, string>()
   for (const [ref, value] of Array.from(await readPrefixed(FEED_SETTINGS.rowsPrefix).then(m => m.entries()))) {
     const v = parse<WrittenValue>(value)
-    if (v && v.s === sheetKey && Array.isArray(v.ids)) out.set(ref, new Set(v.ids))
+    if (!v || v.s !== sheetKey || !Array.isArray(v.ids)) continue
+    written.set(ref, new Set(v.ids))
+    raw.set(ref, value)
+    for (const [id, e] of Object.entries(v.b ?? {})) base.set(id, e)
   }
-  return out
+  return { written, base, raw }
 }
 
 export async function readAliases(): Promise<Map<string, string>> {
@@ -190,21 +206,52 @@ export async function readAliases(): Promise<Map<string, string>> {
   return out
 }
 
-/** Store the written sets that changed. Only bookings whose set differs are touched. */
-export async function saveWritten(sheetKey: string, prev: Map<string, Set<string>>, next: Map<string, string[]>): Promise<number> {
+/** Store what changed. Only bookings whose stored value differs are touched. */
+export async function saveMemory(sheetKey: string, prev: FeedMemory, next: Map<string, string[]>, nextBase: Map<string, BaseEntry>): Promise<number> {
   const changed: [string, string][] = []
   for (const [ref, ids] of Array.from(next.entries())) {
     const sorted = Array.from(new Set(ids)).sort()
-    const before = Array.from(prev.get(ref) ?? []).sort()
-    // `prev` only holds this sheet's entries, so a booking last written to another sheet counts as changed.
-    if (!prev.has(ref) || sorted.join() !== before.join()) {
-      changed.push([`${FEED_SETTINGS.rowsPrefix}${ref}`, JSON.stringify({ s: sheetKey, ids: sorted } satisfies WrittenValue)])
+    const b: Record<string, BaseEntry> = {}
+    for (const id of sorted) {
+      const e = nextBase.get(id) ?? prev.base.get(id)
+      if (e && (e.t !== undefined || e.d !== undefined)) b[id] = e
     }
+    const value = JSON.stringify({ s: sheetKey, ids: sorted, ...(Object.keys(b).length ? { b } : {}) } satisfies WrittenValue)
+    if (prev.raw.get(ref) !== value) changed.push([`${FEED_SETTINGS.rowsPrefix}${ref}`, value])
   }
   for (let i = 0; i < changed.length; i += 25) {
     await Promise.all(changed.slice(i, i + 25).map(([key, value]) => setSetting(key, value)))
   }
   return changed.length
+}
+
+/**
+ * Settle a Meeting Time / Driver conflict by moving the agreed value to the
+ * losing side's value: the next sync then sees only the winner as "changed"
+ * and carries it across. Nothing is written to OPS or the sheet here.
+ */
+export async function settleConflict(input: {
+  sheetKey: string; bookingRef: string; sheetLineId: string; field: TwoWayKey; keep: 'ops' | 'excel'; opsKey: string; xlKey: string
+}): Promise<boolean> {
+  const key = `${FEED_SETTINGS.rowsPrefix}${input.bookingRef}`
+  const v = parse<WrittenValue>(await getSetting(key))
+  if (!v || v.s !== input.sheetKey || !v.ids.includes(input.sheetLineId)) return false
+  const b = v.b ?? {}
+  const entry = { ...(b[input.sheetLineId] ?? {}) }
+  entry[input.field === 'meetingTime' ? 't' : 'd'] = input.keep === 'ops' ? input.xlKey : input.opsKey
+  b[input.sheetLineId] = entry
+  await setSetting(key, JSON.stringify({ ...v, b }))
+  return true
+}
+
+/** Booking colours OPS painted on a sheet without the layout: bookingRef → "parity:rows". */
+export async function readPaint(sheetKey: string): Promise<Map<string, string>> {
+  const v = parse<{ s: string; m: Record<string, string> }>(await getSetting(FEED_SETTINGS.paint))
+  return new Map(v?.s === sheetKey ? Object.entries(v.m) : [])
+}
+
+export async function savePaint(sheetKey: string, m: Map<string, string>): Promise<void> {
+  await setSetting(FEED_SETTINGS.paint, JSON.stringify({ s: sheetKey, m: Object.fromEntries(m) })).catch(() => undefined)
 }
 
 /**
