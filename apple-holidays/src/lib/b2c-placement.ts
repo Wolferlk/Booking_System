@@ -37,6 +37,7 @@ import { isB2cOriginBooking } from '@/lib/b2c-booking-sync'
 import { ticketDataFromRow } from '@/lib/flight-ticket/store-ticket'
 import { loadChildGuard } from '@/lib/data-protection-server'
 import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
+import { cityFromAddress, cleanCity } from '@/lib/b2c-hotel-place'
 
 export class B2cPlacementError extends Error {
   constructor(message: string, public status = 422) { super(message) }
@@ -182,7 +183,8 @@ export function stayFromBlob(raw: unknown): {
 
   return {
     name: str(hd.hotelName),
-    city: str(hd.city),
+    // Some contracted hotels store a street as their city; Ratehawk stores none.
+    city: cleanCity(str(hd.city)),
     address: str(hd.address),
     checkIn,
     checkOut,
@@ -285,7 +287,9 @@ export async function placeB2cOrder(bookingRef: string): Promise<PlacementReport
         data: {
           bookingId: booking.id,
           hotel,
-          city: (stay?.city ?? str(p.product_city) ?? str(p.service_location) ?? booking.tourDestination ?? '—').slice(0, 191),
+          // The booking's destination is the last resort only: it is one city for
+          // a multi-city trip, and must never stand in for a hotel's own place.
+          city: (stay?.city ?? str(p.product_city) ?? cityFromAddress(stay?.address) ?? str(p.service_location) ?? booking.tourDestination ?? '—').slice(0, 191),
           checkIn: new Date(`${checkIn}T00:00:00Z`),
           checkOut: new Date(`${checkOut}T00:00:00Z`),
           nights: daysBetween(checkIn, checkOut) || nights,

@@ -17,6 +17,7 @@
  */
 import mysql from 'mysql2/promise'
 import { flightDateSpan, parseFlightBooking } from './b2c-flight'
+import { cityFromAddress, cleanCity, looksLikeStreet, parseStayBlob, placeFromRatehawkRegion } from './b2c-hotel-place'
 
 /** Hard ceiling so a stalled SSL negotiation can never hang a request forever. */
 const CONN_TIMEOUT_MS = 15_000
@@ -24,6 +25,11 @@ const CONN_TIMEOUT_MS = 15_000
 /** Travel-only main categories: 3 Lifestyle, 4 Hotels, 5 Education, 6 Flights.
  *  1 Essential / 2 Non Essential are physical retail goods and are never bookings. */
 export const TRAVEL_CATEGORY_IDS = [3, 4, 5, 6] as const
+
+/** Lifestyle: `product_id` is a `tbl_lifestyle.lifestyle_id`. */
+const LIFESTYLE_CATEGORY_ID = 3
+/** Hotels: `product_id` is a `hotels.id` for Aahaas-contracted stays, 0 for Ratehawk / TBO. */
+const HOTEL_CATEGORY_ID = 4
 
 /** Flights. Sold worldwide, and — unlike every other category — routinely stored
  *  with no `service_date` at all. Such orders take their travel dates from the
@@ -233,9 +239,12 @@ export interface B2cOrderProduct extends mysql.RowDataPacket {
   tax_amount: string | null
   base_currency: string | null
   paid_currency: string | null
-  // Resolved product country (ISO alpha-2) — only Lifestyle-backed products have one.
+  // Resolved product country (ISO alpha-2) and city: from tbl_lifestyle for
+  // Lifestyle lines, from `hotels` / the booked stay for hotel lines.
   product_country: string | null
   product_city: string | null
+  /** `hotels.hotel_address` for Aahaas-contracted hotel lines; null otherwise. */
+  hotel_address?: string | null
   /**
    * What the storefront called this one booked line (`tbl_lifestyle_bookings.display_label`),
    * e.g. "Gardens by the Bay & Singapore Flyer to Hotel – Private Transfer". Null for
@@ -585,7 +594,11 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
     ? `LEFT JOIN tbl_checkouts          lc ON lc.id = m.checkout_id AND lc.main_category_id = 3
        LEFT JOIN tbl_lifestyle_bookings lb ON lb.lifestyle_booking_id = lc.related_order_id`
     : ''
-  return b2cQuery<B2cOrderProduct>(
+  // `product_id` points at a different table per category: tbl_lifestyle for
+  // Lifestyle, `hotels` for Aahaas-contracted hotels. Joining every line to
+  // tbl_lifestyle gave hotel 592 (Eco Luxury, Hanoi) the place of lifestyle 592
+  // ("Archery in Negombo", LK) and filed Vietnam order 16404 under Sri Lanka.
+  const rows = await b2cQuery<B2cOrderProduct>(
     `SELECT m.id, m.order_id, m.checkout_id, m.category_id, mc.maincat_type,
             m.product_id, m.product_name, m.vendor_name,
             m.service_date, m.time_slot, m.service_location, m.provider, m.sku,
@@ -594,11 +607,16 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
             m.net_seling_amount, m.net_total_amount,
             m.discount_amount, m.tax_amount,
             m.base_currency, m.paid_currency,
-            l.country       AS product_country,
-            l.lifestyle_city AS product_city,
+            COALESCE(l.country, h.country)      AS product_country,
+            COALESCE(l.lifestyle_city, h.city)  AS product_city,
+            h.hotel_address                     AS hotel_address,
             ${labelCol}
        FROM checkouts_more_data m
        LEFT JOIN tbl_lifestyle    l  ON l.lifestyle_id = m.product_id
+                                    AND m.category_id = ${LIFESTYLE_CATEGORY_ID}
+       LEFT JOIN hotels           h  ON h.id = m.product_id
+                                    AND m.category_id = ${HOTEL_CATEGORY_ID}
+                                    AND m.product_id > 0
        LEFT JOIN tbl_maincategory mc ON mc.id          = m.category_id
        ${labelJoin}
       WHERE m.order_id IN (${ids})
@@ -606,6 +624,67 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
         ${liveLines}
       ORDER BY m.order_id, m.service_date, m.id`,
   )
+  return resolveHotelPlaces(rows)
+}
+
+/**
+ * Give every hotel line a real country and city.
+ *
+ *  - A `hotels.city` that is a street ("88 Đường Bùi Thị Xuân") is replaced by
+ *    the city named in the hotel's address.
+ *  - A line with no product row (Ratehawk, TBO: `product_id = 0`) takes its
+ *    place from the booked stay: `hotelData.country/city` when the supplier
+ *    filled them, else `ratehawk_hotels.region` by the booked `hid`, else the
+ *    city in the booked address ("k4/52 Dang Thuy Tram, Da Nang").
+ *
+ * Read-only and best effort: if the stay lookup fails the lines keep what the
+ * main query gave them, exactly as before.
+ */
+async function resolveHotelPlaces(rows: B2cOrderProduct[]): Promise<B2cOrderProduct[]> {
+  const hotels = rows.filter((r) => Number(r.category_id) === HOTEL_CATEGORY_ID)
+  for (const r of hotels) {
+    if (looksLikeStreet(r.product_city)) r.product_city = cityFromAddress(r.hotel_address)
+  }
+
+  const open = hotels.filter((r) => !r.product_country || !r.product_city)
+  if (open.length === 0) return rows
+  try {
+    const blobs = await fetchHotelStayBlobs(open.map((r) => Number(r.checkout_id)))
+    const stays = new Map<number, { hid: number | null; country: string | null; city: string | null; address: string | null }>()
+    for (const b of blobs) {
+      const ds = parseStayBlob(b.bookingdataset)
+      const hd = ds?.hotelMainRequest?.hotelData ?? {}
+      const ratehawk = /ratehawk/i.test(String(b.provider ?? hd.provider ?? ''))
+      const hid = Number(ds?.hotelRatesRequest?.hid ?? (ratehawk ? hd.id : NaN))
+      const iso = String(hd.countryCode ?? hd.country ?? '').trim()
+      stays.set(Number(b.line_id), {
+        hid: ratehawk && Number.isInteger(hid) && hid > 0 ? hid : null,
+        country: /^[A-Za-z]{2}$/.test(iso) ? iso.toUpperCase() : null,
+        city: cleanCity(hd.city),
+        address: typeof hd.address === 'string' ? hd.address : null,
+      })
+    }
+
+    const hids = Array.from(new Set(Array.from(stays.values()).map((s) => s.hid).filter((h): h is number => h !== null)))
+    const regions = new Map<number, { city: string | null; country: string | null }>()
+    if (hids.length > 0) {
+      const rh = await b2cQuery<mysql.RowDataPacket & { hid: number; region: unknown }>(
+        `SELECT hid, region FROM ratehawk_hotels WHERE hid IN (${sanitizeIds(hids)}) LIMIT ${hids.length * 2}`,
+      )
+      for (const row of rh) regions.set(Number(row.hid), placeFromRatehawkRegion(row.region))
+    }
+
+    for (const r of open) {
+      const stay = stays.get(Number(r.checkout_id))
+      if (!stay) continue
+      const region = stay.hid !== null ? regions.get(stay.hid) : undefined
+      r.product_country = r.product_country || stay.country || region?.country || null
+      r.product_city = r.product_city || stay.city || region?.city || cityFromAddress(stay.address)
+    }
+  } catch (err) {
+    console.error('[b2c-db] hotel place lookup failed (non-fatal):', err instanceof Error ? err.message : err)
+  }
+  return rows
 }
 
 /**
