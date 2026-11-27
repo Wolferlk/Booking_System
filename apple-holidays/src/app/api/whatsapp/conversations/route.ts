@@ -17,6 +17,7 @@ import {
   type SearchMatch,
 } from '@/lib/whatsapp-inbox-search'
 import { parseAutoTag } from '@/lib/whatsapp-auto-tags'
+import { normalizeUploadUrl } from '@/lib/upload-path'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -36,23 +37,39 @@ const MEDIA_LABEL: Record<string, string> = {
  * it is read at most once every five minutes.
  */
 const DRIVER_DIR_TTL_MS = 5 * 60_000
-let driverDir: { at: number; byTail: Map<string, string> } | null = null
+interface PartnerEntry { name: string; photoUrl: string | null }
+interface PartnerDir { drivers: Map<string, PartnerEntry>; vendors: Map<string, PartnerEntry> }
+let driverDir: { at: number; dir: PartnerDir } | null = null
 
-async function driverDirectory(): Promise<Map<string, string>> {
-  if (driverDir && Date.now() - driverDir.at < DRIVER_DIR_TTL_MS) return driverDir.byTail
-  const byTail = new Map<string, string>()
+/** Drivers (with their photo) and vehicle vendors, keyed by the last 9 digits. */
+async function driverDirectory(): Promise<PartnerDir> {
+  if (driverDir && Date.now() - driverDir.at < DRIVER_DIR_TTL_MS) return driverDir.dir
+  const dir: PartnerDir = { drivers: new Map(), vendors: new Map() }
+  const tail = (raw: string | null | undefined) => {
+    const digits = (raw ?? '').replace(/\D/g, '')
+    return digits.length >= 9 ? digits.slice(-9) : null
+  }
   try {
-    const drivers = await prisma.driver.findMany({ select: { name: true, phone: true } })
+    const [drivers, vendors] = await Promise.all([
+      prisma.driver.findMany({ select: { name: true, phone: true, photoUrl: true, isActive: true }, orderBy: { isActive: 'desc' } }),
+      prisma.vehicleVendor.findMany({ select: { name: true, phone: true, whatsappPhone: true }, orderBy: { isActive: 'desc' } }),
+    ])
     for (const d of drivers) {
-      const digits = (d.phone ?? '').replace(/\D/g, '')
-      if (digits.length >= 9 && !byTail.has(digits.slice(-9))) byTail.set(digits.slice(-9), d.name)
+      const t = tail(d.phone)
+      if (t && !dir.drivers.has(t)) dir.drivers.set(t, { name: d.name, photoUrl: normalizeUploadUrl(d.photoUrl) })
+    }
+    for (const v of vendors) {
+      for (const raw of [v.whatsappPhone, v.phone]) {
+        const t = tail(raw)
+        if (t && !dir.vendors.has(t)) dir.vendors.set(t, { name: v.name, photoUrl: null })
+      }
     }
   } catch {
     // Tags alone still identify drivers; keep whatever we had.
-    if (driverDir) return driverDir.byTail
+    if (driverDir) return driverDir.dir
   }
-  driverDir = { at: Date.now(), byTail }
-  return byTail
+  driverDir = { at: Date.now(), dir }
+  return dir
 }
 
 export async function GET(req: NextRequest) {
@@ -82,7 +99,7 @@ export async function GET(req: NextRequest) {
       senderName: true, read: true, status: true, createdAt: true, waMessageId: true, mediaUrl: true,
     },
   })
-  const drivers = await driverDirectory()
+  const partners = await driverDirectory()
 
   // Which business number each reply came in on (OPS's own sends are always
   // Aahaas Operations). Lets the desk filter the inbox per number.
@@ -100,7 +117,7 @@ export async function GET(req: NextRequest) {
   const byPhone = new Map<string, {
     last: Row; unread: number; displayName: string | null; ref: string | null
     refs: Set<string>; bodyHit: string | null; numbers: BusinessNumberKey[]
-    driverName: string | null; isDriver: boolean; autoCount: number; fileCount: number; autoTags: string[]
+    driverName: string | null; isDriver: boolean; driverPhoto: string | null; vendorName: string | null; autoCount: number; fileCount: number; autoTags: string[]
   }>()
   // Message text is only searched for 3+ characters — "VN" would hit half the inbox.
   const bodyNeedle = search.length >= 3 && !looksLikePhone(rawSearch) ? search : ''
@@ -110,7 +127,7 @@ export async function GET(req: NextRequest) {
     if (!entry) {
       entry = {
         last: row, unread: 0, displayName: null, ref: null, refs: new Set(), bodyHit: null, numbers: [],
-        driverName: null, isDriver: false, autoCount: 0, fileCount: 0, autoTags: [],
+        driverName: null, isDriver: false, driverPhoto: null, vendorName: null, autoCount: 0, fileCount: 0, autoTags: [],
       }
       byPhone.set(row.phone, entry)
     }
@@ -141,11 +158,14 @@ export async function GET(req: NextRequest) {
 
   // Numbers in the drivers table count as drivers even before any tagged send.
   for (const [phone, entry] of Array.from(byPhone)) {
-    const listed = phone.length >= 9 ? drivers.get(phone.slice(-9)) : undefined
+    const listed = phone.length >= 9 ? partners.drivers.get(phone.slice(-9)) : undefined
     if (listed) {
       entry.isDriver = true
-      entry.driverName = listed
+      entry.driverName = listed.name
+      entry.driverPhoto = listed.photoUrl
     }
+    const vendor = phone.length >= 9 ? partners.vendors.get(phone.slice(-9)) : undefined
+    if (vendor) entry.vendorName = vendor.name
   }
 
   // Search: which chats match, and why. A file number / ref / guest name hits
@@ -249,7 +269,8 @@ export async function GET(req: NextRequest) {
       updatedAt: last.createdAt,
       unreadCount: entry.unread,
       numbers: entry.numbers,
-      driver: entry.isDriver ? { name: entry.driverName } : null,
+      driver: entry.isDriver ? { name: entry.driverName, photoUrl: entry.driverPhoto } : null,
+      vendor: entry.vendorName ? { name: entry.vendorName } : null,
       autoCount: entry.autoCount,
       fileCount: entry.fileCount,
       autoTags: entry.autoTags.slice(0, 4),

@@ -30,6 +30,7 @@ import {
 } from '@/components/te/transcript-shared'
 import { AgendaSendDialog, PortalSendDialog } from '@/components/whatsapp-inbox/trip-send'
 import { GuestCare, GuestCarePulse, careAlerts, useGuestCare, type GuestCareState } from '@/components/whatsapp-inbox/guest-care'
+import { PartnerPanel, usePartner } from '@/components/whatsapp-inbox/partner-panel'
 
 type Section = 'overview' | 'itinerary' | 'agenda' | 'guests' | 'flights' | 'stays' | 'package' | 'team' | 'tickets' | 'calls' | 'care'
 
@@ -64,6 +65,8 @@ interface PanelProps {
   ready: boolean
   contactName: string | null
   windowOpen: boolean | null
+  /** The chat is a driver / vehicle vendor — the panel opens on their profile. */
+  partner?: 'driver' | 'vendor' | null
   onClose: () => void
   onOpenChat: (phone: string) => void
   onSent: () => void
@@ -84,8 +87,56 @@ export function TripPanel(props: PanelProps) {
         transition={{ type: 'spring', stiffness: 420, damping: 38 }}
         className="flex h-full w-[432px] shrink-0 flex-col border-l border-slate-200/80 bg-[#f5f7f6] max-[1239px]:fixed max-[1239px]:inset-y-0 max-[1239px]:right-0 max-[1239px]:z-40 max-[1239px]:shadow-2xl max-[860px]:w-full"
       >
-        <ChatTrip key={props.phone} {...props} />
+        <ChatSide key={props.phone} {...props} />
       </motion.aside>
+    </>
+  )
+}
+
+/**
+ * Driver and vendor chats get their own profile view (who they are, the app,
+ * what they drive now / next / before, feedback, vehicle photos) beside the
+ * usual booking view. Both stay mounted so switching back is instant.
+ */
+function ChatSide(props: PanelProps) {
+  const isPartner = !!props.partner
+  const [view, setView] = useState<'profile' | 'trip'>(isPartner ? 'profile' : 'trip')
+  const partner = usePartner(props.phone, isPartner)
+  if (!isPartner) return <ChatTrip {...props} />
+
+  const tabs = [
+    { key: 'profile' as const, label: props.partner === 'vendor' ? 'Vendor profile' : 'Driver profile', icon: CarFront },
+    { key: 'trip' as const, label: 'Booking on chat', icon: LayoutGrid },
+  ]
+  return (
+    <>
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200/70 bg-white px-3 py-2">
+        <div className="flex min-w-0 flex-1 rounded-xl bg-slate-100 p-0.5">
+          {tabs.map(t => {
+            const Icon = t.icon
+            const on = view === t.key
+            return (
+              <button
+                key={t.key}
+                onClick={() => setView(t.key)}
+                aria-pressed={on}
+                className={`relative flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-[10px] py-1.5 text-[11.5px] font-bold transition ${on ? 'text-white' : 'text-slate-500 hover:text-slate-800'}`}
+              >
+                {on && <motion.span layoutId="chat-side-tab" className="absolute inset-0 rounded-[10px] bg-[#0a2b24] shadow-sm" transition={{ type: 'spring', stiffness: 500, damping: 38 }} />}
+                <Icon className={`relative h-3.5 w-3.5 ${on ? 'text-amber-300' : ''}`} />
+                <span className="relative truncate">{t.label}</span>
+              </button>
+            )
+          })}
+        </div>
+        {view === 'profile' && <HeaderBtn title="Close panel" onClick={props.onClose}><X className="h-4 w-4" /></HeaderBtn>}
+      </div>
+      <div className={view === 'profile' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+        <PartnerPanel phone={props.phone} state={partner} onOpenChat={props.onOpenChat} />
+      </div>
+      <div className={view === 'trip' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+        <ChatTrip {...props} />
+      </div>
     </>
   )
 }

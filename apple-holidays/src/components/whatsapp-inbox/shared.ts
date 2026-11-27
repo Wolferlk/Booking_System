@@ -43,7 +43,9 @@ export interface Conversation {
   /** Aahaas business numbers this chat is on, most recent first. */
   numbers?: BusinessNumberKey[]
   /** Set when the number is a driver (tagged driver sends or the drivers table). */
-  driver?: { name: string | null } | null
+  driver?: { name: string | null; photoUrl?: string | null } | null
+  /** Set when the number is a vehicle vendor (fleet owner) in vehicle_vendors. */
+  vendor?: { name: string | null } | null
   /** Automatic sends in this chat (tagged senderName — see lib/whatsapp-auto-tags). */
   autoCount?: number
   /** Messages in this chat that carry a file (document, photo …). */
@@ -234,7 +236,7 @@ export function messagesSignature(ms: WaMessage[]) {
 }
 
 export function conversationsSignature(cs: Conversation[]) {
-  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}:${c.booking?.isNumber ?? ''}:${(c.numbers ?? []).join(',')}:${c.match?.field ?? ''}:${c.match?.text ?? ''}:${c.driver ? `d${c.driver.name ?? ''}` : ''}:${c.autoCount ?? 0}:${c.fileCount ?? 0}`).join('|')
+  return cs.map(c => `${c.phone}:${c.updatedAt}:${c.unreadCount}:${c.booking?.bookingRef ?? ''}:${c.booking?.status ?? ''}:${c.booking?.isNumber ?? ''}:${(c.numbers ?? []).join(',')}:${c.match?.field ?? ''}:${c.match?.text ?? ''}:${c.driver ? `d${c.driver.name ?? ''}${c.driver.photoUrl ?? ''}` : ''}${c.vendor ? `v${c.vendor.name ?? ''}` : ''}:${c.autoCount ?? 0}:${c.fileCount ?? 0}`).join('|')
 }
 
 export function readLocal<T>(key: string, fallback: T): T {

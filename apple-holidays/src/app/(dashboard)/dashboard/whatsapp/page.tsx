@@ -44,7 +44,7 @@ const KIND_KEY = 'wa-inbox:kind-filter'
 
 /** The name a chat is shown under: the guest's WhatsApp name, else the driver's. */
 function chatName(c: Conversation): string | null {
-  return c.displayName || c.driver?.name || null
+  return c.displayName || c.driver?.name || c.vendor?.name || null
 }
 
 /** Chats from an older API response carry no numbers — they were all Operations. */
@@ -657,6 +657,7 @@ function WhatsAppInboxInner() {
     selectedConv?.displayName ??
     messages.find(m => m.direction === 'inbound' && m.senderName)?.senderName ??
     selectedConv?.driver?.name ??
+    selectedConv?.vendor?.name ??
     null
 
   function setKindFilter(next: KindFilter) {
@@ -1213,13 +1214,18 @@ function WhatsAppInboxInner() {
                 <button onClick={closeConversation} className="hidden h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-500 max-[860px]:grid">
                   <ArrowLeft className="h-4 w-4" />
                 </button>
-                <Avatar seed={selected} name={displayName} phone={selected} size={42} ring={windowOpen === true} />
+                <Avatar seed={selected} name={displayName} phone={selected} size={42} ring={windowOpen === true} photoUrl={selectedConv?.driver?.photoUrl} />
                 <div className="min-w-0 flex-1">
                   <p className="flex min-w-0 items-center gap-1.5 text-[15px] font-bold leading-tight text-slate-900">
                     <span className="truncate">{displayName || `+${selected}`}</span>
                     {selectedConv?.driver && (
                       <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-amber-800" title="This number is a driver">
                         <Car className="h-3 w-3" /> Driver
+                      </span>
+                    )}
+                    {selectedConv?.vendor && (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-indigo-800" title={`Vehicle vendor · ${selectedConv.vendor.name ?? ''}`}>
+                        <Briefcase className="h-3 w-3" /> Vendor
                       </span>
                     )}
                   </p>
@@ -1613,6 +1619,7 @@ function WhatsAppInboxInner() {
           ready={windowOpen !== null}
           contactName={displayName}
           windowOpen={windowOpen}
+          partner={selectedConv?.driver ? 'driver' : selectedConv?.vendor ? 'vendor' : null}
           onClose={() => showTripPanel(false)}
           onOpenChat={openPrivateChat}
           onSent={() => {
@@ -1818,15 +1825,30 @@ function ComposerBtn({ children, title, onClick, active }: { children: React.Rea
   )
 }
 
-function Avatar({ seed, name, phone, size = 44, ring }: { seed: string; name: string | null; phone: string; size?: number; ring?: boolean }) {
+function Avatar({ seed, name, phone, size = 44, ring, photoUrl }: { seed: string; name: string | null; phone: string; size?: number; ring?: boolean; photoUrl?: string | null }) {
+  // A driver's registered photo stands in for the initials; a broken link falls back to them.
+  const [broken, setBroken] = useState<string | null>(null)
+  const showPhoto = !!photoUrl && broken !== photoUrl
   return (
     <span className="relative shrink-0">
-      <span
-        className="grid place-items-center rounded-full font-bold text-white shadow-sm"
-        style={{ background: avatarGradient(seed), width: size, height: size, fontSize: size * 0.32 }}
-      >
-        {initials(name, phone)}
-      </span>
+      {showPhoto ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={photoUrl!}
+          alt={name ?? `+${phone}`}
+          loading="lazy"
+          onError={() => setBroken(photoUrl!)}
+          className="rounded-full object-cover shadow-sm ring-1 ring-black/5"
+          style={{ width: size, height: size }}
+        />
+      ) : (
+        <span
+          className="grid place-items-center rounded-full font-bold text-white shadow-sm"
+          style={{ background: avatarGradient(seed), width: size, height: size, fontSize: size * 0.32 }}
+        >
+          {initials(name, phone)}
+        </span>
+      )}
       {ring && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-white" title="24h window open" />}
     </span>
   )
@@ -2051,7 +2073,7 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
         }`}
       >
         {active && <motion.span layoutId="wa-active-bar" className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-emerald-500" />}
-        <Avatar seed={c.phone} name={chatName(c)} phone={c.phone} />
+        <Avatar seed={c.phone} name={chatName(c)} phone={c.phone} photoUrl={c.driver?.photoUrl} />
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
             <span className={`min-w-0 flex-1 truncate text-[13.5px] ${hasUnread ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
@@ -2107,11 +2129,16 @@ function ConversationRow({ c, query, active, pinned, onOpen, onTogglePin }: {
               </span>
             )
           })()}
-          {(c.booking || c.driver || (c.autoCount ?? 0) > 0 || (c.fileCount ?? 0) > 0) && (
+          {(c.booking || c.driver || c.vendor || (c.autoCount ?? 0) > 0 || (c.fileCount ?? 0) > 0) && (
           <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
           {c.driver && (
             <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800" title={c.driver.name ? `Driver · ${c.driver.name}` : 'Driver'}>
               <Car className="h-2.5 w-2.5" /> Driver
+            </span>
+          )}
+          {c.vendor && (
+            <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800" title={c.vendor.name ? `Vehicle vendor · ${c.vendor.name}` : 'Vehicle vendor'}>
+              <Briefcase className="h-2.5 w-2.5" /> Vendor
             </span>
           )}
           {c.booking && (
