@@ -385,6 +385,86 @@ interface BookingDetails {
   itineraryItems: { id: string; dayNo: number; date: string; title: string; description?: string | null }[]
 }
 
+/** Mirrors AutoGenStatus in lib/agenda-auto-generate.ts (server-only module). */
+type AutoGenStatus = {
+  state: 'running' | 'done' | 'exists' | 'failed' | 'waiting'
+  trigger: 'sweep' | 'page-open' | 'cron-http'
+  attempts: number
+  startedAt: string
+  finishedAt?: string | null
+  items?: number
+  descriptions?: number
+  error?: string | null
+  nextAttemptAt?: string | null
+}
+type AutoGenInfo = {
+  status: AutoGenStatus | null
+  enabled: boolean
+  chartItems: number
+  createdAt: string
+  scheduledAt: string | null
+}
+
+// What the generator does, in order, with roughly when each step starts (s).
+// The timing is indicative — the card only shows where a typical run would be.
+const BUILD_STEPS: { at: number; label: string }[] = [
+  { at: 0,  label: 'Reading the itinerary, flights and hotels' },
+  { at: 6,  label: 'Planning every movement, day by day' },
+  { at: 24, label: 'Applying airport pickup rules and meeting times' },
+  { at: 38, label: 'Matching descriptions from the confirmation' },
+  { at: 52, label: 'Saving the movement chart' },
+]
+
+function AgendaBuildingCard({ startedAt, background }: { startedAt: string | null; background: boolean }) {
+  const [mountedAt] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const since = startedAt ? Date.parse(startedAt) : mountedAt
+  const elapsed = Math.max(0, Math.floor((now - (Number.isFinite(since) ? since : mountedAt)) / 1000))
+  const current = BUILD_STEPS.reduce((acc, s, i) => (elapsed >= s.at ? i : acc), 0)
+  const pct = Math.min(95, Math.round((elapsed / 65) * 100))
+
+  return (
+    <Card className="p-8">
+      <div className="max-w-md mx-auto">
+        <div className="flex items-center justify-center gap-2 mb-1">
+          <Sparkles className="w-5 h-5 text-violet-500 animate-pulse" />
+          <p className="text-slate-700 font-semibold">AI is building the movement chart…</p>
+        </div>
+        <p className="text-center text-slate-400 text-sm">
+          {background
+            ? 'Started automatically after this booking was created — you can leave this page, it keeps going.'
+            : 'Applying airport transfer rules, meeting times and meal plans'}
+        </p>
+
+        <div className="mt-5 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-brand-500 transition-all duration-1000" style={{ width: `${pct}%` }} />
+        </div>
+
+        <ol className="mt-5 space-y-2">
+          {BUILD_STEPS.map((step, i) => (
+            <li key={step.label} className={`flex items-center gap-2.5 text-sm ${i < current ? 'text-slate-400' : i === current ? 'text-slate-800 font-medium' : 'text-slate-300'}`}>
+              {i < current
+                ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                : i === current
+                  ? <Loader2 className="w-4 h-4 text-brand-500 animate-spin flex-shrink-0" />
+                  : <span className="w-4 h-4 rounded-full border-2 border-slate-200 flex-shrink-0" />}
+              {step.label}
+            </li>
+          ))}
+        </ol>
+
+        <p className="mt-5 text-center text-xs text-slate-400 tabular-nums">
+          {elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s`} elapsed · usually under a minute
+        </p>
+      </div>
+    </Card>
+  )
+}
+
 export default function AgendaPage() {
   const { ref } = useParams<{ ref: string }>()
   const router = useRouter()
@@ -405,7 +485,14 @@ export default function AgendaPage() {
   // Saved charts open as a calm, read-only document. Editors explicitly opt in
   // so a casual click cannot change the movement chart accidentally.
   const [editMode,       setEditMode]       = useState(false)
-  const [generating,     setGenerating]     = useState(false)
+  const [manualGenerating, setGenerating]   = useState(false)
+  // Background auto-generate (lib/agenda-auto-generate.ts): the sweep builds a
+  // new booking's chart ~1 min after creation; this tracks that run on screen.
+  const [autoGen,        setAutoGen]        = useState<AutoGenStatus | null>(null)
+  const [autoGenBusy,    setAutoGenBusy]    = useState(false)
+  const autoGenPosting = useRef(false)
+  // Any chart build in progress — a manual AI Generate or the background one.
+  const generating = manualGenerating || autoGenBusy
   const [showUpload,     setShowUpload]     = useState(false)
   const [assigningIdx,   setAssigningIdx]   = useState<number | null>(null)
   const [assignMode,     setAssignMode]     = useState<'driver' | 'vendor'>('driver')
@@ -843,20 +930,96 @@ export default function AgendaPage() {
       return
     }
     if (!canEdit) return
+    // An empty chart is built by the auto-generate effect below (one server-side
+    // run, shared with the background sweep) — just clean the URL.
     autoGenRef.current = true
-    void generateFromBooking().finally(() => {
-      router.replace(`/dashboard/bookings/${ref}/agenda`)
-    })
+    router.replace(`/dashboard/bookings/${ref}/agenda`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantsGenerate, loading, generating, booking, items.length, canEdit, ref])
 
+  // Opening an empty chart no longer builds it in the browser. The background
+  // sweep normally has it ready before anyone looks; if not, ask the server to
+  // build it now — the same per-booking claim, so if the sweep is mid-run this
+  // just follows that run instead of starting a second AI call.
   useEffect(() => {
-    if (!loading && items.length === 0 && canEdit && !autoGenFired.current) {
-      autoGenFired.current = true
-      generateFromBooking()
+    if (loading || autoGenFired.current) return
+    autoGenFired.current = true
+    if (items.length === 0 && canEdit) {
+      void kickAutoGenerate()
+    } else if (items.length > 0) {
+      // Only for the "built automatically" note above the chart.
+      void fetchAutoGenStatus().then(s => { if (s?.status) setAutoGen(s.status) })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading])
+
+  async function fetchAutoGenStatus(): Promise<AutoGenInfo | null> {
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda/auto-generate`, { cache: 'no-store' })
+      const json = await res.json()
+      return json.success ? json.data as AutoGenInfo : null
+    } catch { return null }
+  }
+
+  async function settleAutoGen(st: AutoGenStatus | null) {
+    setAutoGen(st)
+    if (st?.state === 'running') return            // still going — the poll follows it
+    setAutoGenBusy(false)
+    if (!st) return
+    if (st.state === 'done' || st.state === 'exists') {
+      await Promise.all([loadAgenda(), loadWaSummary()])
+      if (st.state === 'done') {
+        toast.success(`Movement chart ready — ${st.items ?? 0} movement${st.items === 1 ? '' : 's'} built by AI`, {
+          description: st.descriptions ? `${st.descriptions} description${st.descriptions === 1 ? '' : 's'} taken from the confirmation` : undefined,
+        })
+      }
+    } else if (st.state === 'failed') {
+      toast.error(`Auto-generate failed: ${st.error ?? 'unknown error'}`, { description: 'Use “AI Generate” to try again, or upload the TQ file.' })
+    } else if (st.state === 'waiting') {
+      toast.info(st.error ?? 'No itinerary yet — the chart will be built once it arrives.')
+    }
+  }
+
+  async function kickAutoGenerate() {
+    setAutoGenBusy(true)
+    const info = await fetchAutoGenStatus()
+    if (info && info.chartItems > 0) {
+      await settleAutoGen(info.status ?? { state: 'exists', trigger: 'sweep', attempts: 0, startedAt: new Date().toISOString() })
+      return
+    }
+    if (info?.status?.state === 'running') { setAutoGen(info.status); return }   // the sweep is on it — follow it
+
+    setAutoGen({ state: 'running', trigger: 'page-open', attempts: 1, startedAt: new Date().toISOString() })
+    autoGenPosting.current = true
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda/auto-generate`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error || `Generation failed (${res.status})`)
+      await settleAutoGen(json.data.status as AutoGenStatus)
+    } catch (err: unknown) {
+      setAutoGenBusy(false)
+      setAutoGen(null)
+      toast.error(err instanceof Error ? err.message : 'Generation failed')
+    } finally {
+      autoGenPosting.current = false
+    }
+  }
+
+  // Following a run this page did not start (the background sweep): poll until it lands.
+  useEffect(() => {
+    if (!autoGenBusy || autoGen?.state !== 'running') return
+    const t = setInterval(async () => {
+      if (autoGenPosting.current) return
+      const info = await fetchAutoGenStatus()
+      if (!info) return
+      if (info.chartItems > 0 || (info.status && info.status.state !== 'running')) {
+        clearInterval(t)
+        await settleAutoGen(info.status ?? { state: 'exists', trigger: 'sweep', attempts: 0, startedAt: new Date().toISOString() })
+      }
+    }, 4000)
+    return () => clearInterval(t)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoGenBusy, autoGen?.state])
 
   function normaliseItems(raw: AgendaItem[]): AgendaItem[] {
     return raw.map(item => {
@@ -2075,11 +2238,25 @@ export default function AgendaPage() {
 
         {/* ── AI GENERATING OVERLAY ── */}
         {generating && (
-          <Card className="p-8 text-center">
-            <Loader2 className="w-8 h-8 text-brand-500 animate-spin mx-auto mb-3" />
-            <p className="text-slate-700 font-semibold">AI is generating the movement chart…</p>
-            <p className="text-slate-400 text-sm mt-1">Applying airport transfer rules, meeting times and meal plans</p>
-          </Card>
+          <AgendaBuildingCard
+            startedAt={autoGenBusy ? autoGen?.startedAt ?? null : null}
+            background={autoGenBusy && autoGen?.trigger !== 'page-open'}
+          />
+        )}
+
+        {/* ── BUILT AUTOMATICALLY NOTE ── (until someone saves over it) */}
+        {!generating && items.length > 0 && autoGen?.state === 'done' && autoGen.finishedAt
+          && (!loadedAgendaAt.current || Date.parse(loadedAgendaAt.current) <= Date.parse(autoGen.finishedAt) + 5_000) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-violet-200 bg-gradient-to-r from-violet-50 to-white px-4 py-2.5 text-sm">
+            <Sparkles className="w-4 h-4 text-violet-500 flex-shrink-0" />
+            <span className="text-violet-900 font-medium">Built automatically by AI</span>
+            <span className="text-violet-700/80">
+              {autoGen.trigger === 'page-open' ? 'when this chart was first opened' : 'in the background after the booking was created'}
+              {' · '}{new Date(autoGen.finishedAt).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              {typeof autoGen.items === 'number' ? ` · ${autoGen.items} movements` : ''}
+            </span>
+            <span className="ml-auto text-xs text-violet-500">Review times &amp; points before reconfirming</span>
+          </div>
         )}
 
         {/* ── EMPTY STATE ── */}

@@ -398,6 +398,19 @@ async function startFileHandlerResolveSweepScheduler() {
   }
 }
 
+async function startAgendaAutoGenerateTask() {
+  try {
+    // Movement chart auto-generate: a 30 s sweep that builds the chart for every
+    // new booking about a minute after it lands (Apple System / B2C / manual),
+    // so nobody waits on the spinner when they open the agenda. Only ever fills
+    // an empty chart. Switch: ai_auto_agenda_generate (Settings → AI Token Controls).
+    const { startAgendaAutoGenerateScheduler } = await import('./agenda-auto-generate-scheduler')
+    startAgendaAutoGenerateScheduler()
+  } catch (err) {
+    console.error('[Scheduler] agenda auto-generate scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startAgendaAutoEmailScheduler() {
   try {
     // node-cron scheduler: emails the tour confirmation (agenda PDF) to customers
@@ -503,6 +516,9 @@ export function startCronJobs() {
   // Tour-confirmation auto-email: node-cron daily job, sends the agenda PDF to
   // customers arriving in 3 days. Timezone-aware with boot catch-up.
   void startAgendaAutoEmailScheduler()
+
+  // New booking → movement chart built in the background ~1 min later.
+  void startAgendaAutoGenerateTask()
 
   // Auto mail reading and the OneDrive auto-poll are hard-disabled in code
   // (see automation-switches.ts) — don't even schedule their ticks, so no

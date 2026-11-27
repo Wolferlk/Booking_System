@@ -1417,8 +1417,8 @@ export default function ConfigPage() {
                     icon={<BrainCircuit className="w-4 h-4" />}
                     label="Auto-Generate Agenda"
                     description={aiAgendaEnabled
-                      ? 'GPT-4o generates a full movement chart for every new booking from email — ~7,500 tokens per email.'
-                      : 'Agenda generation is OFF — only a skeleton agenda is created. Manually generate from the booking page.'}
+                      ? 'GPT-4o builds the movement chart for every new booking (Apple System, B2C, email) in the background about a minute after it is created — ~7,500 tokens per booking.'
+                      : 'Background agenda generation is OFF — the chart is built when someone opens the agenda page, or from AI Generate.'}
                     tokenNote="~7,500 tokens saved per TC email"
                     enabled={aiAgendaEnabled}
                     saving={saving === 'ai_auto_agenda_generate'}
