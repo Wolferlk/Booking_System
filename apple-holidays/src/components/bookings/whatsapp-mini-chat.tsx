@@ -10,6 +10,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { playMessageAlert } from '@/components/whatsapp-inbox/sound'
 import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
+import { AiCallCard, NextAiCallChip, useAiCallFeed, phoneKey, type AiCallEvent } from '@/components/whatsapp-inbox/ai-call-card'
 
 interface WaMessage {
   id: string
@@ -199,6 +200,31 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
     return rows
   }, [messages, optimistic, onlyActive, activeDigits, query])
 
+  // AI calls woven into the thread at the time they happened.
+  const callFeed = useAiCallFeed(bookingRef, panel !== 'closed')
+  type Row = { type: 'msg'; msg: WaMessage; at: number } | { type: 'call'; ev: AiCallEvent; at: number }
+  const timeline = useMemo<Row[]>(() => {
+    let calls = callFeed.events
+    if (onlyActive && activeDigits && callFeed.phone) {
+      calls = phoneKey(callFeed.phone) === phoneKey(activeDigits) ? calls : []
+    }
+    const q = query.trim().toLowerCase()
+    if (q) calls = calls.filter(e => (e.summary ?? '').toLowerCase().includes(q) || (e.issues ?? '').toLowerCase().includes(q))
+    const msgRows: Row[] = shown.map(msg => ({ type: 'msg', msg, at: new Date(msg.createdAt).getTime() }))
+    if (!calls.length) return msgRows
+    // Messages are already in order (optimistic ones last); slot each call in
+    // before the first message that came after it.
+    const out: Row[] = []
+    let ci = 0
+    const callRows: Row[] = calls.map(ev => ({ type: 'call', ev, at: new Date(ev.at).getTime() }))
+    for (const r of msgRows) {
+      while (ci < callRows.length && callRows[ci].at <= r.at) out.push(callRows[ci++])
+      out.push(r)
+    }
+    while (ci < callRows.length) out.push(callRows[ci++])
+    return out
+  }, [shown, callFeed, onlyActive, activeDigits, query])
+
   // ── fetch history ──────────────────────────────────────────────────────
   const fetchMessages = useCallback(async (mode: 'initial' | 'poll' | 'manual' = 'poll') => {
     if (inFlightRef.current && mode === 'poll') return
@@ -315,7 +341,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
 
   useLayoutEffect(() => {
     if (panel !== 'open') return
-    const len  = shown.length
+    const len  = timeline.length
     const prev = prevLenRef.current
     prevLenRef.current = len
     if (forceScrollRef.current) {
@@ -325,7 +351,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
       if (atBottomRef.current) scrollToBottom(prev > 0)
       else setNewBelow(n => n + (len - prev))
     }
-  }, [shown.length, panel, scrollToBottom])
+  }, [timeline.length, panel, scrollToBottom])
 
   // Opening (or expanding) the panel lands at the latest message, instantly.
   useLayoutEffect(() => {
@@ -718,7 +744,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                 </div>
               )}
 
-              {loaded && shown.length === 0 && (
+              {loaded && timeline.length === 0 && (
                 <div className="flex flex-col items-center justify-center h-full text-center text-slate-500 [html.bk-dark_&]:text-slate-400 py-8">
                   <div className="w-14 h-14 rounded-full bg-white/80 [html.bk-dark_&]:bg-[#202c33] flex items-center justify-center mb-3 shadow-sm">
                     {query ? <Search className="w-6 h-6 text-slate-400" /> : <MessageCircle className="w-7 h-7 text-green-500" />}
@@ -732,10 +758,27 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                 </div>
               )}
 
-              {shown.map((msg, i) => {
-                const prev    = shown[i - 1]
-                const at      = new Date(msg.createdAt)
-                const newDay  = !prev || new Date(prev.createdAt).toDateString() !== at.toDateString()
+              {timeline.map((row, i) => {
+                const prevRow = timeline[i - 1]
+                const at      = new Date(row.at)
+                const newDay  = !prevRow || new Date(prevRow.at).toDateString() !== at.toDateString()
+                const dayChip = newDay && (
+                  <div className="flex justify-center my-2 sticky top-0 z-10">
+                    <span className="text-[10px] font-medium text-slate-600 bg-white/90 [html.bk-dark_&]:text-slate-300 [html.bk-dark_&]:bg-[#182229]/95 backdrop-blur px-2.5 py-0.5 rounded-full shadow-sm">
+                      {dayLabel(at)}
+                    </span>
+                  </div>
+                )
+                if (row.type === 'call') {
+                  return (
+                    <div key={row.ev.uid}>
+                      {dayChip}
+                      <AiCallCard ev={row.ev} />
+                    </div>
+                  )
+                }
+                const msg     = row.msg
+                const prev    = prevRow?.type === 'msg' ? prevRow.msg : undefined
                 const grouped = !newDay && prev && prev.direction === msg.direction && prev.senderName === msg.senderName
                   && at.getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
                 const isOut   = msg.direction === 'outbound'
@@ -745,13 +788,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
 
                 return (
                   <div key={msg.id}>
-                    {newDay && (
-                      <div className="flex justify-center my-2 sticky top-0 z-10">
-                        <span className="text-[10px] font-medium text-slate-600 bg-white/90 [html.bk-dark_&]:text-slate-300 [html.bk-dark_&]:bg-[#182229]/95 backdrop-blur px-2.5 py-0.5 rounded-full shadow-sm">
-                          {dayLabel(at)}
-                        </span>
-                      </div>
-                    )}
+                    {dayChip}
                     <div className={cn('group flex items-end gap-1', isOut ? 'justify-end' : 'justify-start', grouped ? 'mt-0.5' : 'mt-2')}>
                       {isOut && msg.body && !msg.id.startsWith('tmp-') && (
                         <button
@@ -853,6 +890,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                   </div>
                 )
               })}
+              {loaded && !query && <NextAiCallChip next={callFeed.next} />}
             </div>
 
             {/* Jump-to-latest — shown when the reader has scrolled up */}

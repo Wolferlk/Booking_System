@@ -27,6 +27,7 @@ import { SoundSettingsButton } from '@/components/whatsapp-inbox/sound-settings'
 import { GroupWorkspace, GroupsRail, useGroupDetail } from '@/components/whatsapp-inbox/groups'
 import { TripPanel } from '@/components/whatsapp-inbox/trip-panel'
 import { RelatedThreadsStrip } from '@/components/whatsapp-inbox/related-threads-strip'
+import { AiCallCard, NextAiCallChip, useAiCallFeed, phoneKey, type AiCallEvent } from '@/components/whatsapp-inbox/ai-call-card'
 import {
   BUSINESS_NUMBERS, DEFAULT_BUSINESS_NUMBER, businessNumber, type BusinessNumberKey,
 } from '@/lib/whatsapp-business-numbers'
@@ -817,24 +818,54 @@ function WhatsAppInboxInner() {
   }, [messages])
   const windowLeft = windowOpen && windowClosesAt ? windowClosesAt - now : null
 
+  // AI calls for the linked booking, shown in the thread at the time they
+  // happened. Only on the number that was called — or, when this is the
+  // booking's only chat, here anyway (the call line can differ from WhatsApp).
+  const callFeed = useAiCallFeed(threadBooking?.bookingRef ?? null, !!selected && !!threadBooking)
+  const threadCalls = useMemo<AiCallEvent[]>(() => {
+    if (!selected || threadView === 'files' || !callFeed.events.length) return []
+    const onThisNumber = !!callFeed.phone && phoneKey(callFeed.phone) === phoneKey(selected)
+    return onThisNumber || relatedThreads.length === 0 ? callFeed.events : []
+  }, [selected, threadView, callFeed, relatedThreads.length])
+  const showNextCall = !!callFeed.next && !!selected && threadView !== 'files' &&
+    ((!!callFeed.phone && phoneKey(callFeed.phone) === phoneKey(selected)) || relatedThreads.length === 0)
+
   // Day groups with "run" info so consecutive bubbles from one side stack tightly.
+  // AI calls slot in by time and break a run like any other side would.
   const messageGroups = useMemo(() => {
-    const groups: { dayLabel: string; items: { m: WaMessage; first: boolean; last: boolean }[] }[] = []
-    shownMessages.forEach((m, i) => {
-      const prev = shownMessages[i - 1]
-      const next = shownMessages[i + 1]
-      const label = fmtDayLabel(m.createdAt)
-      const sameAsPrev = !!prev && prev.direction === m.direction && fmtDayLabel(prev.createdAt) === label &&
-        new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
-      const sameAsNext = !!next && next.direction === m.direction && fmtDayLabel(next.createdAt) === label &&
-        new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() < 5 * 60_000
-      const entry = { m, first: !sameAsPrev, last: !sameAsNext }
+    type Item = { m: WaMessage; first: boolean; last: boolean; call?: undefined } | { call: AiCallEvent; m?: undefined }
+    const groups: { dayLabel: string; items: Item[] }[] = []
+    type Row = { m: WaMessage; at: string } | { call: AiCallEvent; at: string }
+    const rows: Row[] = []
+    let ci = 0
+    for (const m of shownMessages) {
+      while (ci < threadCalls.length && threadCalls[ci].at <= new Date(m.createdAt).toISOString()) rows.push({ call: threadCalls[ci], at: threadCalls[ci++].at })
+      rows.push({ m, at: m.createdAt })
+    }
+    while (ci < threadCalls.length) rows.push({ call: threadCalls[ci], at: threadCalls[ci++].at })
+
+    rows.forEach((row, i) => {
+      const label = fmtDayLabel(row.at)
+      let entry: Item
+      if ('call' in row) entry = { call: row.call }
+      else {
+        const m = row.m
+        const p = rows[i - 1]
+        const n = rows[i + 1]
+        const prev = p && 'm' in p ? p.m : null
+        const next = n && 'm' in n ? n.m : null
+        const sameAsPrev = !!prev && prev.direction === m.direction && fmtDayLabel(prev.createdAt) === label &&
+          new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000
+        const sameAsNext = !!next && next.direction === m.direction && fmtDayLabel(next.createdAt) === label &&
+          new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() < 5 * 60_000
+        entry = { m, first: !sameAsPrev, last: !sameAsNext }
+      }
       const lastGroup = groups[groups.length - 1]
       if (lastGroup && lastGroup.dayLabel === label) lastGroup.items.push(entry)
       else groups.push({ dayLabel: label, items: [entry] })
     })
     return groups
-  }, [shownMessages])
+  }, [shownMessages, threadCalls])
 
   // ── global keyboard shortcuts ────────────────────────────────────────────
   useEffect(() => {
@@ -1355,7 +1386,10 @@ function WhatsAppInboxInner() {
                           <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-slate-500 shadow-sm ring-1 ring-black/5 backdrop-blur">{group.dayLabel}</span>
                         </div>
                         <AnimatePresence initial={false}>
-                          {group.items.map(({ m, first, last }) => (
+                          {group.items.map(item => {
+                            if (item.call) return <AiCallCard key={item.call.uid} ev={item.call} />
+                            const { m, first, last } = item
+                            return (
                             <div key={m.id}>
                               {m.id === firstUnreadId && (
                                 <div className="my-3 flex items-center gap-3">
@@ -1376,10 +1410,12 @@ function WhatsAppInboxInner() {
                                 onQuote={() => quote(m)}
                               />
                             </div>
-                          ))}
+                            )
+                          })}
                         </AnimatePresence>
                       </div>
                     ))}
+                    {showNextCall && <NextAiCallChip next={callFeed.next} />}
                     <AnimatePresence initial={false}>
                       {visiblePending.map(p => (
                         <PendingBubble key={p.tempId} p={p} onRetry={() => retry(p)} onDiscard={() => discard(p)} />

@@ -25,7 +25,11 @@ export const dynamic = 'force-dynamic'
 const ALLOWED: UserRole[] = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 type Kind = 'on_tour' | 'reconfirm' | 'post_tour'
-type State = 'answered' | 'missed' | 'retrying' | 'calling'
+// 'blocked' = never dialled: the guest hasn't allowed WhatsApp calls yet, or
+// there's no number. The voice service files those as missed/failed, but they
+// aren't missed calls and the chat shows them as a slim note, not a card.
+type State = 'answered' | 'missed' | 'retrying' | 'calling' | 'blocked'
+const BLOCKED_ERR = /awaiting call approval|no phone/i
 
 export interface AiCallEvent {
   uid: string
@@ -158,6 +162,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     else if (CALLING.has(status)) state = 'calling'
     else if (MISSED.has(status)) state = 'missed'
     else if (status === 'pending' && s.attempts > 0) state = 'retrying'
+    if ((state === 'missed' || state === 'retrying') && s.error && BLOCKED_ERR.test(s.error)) state = 'blocked'
 
     if (!state) {
       // Not dialled yet — remember the earliest upcoming one for the "next call" chip.
