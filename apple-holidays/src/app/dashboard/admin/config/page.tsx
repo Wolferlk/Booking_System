@@ -16,6 +16,7 @@ import CancellationRecoveryCard from '@/components/settings/cancellation-recover
 import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
 import McExcelFeedCard from '@/components/settings/mc-excel-feed-card'
+import AgendaBackfillCard from '@/components/settings/agenda-backfill-card'
 import AirportPickupCard from '@/components/settings/airport-pickup-card'
 import GuestEmergencyContactsCard from '@/components/settings/guest-emergency-contacts-card'
 import { GUEST_EMERGENCY_KEY, parseGuestEmergencyPolicy } from '@/lib/emergency-contacts'
@@ -349,6 +350,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'automation',     title: 'Automation Settings',          group: 'Automation & AI', icon: Zap,          keywords: 'auto mail inbox polling onedrive scheduled background critical password pause' },
   { id: 'ai-feedback-cc', title: 'AI Call Bot Summary Email',    group: 'Automation & AI', icon: Bot,          keywords: 'feedback cc recipients agent summary transcript sentiment' },
   { id: 'ai-tokens',      title: 'AI Token Controls',            group: 'Automation & AI', icon: BrainCircuit, keywords: 'gpt cost savings agenda generation pnl extract classify onedrive new files only' },
+  { id: 'agenda-backfill', title: 'Create Missing Agendas',      group: 'Automation & AI', icon: Sparkles,     keywords: 'agenda movement chart missing not created empty upcoming arrival date range backfill auto generate ai bulk build' },
   { id: 'ai-usage',       title: 'OpenAI Token Usage',           group: 'Automation & AI', icon: BarChart3,    keywords: 'statistics spend monitor consumption chart model' },
 
   { id: 'danger-zone',    title: 'Danger Zone Notice',           group: 'Reference',       icon: ShieldAlert,  keywords: 'risky less credit mode protected critical password' },
@@ -1483,6 +1485,11 @@ export default function ConfigPage() {
 
                 </CardBody>
               </Card>
+            </Section>
+
+            <Section id="agenda-backfill" visible={show('agenda-backfill')} flashed={flashId === 'agenda-backfill'}>
+              {/* Arrival-date range → build every empty movement chart in the background */}
+              <AgendaBackfillCard />
             </Section>
 
             <Section id="danger-zone" visible={show('danger-zone')} flashed={flashId === 'danger-zone'}>

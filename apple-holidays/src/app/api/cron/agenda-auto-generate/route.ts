@@ -9,6 +9,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { runAgendaAutoGenerateSweep } from '@/lib/agenda-auto-generate'
+import { runAgendaBackfillTick } from '@/lib/agenda-backfill'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,7 +27,8 @@ export async function GET(req: NextRequest) {
   }
   try {
     const summary = await runAgendaAutoGenerateSweep('cron-http')
-    return NextResponse.json({ ok: true, summary })
+    const backfill = await runAgendaBackfillTick()
+    return NextResponse.json({ ok: true, summary, backfill })
   } catch (err) {
     return NextResponse.json(
       { ok: false, error: err instanceof Error ? err.message : 'Sweep failed' },

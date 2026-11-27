@@ -9,6 +9,7 @@
  * per-booking claim, so running both is harmless.
  */
 import { runAgendaAutoGenerateSweep, AUTOGEN_DELAY_SEC, AUTOGEN_WINDOW_HRS } from './agenda-auto-generate'
+import { runAgendaBackfillTick } from './agenda-backfill'
 
 const TICK_MS = 30_000
 
@@ -29,6 +30,13 @@ async function tick(): Promise<void> {
     }
   } catch (err) {
     console.error('[AgendaAutoGenScheduler] tick error:', err instanceof Error ? err.message : err)
+  }
+  // Settings → Create Missing Agendas. New bookings above go first; the
+  // backfill only does anything while an admin has a job running.
+  try {
+    await runAgendaBackfillTick()
+  } catch (err) {
+    console.error('[AgendaAutoGenScheduler] backfill tick error:', err instanceof Error ? err.message : err)
   } finally {
     arm(TICK_MS)
   }
