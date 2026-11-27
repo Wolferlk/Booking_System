@@ -22,13 +22,13 @@ import {
   saveMemory, savePaint, setFeedProgress, sheetKeyOf, takeFeedLock,
 } from './config'
 import {
-  addTab, clearRowFormats, closeSession, fillBlocks, freezeHeader, greyRows, hasLayout, insertRows, listTabs, openSession, plainRows,
-  readColumn, readGrid, resolveFeedWorkbook, setColumnWidths, uploadWorkbook, usedExtent, workbookIsEmpty, writeBlock,
+  addTab, clearRowFormats, closeSession, fillRows, freezeHeader, greyRows, hasLayout, insertRows, listTabs, openSession, plainRows,
+  readColumn, readFill, readGrid, resolveFeedWorkbook, setColumnWidths, uploadWorkbook, usedExtent, workbookIsEmpty, writeBlock,
   writeHeader, writeStamp, WorkbookError, type FeedSheetRef,
 } from './workbook'
 import { applyWritebacks } from './writeback'
 import { buildFeedWorkbook } from './template'
-import { cellKey, FEED_COLUMNS, FEED_COUNTRIES, PALETTE, type FeedConfig, type FeedCounts, type FeedRun, type PlanSample } from './shared'
+import { BAND_PAIRS, cellKey, FEED_COLUMNS, FEED_COUNTRIES, type BandPair, type FeedConfig, type FeedCounts, type FeedRun, type PlanSample } from './shared'
 
 export interface SheetStatus {
   file: { name: string; webUrl: string; lastModified: string | null } | null
@@ -129,7 +129,7 @@ export async function prepareSheet(by: string | null): Promise<PrepareResult> {
     const check = await workbookIsEmpty(ref)
     if (check.empty) {
       const lists = await usedListValues(config).catch(() => ({}))
-      const buf = await buildFeedWorkbook({ tabName: config.tabName, lists })
+      const buf = await buildFeedWorkbook({ tabName: config.tabName, lists, bands: config.bandPair })
       // Re-read the eTag right before replacing — a file edited since the check is refused.
       const fresh = await resolveFeedWorkbook(config.sheetUrl)
       await uploadWorkbook(fresh, buf, fresh.eTag)
@@ -282,8 +282,16 @@ export async function runFeedSync(opts: {
     if (loaded.layout) {
       await writeStamp(ref, stampText(config, plan.counts.feedRows), session)
     } else if (config.bandColors) {
-      const failed = await paintBands(ref, tab, header, headerRow, session, sheetKey).catch(() => -1)
-      if (failed) run.warnings.push(failed < 0 ? 'Booking colours could not be painted this time' : `${failed} booking colour block(s) could not be painted`)
+      const p = await paintBands(ref, tab, header, headerRow, session, sheetKey, config.bandPair, run.id).catch(() => null)
+      if (!p) run.warnings.push('Booking colours could not be painted this time — tried again next sync')
+      else {
+        if (p.unseen) run.warnings.push('Excel accepted the booking colours but the sheet does not show them — nothing remembered, tried again next sync')
+        if (p.failed) run.warnings.push(`${p.failed} booking(s) could not be coloured — tried again next sync`)
+        if (p.pending) run.warnings.push(`Booking colours: ${p.pending} booking(s) still to colour — continues on the next sync`)
+        if (p.healed) run.warnings.push('Booking colours were missing on the sheet — repainted')
+        if (p.unsaved) run.warnings.push('Too many bookings to remember their colours — the sheet is re-checked every sync')
+        if (p.painted) console.log(`[mc-excel-feed] coloured ${p.painted} of ${p.blocks} booking block(s)`)
+      }
     }
 
     run.status = changes(plan.counts) ? 'SUCCESS' : 'NO_CHANGE'
@@ -353,18 +361,40 @@ async function carryOut(plan: FeedPlan, header: HeaderMap, ref: FeedSheetRef, ta
   }
 }
 
+interface PaintResult { blocks: number; painted: number; failed: number; pending: number; unseen: boolean; healed: boolean; unsaved: boolean }
+
+/** A paint pass stops after this long and carries on next sync, so a big repaint never holds the lock for long. */
+const PAINT_BUDGET_MS = 6 * 60_000
+
 /**
- * Two booking colours on a workbook without the OPS layout: read where each
- * booking's rows are now, and fill only the blocks whose colour or size
- * changed since the last paint (an insert above a booking moves its fill with
- * it; a new booking flips the ones below it).
+ * Two booking colours on a workbook without the OPS layout. Every row of a
+ * booking gets the same soft fill; neighbouring bookings alternate (odd "#"
+ * takes colour a, even takes colour b — the same "#" the sheet computes).
+ *
+ *   - Only blocks whose colour or size changed since the last paint are filled
+ *     (an insert above a booking moves its fill with it).
+ *   - When most of a stretch must change (a new booking near the top flips
+ *     every booking below it), the stretch is washed with colour b in ONE call
+ *     and only the colour-a bookings are painted on top — half the calls.
+ *   - Self-check: each sync reads back a few bookings OPS believes are painted;
+ *     if the sheet doesn't show it (formats cleared, or a paint that never
+ *     landed) they are painted again.
+ *   - After painting, two blocks are read back; if Excel accepted the calls
+ *     but shows no colour, nothing is remembered and a warning is raised.
  */
-async function paintBands(ref: FeedSheetRef, tab: string, header: HeaderMap, headerRow: number, session: string | null, sheetKey: string): Promise<number> {
+async function paintBands(
+  ref: FeedSheetRef, tab: string, header: HeaderMap, headerRow: number, session: string | null,
+  sheetKey: string, pairKey: BandPair, runId: string,
+): Promise<PaintResult> {
+  const pair = BAND_PAIRS[pairKey]
+  const out: PaintResult = { blocks: 0, painted: 0, failed: 0, pending: 0, unseen: false, healed: false, unsaved: false }
   const { rows } = await usedExtent(ref, tab, session)
-  if (rows <= headerRow) return 0
+  if (rows <= headerRow) return out
   const refs = await readColumn(ref, tab, header.cols.ref, headerRow + 1, rows, session)
   const bands = header.cols.band !== undefined ? await readColumn(ref, tab, header.cols.band, headerRow + 1, rows, session) : []
-  const blocks: { ref: string; first: number; last: number; odd: boolean }[] = []
+
+  type Block = { ref: string; key: string; first: number; last: number; odd: boolean; color: string; sig: string }
+  const blocks: Block[] = []
   let counter = 0
   refs.forEach((v, i) => {
     const r = cellKey(v).toUpperCase()
@@ -374,22 +404,83 @@ async function paintBands(ref: FeedSheetRef, tab: string, header: HeaderMap, hea
     if (prev && prev.ref === r && prev.last === row - 1) { prev.last = row; return }
     counter++
     const b = bands[i]
-    blocks.push({ ref: r, first: row, last: row, odd: typeof b === 'number' ? b % 2 === 1 : counter % 2 === 1 })
+    const odd = typeof b === 'number' ? b % 2 === 1 : counter % 2 === 1
+    blocks.push({ ref: r, key: '', first: row, last: row, odd, color: (odd ? pair.a : pair.b).toUpperCase(), sig: '' })
   })
-  const painted = await readPaint(sheetKey)
-  const next = new Map<string, string>()
   const seen = new Map<string, number>()
-  const todo: { first: number; last: number; color: string }[] = []
   for (const b of blocks) {
     const k = seen.get(b.ref) ?? 0
     seen.set(b.ref, k + 1)
-    const key = `${b.ref}#${k}`
-    const sig = `${b.odd ? 1 : 0}:${b.last - b.first + 1}`
-    next.set(key, sig)
-    if (painted.get(key) !== sig) todo.push({ first: b.first, last: b.last, color: b.odd ? PALETTE.bandA : PALETTE.bandB })
+    b.key = `${b.ref}#${k}`
+    b.sig = `${b.odd ? 'a' : 'b'}${b.last - b.first + 1}`
   }
+  out.blocks = blocks.length
+  if (!blocks.length) return out
   const lastCol = Math.max(...Object.values(header.cols))
-  const failed = todo.length ? await fillBlocks(ref, tab, todo, lastCol, session) : 0
-  if (!failed && JSON.stringify(Object.fromEntries(next)).length < 60_000) await savePaint(sheetKey, next)
-  return failed
+  const remembered = await readPaint(sheetKey, pairKey)
+
+  // What OPS believes is already on the sheet — spot-check up to three of those bookings.
+  let todo = blocks.filter(b => remembered.get(b.key) !== b.sig)
+  const believed = blocks.filter(b => remembered.get(b.key) === b.sig)
+  if (believed.length) {
+    const spin = Math.floor(Date.now() / 60_000)
+    const sample = Array.from(new Set([0, Math.floor(believed.length / 2), spin % believed.length])).map(i => believed[i])
+    const missed: Block[] = []
+    for (const b of sample) {
+      const c = await readFill(ref, tab, `A${b.first}`, session)
+      if (c && c !== b.color) missed.push(b)
+    }
+    if (missed.length >= 2 || (missed.length && sample.length === 1)) { todo = blocks; out.healed = true }
+    else todo.push(...missed)
+  }
+  const todoKeys = new Set(todo.map(b => b.key))
+  const next = new Map<string, string>()
+  for (const b of blocks) if (!todoKeys.has(b.key)) next.set(b.key, b.sig)
+  if (!todo.length) {
+    out.unsaved = !(await savePaint(sheetKey, pairKey, next))
+    return out
+  }
+
+  // Work top to bottom, so a pass cut short by the budget leaves a clean top part.
+  todo.sort((x, y) => x.first - y.first)
+  let list = todo
+  const washed: Block[] = []
+  const firstIdx = blocks.findIndex(b => todoKeys.has(b.key))
+  const stretch = blocks.slice(firstIdx)
+  if (todo.length >= 12 && todo.length >= stretch.length * 0.6) {
+    // One wash of colour b over the stretch, then only the colour-a bookings on top.
+    if (await fillRows(ref, tab, stretch[0].first, stretch[stretch.length - 1].last, lastCol, BAND_PAIRS[pairKey].b, session)) {
+      for (const b of stretch) {
+        if (b.odd) next.delete(b.key)
+        else { next.set(b.key, b.sig); washed.push(b); out.painted++ }
+      }
+      list = stretch.filter(b => b.odd)
+    }
+  }
+
+  const started = Date.now()
+  const done: Block[] = []
+  for (let i = 0; i < list.length; i++) {
+    if (Date.now() - started > PAINT_BUDGET_MS) { out.pending = list.length - i; break }
+    const b = list[i]
+    if (await fillRows(ref, tab, b.first, b.last, lastCol, b.color, session)) { next.set(b.key, b.sig); done.push(b); out.painted++ }
+    else out.failed++
+    if (i % 10 === 9 || i === list.length - 1) {
+      await setFeedProgress({ runId, phase: 'Colouring bookings', done: i + 1, total: list.length, at: new Date().toISOString() })
+    }
+  }
+
+  // Did it land? Read back the first and last booking painted in this pass.
+  const check = Array.from(new Set([done[0], done[done.length - 1], washed[0]].filter((b): b is Block => !!b)))
+  let wrong = 0, read = 0
+  for (const b of check) {
+    const c = await readFill(ref, tab, `A${b.first}`, session)
+    if (c) { read++; if (c !== b.color) wrong++ }
+  }
+  if (read && wrong === read) {
+    out.unseen = true
+    for (const b of [...list, ...washed]) next.delete(b.key)
+  }
+  out.unsaved = !(await savePaint(sheetKey, pairKey, next))
+  return out
 }

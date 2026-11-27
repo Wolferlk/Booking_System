@@ -56,7 +56,8 @@ export async function PUT(req: NextRequest) {
     const msg = !before.writeBack && after.writeBack ? 'Excel → OPS switched ON — Meeting Time and Driver edits in the Excel now update the agenda'
       : before.writeBack && !after.writeBack ? 'Excel → OPS switched OFF'
       : !before.enabled && after.enabled ? `Automatic sync switched ON — every ${after.intervalMin} min`
-      : before.enabled && !after.enabled ? 'Automatic sync switched OFF' : 'Saved'
+      : before.enabled && !after.enabled ? 'Automatic sync switched OFF'
+      : before.bandPair !== after.bandPair && after.bandColors ? 'Booking colours changed — the sheet is recoloured on the next sync' : 'Saved'
     return buildApiSuccess(await snapshot(true), msg)
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'Could not save', 400)

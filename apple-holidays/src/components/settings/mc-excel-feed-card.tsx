@@ -19,7 +19,7 @@ import {
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import {
-  FEED_COLUMNS, FEED_COUNTRIES, timeAgo,
+  BAND_PAIRS, FEED_COLUMNS, FEED_COUNTRIES, timeAgo, type BandPair,
   type FeedConfig, type FeedCountry, type FeedCounts, type FeedRun, type PlanSample,
 } from '@/lib/mc-excel-feed/shared'
 
@@ -213,7 +213,7 @@ export default function McExcelFeedCard() {
     return a.sheetUrl !== form.sheetUrl || a.tabName !== form.tabName || a.startDate !== form.startDate
       || a.countries.join() !== form.countries.join() || String(a.intervalMin) !== form.intervalMin
       || a.enabled !== form.enabled || a.placement !== form.placement || a.greyInactive !== form.greyInactive
-      || a.writeBack !== form.writeBack || a.bandColors !== form.bandColors
+      || a.writeBack !== form.writeBack || a.bandColors !== form.bandColors || a.bandPair !== form.bandPair
   }, [snap, form])
 
   const last = snap?.runs.find(r => r.trigger !== 'PREVIEW') ?? null
@@ -340,6 +340,21 @@ export default function McExcelFeedCard() {
                   <input type="checkbox" checked={form.bandColors} disabled={!snap.canAdmin} onChange={e => setForm(f => f && ({ ...f, bandColors: e.target.checked }))} />
                   <Palette className="h-3.5 w-3.5 text-indigo-500" /> Two booking colours
                 </label>
+                {form.bandColors && (
+                  <div className="inline-flex items-center gap-1.5" role="radiogroup" aria-label="Booking colours">
+                    {(Object.entries(BAND_PAIRS) as [BandPair, (typeof BAND_PAIRS)[BandPair]][]).map(([k, p]) => (
+                      <button key={k} type="button" role="radio" aria-checked={form.bandPair === k} title={p.label} disabled={!snap.canAdmin}
+                        onClick={() => setForm(f => f && ({ ...f, bandPair: k }))}
+                        className={cn('flex w-10 flex-col overflow-hidden rounded-md ring-1 transition',
+                          form.bandPair === k ? 'ring-2 ring-indigo-500 ring-offset-1' : 'ring-slate-300 hover:ring-slate-400')}>
+                        {[p.a, p.a, p.b, p.b, p.a].map((c, i) => (
+                          <span key={i} className="block h-1.5 border-b border-white/60 last:border-0" style={{ background: c }} />
+                        ))}
+                      </button>
+                    ))}
+                    <span className="text-[11px] text-slate-500">{BAND_PAIRS[form.bandPair]?.label}</span>
+                  </div>
+                )}
                 <label className="inline-flex cursor-pointer items-center gap-1.5 font-semibold text-slate-700">
                   <input type="checkbox" checked={form.enabled} disabled={!snap.canAdmin} onChange={e => setForm(f => f && ({ ...f, enabled: e.target.checked }))} />
                   Automatic sync on

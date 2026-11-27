@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     usedListValues(config).catch(() => ({})),
     kind === 'copy' ? loadFeed(config) : Promise.resolve(null),
   ])
-  const buf = await buildFeedWorkbook({ tabName: config.tabName, lists, rows: feed?.rows })
+  const buf = await buildFeedWorkbook({ tabName: config.tabName, lists, rows: feed?.rows, bands: config.bandPair })
   const day = new Date().toISOString().slice(0, 10)
   const name = kind === 'copy' ? `MC Feed — OPS copy ${day}.xlsx` : 'MC Feed — template.xlsx'
   return new NextResponse(new Uint8Array(buf), {

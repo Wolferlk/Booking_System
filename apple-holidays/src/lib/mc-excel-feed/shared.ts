@@ -164,10 +164,26 @@ export const LAYOUT_NAME = 'OPS_FEED_LAYOUT'
 /** The banner cell the sync stamps with "last synced …". */
 export const STAMP_NAME = 'OPS_FEED_STAMP'
 
-/** The two booking colours (and the header colours) — one palette for the layout and for OPS painting. */
+/**
+ * Booking colours: every booking's rows share one soft fill, and neighbouring
+ * bookings alternate between the two (odd bookings take `a`, even take `b`).
+ * Soft enough to read black text on and print, strong enough to see a booking
+ * end on any screen. The admin picks the pair in Settings.
+ */
+export type BandPair = 'grey-sky' | 'grey-mint' | 'grey-peach' | 'grey-white'
+export const BAND_PAIRS: Record<BandPair, { label: string; a: string; b: string }> = {
+  'grey-sky': { label: 'Soft grey + sky', a: '#E7EAEE', b: '#DBEAFB' },
+  'grey-mint': { label: 'Soft grey + mint', a: '#E7EAEE', b: '#DCF2E5' },
+  'grey-peach': { label: 'Soft grey + peach', a: '#E7EAEE', b: '#FCE8D8' },
+  'grey-white': { label: 'Soft grey + white', a: '#E7EAEE', b: '#FFFFFF' },
+}
+export const DEFAULT_BAND_PAIR: BandPair = 'grey-sky'
+export const bandPairOf = (v: unknown): BandPair => (typeof v === 'string' && v in BAND_PAIRS ? v as BandPair : DEFAULT_BAND_PAIR)
+
+/** Header colours (and the default booking colours) — one palette for the layout and for OPS painting. */
 export const PALETTE = {
-  bandA: '#EEF2FF',     // soft indigo
-  bandB: '#ECFDF5',     // soft mint
+  bandA: BAND_PAIRS[DEFAULT_BAND_PAIR].a,
+  bandB: BAND_PAIRS[DEFAULT_BAND_PAIR].b,
   ops: '#0F766E',       // teal — OPS writes
   desk: '#FEF3C7',      // amber — desk types
   deskText: '#92400E',
@@ -201,6 +217,8 @@ export interface FeedConfig {
   writeBack: boolean
   /** Two booking colours painted by OPS on a workbook without the OPS layout (the layout colours itself). */
   bandColors: boolean
+  /** Which two soft colours the bookings alternate between. */
+  bandPair: BandPair
 }
 
 export const DEFAULT_FEED_CONFIG: FeedConfig = {
@@ -214,6 +232,7 @@ export const DEFAULT_FEED_CONFIG: FeedConfig = {
   greyInactive: true,
   writeBack: false,
   bandColors: true,
+  bandPair: DEFAULT_BAND_PAIR,
 }
 
 export const FEED_COUNTRIES: { value: FeedCountry; label: string }[] = [

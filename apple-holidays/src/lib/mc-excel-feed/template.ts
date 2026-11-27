@@ -23,7 +23,7 @@
 import ExcelJS from 'exceljs'
 import { MEAL_PLAN_OPTIONS, VIETNAM_LOCATIONS } from '@/lib/agenda-suggestions'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
-import { colLetter, FEED_COLUMNS, LAYOUT_NAME, PALETTE, STAMP_NAME, STATUS, type FeedRow, type ListKey } from './shared'
+import { BAND_PAIRS, colLetter, DEFAULT_BAND_PAIR, FEED_COLUMNS, LAYOUT_NAME, PALETTE, STAMP_NAME, STATUS, type BandPair, type FeedRow, type ListKey } from './shared'
 import { cellContext, DATE_FORMAT, desiredCell, mapHeader, twoWayCell } from './plan'
 
 export const LISTS_TAB = 'Lists'
@@ -60,7 +60,8 @@ const FONT = 'Calibri'
 type CfAdder = { addConditionalFormatting: (cf: { ref: string; rules: unknown[] }) => void }
 type DvAdder = { dataValidations: { add: (a: string, v: ExcelJS.DataValidation) => void } }
 
-export async function buildFeedWorkbook(opts: { tabName: string; lists?: ListValues; rows?: FeedRow[] }): Promise<Buffer> {
+export async function buildFeedWorkbook(opts: { tabName: string; lists?: ListValues; rows?: FeedRow[]; bands?: BandPair }): Promise<Buffer> {
+  const band = BAND_PAIRS[opts.bands ?? DEFAULT_BAND_PAIR]
   const book = new ExcelJS.Workbook()
   book.creator = 'OPS — MC Excel Feed'
   book.created = new Date()
@@ -150,8 +151,8 @@ export async function buildFeedWorkbook(opts: { tabName: string; lists?: ListVal
         style: { font: { color: { argb: 'FF94A3B8' }, italic: true, strike: true }, fill: cfFill('#F8FAFC') } },
       { type: 'expression', priority: 3, formulae: [`AND($${R}${first}<>"",$${R}${first}<>$${R}${first - 1})`],
         style: { border: { top: { style: 'thin', color: { argb: 'FF475569' } } } } },
-      { type: 'expression', priority: 4, formulae: [`AND(ISNUMBER($${A}${first}),ISODD($${A}${first}))`], style: { fill: cfFill(PALETTE.bandA) } },
-      { type: 'expression', priority: 5, formulae: [`AND(ISNUMBER($${A}${first}),ISEVEN($${A}${first}))`], style: { fill: cfFill(PALETTE.bandB) } },
+      { type: 'expression', priority: 4, formulae: [`AND(ISNUMBER($${A}${first}),ISODD($${A}${first}))`], style: { fill: cfFill(band.a) } },
+      { type: 'expression', priority: 5, formulae: [`AND(ISNUMBER($${A}${first}),ISEVEN($${A}${first}))`], style: { fill: cfFill(band.b) } },
     ],
   })
   cf.addConditionalFormatting({

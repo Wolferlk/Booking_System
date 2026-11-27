@@ -11,7 +11,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import {
-  DEFAULT_FEED_CONFIG, FEED_COUNTRIES, FEED_SETTINGS,
+  bandPairOf, DEFAULT_FEED_CONFIG, FEED_COUNTRIES, FEED_SETTINGS,
   type FeedConfig, type FeedCountry, type FeedRun, type TwoWayKey,
 } from './shared'
 import type { BaseEntry } from './plan'
@@ -52,6 +52,7 @@ function normaliseConfig(c: FeedConfig): FeedConfig {
     greyInactive: c.greyInactive !== false,
     writeBack: c.writeBack === true,
     bandColors: c.bandColors !== false,
+    bandPair: bandPairOf(c.bandPair),
   }
 }
 
@@ -244,14 +245,22 @@ export async function settleConflict(input: {
   return true
 }
 
-/** Booking colours OPS painted on a sheet without the layout: bookingRef → "parity:rows". */
-export async function readPaint(sheetKey: string): Promise<Map<string, string>> {
-  const v = parse<{ s: string; m: Record<string, string> }>(await getSetting(FEED_SETTINGS.paint))
-  return new Map(v?.s === sheetKey ? Object.entries(v.m) : [])
+/**
+ * Booking colours OPS painted on a sheet without the layout: "REF#n" → "a12" /
+ * "b7" (which colour, how many rows). Scoped to the sheet and the colour pair,
+ * so a new link or a new pair starts from an unpainted sheet.
+ */
+export async function readPaint(sheetKey: string, pair: string): Promise<Map<string, string>> {
+  const v = parse<{ s: string; p?: string; m: Record<string, string> }>(await getSetting(FEED_SETTINGS.paint))
+  return new Map(v?.s === sheetKey && v.p === pair ? Object.entries(v.m) : [])
 }
 
-export async function savePaint(sheetKey: string, m: Map<string, string>): Promise<void> {
-  await setSetting(FEED_SETTINGS.paint, JSON.stringify({ s: sheetKey, m: Object.fromEntries(m) })).catch(() => undefined)
+/** False when the map is too big for one setting — those blocks are simply re-checked next time. */
+export async function savePaint(sheetKey: string, pair: string, m: Map<string, string>): Promise<boolean> {
+  const json = JSON.stringify({ s: sheetKey, p: pair, m: Object.fromEntries(m) })
+  if (json.length > 60_000) return false
+  await setSetting(FEED_SETTINGS.paint, json).catch(() => undefined)
+  return true
 }
 
 /**

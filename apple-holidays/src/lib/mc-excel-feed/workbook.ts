@@ -248,30 +248,28 @@ export async function readColumn(ref: CachedSheetRef, tab: string, col: number, 
 }
 
 /**
- * Fill row blocks with a colour, 20 per Graph $batch, one after another inside
- * each batch (dependsOn) so the workbook never sees parallel writes. Cosmetic:
- * failures are counted, never thrown.
+ * Fill rows first…last (columns A…lastCol) with one colour. A direct call, not
+ * a Graph $batch: batched fills came back "200" per request on the live
+ * workbook and still left it white (2026-11-27), so painting goes through the
+ * same path as the value writes and is checked afterwards with readFill.
+ * Cosmetic: false on failure, never throws.
  */
-export async function fillBlocks(
-  ref: CachedSheetRef, tab: string, blocks: { first: number; last: number; color: string }[], lastCol: number, session: string | null,
-): Promise<number> {
-  let failed = 0
-  for (let i = 0; i < blocks.length; i += 20) {
-    const slice = blocks.slice(i, i + 20)
-    const requests = slice.map((b, j) => ({
-      id: String(j + 1),
-      method: 'PATCH',
-      url: `${rng(ref, tab, `A${b.first}:${colLetter(lastCol)}${b.last}`)}/format/fill`,
-      headers: { 'Content-Type': 'application/json', ...(session ? { 'workbook-session-id': session } : {}) },
-      body: { color: b.color },
-      ...(j ? { dependsOn: [String(j)] } : {}),
-    }))
-    try {
-      const r = await call<{ responses?: { status: number }[] }>('/$batch', { method: 'POST', body: JSON.stringify({ requests }) })
-      failed += (r.responses ?? []).filter(x => x.status >= 400).length
-    } catch { failed += slice.length }
-  }
-  return failed
+export async function fillRows(
+  ref: CachedSheetRef, tab: string, first: number, last: number, lastCol: number, color: string, session: string | null,
+): Promise<boolean> {
+  try {
+    await call(`${rng(ref, tab, `A${first}:${colLetter(lastCol)}${last}`)}/format/fill`, { method: 'PATCH', session, body: JSON.stringify({ color }) })
+    return true
+  } catch { return false }
+}
+
+/** The fill colour Excel reports for one cell, upper-case "#RRGGBB" ("#FFFFFF" when unfilled), or null when it can't be read. */
+export async function readFill(ref: CachedSheetRef, tab: string, cell: string, session: string | null): Promise<string | null> {
+  try {
+    const r = await call<{ color?: string | null }>(`${rng(ref, tab, cell)}/format/fill`, { session })
+    const c = String(r.color ?? '').trim().toUpperCase()
+    return /^#[0-9A-F]{6}$/.test(c) ? c : '#FFFFFF'
+  } catch { return null }
 }
 
 export async function freezeHeader(ref: CachedSheetRef, tab: string, rows: number, session: string | null): Promise<void> {
