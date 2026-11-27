@@ -1470,12 +1470,14 @@ export default function AgendaPage() {
       // Matched against the whole chart, so this movement gets the same text
       // "Confirmation Descriptions" would give it (and never a sibling's).
       const match = matchSourceDescriptions(items, sourceItems, booking?.arrivalDate).byItem.get(idx)
-      if (!match) throw new Error('AppleSystem has no description for this movement\'s date and activity')
+      // B2C answers with the Aahaas admin's product text, everyone else with AppleSystem.
+      const sourceName = typeof json.data?.source === 'string' && json.data.source ? json.data.source : 'AppleSystem'
+      if (!match) throw new Error(`${sourceName} has no description for this movement's date and activity`)
 
       setItems(current => current.map((x, j) => j === idx ? { ...x, details: match.description } : x))
       toast.success(match.confidence === 'check'
         ? `Loaded "${match.title || 'that day'}" — please check it is the right activity`
-        : 'Official API description loaded into this draft')
+        : `${sourceName} loaded into this draft`)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'API description refresh failed')
     } finally {
@@ -2464,7 +2466,7 @@ export default function AgendaPage() {
                                 type="button"
                                 onClick={() => refreshSourceDescription(i)}
                                 disabled={sourceDescribingIdx === i}
-                                title="Fetch the latest official description from AppleSystem. This only changes the unsaved draft."
+                                title="Fetch the latest official description — from AppleSystem, or for an Aahaas B2C booking the product description shown on the Aahaas admin. This only changes the unsaved draft."
                                 className="flex items-center gap-1 text-[11px] font-medium text-sky-600 hover:text-sky-800 disabled:opacity-50"
                               >
                                 {sourceDescribingIdx === i

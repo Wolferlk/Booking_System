@@ -628,6 +628,32 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
 }
 
 /**
+ * The admin dashboard's product description (`tbl_lifestyle.lifestyle_description`,
+ * HTML) for Lifestyle products, keyed by `lifestyle_id`.
+ *
+ * Its own query on purpose: `fetchOrderProducts` feeds the importer, the Update
+ * Booking sync and placement, and none of them should carry a long TEXT column
+ * they never read. Primary-key lookup, read-only; deleted products still answer
+ * (a booked product keeps its text even after the store retires it).
+ */
+export async function fetchLifestyleDescriptions(lifestyleIds: number[]): Promise<Map<number, string>> {
+  const ids = Array.from(new Set(lifestyleIds.filter((id) => Number.isInteger(id) && id > 0)))
+  const out = new Map<number, string>()
+  if (ids.length === 0) return out
+  const rows = await b2cQuery<mysql.RowDataPacket & { lifestyle_id: number; lifestyle_description: string | null }>(
+    `SELECT lifestyle_id, lifestyle_description
+       FROM tbl_lifestyle
+      WHERE lifestyle_id IN (${sanitizeIds(ids)})
+      LIMIT ${ids.length}`,
+  )
+  for (const r of rows) {
+    const text = String(r.lifestyle_description ?? '')
+    if (text.trim()) out.set(Number(r.lifestyle_id), text)
+  }
+  return out
+}
+
+/**
  * Give every hotel line a real country and city.
  *
  *  - A `hotels.city` that is a street ("88 Đường Bùi Thị Xuân") is replaced by

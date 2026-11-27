@@ -27,6 +27,8 @@ import { splitRouteLabel } from '@/lib/b2c-booking-map'
 import { arrangeTransferChains, matchLegRows, transferLegsOf, type TransferLeg } from '@/lib/agenda-transfer-chain'
 import { isB2cBooking } from '@/lib/booking-source'
 import { cityForDate, isTripCity, loadDestinationPlan } from '@/lib/b2c-destination-ai'
+import { EMPTY_PRODUCT_DESCRIPTIONS, productDescriptionFor, withProductDescriptions } from '@/lib/b2c-product-description'
+import { loadB2cProductDescriptions } from '@/lib/b2c-product-description-server'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -116,7 +118,20 @@ export async function generateAgendaForBooking(
   // It decides every row's Location, so a store field like "Negombo" on a
   // Vietnam trip can no longer leak into the chart.
   const isB2c = isB2cBooking(booking.agent)
-  const destPlan = isB2c ? await loadDestinationPlan(booking.bookingRef) : null
+  // B2C: each product's description exactly as the Aahaas admin dashboard shows
+  // it (tbl_lifestyle.lifestyle_description). It becomes a Lifestyle movement's
+  // details; the itinerary's own audit line ("Lifestyle · Product: … · Time: …")
+  // still feeds the prompt and the transfer-chain rules, which read it.
+  // Read-only, never throws — empty when the store cannot be reached.
+  const [destPlan, adminDescriptions] = isB2c
+    ? await Promise.all([loadDestinationPlan(booking.bookingRef), loadB2cProductDescriptions(booking)])
+    : [null, EMPTY_PRODUCT_DESCRIPTIONS]
+  if (isB2c) {
+    console.log(`[agenda/generate] ${ref}: ${adminDescriptions.entries.length} admin product description(s) from store order ${adminDescriptions.orderId ?? '—'}`)
+  }
+  /** What a movement built from this itinerary row should say. */
+  const detailTextOf = (row: { title?: string | null; date?: unknown; description?: string | null }): string | null =>
+    (isB2c ? productDescriptionFor(adminDescriptions, row) : null) ?? row.description ?? null
   const b2cLocation = (date: string, current?: unknown): string => {
     if (!destPlan) return String(current ?? '')
     if (isTripCity(destPlan, String(current ?? ''))) return String(current)
@@ -592,7 +607,9 @@ ${tqDocumentText
       ...source,
       idx,
       titleKey: String(source.title ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(),
-      description: String(source.description ?? '').trim(),
+      description: String(detailTextOf(source) ?? '').trim(),
+      // The admin dashboard's own product text — used as it stands (below).
+      isAdminText: isB2c && productDescriptionFor(adminDescriptions, source) !== null,
     }))
     .filter(source => source.description)
   const sourceAware = deduped.map((item, rowIdx) => {
@@ -607,6 +624,9 @@ ${tqDocumentText
       : sameDate.find(row => row.titleKey === titleKey)
         ?? sameDate.find(row => row.titleKey && titleKey && (row.titleKey.includes(titleKey) || titleKey.includes(row.titleKey)))
     if (!source) return item
+    // B2C product: the details read exactly as the admin dashboard does, not
+    // the model's paraphrase. Transfer-leg remarks are added after this.
+    if (source.isAdminText) return { ...item, details: source.description }
 
     const current = String(item.details ?? '').trim()
     const sourceKey = source.description.toLowerCase().replace(/\s+/g, ' ').trim()
@@ -622,7 +642,10 @@ ${tqDocumentText
   // the model left out is appended here rather than lost. The same guarantee the
   // email pipeline has always had (see `lib/incoming-mail-automation.ts`).
   const normText = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const covered = sourceAware.map(it => normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
+  // The model's own wording counts too: a B2C row's details are now the admin
+  // product text, which need not repeat the title the model echoed.
+  const covered = sourceAware.map((it, i) =>
+    normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''} ${it.details === deduped[i]?.details ? '' : deduped[i]?.details ?? ''}`))
   const tokensOf = (key: string) => key.split(' ').filter(t => t.length > 3)
   // A title is "covered" when it appears verbatim on some row, or when most of
   // its distinctive words do — the model routinely re-words the middle of a
@@ -691,12 +714,13 @@ ${tqDocumentText
       const src = structuredData.itineraryItems[leg.src]
       // A single departure time ("Time: 18:30"), not an opening window ("10:00-17:00").
       const time = /\bTime:\s*(\d{1,2}:\d{2})(?!\s*[-–]\s*\d)/.exec(String(src.description ?? ''))?.[1]
+      const admin = isB2c ? productDescriptionFor(adminDescriptions, src) : null
       return {
         date:        leg.date,
         location:    destPlan ? b2cLocation(leg.date) : booking.tourDestination ?? '',
         fromPoint:   pointFor(leg.from, leg.date),
         toPoint:     pointFor(leg.to, leg.date),
-        details:     [src.title, src.description].filter(Boolean).join(' · '),
+        details:     admin ?? [src.title, src.description].filter(Boolean).join(' · '),
         mealPlan:    null,
         meetingTime: time ? time.padStart(5, '0') : '08:00',
         timeFrom:    null,
@@ -714,6 +738,7 @@ ${tqDocumentText
       // Transfer") becomes a real From/To, with "Hotel" resolved to that night's
       // hotel, so a re-added return leg is ready for a driver as it stands.
       const route = moves ? splitRouteLabel(title.replace(/\s*\((outbound|return|\d+ of \d+)\)\s*$/i, '')) : null
+      const admin = isB2c ? productDescriptionFor(adminDescriptions, src) : null
       return {
         date:        src.date,
         location:    destPlan ? b2cLocation(src.date) : booking.tourDestination ?? '',
@@ -721,7 +746,7 @@ ${tqDocumentText
         // Otherwise the complete confirmed title, verbatim — this row exists
         // precisely because the model would not copy it.
         toPoint:     route ? pointFor(route.to, src.date) : title,
-        details:     route ? [title, src.description].filter(Boolean).join(' · ') : (src.description ?? null),
+        details:     admin ?? (route ? [title, src.description].filter(Boolean).join(' · ') : (src.description ?? null)),
         mealPlan:    null,
         meetingTime: serviceType === 'OWN_ARRANGEMENT' ? null : '08:00',
         timeFrom:    null,
@@ -785,9 +810,12 @@ ${tqDocumentText
   // A new chart starts with the confirmation's own wording on every movement —
   // the same text "Confirmation Descriptions" would load (confident matches
   // only; the rest keep the generated paragraph).
+  // B2C: the store's own product text instead of AppleSystem, which never holds
+  // a B2C booking (and whose number search can land on an unrelated quote).
   const filled = await fillConfirmationDescriptions(ref, finalItems, {
     arrivalDate: booking.arrivalDate,
-    fallback: booking.itineraryItems,
+    fallback: isB2c ? withProductDescriptions(booking.itineraryItems, adminDescriptions) : booking.itineraryItems,
+    skipAppleSystem: isB2c,
   })
   if (filled.replaced) {
     console.log(`[agenda/generate] ${ref}: ${filled.replaced} description(s) set from the confirmation (${filled.source})`)

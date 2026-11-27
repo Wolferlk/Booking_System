@@ -59,17 +59,25 @@ export async function fillConfirmationDescriptions<T extends FillableItem>(
     arrivalDate?: unknown
     /** The booking's stored itinerary — used when AppleSystem has nothing. */
     fallback?: { dayNo?: number | null; date?: unknown; title?: string | null; description?: string | null }[]
+    /**
+     * Go straight to `fallback`. For bookings that never live in AppleSystem
+     * (Aahaas B2C): a bare store order id like "16399" can partially match an
+     * unrelated "VN16399" quotation, whose text must never land on this chart.
+     */
+    skipAppleSystem?: boolean
   } = {},
 ): Promise<{ items: T[]; replaced: number; source: 'applesystem' | 'booking' | 'none' }> {
   if (!items.length) return { items, replaced: 0, source: 'none' }
 
   let entries: SourceEntry[] = []
   let source: 'applesystem' | 'booking' | 'none' = 'none'
-  try {
-    entries = await loadAppleSystemEntries(bookingRef)
-    if (entries.some(e => e.description?.trim())) source = 'applesystem'
-  } catch (err) {
-    console.warn(`[agenda/confirmation-fill] ${bookingRef}: AppleSystem read failed — ${err instanceof Error ? err.message : err}`)
+  if (!opts.skipAppleSystem) {
+    try {
+      entries = await loadAppleSystemEntries(bookingRef)
+      if (entries.some(e => e.description?.trim())) source = 'applesystem'
+    } catch (err) {
+      console.warn(`[agenda/confirmation-fill] ${bookingRef}: AppleSystem read failed — ${err instanceof Error ? err.message : err}`)
+    }
   }
   if (source === 'none' && opts.fallback?.length) {
     entries = opts.fallback.map(f => ({

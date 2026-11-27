@@ -41,7 +41,7 @@ export default function ConfirmationDescriptionsModal({ open, onClose, bookingRe
     try {
       const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/agenda/source-description`, { cache: 'no-store' })
       const json = await res.json()
-      if (!res.ok || !json.success) throw new Error(json.error || 'Could not read the confirmation from AppleSystem')
+      if (!res.ok || !json.success) throw new Error(json.error || 'Could not read the confirmation descriptions')
       setSources(Array.isArray(json.data?.items) ? json.data.items : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not read the confirmation')
@@ -93,7 +93,7 @@ export default function ConfirmationDescriptionsModal({ open, onClose, bookingRe
       {loading ? (
         <div className="flex flex-col items-center gap-3 py-14 text-sm text-slate-500">
           <Loader2 className="h-6 w-6 animate-spin text-sky-500" />
-          Reading the confirmation from AppleSystem…
+          Reading the confirmation (AppleSystem, or the Aahaas admin for B2C)…
         </div>
       ) : error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
