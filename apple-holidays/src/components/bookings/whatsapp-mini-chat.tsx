@@ -84,7 +84,7 @@ function Highlight({ text, q }: { text: string; q: string }) {
     <>
       {parts.map((p, i) =>
         p.toLowerCase() === q.toLowerCase()
-          ? <mark key={i} className="bg-yellow-200 rounded px-0.5">{p}</mark>
+          ? <mark key={i} className="bg-yellow-200 text-slate-900 rounded px-0.5">{p}</mark>
           : <span key={i}>{p}</span>,
       )}
     </>
@@ -697,28 +697,30 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
 
           {/* Message list */}
           <div className="relative flex-1 min-h-0">
+            {/* data-theme-keep: the booking page's generic dark override
+                (booking-dark.generated.css) recolours bg-white / text-slate-800
+                but not the WhatsApp greens, which left light text on the light
+                green outbound bubble. The list opts out and styles its own dark
+                mode via the [html.bk-dark_&] variants below. */}
             <div
               ref={listRef}
               onScroll={onListScroll}
-              className="h-full overflow-y-auto overscroll-contain px-3 py-3 bg-[#efeae2]"
-              style={{
-                backgroundImage: 'radial-gradient(rgba(0,0,0,0.035) 1px, transparent 1px)',
-                backgroundSize: '14px 14px',
-              }}
+              data-theme-keep
+              className="h-full overflow-y-auto overscroll-contain px-3 py-3 bg-[#efeae2] [html.bk-dark_&]:bg-[#0b141a] bg-[radial-gradient(rgba(0,0,0,0.035)_1px,transparent_1px)] [html.bk-dark_&]:bg-[radial-gradient(rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[length:14px_14px]"
             >
               {!loaded && (
                 <div className="space-y-2 animate-pulse">
                   {[60, 45, 70, 40].map((w, i) => (
                     <div key={i} className={cn('flex', i % 2 ? 'justify-end' : 'justify-start')}>
-                      <div className="h-9 rounded-2xl bg-white/70" style={{ width: `${w}%` }} />
+                      <div className="h-9 rounded-2xl bg-white/70 [html.bk-dark_&]:bg-[#202c33]" style={{ width: `${w}%` }} />
                     </div>
                   ))}
                 </div>
               )}
 
               {loaded && shown.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-full text-center text-slate-500 py-8">
-                  <div className="w-14 h-14 rounded-full bg-white/80 flex items-center justify-center mb-3 shadow-sm">
+                <div className="flex flex-col items-center justify-center h-full text-center text-slate-500 [html.bk-dark_&]:text-slate-400 py-8">
+                  <div className="w-14 h-14 rounded-full bg-white/80 [html.bk-dark_&]:bg-[#202c33] flex items-center justify-center mb-3 shadow-sm">
                     {query ? <Search className="w-6 h-6 text-slate-400" /> : <MessageCircle className="w-7 h-7 text-green-500" />}
                   </div>
                   <p className="text-xs font-medium">{query ? 'No messages match your search.' : 'No messages yet.'}</p>
@@ -745,7 +747,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                   <div key={msg.id}>
                     {newDay && (
                       <div className="flex justify-center my-2 sticky top-0 z-10">
-                        <span className="text-[10px] font-medium text-slate-600 bg-white/90 backdrop-blur px-2.5 py-0.5 rounded-full shadow-sm">
+                        <span className="text-[10px] font-medium text-slate-600 bg-white/90 [html.bk-dark_&]:text-slate-300 [html.bk-dark_&]:bg-[#182229]/95 backdrop-blur px-2.5 py-0.5 rounded-full shadow-sm">
                           {dayLabel(at)}
                         </span>
                       </div>
@@ -754,7 +756,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                       {isOut && msg.body && !msg.id.startsWith('tmp-') && (
                         <button
                           onClick={() => copy(msg.body!)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/70 transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/70 [html.bk-dark_&]:hover:text-slate-200 [html.bk-dark_&]:hover:bg-white/10 transition-opacity"
                           title="Copy"
                         >
                           <Copy className="w-3 h-3" />
@@ -763,15 +765,15 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                       <div
                         className={cn(
                           'max-w-[80%] rounded-2xl px-3 py-1.5 shadow-sm',
-                          isOut ? 'bg-[#d9fdd3]' : 'bg-white',
+                          isOut ? 'bg-[#d9fdd3] [html.bk-dark_&]:bg-[#005c4b]' : 'bg-white [html.bk-dark_&]:bg-[#202c33]',
                           !grouped && (isOut ? 'rounded-tr-sm' : 'rounded-tl-sm'),
-                          failed && 'ring-1 ring-red-300 bg-red-50',
+                          failed && 'ring-1 ring-red-300 bg-red-50 [html.bk-dark_&]:ring-red-500/60 [html.bk-dark_&]:bg-red-950/70',
                           muted && 'opacity-60',
                           msg.status === 'sending' && 'opacity-75',
                         )}
                       >
                         {msg.senderName && !grouped && (
-                          <p className={cn('text-[10px] font-semibold mb-0.5', isOut ? 'text-green-700' : 'text-sky-700')}>
+                          <p className={cn('text-[10px] font-semibold mb-0.5', isOut ? 'text-green-700 [html.bk-dark_&]:text-emerald-300' : 'text-sky-700 [html.bk-dark_&]:text-sky-300')}>
                             {msg.senderName}
                           </p>
                         )}
@@ -783,16 +785,16 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                         )}
                         {msg.mediaUrl && msg.mediaType !== 'image' && (
                           <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer"
-                             className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-sky-700 bg-black/5 rounded-lg px-2 py-1.5 hover:bg-black/10">
+                             className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-sky-700 bg-black/5 rounded-lg px-2 py-1.5 hover:bg-black/10 [html.bk-dark_&]:text-sky-300 [html.bk-dark_&]:bg-white/10 [html.bk-dark_&]:hover:bg-white/15">
                             📎 View attachment
                           </a>
                         )}
                         {msg.body && (
-                          <p className={cn('text-xs text-slate-800 whitespace-pre-wrap break-words leading-relaxed', muted && 'line-through')}>
+                          <p className={cn('text-xs text-slate-800 [html.bk-dark_&]:text-slate-100 whitespace-pre-wrap break-words leading-relaxed', muted && 'line-through')}>
                             <Highlight text={msg.body} q={query.trim()} />
                           </p>
                         )}
-                        <div className="flex items-center justify-end gap-1 mt-0.5 text-[10px] text-slate-500">
+                        <div className="flex items-center justify-end gap-1 mt-0.5 text-[10px] text-slate-500 [html.bk-dark_&]:text-slate-400">
                           {threadPhones.length > 1 && msg.phone && (
                             <span className="font-mono opacity-70">+{digits(msg.phone)}</span>
                           )}
@@ -801,13 +803,13 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                         </div>
 
                         {msg.status === 'pending' && (
-                          <div className="mt-1 pt-1 border-t border-amber-200/70 flex items-center gap-2 text-[10px] text-amber-700">
+                          <div className="mt-1 pt-1 border-t border-amber-200/70 flex items-center gap-2 text-[10px] text-amber-700 [html.bk-dark_&]:text-amber-300 [html.bk-dark_&]:border-amber-300/30">
                             <span className="flex-1">Queued · goes out when the client replies</span>
                             {!msg.mediaType && (
                               <button
                                 onClick={() => sendQueuedNow(msg.id)}
                                 disabled={sendingQueued !== null}
-                                className="flex items-center gap-0.5 font-semibold text-green-700 hover:underline disabled:opacity-50"
+                                className="flex items-center gap-0.5 font-semibold text-green-700 [html.bk-dark_&]:text-emerald-300 hover:underline disabled:opacity-50"
                                 title="Send it now as a WhatsApp template — delivers even though the 24h window is closed (line breaks become · )"
                               >
                                 {sendingQueued === msg.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
@@ -818,7 +820,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                           </div>
                         )}
                         {failed && msg.body && (
-                          <div className="mt-1 pt-1 border-t border-red-200 flex items-center gap-2 text-[10px] text-red-600">
+                          <div className="mt-1 pt-1 border-t border-red-200 flex items-center gap-2 text-[10px] text-red-600 [html.bk-dark_&]:text-red-300 [html.bk-dark_&]:border-red-400/30">
                             <span className="flex-1">Not delivered</span>
                             <button
                               onClick={() => send(msg.body!, msg.id.startsWith('tmp-') ? msg.id : undefined)}
@@ -841,7 +843,7 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                       {!isOut && msg.body && (
                         <button
                           onClick={() => copy(msg.body!)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/70 transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-white/70 [html.bk-dark_&]:hover:text-slate-200 [html.bk-dark_&]:hover:bg-white/10 transition-opacity"
                           title="Copy"
                         >
                           <Copy className="w-3 h-3" />
