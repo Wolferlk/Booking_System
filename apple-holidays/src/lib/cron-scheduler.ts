@@ -411,6 +411,15 @@ async function startAgendaAutoGenerateTask() {
   }
 }
 
+async function startAgendaFlightTimeTask() {
+  try {
+    const { startAgendaFlightTimeScheduler } = await import('./agenda-flight-time-scheduler')
+    startAgendaFlightTimeScheduler()
+  } catch (err) {
+    console.error('[Scheduler] agenda flight-time sweep error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startAgendaAutoEmailScheduler() {
   try {
     // node-cron scheduler: emails the tour confirmation (agenda PDF) to customers
@@ -519,6 +528,11 @@ export function startCronJobs() {
 
   // New booking → movement chart built in the background ~1 min later.
   void startAgendaAutoGenerateTask()
+
+  // Flights added / corrected after the chart was built → its EMPTY airport
+  // meeting times are filled from Settings → Airport Pickup Timings. Flight
+  // writes are caught at once by a Prisma hook; this 5-min sweep is the net.
+  void startAgendaFlightTimeTask()
 
   // Auto mail reading and the OneDrive auto-poll are hard-disabled in code
   // (see automation-switches.ts) — don't even schedule their ticks, so no

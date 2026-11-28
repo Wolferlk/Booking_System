@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { PlaneTakeoff, PlaneLanding, Minus, Plus, RotateCcw, Save, Globe2, MapPin, Hotel, UserCheck } from 'lucide-react'
+import { PlaneTakeoff, PlaneLanding, Minus, Plus, RotateCcw, Save, Globe2, MapPin, Hotel, UserCheck, Wand2 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { to12h } from '@/lib/clock-time'
 import {
@@ -34,7 +34,7 @@ const ARRIVAL_PRESETS = [0, 15, 30, 45, 60]
 const SAMPLE_DEP = '11:15'
 const SAMPLE_ARR = '12:40'
 
-type RuleKey = Exclude<keyof FlightPickupRules, 'roundToMin'>
+type RuleKey = Exclude<keyof FlightPickupRules, 'roundToMin' | 'autoFillBlank' | 'retimeAutoFilled'>
 
 function Stepper({
   value, onChange, range, presets, accent,
@@ -88,6 +88,35 @@ function Stepper({
         ))}
       </div>
     </div>
+  )
+}
+
+function Toggle({
+  on, onChange, title, hint, disabled = false,
+}: {
+  on: boolean
+  onChange: (v: boolean) => void
+  title: string
+  hint: string
+  disabled?: boolean
+}) {
+  return (
+    <label className={`flex items-start gap-2.5 ${disabled ? 'opacity-50' : 'cursor-pointer'}`}>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        disabled={disabled}
+        onClick={() => onChange(!on)}
+        className={`mt-0.5 relative inline-flex h-5 w-9 flex-shrink-0 rounded-full transition-colors ${on ? 'bg-sky-600' : 'bg-slate-300'}`}
+      >
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+      </button>
+      <span>
+        <span className="block text-[12px] font-semibold text-slate-700">{title}</span>
+        <span className="block text-[11px] text-slate-500">{hint}</span>
+      </span>
+    </label>
   )
 }
 
@@ -244,6 +273,26 @@ export default function AirportPickupCard({ settings, saving, onSave }: Props) {
             leftTime={SAMPLE_ARR} leftLabel="Dom lands" leftIcon={<PlaneLanding className="w-3 h-3" />}
             rightTime={arrDom} rightLabel="Meet" rightIcon={<UserCheck className="w-3 h-3" />}
             gap={draft.arrivalDomesticMin} accent="emerald"
+          />
+        </div>
+
+        {/* Late flight details → empty airport meeting times (lib/agenda-flight-time-sync.ts) */}
+        <div className="rounded-xl border border-sky-100 bg-sky-50/40 p-3 space-y-2">
+          <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-sky-600">
+            <Wand2 className="w-3.5 h-3.5" /> When flight details arrive after the chart was built
+          </p>
+          <Toggle
+            on={draft.autoFillBlank}
+            onChange={v => setDraft(d => ({ ...d, autoFillBlank: v, retimeAutoFilled: v ? d.retimeAutoFilled : false }))}
+            title="Fill empty airport meeting times automatically"
+            hint="Within seconds of a flight being added or corrected, every upcoming airport row with an EMPTY meeting time gets one from the timings above. A time someone typed is never changed, and no WhatsApp is sent."
+          />
+          <Toggle
+            on={draft.retimeAutoFilled}
+            disabled={!draft.autoFillBlank}
+            onChange={v => setDraft(d => ({ ...d, retimeAutoFilled: v }))}
+            title="Also move auto-filled times when the flight changes again"
+            hint="Only a time this auto-fill wrote itself, and only while nobody has edited it. Off: once filled, the time stays until someone changes it."
           />
         </div>
 

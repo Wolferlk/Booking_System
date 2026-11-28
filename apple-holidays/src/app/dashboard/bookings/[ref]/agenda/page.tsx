@@ -47,6 +47,8 @@ import SectionLogsButton from '@/components/logs/section-logs-button'
 import ExcelMcGenerate, { type ExcelMcApply } from '@/components/agenda/excel-mc-generate'
 import { itemFromLine, type McSheetLine } from '@/lib/vn-mc-import/shared'
 import { countryLabel, type OperationCountry } from '@/lib/country-detection'
+import FlightTimeFillPanel, { type LocalFill } from '@/components/agenda/flight-time-fill-panel'
+import { rowKey as flightTimeRowKey } from '@/lib/agenda-flight-time-plan'
 
 /** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
 function normalizeMealPlan(raw: string | null | undefined): string {
@@ -551,6 +553,8 @@ export default function AgendaPage() {
 
   // Airport pickup / arrivals timings from Settings — shipped defaults until loaded.
   const [pickupRules,       setPickupRules]       = useState<FlightPickupRules>(DEFAULT_FLIGHT_PICKUP_RULES)
+  // Rows whose meeting time the late-flight auto-fill wrote (rowKey → time), for the row badge.
+  const [autoFlightRows,    setAutoFlightRows]    = useState<Map<string, string>>(() => new Map())
 
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
@@ -2261,6 +2265,32 @@ export default function AgendaPage() {
           </div>
         )}
 
+        {/* ── LATE FLIGHT DETAILS → EMPTY AIRPORT MEETING TIMES ──
+            lib/agenda-flight-time-sync.ts. Only ever fills an empty time. */}
+        {!generating && items.length > 0 && (
+          <FlightTimeFillPanel
+            bookingRef={ref}
+            items={items}
+            isEditing={isEditing}
+            canEdit={canEdit}
+            isAdmin={isAdmin}
+            onReload={() => { void loadAgenda() }}
+            onAutoRows={setAutoFlightRows}
+            onApplyLocal={(fills: LocalFill[]) => {
+              const byId = new Map(fills.map(f => [f.itemId, f]))
+              setItems(is => is.map(x => {
+                const f = x.id ? byId.get(x.id) : undefined
+                if (!f || x.meetingTime.trim()) return x
+                return {
+                  ...x,
+                  meetingTime: f.meetingTime,
+                  ...(f.timeTo !== undefined && !x.timeFrom && !x.timeTo ? { timeFrom: f.timeFrom ?? '', timeTo: f.timeTo ?? '' } : {}),
+                }
+              }))
+            }}
+          />
+        )}
+
         {/* ── EMPTY STATE ── */}
         {!generating && items.length === 0 && (
           <Card className="p-12 text-center">
@@ -2752,6 +2782,14 @@ export default function AgendaPage() {
                           )}
                           {item.meetingTime && (
                             <span className="text-xs text-slate-500">Meet: {to12h(item.meetingTime)}</span>
+                          )}
+                          {item.meetingTime && autoFlightRows.get(flightTimeRowKey(item)) === item.meetingTime && (
+                            <span
+                              title="Set automatically from the flight details when they were added (Settings → Airport Pickup Timings)"
+                              className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200"
+                            >
+                              <Plane className="w-2.5 h-2.5" /> from flight
+                            </span>
                           )}
                           {isSicType(item.serviceType) && (item.timeFrom || item.timeTo) && (
                             <span className="text-xs text-slate-500">{range12h(item.timeFrom, item.timeTo)}</span>

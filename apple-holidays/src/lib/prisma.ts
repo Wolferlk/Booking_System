@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { loadEnvConfig } from '@next/env'
 import { applyPoolSettings, poolSettings } from './db-tuning'
+import { installFlightWriteHook } from './agenda-flight-time-hook'
 
 loadEnvConfig(process.cwd())
 
@@ -74,8 +75,12 @@ export const prisma =
       void globalForPrisma.prisma.$disconnect().catch(() => {})
     }
     globalForPrisma.prismaDatabaseUrl = databaseUrl
-    return (globalForPrisma.prisma = new PrismaClient({
+    const client = new PrismaClient({
       datasources: databaseUrl ? { db: { url: databaseUrl } } : undefined,
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-    }))
+    })
+    // Late flight details → fill the chart's empty airport meeting times.
+    // Observes flight writes only; see lib/agenda-flight-time-hook.ts.
+    try { installFlightWriteHook(client) } catch { /* never block the client */ }
+    return (globalForPrisma.prisma = client)
   })()

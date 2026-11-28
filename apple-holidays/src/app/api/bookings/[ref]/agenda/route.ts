@@ -28,6 +28,7 @@ import { carryTicketsControl } from '@/lib/tickets-control'
 import { carryMcDetails } from '@/lib/mc-details'
 import { carryTransRecon } from '@/lib/trans-recon/server'
 import { carryMcDone } from '@/lib/mc-done'
+import { queueAgendaFlightTimeSync } from '@/lib/agenda-flight-time-sync'
 import { carryMcSupplier } from '@/lib/mc-supplier'
 import { carryMcExcelFeed } from '@/lib/mc-excel-feed/config'
 import type { UserRole } from '@prisma/client'
@@ -501,6 +502,11 @@ export async function POST(
   } catch (waErr) {
     console.error('[Agenda] Driver WhatsApp notification error (non-fatal):', waErr)
   }
+
+  // A page left open saves its own copy, blanks included — so an airport time
+  // the late-flight fill wrote while it was open would be lost. Re-run the fill
+  // a few seconds after every save: it only ever touches EMPTY times.
+  queueAgendaFlightTimeSync(`b:${booking.id}`, 'agenda-save')
 
   await logAgendaSave(
     params.ref,

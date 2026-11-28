@@ -14,7 +14,7 @@
  * there instead.
  */
 
-import { to12h } from './clock-time'
+import { parse12h, to12h } from './clock-time'
 import { airport } from './ops-geo'
 import {
   DEFAULT_FLIGHT_PICKUP_RULES, durationLabel, durationWords, shiftClock,
@@ -117,6 +117,19 @@ function mentionsAirport(text: string | null | undefined, apt: string | null | u
   return false
 }
 
+/**
+ * A flight time as the stored "HH:MM". Flight rows come from several sources
+ * and their times are not uniform: "11.00", " 11:35", "19:30 hrs" and
+ * "1:35 PM" are all on the live table. `shiftClock` reads only a leading
+ * "H:MM", so "1:35 PM" came out as a 01:35 flight and "11.00" as no time at
+ * all. Anything parse12h cannot read is passed through unchanged.
+ */
+export function flightClock(raw: string | null | undefined): string | null {
+  const text = String(raw ?? '').trim()
+  if (!text) return null
+  return parse12h(text) ?? text
+}
+
 const AIRPORTISH = /\b(airport|airfield|aerodrome|terminal|apt)\b/i
 
 /** Does this row touch an airport at all? Cheap gate before any matching. */
@@ -169,9 +182,9 @@ export function linkFlight(
       ? (international ? rules.arrivalIntlMin : rules.arrivalDomesticMin)
       : (international ? rules.departureIntlMin : rules.departureDomesticMin)
     const suggestedPickup = role === 'departure'
-      ? shiftClock(flight.depTime, -bufferMinutes, rules.roundToMin)
+      ? shiftClock(flightClock(flight.depTime), -bufferMinutes, rules.roundToMin)
       : role === 'arrival'
-        ? shiftClock(flight.arrTime, bufferMinutes, rules.roundToMin)
+        ? shiftClock(flightClock(flight.arrTime), bufferMinutes, rules.roundToMin)
         : null
     return {
       flight,

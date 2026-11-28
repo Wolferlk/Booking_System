@@ -30,6 +30,18 @@ export interface FlightPickupRules {
    * ever add slack, never take it away.
    */
   roundToMin: number
+  /**
+   * When flight details are added or corrected after the chart was built, fill
+   * the airport rows whose meeting time is still EMPTY from these rules (see
+   * lib/agenda-flight-time-sync.ts). A time someone typed is never touched.
+   */
+  autoFillBlank: boolean
+  /**
+   * Also move a time that this auto-fill wrote itself when the flight changes
+   * again, as long as nobody has edited it since. Off by default: the desk asked
+   * for empty times only.
+   */
+  retimeAutoFilled: boolean
 }
 
 /**
@@ -43,6 +55,8 @@ export const DEFAULT_FLIGHT_PICKUP_RULES: FlightPickupRules = {
   arrivalIntlMin: 45,
   arrivalDomesticMin: 30,
   roundToMin: 0,
+  autoFillBlank: true,
+  retimeAutoFilled: false,
 }
 
 export const DEPARTURE_MIN_RANGE = { min: 30, max: 480 } as const
@@ -70,6 +84,8 @@ export function parseFlightPickupRules(raw: string | null | undefined): FlightPi
     arrivalIntlMin:       clampInt(obj.arrivalIntlMin,       ARRIVAL_MIN_RANGE.min,   ARRIVAL_MIN_RANGE.max,   d.arrivalIntlMin),
     arrivalDomesticMin:   clampInt(obj.arrivalDomesticMin,   ARRIVAL_MIN_RANGE.min,   ARRIVAL_MIN_RANGE.max,   d.arrivalDomesticMin),
     roundToMin: (ROUND_STEPS as readonly number[]).includes(round) ? round : d.roundToMin,
+    autoFillBlank: typeof obj.autoFillBlank === 'boolean' ? obj.autoFillBlank : d.autoFillBlank,
+    retimeAutoFilled: typeof obj.retimeAutoFilled === 'boolean' ? obj.retimeAutoFilled : d.retimeAutoFilled,
   }
 }
 
