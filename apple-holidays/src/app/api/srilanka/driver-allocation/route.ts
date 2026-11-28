@@ -7,6 +7,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { backfillSlAllocationsFromAgenda } from '@/lib/sl-driver-allocation-sync'
 import { HOTEL_ONLY_VEHICLE } from '@/lib/driver-requirement'
+import { logBookingEvent } from '@/lib/booking-logs'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -316,6 +317,15 @@ export async function POST(req: NextRequest) {
       if (isHotelOnly) {
         await prisma.assignment.deleteMany({ where: { agendaItemId: { in: itemIds } } })
       }
+      // The movement chart changed from this board — record who did it.
+      await logBookingEvent({
+        bookingRef: booking.bookingRef, section: 'agenda', action: 'updated', source: 'user',
+        actor: { id: session.user.id, name: session.user.name || session.user.email || null },
+        summary: isHotelOnly
+          ? `Every movement marked Hotel Only from the SL Driver Allocation board — drivers released`
+          : 'Hotel Only lifted from every movement on the SL Driver Allocation board',
+        changes: [{ field: 'Hotel only', from: isHotelOnly ? 'No' : 'Yes', to: isHotelOnly ? 'Yes' : 'No' }],
+      }).catch(() => undefined)
     }
 
     // A hotel-only file holds no driver at booking level either.

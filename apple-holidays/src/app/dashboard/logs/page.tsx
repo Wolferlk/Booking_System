@@ -141,7 +141,10 @@ function LogsView() {
               className={`inline-flex items-center gap-1 rounded-full px-3 py-1 font-semibold transition ${failedOnly ? 'bg-rose-500 text-white shadow' : 'bg-white/15 text-white hover:bg-white/25'}`}>
               <AlertTriangle className="h-3.5 w-3.5" /> Failed / not sent only
             </button>
-            <button type="button" onClick={clearAll} className="ml-auto rounded-full px-3 py-1 text-indigo-100 hover:bg-white/15">Clear</button>
+            <a href="/dashboard/logs/agenda" className="ml-auto inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1 font-medium text-white hover:bg-white/25">
+              <Route className="h-3.5 w-3.5" /> Agenda Edit Report
+            </a>
+            <button type="button" onClick={clearAll} className="rounded-full px-3 py-1 text-indigo-100 hover:bg-white/15">Clear</button>
           </div>
         </div>
 

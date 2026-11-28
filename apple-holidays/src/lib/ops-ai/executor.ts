@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { isAssignLocked, assignLockMessage } from '@/lib/booking-assign-lock'
 import { hasPermission } from '@/lib/rbac'
 import { logActivity } from '@/lib/activity'
+import { logBookingEvent } from '@/lib/booking-logs'
 import {
   OPS_TOOLS, EDITABLE_BOOKING_FIELDS, EDITABLE_ACCOMMODATION_FIELDS,
   EDITABLE_AGENDA_FIELDS, NAVIGABLE_ROUTES, SERVICE_TYPES, BOOKING_STATUSES,
@@ -370,8 +371,14 @@ async function runAddAgendaItem(args: Record<string, unknown>, actor: OpsActor):
     action: 'BOOKING_UPDATED',
     entityType: 'AgendaItem',
     entityId: item.id,
-    details: { via: 'OPS_AI', op: 'agenda_item_added', bookingRef: ref, date: date.toISOString().slice(0, 10), location },
+    details: { via: 'OPS_AI', op: 'agenda_item_added', bookingRef: ref, date: date.toISOString().slice(0, 10), location, logged: true },
   })
+  // Booking Logs + Agenda Edit Report, under the person who asked OPS AI.
+  await logBookingEvent({
+    bookingRef: ref, section: 'agenda', action: 'added', source: 'user',
+    actor: { id: actor.userId, name: actor.name },
+    summary: `Movement added via OPS AI · ${date.toISOString().slice(0, 10)} · ${location.slice(0, 200)}`,
+  }).catch(() => undefined)
 
   return {
     ok: true,
@@ -411,8 +418,20 @@ async function runUpdateAgendaItem(args: Record<string, unknown>, actor: OpsActo
     action: 'BOOKING_UPDATED',
     entityType: 'AgendaItem',
     entityId: id,
-    details: { via: 'OPS_AI', op: 'agenda_item_updated', bookingRef: item.agenda.booking.bookingRef, fields: changed },
+    details: { via: 'OPS_AI', op: 'agenda_item_updated', bookingRef: item.agenda.booking.bookingRef, fields: changed, logged: true },
   })
+  const show = (v: unknown) => v === null || v === undefined || v === '' ? null
+    : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 300)
+  await logBookingEvent({
+    bookingRef: item.agenda.booking.bookingRef, section: 'agenda', action: 'updated', source: 'user',
+    actor: { id: actor.userId, name: actor.name },
+    summary: `Movement edited via OPS AI · ${item.date.toISOString().slice(0, 10)} · ${String(item.location ?? '').slice(0, 200)}`,
+    changes: Object.keys(data).map((field) => ({
+      field: EDITABLE_AGENDA_FIELDS[field as keyof typeof EDITABLE_AGENDA_FIELDS]?.label ?? field,
+      from: show((item as unknown as Record<string, unknown>)[field]),
+      to: show(data[field]),
+    })),
+  }).catch(() => undefined)
 
   return {
     ok: true,

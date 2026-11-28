@@ -118,7 +118,7 @@ export async function GET(req: NextRequest) {
       if (ref && !bookingRef.startsWith(ref)) continue
       rows.push({
         bookingRef,
-        action: d.op === 'agenda_item_added' ? 'created' : 'updated',
+        action: d.op === 'agenda_item_added' ? 'added' : 'updated',
         summary: d.op === 'agenda_item_added' ? `Movement added via OPS AI` : `Movement edited via OPS AI`,
         actorName: a.user?.name || a.user?.email || null,
         source: 'user',
