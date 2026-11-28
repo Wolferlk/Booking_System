@@ -26,11 +26,16 @@ import { readDb } from '@/lib/prisma-read'
 import { normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
 import { portalLinkPath } from '@/lib/portal-link'
 import { guestAutoOffRefs } from '@/lib/guest-auto-switches'
+import { testBookingGuestBlockRefs, isTestBookingForGuestMessages, TEST_BOOKING_GUEST_SKIP } from '@/lib/test-bookings'
 
-/** Drop bookings whose automatic guest messages were turned OFF (OTP-confirmed). */
+/** Drop bookings whose automatic guest messages were turned OFF (OTP-confirmed) or that are test bookings. */
 async function withoutMuted<T extends { bookingRef: string }>(rows: T[]): Promise<T[]> {
-  const muted = new Set(await guestAutoOffRefs('messages').catch(() => [] as string[]))
-  return muted.size ? rows.filter(r => !muted.has(r.bookingRef.toUpperCase())) : rows
+  const [muted, tests] = await Promise.all([
+    guestAutoOffRefs('messages').catch(() => [] as string[]),
+    testBookingGuestBlockRefs(),
+  ])
+  const skip = new Set([...muted, ...tests])
+  return skip.size ? rows.filter(r => !skip.has(r.bookingRef.toUpperCase())) : rows
 }
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -233,6 +238,10 @@ export async function sendPortalLinkForBooking(
   if (!b) return { ok: false, reason: 'Booking not found' }
   if ((SKIP_STATUSES as readonly string[]).includes(b.status)) {
     return { ok: false, reason: `Booking is ${b.status}` }
+  }
+  // A test booking only gets the link on a number staff typed in themselves.
+  if (!opts.to && await isTestBookingForGuestMessages(bookingRef)) {
+    return { ok: false, reason: TEST_BOOKING_GUEST_SKIP }
   }
 
   if (!opts.force && await alreadySent(bookingRef, cfg.tag)) {

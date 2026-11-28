@@ -10,6 +10,7 @@ import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 import { emergencyContactsBlockFor } from '@/lib/guest-emergency-contacts'
+import { isTestBookingForGuestMessages } from '@/lib/test-bookings'
 
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
@@ -108,7 +109,11 @@ export async function triggerQC1AutoSend(bookingRef: string): Promise<void> {
     console.error(`[QC1] Email failed for ${bookingRef}:`, err)
   }
 
-  // WhatsApp Msg 1 — basic confirmation to customer
+  // WhatsApp Msg 1 — basic confirmation to customer (never for a test booking)
+  if (await isTestBookingForGuestMessages(bookingRef)) {
+    console.log(`[QC1] ${bookingRef} is a test booking — guest WhatsApp skipped`)
+    return
+  }
   const waPhone =
     (booking as unknown as { contactWhatsapp?: string | null }).contactWhatsapp ??
     (booking as unknown as { contactPhone?: string | null }).contactPhone
@@ -212,6 +217,10 @@ export async function triggerQC2AutoSend(bookingRef: string): Promise<void> {
     (booking as unknown as { contactPhone?: string | null }).contactPhone
   if (!waPhone) return
 
+  // Never message a test booking's guest. The email below still follows as before.
+  const isTest = await isTestBookingForGuestMessages(bookingRef)
+  if (isTest) console.log(`[QC2] ${bookingRef} is a test booking — guest WhatsApp skipped`)
+
   const now       = new Date()
   const lead      = booking.passengers[0]
   const firstName = (lead?.name ?? 'Guest').split(' ')[0]
@@ -239,7 +248,7 @@ ${await emergencyContactsBlockFor((booking as unknown as { operationCountry?: st
 Wishing you a wonderful trip! ✈️
 *${teamName}*`
 
-  try {
+  if (!isTest) try {
     const normPhone   = waPhone.replace(/\D/g, '')
     const pdfBuffer   = await generateFullDetailsPdf(booking)
     const pdfFilename = `AppleHolidays-${bookingRef}-FullDetails-${Date.now()}.pdf`

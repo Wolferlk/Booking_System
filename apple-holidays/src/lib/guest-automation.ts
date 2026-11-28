@@ -29,6 +29,7 @@ import { markApproved, recordApprovalRequest } from '@/lib/te/call-approvals'
 import { deliverToGuest } from '@/lib/customer-whatsapp-automation'
 import { normalisePhone } from '@/lib/whatsapp'
 import { checkPhone } from '@/lib/phone-intl'
+import { isTestBookingForGuestMessages } from '@/lib/test-bookings'
 import {
   SETTING_ENGAGE_ON_ASSIGN, getGuestAutoSwitches, writeGuestAutoSwitches, getEngageJourney,
   writeEngageJourney, openEngageJourneys,
@@ -102,6 +103,7 @@ export async function autoEngageGuest(p: {
   if (p.trigger === 'number-assigned' && !(await engageOnAssignEnabled())) return skip('auto-engage on assign is switched off globally')
   const switches = await getGuestAutoSwitches(p.bookingRef)
   if (!switches.calls) return skip('AI calls are turned off for this booking')
+  if (await isTestBookingForGuestMessages(p.bookingRef)) return skip('test booking — no WhatsApp to the guest')
 
   const b = await prisma.booking.findUnique({
     where: { bookingRef: p.bookingRef },
@@ -217,6 +219,8 @@ export async function runGuestApprovalReminders(): Promise<ReminderSweepResult> 
       if (normalizePhone(b.contactWhatsapp) !== j.phone) { await close('stopped', 'guest number changed'); continue }
       if ((await getGuestAutoSwitches(bookingRef)).calls === false) { await close('stopped', 'AI calls turned off'); continue }
       if (j.approval.stage === 'failed' && !j.approval.requestedAt) { await close('stopped', 'approval request could not be sent'); continue }
+      // Test booking: no reminders while marked (left open, so releasing the mark resumes them).
+      if (await isTestBookingForGuestMessages(bookingRef)) continue
 
       // Has the guest tapped Allow since?
       const lastCheck = j.approval.lastCheckedAt ? Date.parse(j.approval.lastCheckedAt) : 0

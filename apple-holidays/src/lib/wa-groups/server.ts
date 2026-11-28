@@ -715,7 +715,7 @@ export async function sendFromDesk(o: {
     where:  { AND: [liveWhere, { bookingRef: o.ref }] },
     select: { arrivalDate: true, departureDate: true },
   })
-  if (!live) return { status: 'skipped', detail: 'Booking is not live (cancelled, draft or replaced)' }
+  if (!live) return { status: 'skipped', detail: 'Booking is not live (cancelled, draft, replaced, guest messages off, or a test booking)' }
   if (o.kind === 'daily' && o.date && (o.date < isoDay(live.arrivalDate) || o.date > isoDay(live.departureDate))) {
     return { status: 'skipped', detail: 'Not travelling that day' }
   }

@@ -26,6 +26,7 @@ import { normalizePhone, teGet, tePatch, tePost } from './te/te-api'
 import { markApproved, recordApprovalRequest } from './te/call-approvals'
 import { getVersionLinks } from './b2c-version-links'
 import { isGuestAutoOff, trackApprovalRequest } from './guest-auto-switches'
+import { isTestBookingForGuestMessages } from './test-bookings'
 
 export const ENGAGE_ENABLED = 'auto_b2c_guest_engage_enabled'
 /** One row per booking, written once the booking has been handled. */
@@ -92,6 +93,7 @@ export async function engageB2cGuest(params: {
   if (booking.departureDate.toISOString().slice(0, 10) < new Date().toISOString().slice(0, 10)) return skip('trip is over')
 
   if (await isGuestAutoOff(bookingRef, 'calls')) return skip('AI calls turned off for this booking')
+  if (await isTestBookingForGuestMessages(bookingRef)) return skip('test booking — no WhatsApp to the guest')
 
   const phone = internationalDigits(booking.contactWhatsapp)
   if (!phone) return skip('no WhatsApp number with a country code')

@@ -30,6 +30,7 @@ import { shouldHideBrand, type BrandAudience } from '@/lib/customer-branding'
 import { resolveVendorPhones } from '@/lib/vn-vendor-sync/registry'
 import { guestAutoOffRefs, isGuestAutoOff } from '@/lib/guest-auto-switches'
 import { logBookingEventOnce } from '@/lib/booking-logs'
+import { testBookingRefs, isTestBookingForGuestMessages, TEST_BOOKING_GUEST_SKIP } from '@/lib/test-bookings'
 
 // Same fixed-offset convention as /api/cron/driver-notify (UTC+7 Vietnam default)
 const TZ_OFFSET_HOURS = Number(process.env.CUSTOMER_MSG_TZ_OFFSET_HOURS ?? '7')
@@ -91,7 +92,9 @@ export async function liveBookingWhere(): Promise<Prisma.BookingWhereInput> {
     : { OR: [live, { status: 'DRAFT', agent: B2C_AGENT_NAME, bookingRef: { in: engaged } }] }
   // Staff turned automatic guest messages OFF for these (OTP-confirmed, guest-auto-switches.ts).
   const muted = await guestAutoOffRefs('messages').catch(() => [] as string[])
-  const excluded = [...replaced, ...muted]
+  // Marked as a test booking (shared Test Bookings register) — never message the guest.
+  const tests = await testBookingRefs().then(r => r.refs).catch(() => [] as string[])
+  const excluded = [...replaced, ...muted, ...tests]
   return excluded.length ? { AND: [base, { bookingRef: { notIn: excluded } }] } : base
 }
 
@@ -337,6 +340,12 @@ async function sendDailyBriefingForBookingInner(
   // (forced) send from the panel is still the desk's own decision.
   if (!opts.force && !opts.dryRun && await isGuestAutoOff(bookingRef, 'messages')) {
     return { ok: false, reason: 'Automatic messages are turned off for this booking' }
+  }
+
+  // Test bookings: no guest plan, automatic or bulk. Only a staff test copy
+  // (opts.test, to a staff number) and previews still work.
+  if (!opts.test && !opts.dryRun && await isTestBookingForGuestMessages(bookingRef)) {
+    return { ok: false, reason: TEST_BOOKING_GUEST_SKIP }
   }
 
   if (!opts.force && await alreadySentForDay(bookingRef, targetDateStr)) {
@@ -670,6 +679,9 @@ async function sendFeedbackRequestForBookingInner(
   if (b.guestFeedback && !opts.dryRun) return { ok: false, reason: 'Feedback already received' }
   if (!opts.force && !opts.dryRun && await isGuestAutoOff(bookingRef, 'messages')) {
     return { ok: false, reason: 'Automatic messages are turned off for this booking' }
+  }
+  if (!opts.dryRun && await isTestBookingForGuestMessages(bookingRef)) {
+    return { ok: false, reason: TEST_BOOKING_GUEST_SKIP }
   }
 
   if (!opts.force && await alreadySentToday(bookingRef, TAG_FEEDBACK_REQUEST)) {

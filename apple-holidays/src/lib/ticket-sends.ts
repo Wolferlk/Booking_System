@@ -26,6 +26,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { normalisePhone, sendWhatsAppMedia, isWithin24hWindow } from '@/lib/whatsapp'
 import { deliverToGuest, liveBookingWhere, getSuperPartners, nowInTz } from '@/lib/customer-whatsapp-automation'
+import { isTestBookingForGuestMessages, TEST_BOOKING_GUEST_SKIP } from '@/lib/test-bookings'
 import { isSuperPartner } from '@/lib/super-partners'
 import type { BrandAudience } from '@/lib/customer-branding'
 import { loadTicketFiles } from '@/lib/ticket-files'
@@ -274,6 +275,9 @@ export async function sendTicketsForBooking(
   })
   if (!b) return { ok: false, sent: 0, files: 0, reason: 'Booking not found' }
   if (b.status === 'CANCELLED') return { ok: false, sent: 0, files: 0, reason: 'Booking is cancelled' }
+  if (!opts.dryRun && await isTestBookingForGuestMessages(bookingRef)) {
+    return { ok: false, sent: 0, files: 0, reason: TEST_BOOKING_GUEST_SKIP }
+  }
 
   const today = nowInTz(TICKET_SENDS_TZ).date
   const ledger = await readLedger(bookingRef)

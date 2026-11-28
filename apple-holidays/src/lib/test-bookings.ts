@@ -277,6 +277,34 @@ export async function testBookingWhere(
   }
 }
 
+// ─── Guest messaging ──────────────────────────────────────────────────────────
+//
+// A test booking's "guest" is usually a staff member, a copied real contact, or
+// a made-up number — automatic WhatsApp (daily plan, feedback invite, tickets,
+// portal link, QC confirmations, AI-call approval requests, group automations)
+// must never reach it. Same fail-open rule as the lists: if the register cannot
+// be read, nothing is blocked (a real guest losing their plan is worse).
+
+/** Upper-cased OPS bookingRefs that are test bookings — for sweep filters. Never throws. */
+export async function testBookingGuestBlockRefs(): Promise<string[]> {
+  try {
+    return (await testBookingRefs()).refs.map(r => r.trim().toUpperCase())
+  } catch (err) {
+    console.error('[test-bookings] could not resolve OPS refs for guest messaging, blocking nothing:', err)
+    return []
+  }
+}
+
+/** True when automatic guest WhatsApp for this OPS booking must not be sent. Never throws. */
+export async function isTestBookingForGuestMessages(bookingRef: string): Promise<boolean> {
+  const key = bookingRef.trim().toUpperCase()
+  if (!key) return false
+  return (await testBookingGuestBlockRefs()).includes(key)
+}
+
+/** The skip reason shown in Booking Logs / send results. */
+export const TEST_BOOKING_GUEST_SKIP = 'Marked as a test booking — no WhatsApp is sent to the guest'
+
 /** The active mark behind any of these references, or null. */
 export async function findTestBooking(...references: (string | null | undefined)[]): Promise<TestBookingMark | null> {
   const { marks } = await loadTestBookings()
