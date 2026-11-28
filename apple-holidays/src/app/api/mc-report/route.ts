@@ -12,6 +12,7 @@ import { loadTicketsControl } from '@/lib/tickets-control'
 import { loadMcDetails, loadBookingContext, type McBookingContext } from '@/lib/mc-details'
 import { loadMcDone } from '@/lib/mc-done'
 import { loadMcSuppliers } from '@/lib/mc-supplier'
+import { testBookingWhere } from '@/lib/test-bookings'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -108,13 +109,15 @@ function cancellationFields(b: {
   }
 }
 
-// Merges optional search + country conditions into a single booking WHERE clause
+// Merges optional search + country + test-booking conditions into a single booking WHERE clause
 function buildBookingWhere(
   search: string | null,
   countryWhere: Record<string, unknown> | undefined,
+  testClause: Record<string, unknown> | null,
 ): Record<string, unknown> | undefined {
   const conditions: Record<string, unknown>[] = []
   if (countryWhere) conditions.push(countryWhere)
+  if (testClause) conditions.push(testClause)
   if (search) conditions.push({
     OR: [
       { bookingRef:     { contains: search } },
@@ -303,7 +306,17 @@ export async function GET(req: NextRequest) {
     dateFilter.lte = to
   }
 
-  const bookingWhere = buildBookingWhere(search, bookingCountryWhere)
+  /**
+   * Test bookings — marked on the shared register in OPS or Accounts
+   * (src/lib/test-bookings.ts) — are kept off the chart, the same as All
+   * Bookings. `tests=include` / `tests=only` opt back in. Fail-open: if the
+   * register cannot be read, nothing is hidden.
+   */
+  const testsParam = searchParams.get('tests')
+  const testMode = testsParam === 'only' || testsParam === 'include' ? testsParam : 'exclude'
+  const tests = await testBookingWhere(testMode)
+
+  const bookingWhere = buildBookingWhere(search, bookingCountryWhere, tests.clause)
 
   // Hotel Only stays do not depend on the agenda query — start them alongside it.
   const hotelOnlyPromise = hotelOnlyRows(dateFilter, bookingWhere, serviceType)
