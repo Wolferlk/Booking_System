@@ -1,17 +1,19 @@
 /**
- * VN Driver Sync actions: runAll / runBooking (sync now), apply, ignore,
+ * VN Driver Sync actions: runAll / runBooking (sync now), apply, pick (fix a match by hand), ignore,
  * restore, undo (one movement), undoRun (admins). All need movement-chart edit rights.
  */
 import { NextRequest } from 'next/server'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { vendorSyncSession } from '@/lib/vn-vendor-sync/access'
-import { applyLink, ignoreLink, restoreLink, runDriverSync, undoLink, undoRun } from '@/lib/vn-driver-sync/server'
+import { applyLink, ignoreLink, pickLink, restoreLink, runDriverSync, undoLink, undoRun } from '@/lib/vn-driver-sync/server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({})) as { action?: string; linkId?: string; runId?: string; bookingRef?: string }
+  const body = await req.json().catch(() => ({})) as {
+    action?: string; linkId?: string; runId?: string; bookingRef?: string; lineKey?: string; itemId?: string; replace?: boolean
+  }
   const auth = await vendorSyncSession(body.action === 'undoRun' ? 'admin' : 'edit')
   if ('error' in auth) return buildApiError(auth.error, auth.status)
   try {
@@ -24,6 +26,7 @@ export async function POST(req: NextRequest) {
         return buildApiSuccess({ run })
       }
       case 'apply':   return buildApiSuccess({ message: await applyLink(String(body.linkId), auth.actor) })
+      case 'pick':    return buildApiSuccess({ message: await pickLink({ linkId: String(body.linkId), lineKey: String(body.lineKey ?? ''), itemId: String(body.itemId ?? ''), replace: body.replace === true }, auth.actor) })
       case 'ignore':  return buildApiSuccess({ message: await ignoreLink(String(body.linkId), auth.actor) })
       case 'restore': return buildApiSuccess({ message: await restoreLink(String(body.linkId), auth.actor) })
       case 'undo':    return buildApiSuccess({ message: await undoLink(String(body.linkId), auth.actor) })

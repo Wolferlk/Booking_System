@@ -31,12 +31,13 @@ import { fold } from '@/lib/vn-vendor-sync/match'
 import { serviceTypeShortLabel, isSicType, isPrivateTransferType } from '@/lib/service-types'
 import { parse12h } from '@/lib/clock-time'
 import { extractPhones } from '@/lib/guest-driver'
-import { readMovementSheet, serviceAccount, SheetAccessError, type SheetRow } from './sheet'
-import { matchBooking, type AiCacheEntry, type Movement, type Pick as MatchPick } from './match'
+import { readMovementSheet, serviceAccount, SheetAccessError, sheetServiceCode, type SheetRow } from './sheet'
+import { matchBooking, pairScore, type AiCacheEntry, type Movement, type Pick as MatchPick } from './match'
 import {
   DEFAULT_DAYS_AHEAD, DEFAULT_INTERVAL_MIN, DEFAULT_SHEET_URL, DRIVER_SYNC_SETTINGS, isMicrosoftLink, sheetIdOf, sheetUrlOf,
   type DriverSyncConfig, type DriverSyncEventInfo, type DriverSyncLinkInfo, type DriverSyncMode, type DriverSyncOverview,
   type DriverSyncRunInfo, type EventAction, type LinkStatus, type SheetState, type UnmatchedRow, type BookingSheetLine,
+  type BookingMovement, type MatchMethod, lineKeyOf,
 } from './shared'
 
 export { isMissingTable }
@@ -122,6 +123,60 @@ const clip = (s: string | null | undefined, n: number) => (s ? (s.length > n ? `
 const keyPart = (s: string | null | undefined) => fold(s).replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 60)
 const squash = (s: string | null | undefined) => fold(s).replace(/[^a-z0-9]+/g, '')
 const digitsOf = (s: string | null | undefined) => String(s ?? '').replace(/\D/g, '')
+
+// ── Sheet lines as stored on links ───────────────────────────────────────────
+//
+// A link keeps its sheet line as "route ¶ details" (route = "from → to"). For a
+// person's pick and for the fit scores on the page, that is turned back into the
+// shape the scorer reads. Location and meal are not stored, so they score neutral.
+
+interface StoredLine { tab: string; row: number; date: string | null; details: string | null; time: string | null; service: string | null; text: string | null; phones: string[] }
+
+function rowOfLine(l: StoredLine): SheetRow {
+  const parts = (l.details ?? '').split(' ¶ ').map(x => x.trim()).filter(Boolean)
+  const routed = parts.length > 0 && parts[0].includes(' → ')
+  const [from, to] = routed ? parts[0].split(' → ') : [null, null]
+  return {
+    id: `${l.tab}!${l.row}`, tab: l.tab, row: l.row, refs: [], date: l.date,
+    details: (routed ? parts.slice(1) : parts).join(' ') || null, meal: null, time: l.time,
+    service: l.service, serviceCode: sheetServiceCode(l.service), location: null,
+    from: from?.trim() || null, to: to?.trim() || null, route: routed ? parts[0] : null,
+    guest: null, timeRaw: l.time, adults: null, children: null, text: l.text, driverText: null, phones: l.phones,
+  }
+}
+
+const movementOfItem = (i: { id: string; date: Date; details: string | null; location: string | null; fromPoint: string | null; toPoint: string | null; meetingTime: string | null; mealPlan: string | null; serviceType: string | null }): Movement => ({
+  id: i.id, date: iso(i.date), details: i.details, location: i.location, fromPoint: i.fromPoint, toPoint: i.toPoint,
+  meetingTime: i.meetingTime, mealPlan: i.mealPlan, serviceType: i.serviceType,
+})
+
+/** The sync's pair score, marked down when the line sits on another day than the movement. */
+function fitOf(row: SheetRow, m: Movement): number {
+  let s = pairScore(row, m).score
+  if (row.date && row.date !== m.date) {
+    const off = Math.abs(Math.round((Date.parse(`${row.date}T00:00:00Z`) - Date.parse(`${m.date}T00:00:00Z`)) / 86_400_000))
+    s *= off === 1 ? 0.7 : 0.35
+  }
+  return Math.round(s * 100) / 100
+}
+
+const routeDetailsOf = (r: SheetRow) => [r.route, r.details].filter(Boolean).join(' ¶ ')
+
+/** Where a hand-picked line is in this read of the sheet — same text first (rows shift), then same row number. */
+function findPinnedRow(link: VnDriverSyncLink, rows: SheetRow[]): SheetRow | null {
+  if (!link.sheetTab) return null
+  const want = squash(link.sheetDetails)
+  const day = link.sheetDate ? iso(link.sheetDate) : null
+  const tabRows = rows.filter(r => r.tab === link.sheetTab)
+  return tabRows.find(r => r.row === link.sheetRow && squash(routeDetailsOf(r)) === want)
+    ?? (want ? tabRows.find(r => squash(routeDetailsOf(r)) === want && (!day || r.date === day)) : undefined)
+    ?? tabRows.find(r => r.row === link.sheetRow && (!day || r.date === day))
+    ?? null
+}
+
+/** A pin still counts while the movement holds exactly what the pick wrote. */
+const pinHolds = (link: VnDriverSyncLink, a: { driverId: string | null; vendorId: string | null; driverName: string | null } | null | undefined) =>
+  link.method === 'MANUAL' && Boolean(link.appliedName) && !a?.driverId && !a?.vendorId && a?.driverName === link.appliedName
 
 type Item = {
   id: string; date: Date; location: string | null; fromPoint: string | null; toPoint: string | null; details: string | null
@@ -356,12 +411,15 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
       const bookingLinks = links.filter(l => l.bookingRef === b.bookingRef)
       if (!items.length || (!sheetRows.length && !bookingLinks.length)) continue
 
-      const movements: Movement[] = items.map(i => ({
-        id: i.id, date: iso(i.date), details: i.details, location: i.location, fromPoint: i.fromPoint, toPoint: i.toPoint,
-        meetingTime: i.meetingTime, mealPlan: i.mealPlan, serviceType: i.serviceType,
-      }))
-      const result = sheetRows.length
-        ? await matchBooking({ bookingRef: b.bookingRef, rows: sheetRows, movements, useAi: config.useAi, cached: aiByRef.get(b.bookingRef) ?? null, budget })
+      // Pairings a person pinned stay out of the matching: their movement and their line are taken,
+      // so the rest of the booking is matched among what is left (one fix often fixes its neighbours).
+      const pins = bookingLinks.filter(l => pinHolds(l, items.find(i => i.id === l.agendaItemId)?.assignment))
+      const pinnedItems = new Set(pins.map(l => l.agendaItemId))
+      const pinnedRows = new Set(pins.map(l => findPinnedRow(l, sheetRows)?.id).filter(Boolean))
+      const movements: Movement[] = items.filter(i => !pinnedItems.has(i.id)).map(movementOfItem)
+      const freeRows = sheetRows.filter(r => !pinnedRows.has(r.id))
+      const result = freeRows.length && movements.length
+        ? await matchBooking({ bookingRef: b.bookingRef, rows: freeRows, movements, useAi: config.useAi, cached: aiByRef.get(b.bookingRef) ?? null, budget })
         : { picks: new Map<string, MatchPick>(), unmatched: [], aiCalled: false, ai: null }
       if (result.aiCalled) counts.aiCalls++
       for (const u of result.unmatched) if (!u.row.date || u.row.date >= iso(today)) unmatched.push(unmatchedOf(b.bookingRef, u.row, u.why))
@@ -387,7 +445,7 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
         const row = pick ? rowById.get(pick.rowId) ?? null : null
         if (pick && row) counts.matched++
         const outcome = await decide({
-          runId: run.id, mode, bookingRef: b.bookingRef, item, key, pick, row, ai: result.ai,
+          runId: run.id, mode, bookingRef: b.bookingRef, item, key, pick, row, rows: sheetRows, ai: result.ai,
           link: linkByKey.get(`${b.bookingRef}::${key}`) ?? null, canWrite: writes < MAX_WRITES_PER_RUN,
         })
         if (outcome.wrote) writes++
@@ -515,6 +573,8 @@ async function decide(p: {
   key: string
   pick: MatchPick | null
   row: SheetRow | null
+  /** Every sheet row of the booking — a pinned movement follows its own line among them. */
+  rows: SheetRow[]
   ai: AiCacheEntry | null
   link: VnDriverSyncLink | null
   canWrite: boolean
@@ -554,6 +614,38 @@ async function decide(p: {
       create: { bookingRef: p.bookingRef, movementKey: p.key, ...rowData },
       update: rowData,
     })
+  }
+
+  // ── Pinned by a person: their line stays on this movement. If the sheet edits that line, follow it.
+  if (link && ours && link.method === 'MANUAL') {
+    const line = findPinnedRow(link, p.rows)
+    if (!line) {
+      if (link.status !== 'STALE') {
+        await save('STALE', { note: 'The line picked by hand is no longer in the sheet — the driver was left as it is' })
+        ev('SHEET_DROPPED', { fromValue: clip(link.appliedName, 191), detail: 'Picked line gone from the sheet; nothing was removed' })
+      }
+      return { wrote: false, count: 'noMatch', events }
+    }
+    const lineFacts: Partial<Prisma.VnDriverSyncLinkUncheckedCreateInput> = {
+      sheetTab: clip(line.tab, 191), sheetRow: line.row, sheetDate: line.date ? new Date(`${line.date}T00:00:00Z`) : null,
+      sheetDetails: clip(routeDetailsOf(line), 4000), sheetTime: clip(line.time, 32), sheetService: clip(line.service, 191),
+      sheetText: clip(line.driverText ?? line.text, 4000), phones: line.phones.length ? clip(line.phones.join(' / '), 191) : null,
+    }
+    const t = targetOf(line)
+    if (!t.name || !t.phone || alreadySays(cur, t)) {
+      await save('APPLIED', { ...lineFacts, note: link.note })
+      return { wrote: false, count: 'inSync', events }
+    }
+    if (p.mode === 'AUTO' && p.canWrite && await writeDriver(item.id, cur.raw, { name: t.name, phone: t.phone })) {
+      await save('APPLIED', {
+        ...lineFacts, appliedName: t.name, appliedPhone: t.phone, appliedAt: now, appliedBy: 'Auto sync (picked line)', appliedRunId: p.runId,
+        note: 'The line picked by hand changed in the sheet — followed it',
+      })
+      ev('UPDATED', { fromValue: clip(cur.name, 191), toValue: t.name, score: link.score, detail: clip(`${t.phone} · follows the line picked by hand`, 500) })
+      return { wrote: true, count: 'updated', events }
+    }
+    await save('SUGGESTED', { ...lineFacts, note: 'The line picked by hand now names another driver — check and apply' })
+    return { wrote: false, count: 'suggested', events }
   }
 
   // ── No sheet row for this movement.
@@ -673,6 +765,139 @@ export async function applyLink(linkId: string, actor: string): Promise<string> 
   return `Driver set: ${t.phone}`
 }
 
+/** A sheet line of a booking, as the page shows it: from a link that holds it, else from the last sweep's "not placed" list. */
+async function storedLineOf(bookingRef: string, key: string): Promise<StoredLine | null> {
+  const m = key.match(/^(.+)!(\d+)~[0-9a-z]+$/)
+  if (!m) return null
+  const tab = m[1], row = Number(m[2])
+  const candidates = await prisma.vnDriverSyncLink.findMany({ where: { bookingRef, sheetTab: tab, sheetRow: row }, orderBy: { updatedAt: 'desc' }, take: 50 })
+  const held = candidates.find(c => lineKeyOf({ tab, row, date: c.sheetDate ? iso(c.sheetDate) : null, details: c.sheetDetails, text: c.sheetText }) === key)
+  if (held) {
+    return {
+      tab, row, date: held.sheetDate ? iso(held.sheetDate) : null, details: held.sheetDetails, time: held.sheetTime, service: held.sheetService,
+      text: held.sheetText, phones: (held.phones ?? '').split(' / ').map(x => x.trim()).filter(Boolean),
+    }
+  }
+  const runs = await prisma.vnDriverSyncRun.findMany({
+    where: { status: 'SUCCESS', scope: { in: ['ALL', bookingRef] }, unmatchedJson: { not: null } },
+    orderBy: { startedAt: 'desc' }, take: 2, select: { unmatchedJson: true },
+  })
+  for (const r of runs) {
+    let list: UnmatchedRow[] = []
+    try { list = JSON.parse(r.unmatchedJson ?? '[]') } catch { list = [] }
+    const u = list.find(x => x.bookingRef === bookingRef && lineKeyOf(x) === key)
+    if (u) return { tab, row, date: u.date, details: u.details, time: u.time, service: u.service, text: u.text, phones: extractPhones(u.text) }
+  }
+  return null
+}
+
+/** An agenda item with its booking and its sync key (same key the sweep gives it). */
+async function itemForPick(agendaItemId: string) {
+  const item = await prisma.agendaItem.findUnique({
+    where: { id: agendaItemId },
+    select: {
+      id: true, agendaId: true, date: true, location: true, fromPoint: true, toPoint: true, details: true, mealPlan: true, meetingTime: true,
+      serviceType: true, isLeisure: true, isHotelOnly: true,
+      agenda: { select: { booking: { select: { bookingRef: true } } } },
+      assignment: { select: { driverId: true, vendorId: true, driverName: true, driverPhone: true } },
+    },
+  })
+  if (!item) return null
+  const sameDay = await prisma.agendaItem.findMany({
+    where: { agendaId: item.agendaId, date: item.date }, orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
+    select: { id: true, date: true, fromPoint: true, toPoint: true, location: true, serviceType: true },
+  })
+  const count = new Map<string, number>()
+  let key = movementKeyOf(item)
+  for (const i of sameDay.filter(x => !NOT_DRIVEN.has(String(x.serviceType ?? '').toUpperCase()))) {
+    const base = movementKeyOf(i)
+    const n = (count.get(base) ?? 0) + 1
+    count.set(base, n)
+    if (i.id === item.id) { key = n > 1 ? `${base}#${n}` : base; break }
+  }
+  return { item, bookingRef: item.agenda.booking.bookingRef, key }
+}
+
+/**
+ * A person fixes a match: sheet line `lineKey` goes on movement `itemId` (both of the card's booking),
+ * the driver is written and the pairing is pinned — later sweeps keep it, follow that line if the
+ * sheet edits it, and match the rest of the booking around it.
+ */
+export async function pickLink(p: { linkId: string; lineKey: string; itemId: string; replace?: boolean }, actor: string): Promise<string> {
+  const src = await prisma.vnDriverSyncLink.findUnique({ where: { id: p.linkId } })
+  if (!src) throw new Error('That movement is gone — sync again')
+  const ref = src.bookingRef
+  const line = await storedLineOf(ref, p.lineKey)
+  if (!line) throw new Error('That sheet line is not known any more — sync the booking again')
+  const t = targetOf({ text: line.text, phones: line.phones })
+  if (!t.name || !t.phone) throw new Error(`Line #${line.row} has no phone number — add one in the sheet first`)
+
+  const found = await itemForPick(p.itemId)
+  if (!found) throw new Error(`${ref}'s movement chart was rebuilt — reload and pick again`)
+  const { item, key } = found
+  if (found.bookingRef !== ref) throw new Error('That movement belongs to another booking')
+  if (item.date < vnToday()) throw new Error('That movement is in the past')
+  if (NOT_DRIVEN.has(String(item.serviceType ?? '').toUpperCase())) throw new Error('Hotel and flight rows take no driver — pick a transfer or tour')
+  const a = item.assignment
+  if (a?.driverId || a?.vendorId) throw new Error('A driver from the directory is on that movement — change it in Assign Driver instead')
+
+  const curName = a?.driverName?.trim() ? a.driverName : null
+  const holder = curName ? await prisma.vnDriverSyncLink.findFirst({ where: { bookingRef: ref, agendaItemId: item.id, appliedName: curName } }) : null
+  if (curName && !holder && !p.replace) throw new Error(`"${clip(curName, 80)}" was typed on that movement by hand — confirm to replace it`)
+
+  const same = curName !== null && squash(curName) === squash(t.name)
+  if (!same && !await writeDriver(item.id, curName, { name: t.name, phone: t.phone })) throw new Error('The movement changed a moment ago — reload and try again')
+
+  const now = new Date()
+  const label = labelOf(item as Item)
+  const fit = fitOf(rowOfLine(line), movementOfItem(item))
+  const prev = holder ? { prevName: holder.prevName, prevPhone: holder.prevPhone } : { prevName: clip(curName, 191), prevPhone: clip(a?.driverPhone ?? null, 191) }
+  const data = {
+    agendaItemId: item.id, movementDate: new Date(`${iso(item.date)}T00:00:00Z`), movementLabel: label, movementText: clip(item.details, 2000),
+    sheetTab: clip(line.tab, 191), sheetRow: line.row, sheetDate: line.date ? new Date(`${line.date}T00:00:00Z`) : null,
+    sheetDetails: clip(line.details, 4000), sheetTime: clip(line.time, 32), sheetService: clip(line.service, 191),
+    sheetText: clip(line.text, 4000), phones: clip(line.phones.join(' / '), 191),
+    score: fit, confidence: 'HIGH', method: 'MANUAL' satisfies MatchMethod, reason: clip(`Picked by ${actor} — line #${line.row}`, 500),
+    status: 'APPLIED' satisfies LinkStatus, note: `Pinned by ${actor} — the sync keeps this line on this movement`,
+    appliedName: same ? curName : t.name, appliedPhone: same ? (a?.driverPhone ?? t.phone) : t.phone,
+    appliedAt: now, appliedBy: actor, appliedRunId: null, ...prev, lastSeenAt: now,
+  }
+  await prisma.vnDriverSyncLink.upsert({
+    where: { bookingRef_movementKey: { bookingRef: ref, movementKey: key } },
+    create: { bookingRef: ref, movementKey: key, ...data },
+    update: data,
+  })
+  // Older links on this same movement (an earlier route → an earlier key) are replaced by this one.
+  // (Its undo history moved onto the pin through `prev` above.)
+  await prisma.vnDriverSyncLink.deleteMany({ where: { bookingRef: ref, agendaItemId: item.id, NOT: { movementKey: key } } })
+
+  const notes: string[] = []
+  // The card it started from, when the line went to another movement: the sync's guess was wrong there.
+  if (src.agendaItemId !== item.id && src.movementKey !== key) {
+    if (src.appliedName && src.status === 'APPLIED') {
+      if (await undoOne(src, actor, null)) notes.push(`the driver the sync wrote on ${clip(src.movementLabel?.replace(/^\d{4}-\d{2}-\d{2} · /, ''), 60)} was taken off`)
+    } else if (!src.appliedName) {
+      await prisma.vnDriverSyncLink.delete({ where: { id: src.id } }).catch(() => undefined)
+    }
+  }
+  // The same line still suggested on another movement — that suggestion is dropped; one already written is flagged.
+  const sameRow = await prisma.vnDriverSyncLink.findMany({ where: { bookingRef: ref, sheetTab: line.tab, sheetRow: line.row, NOT: { movementKey: key } } })
+  const twins = sameRow.filter(o => lineKeyOf({ tab: o.sheetTab, row: o.sheetRow, date: o.sheetDate ? iso(o.sheetDate) : null, details: o.sheetDetails, text: o.sheetText }) === p.lineKey)
+  for (const o of twins) {
+    if (o.id === src.id) continue
+    if (!o.appliedName && ['SUGGESTED', 'NO_NUMBER'].includes(o.status)) await prisma.vnDriverSyncLink.delete({ where: { id: o.id } }).catch(() => undefined)
+    else if (o.status === 'APPLIED') notes.push(`line #${line.row} is also written on ${clip(o.movementLabel?.replace(/^\d{4}-\d{2}-\d{2} · /, ''), 60)} — check it`)
+  }
+
+  await prisma.vnDriverSyncEvent.create({
+    data: {
+      bookingRef: ref, movementKey: key, movementLabel: label, action: 'PICKED', fromValue: clip(curName, 191), toValue: clip(t.name, 191),
+      score: fit, detail: clip(`Line #${line.row} → ${label} · ${t.phone}`, 500), actor,
+    },
+  })
+  return [`Line #${line.row} pinned · driver ${same ? 'already there' : `set: ${t.phone}`}`, ...notes].join(' · ')
+}
+
 /** Put back what was there before the sync wrote — only if nobody changed it since. */
 async function undoOne(link: VnDriverSyncLink, actor: string, runId: string | null): Promise<boolean> {
   if (!link.agendaItemId || !link.appliedName) return false
@@ -771,7 +996,7 @@ export interface DriverSyncFilters {
   /** Free text over ref, system movement and sheet row. */
   q?: string | null
   conf?: 'HIGH' | 'MEDIUM' | 'NONE' | null
-  method?: 'RULES' | 'AI' | null
+  method?: MatchMethod | null
   /** Driver on the movement right now. */
   driver?: 'has' | 'none' | null
   /** The sheet row carries a phone number. */
@@ -790,7 +1015,7 @@ export async function driverSyncOverview(q: {
   const config = await getDriverSyncConfig()
   const sa = serviceAccount()
   const access = { kind: isMicrosoftLink(config.sheet) ? 'MICROSOFT' as const : 'GOOGLE' as const, serviceAccount: sa?.email ?? null, sheetUrl: config.sheet }
-  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [], dayCounts: [], bookingSheets: {} }
+  const empty = { installed: false, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet: null, totals: {}, runs: [], links: [], linkTotal: 0, events: [], unmatched: [], dayCounts: [], bookingSheets: {}, bookingMovements: {}, fits: {} }
   try {
     const today = vnToday()
     const ref = q.ref?.trim().toUpperCase() || null
@@ -905,40 +1130,115 @@ export async function driverSyncOverview(q: {
     // The review card: the agenda item as it is now, and every chart line the sync knows for the booking.
     const pageRefs = Array.from(new Set(links.map(l => l.bookingRef)))
     const itemIds = links.map(l => l.agendaItemId).filter((x): x is string => Boolean(x))
-    const [agendaItems, siblings] = await Promise.all([
+    // The movement picker: every upcoming driven movement of those bookings, from the earliest day on the page.
+    const pickFrom = links.reduce<Date>((d, l) => (l.movementDate && l.movementDate < d ? l.movementDate : d), today)
+    const [agendaItems, siblings, pageBookings] = await Promise.all([
       itemIds.length
         ? prisma.agendaItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, fromPoint: true, toPoint: true, location: true, meetingTime: true, serviceType: true } })
         : Promise.resolve([]),
       pageRefs.length
         ? prisma.vnDriverSyncLink.findMany({
-          where: { bookingRef: { in: pageRefs }, sheetRow: { not: null } },
-          select: { id: true, bookingRef: true, movementLabel: true, sheetTab: true, sheetRow: true, sheetDate: true, sheetTime: true, sheetService: true, sheetDetails: true, sheetText: true },
-          take: 2000,
+          where: { bookingRef: { in: pageRefs } },
+          select: {
+            id: true, bookingRef: true, agendaItemId: true, status: true, method: true, appliedName: true, movementLabel: true,
+            sheetTab: true, sheetRow: true, sheetDate: true, sheetTime: true, sheetService: true, sheetDetails: true, sheetText: true, phones: true,
+          },
+          take: 4000,
+        })
+        : Promise.resolve([]),
+      pageRefs.length
+        ? prisma.booking.findMany({
+          where: { bookingRef: { in: pageRefs } },
+          select: {
+            bookingRef: true,
+            tourAgenda: {
+              select: {
+                items: {
+                  where: { date: { gte: pickFrom } }, orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
+                  select: {
+                    id: true, date: true, location: true, fromPoint: true, toPoint: true, details: true, mealPlan: true, meetingTime: true,
+                    serviceType: true, isLeisure: true, isHotelOnly: true,
+                    assignment: { select: { driverId: true, vendorId: true, driverName: true, driver: { select: { name: true } } } },
+                  },
+                },
+              },
+            },
+          },
         })
         : Promise.resolve([]),
     ])
     const itemOf = new Map(agendaItems.map(i => [i.id, i]))
     const bookingSheets: Record<string, BookingSheetLine[]> = {}
     const seenLine = new Set<string>()
-    for (const s of siblings) {
-      const k = `${s.bookingRef}|${s.sheetTab}|${s.sheetRow}`
+    // A line held by a pin (or written) wins over a stale suggestion of the same line.
+    const rank = (x: typeof siblings[number]) => (x.method === 'MANUAL' ? 0 : x.status === 'APPLIED' ? 1 : 2)
+    const keyOfLink = (x: { sheetTab: string | null; sheetRow: number | null; sheetDate: Date | null; sheetDetails: string | null; sheetText: string | null }) =>
+      lineKeyOf({ tab: x.sheetTab, row: x.sheetRow, date: x.sheetDate ? iso(x.sheetDate) : null, details: x.sheetDetails, text: x.sheetText })
+    const seenRowDay = new Set<string>()
+    for (const s of siblings.filter(x => x.sheetRow !== null).sort((a, b) => rank(a) - rank(b))) {
+      // Same content = same line (row numbers move when the sheet gets rows inserted).
+      const k = `${s.bookingRef}|${keyOfLink(s)}`
       if (seenLine.has(k)) continue
       seenLine.add(k)
+      seenRowDay.add(`${s.bookingRef}|${s.sheetTab}|${s.sheetRow}|${s.sheetDate ? iso(s.sheetDate) : ''}`)
       ;(bookingSheets[s.bookingRef] ??= []).push({
         tab: s.sheetTab, row: s.sheetRow, date: s.sheetDate ? iso(s.sheetDate) : null, time: s.sheetTime, service: s.sheetService,
         details: s.sheetDetails, text: s.sheetText, linkId: s.id, placedOn: s.movementLabel, why: null,
+        key: keyOfLink(s), phones: s.phones || null, pinned: s.method === 'MANUAL',
       })
     }
     for (const u of allUnmatched) {
       if (!pageRefs.includes(u.bookingRef)) continue
-      const k = `${u.bookingRef}|${u.tab}|${u.row}`
-      if (seenLine.has(k)) continue
-      seenLine.add(k)
+      // An unplaced row carries no route, so its content differs from a link's copy — match on row + day.
+      const k = `${u.bookingRef}|${u.tab}|${u.row}|${u.date ?? ''}`
+      if (seenRowDay.has(k)) continue
+      seenRowDay.add(k)
       ;(bookingSheets[u.bookingRef] ??= []).push({
         tab: u.tab, row: u.row, date: u.date, time: u.time, service: u.service, details: u.details, text: u.text, linkId: null, placedOn: null, why: u.why,
+        key: lineKeyOf(u), phones: extractPhones(u.text).join(' / ') || null, pinned: false,
       })
     }
     for (const lines of Object.values(bookingSheets)) lines.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? '') || (a.row ?? 0) - (b.row ?? 0))
+
+    // Movements per booking, with who drives them now and which line the sync put there.
+    const bookingMovements: Record<string, BookingMovement[]> = {}
+    const fits: DriverSyncOverview['fits'] = {}
+    for (const b of pageBookings) {
+      const items = (b.tourAgenda?.items ?? []).filter(i => !NOT_DRIVEN.has(String(i.serviceType ?? '').toUpperCase()))
+      const linksHere = siblings.filter(s => s.bookingRef === b.bookingRef && s.agendaItemId)
+      bookingMovements[b.bookingRef] = items.map((i): BookingMovement => {
+        const a = i.assignment
+        const name = a?.driverName?.trim() || a?.driver?.name || null
+        const own = linksHere.filter(s => s.agendaItemId === i.id).sort((x, y) => rank(x) - rank(y))[0]
+        const fromDirectory = Boolean(a?.driverId || a?.vendorId)
+        return {
+          id: i.id, date: iso(i.date), from: i.fromPoint, to: i.toPoint || i.location, time: i.meetingTime,
+          service: i.serviceType ? serviceTypeShortLabel(i.serviceType) : null,
+          kind: isSicType(i.serviceType) ? 'SIC' : isPrivateTransferType(i.serviceType) ? 'PRIVATE' : 'OTHER',
+          noDriverNeeded: i.isLeisure === true && i.isHotelOnly === true,
+          driverName: name, fromDirectory,
+          ours: Boolean(name) && !fromDirectory && linksHere.some(s => s.agendaItemId === i.id && s.appliedName && s.appliedName === a?.driverName),
+          linkId: own?.id ?? null, linkStatus: (own?.status as LinkStatus | undefined) ?? null,
+          lineKey: own ? keyOfLink(own) : null, pinned: own?.method === 'MANUAL',
+        }
+      })
+      // Every line x every movement, scored the way the sync scores - the page ranks both pickers with it.
+      const byLine: Record<string, Record<string, number>> = {}
+      const moves = items.map(movementOfItem)
+      for (const ln of bookingSheets[b.bookingRef] ?? []) {
+        if (!ln.key || !ln.tab || !ln.row) continue
+        const row = rowOfLine({ tab: ln.tab, row: ln.row, date: ln.date, details: ln.details, time: ln.time, service: ln.service, text: ln.text, phones: [] })
+        const m: Record<string, number> = {}
+        for (const mv of moves) {
+          // Lines more than two days off a movement are never it; skip the scoring.
+          if (ln.date && Math.abs(Date.parse(`${ln.date}T00:00:00Z`) - Date.parse(`${mv.date}T00:00:00Z`)) > 2 * 86_400_000) continue
+          const f = fitOf(row, mv)
+          if (f >= 0.05) m[mv.id] = f
+        }
+        byLine[ln.key] = m
+      }
+      fits[b.bookingRef] = byLine
+    }
 
     return {
       installed: true, canEdit: q.canEdit, isAdmin: q.isAdmin, config, access, sheet,
@@ -954,8 +1254,9 @@ export async function driverSyncOverview(q: {
           movementDate: l.movementDate ? iso(l.movementDate) : null, movementLabel: l.movementLabel, movementText: l.movementText,
           sheet: { tab: l.sheetTab, row: l.sheetRow, date: l.sheetDate ? iso(l.sheetDate) : null, details: l.sheetDetails, time: l.sheetTime, service: l.sheetService, text: l.sheetText },
           phones: l.phones, score: l.score === null ? null : Number(l.score),
-          confidence: (l.confidence as 'HIGH' | 'MEDIUM' | null) ?? null, method: (l.method as 'RULES' | 'AI' | null) ?? null,
+          confidence: (l.confidence as 'HIGH' | 'MEDIUM' | null) ?? null, method: (l.method as MatchMethod | null) ?? null,
           reason: l.reason, status: l.status as LinkStatus, note: l.note,
+          lineKey: keyOfLink(l), pinned: l.method === 'MANUAL',
           now: {
             driverName: a?.driverName ?? a?.driver?.name ?? null,
             driverPhone: a?.driverPhone ?? a?.driver?.phone ?? null,
@@ -974,6 +1275,8 @@ export async function driverSyncOverview(q: {
         }
       }),
       bookingSheets,
+      bookingMovements,
+      fits,
       events: events.map((e): DriverSyncEventInfo => ({
         id: e.id, runId: e.runId, bookingRef: e.bookingRef, movementLabel: e.movementLabel, action: e.action as EventAction,
         fromValue: e.fromValue, toValue: e.toValue, score: e.score === null ? null : Number(e.score), detail: e.detail, actor: e.actor,

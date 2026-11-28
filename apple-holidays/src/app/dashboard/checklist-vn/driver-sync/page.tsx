@@ -11,7 +11,7 @@ import { toast } from 'sonner'
 import {
   RefreshCw, Loader2, Car, FileSpreadsheet, ArrowRight, Undo2, Search, Settings2, Database, CheckCircle2, AlertTriangle,
   Clock, ShieldCheck, ChevronLeft, ChevronRight, ExternalLink, Sparkles, Ban, RotateCcw, Check, Phone, Eye,
-  CalendarDays, PlaneLanding, SlidersHorizontal, X,
+  CalendarDays, PlaneLanding, SlidersHorizontal, X, Crown, Pin, Lock, Lightbulb, Shuffle, MousePointerClick, ArrowLeftRight, WandSparkles,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn } from '@/lib/utils'
@@ -19,6 +19,7 @@ import { guestDriver } from '@/lib/guest-driver'
 import {
   EVENT_ACTION, LINK_STATUS, timeAgo,
   type DriverSyncConfig, type DriverSyncLinkInfo, type DriverSyncOverview, type DriverSyncRunInfo, type LinkStatus, type BookingSheetLine,
+  type BookingMovement,
 } from '@/lib/vn-driver-sync/shared'
 
 const STATUSES: LinkStatus[] = ['APPLIED', 'IN_SYNC', 'SUGGESTED', 'KEPT_MANUAL', 'NO_NUMBER', 'STALE', 'IGNORED']
@@ -40,7 +41,7 @@ interface Filters {
   dateBy: 'movement' | 'arrival'
   from: string; to: string; q: string
   conf: '' | 'HIGH' | 'MEDIUM' | 'NONE'
-  method: '' | 'RULES' | 'AI'
+  method: '' | 'RULES' | 'AI' | 'MANUAL'
   driver: '' | 'has' | 'none'
   phones: '' | 'yes' | 'no'
   minScore: number
@@ -115,18 +116,34 @@ const KIND_TONE = {
   OTHER: 'bg-slate-100 text-slate-600 ring-slate-200',
 } as const
 
-function SheetLineRow({ line, matched, movementDate }: { line: BookingSheetLine; matched: boolean; movementDate: string | null }) {
+const fitTone = (f: number) => (f >= 0.72 ? 'bg-emerald-500 text-white' : f >= 0.5 ? 'bg-amber-400 text-slate-900' : f >= 0.3 ? 'bg-orange-200 text-orange-900' : 'bg-slate-200 text-slate-500')
+const shortDay = (iso: string | null) => (iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }) : '—')
+
+/** Fit of a sheet line to a movement as a small pill (the same score the sync uses). */
+function FitPill({ f, big }: { f: number | null | undefined; big?: boolean }) {
+  if (f === null || f === undefined) return <span className={cn('rounded px-1 font-mono text-[9.5px] text-slate-300', big && 'text-[11px]')}>—</span>
+  return <span className={cn('rounded px-1 font-mono font-bold tabular-nums', big ? 'text-[11px]' : 'text-[9.5px]', fitTone(f))}>{Math.round(f * 100)}%</span>
+}
+
+function SheetLineRow({ line, matched, movementDate, picking, picked, fit, best, onPick }: {
+  line: BookingSheetLine; matched: boolean; movementDate: string | null
+  /** Fix mode: lines are buttons, each with its fit to the chosen movement. */
+  picking?: boolean; picked?: boolean; fit?: number | null; best?: boolean; onPick?: () => void
+}) {
   const { route, desc } = splitDetails(line.details)
   const otherDay = line.date && movementDate && line.date !== movementDate
-  return (
-    <li className={cn('grid grid-cols-[52px_1fr] gap-2 rounded-lg px-2 py-1.5 text-[11px] transition',
-      matched ? 'bg-emerald-50 ring-2 ring-emerald-400' : 'hover:bg-slate-50')}>
+  const noNumber = !line.phones
+  const body = (
+    <>
       <div className="pt-px">
-        <span className={cn('inline-block rounded px-1 font-mono text-[10px] font-semibold', matched ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500')}>#{line.row ?? '—'}</span>
+        <span className={cn('inline-block rounded px-1 font-mono text-[10px] font-semibold',
+          picked ? 'bg-indigo-600 text-white' : matched ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500')}>#{line.row ?? '—'}</span>
         {otherDay && <p className="mt-0.5 text-[9.5px] text-slate-400">{fmtDate(line.date).replace(/^\w+ /, '')}</p>}
+        {picking && <p className="mt-0.5"><FitPill f={fit} /></p>}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 text-left">
         <p className="truncate font-medium text-slate-800" title={route ?? desc}>
+          {best && <Crown className="mr-1 inline h-3 w-3 text-amber-500" />}
           {route ? route : <span className="italic text-slate-400">no from / to</span>}
           {desc && <span className="font-normal text-slate-400"> · {firstWords(desc)}</span>}
         </p>
@@ -138,23 +155,88 @@ function SheetLineRow({ line, matched, movementDate }: { line: BookingSheetLine;
           <span className="shrink-0 font-semibold text-slate-700">{line.time || '—'}</span>
           {line.service && <span className="shrink-0 text-slate-400">· {line.service}</span>}
         </p>
-        {matched ? (
-          <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700"><Check className="h-3 w-3" />Matched to this movement</p>
+        {picked ? (
+          <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700"><MousePointerClick className="h-3 w-3" />Your pick{matched ? ' (same as the sync)' : ''}</p>
+        ) : matched ? (
+          <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
+            {line.pinned ? <><Pin className="h-3 w-3" />Pinned to this movement</> : <><Check className="h-3 w-3" />{picking ? "The sync's guess" : 'Matched to this movement'}</>}
+          </p>
         ) : line.placedOn ? (
-          <p className="mt-0.5 truncate text-[10px] text-slate-400" title={line.placedOn}>On another movement: {line.placedOn.replace(/^\d{4}-\d{2}-\d{2} · /, '')}</p>
+          <p className="mt-0.5 truncate text-[10px] text-slate-400" title={line.placedOn}>
+            {line.pinned && <Pin className="mr-0.5 inline h-2.5 w-2.5 text-indigo-400" />}On another movement: {line.placedOn.replace(/^\d{4}-\d{2}-\d{2} · /, '')}
+          </p>
         ) : line.why ? (
           <p className="mt-0.5 truncate text-[10px] text-amber-600" title={line.why}>Not placed — {line.why}</p>
         ) : null}
+        {picking && noNumber && <p className="mt-0.5 text-[10px] font-medium text-rose-500">No phone number — cannot be written</p>}
       </div>
+    </>
+  )
+  const tone = picked ? 'bg-indigo-50 ring-2 ring-indigo-500 shadow-sm' : matched ? (picking ? 'bg-emerald-50/50 ring-1 ring-emerald-300' : 'bg-emerald-50 ring-2 ring-emerald-400') : 'hover:bg-slate-50'
+  if (!picking) return <li className={cn('grid grid-cols-[52px_1fr] gap-2 rounded-lg px-2 py-1.5 text-[11px] transition', tone)}>{body}</li>
+  return (
+    <li>
+      <button type="button" onClick={onPick} disabled={noNumber}
+        className={cn('grid w-full grid-cols-[52px_1fr] gap-2 rounded-lg px-2 py-1.5 text-[11px] transition disabled:cursor-not-allowed disabled:opacity-45',
+          tone, !picked && !noNumber && 'hover:ring-1 hover:ring-indigo-300')}>
+        {body}
+      </button>
     </li>
   )
 }
 
-function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
-  l: DriverSyncLinkInfo; lines: BookingSheetLine[]; canEdit: boolean; busy: boolean
+/** One system movement in the "which movement?" picker. */
+function MovementOption({ m, day, current, picked, fit, best, onPick }: {
+  m: BookingMovement; day: number | null; current: boolean; picked: boolean; fit: number | null | undefined; best: boolean; onPick: () => void
+}) {
+  const locked = m.fromDirectory
+  const handTyped = Boolean(m.driverName) && !m.ours && !m.fromDirectory
+  return (
+    <li>
+      <button type="button" onClick={onPick} disabled={locked}
+        title={locked ? 'A driver from the directory is on it — change it in Assign Driver' : handTyped ? `Has "${m.driverName}" typed by hand — you will be asked before it is replaced` : ''}
+        className={cn('grid w-full grid-cols-[44px_1fr_auto] items-start gap-2 rounded-lg px-2 py-1.5 text-left text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40',
+          picked ? 'bg-indigo-50 ring-2 ring-indigo-500 shadow-sm' : current ? 'bg-white ring-1 ring-slate-300' : 'hover:bg-white hover:ring-1 hover:ring-indigo-300')}>
+        <span className="pt-px font-mono text-[10.5px] font-semibold text-slate-700">{m.time?.slice(0, 5) || '--:--'}</span>
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-slate-800">
+            {best && <Crown className="mr-1 inline h-3 w-3 text-amber-500" />}
+            {m.from ?? '—'} <ArrowRight className="mx-0.5 inline h-2.5 w-2.5 text-slate-400" /> {m.to ?? '—'}
+          </span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-1">
+            <span className={cn('rounded-full px-1.5 text-[9.5px] font-bold ring-1', KIND_TONE[m.kind])}>{m.kind === 'PRIVATE' ? 'Private' : m.kind === 'SIC' ? 'SIC' : 'Other'}</span>
+            {locked ? (
+              <span className="inline-flex items-center gap-0.5 text-[10px] text-violet-600"><Lock className="h-2.5 w-2.5" />{m.driverName ?? 'directory'}</span>
+            ) : handTyped ? (
+              <span className="max-w-[180px] truncate text-[10px] text-violet-600">✎ {m.driverName}</span>
+            ) : m.driverName ? (
+              <span className="max-w-[180px] truncate text-[10px] text-amber-700">{m.pinned ? '📌 ' : ''}{m.driverName}</span>
+            ) : m.noDriverNeeded ? (
+              <span className="text-[10px] text-slate-400">no driver needed</span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />free</span>
+            )}
+            {current && <span className="text-[10px] text-slate-400">· this card</span>}
+            {day !== null && <span className="sr-only">Day {day}</span>}
+          </span>
+        </span>
+        <FitPill f={fit} />
+      </button>
+    </li>
+  )
+}
+
+function ReviewCard({ l, lines, movements, fits, canEdit, busy, selected, onSelect, onAct, onPick }: {
+  l: DriverSyncLinkInfo; lines: BookingSheetLine[]; movements: BookingMovement[]; fits: Record<string, Record<string, number>>
+  canEdit: boolean; busy: boolean
   selected: boolean; onSelect: (on: boolean) => void; onAct: (l: DriverSyncLinkInfo, action: string) => void
+  onPick: (l: DriverSyncLinkInfo, lineKey: string, target: BookingMovement) => Promise<boolean>
 }) {
   const [showAll, setShowAll] = useState(false)
+  const [fixing, setFixing] = useState(false)
+  const [pickLine, setPickLine] = useState<string | null>(l.lineKey)
+  const [pickItem, setPickItem] = useState<string | null>(l.agendaItemId)
+  const [freeOnly, setFreeOnly] = useState(true)
   const s = LINK_STATUS[l.status]
   const guest = guestDriver(l.sheet.text, l.phones)
   const pct = l.score === null ? null : Math.round(l.score * 100)
@@ -169,23 +251,71 @@ function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
   }
   const timeDiffers = l.sheet.time && sys.meetingTime && l.sheet.time.slice(0, 5) !== sys.meetingTime.slice(0, 5)
 
+  // The matched row may be missing from the booking list (older sweep) — show it from the link itself.
+  const hasMatched = lines.some(x => x.linkId === l.id)
+  const matchedLine: BookingSheetLine | null = !hasMatched && l.sheet.row
+    ? { tab: l.sheet.tab, row: l.sheet.row, date: l.sheet.date, time: l.sheet.time, service: l.sheet.service, details: l.sheet.details, text: l.sheet.text, linkId: l.id, placedOn: null, why: null, key: l.lineKey, phones: l.phones, pinned: l.pinned }
+    : null
+  const allLines = matchedLine ? [matchedLine, ...lines] : lines
   // Lines on the movement's own day first; the matched line always shows.
   const sameDay = lines.filter(x => x.linkId === l.id || !x.date || x.date === l.movementDate)
   const shown = showAll ? lines : sameDay
   const hidden = lines.length - sameDay.length
-  // The matched row may be missing from the booking list (older sweep) — show it from the link itself.
-  const hasMatched = lines.some(x => x.linkId === l.id)
-  const matchedLine: BookingSheetLine | null = !hasMatched && l.sheet.row
-    ? { tab: l.sheet.tab, row: l.sheet.row, date: l.sheet.date, time: l.sheet.time, service: l.sheet.service, details: l.sheet.details, text: l.sheet.text, linkId: l.id, placedOn: null, why: null }
-    : null
+
+  // ── Fit hints: is there a better line for this movement, or a better movement for this line?
+  const fitOf = (key: string | null | undefined, item: string | null | undefined) => (key && item ? fits[key]?.[item] ?? 0 : 0)
+  const canTake = (m: BookingMovement) => !m.fromDirectory && !m.noDriverNeeded
+  const isFree = (m: BookingMovement) => canTake(m) && (!m.driverName || m.ours)
+  const nowFit = (l.lineKey && l.agendaItemId ? fits[l.lineKey]?.[l.agendaItemId] : undefined) ?? l.score ?? 0
+  const betterLine = l.agendaItemId
+    ? allLines.filter(x => x.key && x.key !== l.lineKey && x.phones).map(x => ({ x, f: fitOf(x.key, l.agendaItemId) })).sort((a, b) => b.f - a.f)[0]
+    : undefined
+  const betterMove = l.lineKey
+    ? movements.filter(m => m.id !== l.agendaItemId && isFree(m)).map(m => ({ m, f: fitOf(l.lineKey, m.id) })).sort((a, b) => b.f - a.f)[0]
+    : undefined
+  const hintLine = betterLine && betterLine.f >= 0.45 && betterLine.f - nowFit >= 0.1 ? betterLine : null
+  const hintMove = betterMove && betterMove.f >= 0.45 && betterMove.f - nowFit >= 0.1 ? betterMove : null
+
+  // ── Fix mode
+  const curLine = allLines.find(x => x.key === pickLine) ?? null
+  const curMove = movements.find(m => m.id === pickItem) ?? null
+  const changed = pickLine !== l.lineKey || pickItem !== l.agendaItemId
+  const rankedLines = [...allLines].filter((x, i, a) => x.key && a.findIndex(y => y.key === x.key) === i)
+    .sort((a, b) => fitOf(b.key, pickItem) - fitOf(a.key, pickItem) || (a.date ?? '').localeCompare(b.date ?? '') || (a.row ?? 0) - (b.row ?? 0))
+  const bestLineKey = rankedLines.find(x => x.phones)?.key ?? null
+  const shownMoves = movements.filter(m => !freeOnly || isFree(m) || m.id === l.agendaItemId || m.id === pickItem)
+  const bestMoveId = [...movements].filter(isFree).sort((a, b) => fitOf(pickLine, b.id) - fitOf(pickLine, a.id))[0]?.id ?? null
+  const byDay = shownMoves.reduce<Record<string, BookingMovement[]>>((acc, m) => { (acc[m.date] ??= []).push(m); return acc }, {})
+
+  const startFix = (patch?: { line?: string | null; item?: string | null }) => {
+    setPickLine(patch?.line !== undefined ? patch.line : l.lineKey)
+    setPickItem(patch?.item !== undefined ? patch.item : l.agendaItemId)
+    setFixing(true)
+  }
+  const warnings: { tone: 'amber' | 'rose' | 'slate'; text: string }[] = []
+  if (fixing && curLine && curMove) {
+    const f = fitOf(curLine.key, curMove.id)
+    if (curLine.date && curLine.date !== curMove.date) warnings.push({ tone: 'amber', text: `The sheet line is on ${shortDay(curLine.date)}, the movement on ${shortDay(curMove.date)}` })
+    if (curLine.time && curMove.time && curLine.time.slice(0, 5) !== curMove.time.slice(0, 5)) warnings.push({ tone: 'slate', text: `Times differ: sheet ${curLine.time} · system ${curMove.time} (the system time stays)` })
+    if (f < 0.3) warnings.push({ tone: 'amber', text: `Low fit (${Math.round(f * 100)}%) — make sure this is really the same service` })
+    if (curMove.driverName && !curMove.ours && !curMove.fromDirectory) warnings.push({ tone: 'rose', text: `Replaces "${curMove.driverName}" typed by hand — you will be asked to confirm` })
+    if (curLine.placedOn && curLine.linkId !== l.id && curLine.linkId) warnings.push({ tone: 'slate', text: `${curLine.pinned ? 'Pinned' : 'Suggested'} on ${curLine.placedOn.replace(/^\d{4}-\d{2}-\d{2} · /, '')} now — that suggestion is dropped` })
+    if (curMove.id !== l.agendaItemId) warnings.push({ tone: 'slate', text: l.status === 'APPLIED' ? "This card's movement: the driver the sync wrote there is taken off" : "This card's movement goes back to the next sync to be matched again" })
+  }
+  const blocker = !curLine ? 'Pick a sheet line on the left' : !curLine.phones ? 'That line has no phone number' : !curMove ? 'Pick a system movement on the right' : curMove.fromDirectory ? 'That movement has a directory driver' : null
+  const pickGuest = curLine ? guestDriver(curLine.text, curLine.phones) : null
+  const save = async () => {
+    if (!curLine?.key || !curMove || blocker) return
+    if (await onPick(l, curLine.key, curMove)) setFixing(false)
+  }
 
   return (
     <article className={cn('overflow-hidden rounded-2xl border bg-white shadow-sm transition',
-      selected ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-slate-200 hover:border-slate-300 hover:shadow')}>
+      fixing ? 'border-indigo-400 ring-2 ring-indigo-200' : selected ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-slate-200 hover:border-slate-300 hover:shadow')}>
       {/* Header */}
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-slate-100 bg-slate-50/70 px-4 py-2">
         {canEdit && (
-          <input type="checkbox" checked={selected} disabled={!canBulk(l) || busy} onChange={e => onSelect(e.target.checked)}
+          <input type="checkbox" checked={selected} disabled={!canBulk(l) || busy || fixing} onChange={e => onSelect(e.target.checked)}
             title={canBulk(l) ? 'Select for bulk apply' : l.status === 'KEPT_MANUAL' ? 'Replacing a driver is one at a time' : 'Nothing to apply'}
             className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-30" />
         )}
@@ -198,6 +328,8 @@ function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
             <PlaneLanding className="h-3 w-3" />{l.arrivalDate === l.movementDate ? 'Arrival day' : `Arr ${fmtDate(l.arrivalDate)}`}
           </span>
         )}
+        {l.pinned && <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 ring-1 ring-indigo-200" title={l.reason ?? ''}><Pin className="h-3 w-3" />Picked by hand</span>}
+        {fixing && <span className="inline-flex items-center gap-1 rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-semibold text-white"><WandSparkles className="h-3 w-3" />Fixing the match</span>}
         <div className="ml-auto flex items-center gap-2">
           {pct !== null && (
             <span className="flex items-center gap-1.5" title={l.reason ?? ''}>
@@ -205,7 +337,7 @@ function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
                 <span className={cn('block h-full rounded-full', l.confidence === 'HIGH' ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-400' : 'bg-rose-400')} style={{ width: `${pct}%` }} />
               </span>
               <span className={cn('text-[11px] font-bold tabular-nums', l.confidence === 'HIGH' ? 'text-emerald-700' : pct >= 50 ? 'text-amber-700' : 'text-rose-600')}>
-                {l.method === 'AI' && <Sparkles className="mr-0.5 inline h-3 w-3" />}{pct}%
+                {l.method === 'AI' && <Sparkles className="mr-0.5 inline h-3 w-3" />}{l.method === 'MANUAL' && <Pin className="mr-0.5 inline h-3 w-3" />}{pct}%
               </span>
             </span>
           )}
@@ -218,99 +350,228 @@ function ReviewCard({ l, lines, canEdit, busy, selected, onSelect, onAct }: {
         <section className="min-w-0 p-3">
           <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-emerald-700">
             <FileSpreadsheet className="h-3.5 w-3.5" /> Movement Chart
-            <span className="font-normal normal-case tracking-normal text-slate-400">· {lines.length || (l.sheet.row ? 1 : 0)} line{lines.length === 1 ? '' : 's'} for {l.bookingRef}</span>
+            <span className="font-normal normal-case tracking-normal text-slate-400">
+              {fixing ? '· click the right line — ranked by fit to the chosen movement' : `· ${lines.length || (l.sheet.row ? 1 : 0)} line${lines.length === 1 ? '' : 's'} for ${l.bookingRef}`}
+            </span>
           </p>
-          {shown.length === 0 && !matchedLine ? (
-            <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] italic text-slate-400">No sheet line for this movement</p>
+          {fixing ? (
+            rankedLines.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] italic text-slate-400">No sheet lines known for this booking — sync it first</p>
+            ) : (
+              <ul className="max-h-80 space-y-1 overflow-y-auto pr-1">
+                {rankedLines.map(x => (
+                  <SheetLineRow key={x.key} line={x} matched={x.key === l.lineKey} movementDate={curMove?.date ?? l.movementDate}
+                    picking picked={x.key === pickLine} fit={pickItem && x.key ? fits[x.key]?.[pickItem] : null} best={x.key === bestLineKey && x.key !== pickLine}
+                    onPick={() => setPickLine(x.key)} />
+                ))}
+              </ul>
+            )
           ) : (
-            <ul className={cn('space-y-1', showAll && 'max-h-72 overflow-y-auto pr-1')}>
-              {matchedLine && <SheetLineRow line={matchedLine} matched movementDate={l.movementDate} />}
-              {shown.map(x => <SheetLineRow key={`${x.tab}-${x.row}`} line={x} matched={x.linkId === l.id} movementDate={l.movementDate} />)}
-            </ul>
+            <>
+              {shown.length === 0 && !matchedLine ? (
+                <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] italic text-slate-400">No sheet line for this movement</p>
+              ) : (
+                <ul className={cn('space-y-1', showAll && 'max-h-72 overflow-y-auto pr-1')}>
+                  {matchedLine && <SheetLineRow line={matchedLine} matched movementDate={l.movementDate} />}
+                  {shown.map(x => <SheetLineRow key={`${x.tab}-${x.row}`} line={x} matched={x.linkId === l.id} movementDate={l.movementDate} />)}
+                </ul>
+              )}
+              {hidden > 0 && (
+                <button type="button" onClick={() => setShowAll(v => !v)} className="mt-1.5 text-[10.5px] font-semibold text-indigo-600 hover:underline">
+                  {showAll ? 'Only this day' : `Show all ${lines.length} lines of the booking (+${hidden})`}
+                </button>
+              )}
+            </>
           )}
-          {hidden > 0 && (
-            <button type="button" onClick={() => setShowAll(v => !v)} className="mt-1.5 text-[10.5px] font-semibold text-indigo-600 hover:underline">
-              {showAll ? 'Only this day' : `Show all ${lines.length} lines of the booking (+${hidden})`}
-            </button>
-          )}
-          {l.reason && <p className="mt-2 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-500">Why: </span>{l.reason}</p>}
-        </section>
-
-        {/* Bridge */}
-        <div className="hidden items-center justify-center px-1 lg:flex">
-          <span className={cn('flex h-8 w-8 items-center justify-center rounded-full ring-1',
-            l.confidence === 'HIGH' ? 'bg-emerald-50 text-emerald-600 ring-emerald-200' : 'bg-amber-50 text-amber-600 ring-amber-200')}>
-            <ArrowRight className="h-4 w-4" />
-          </span>
-        </div>
-
-        {/* Right — the system agenda */}
-        <section className="min-w-0 border-t border-slate-100 bg-gradient-to-br from-white to-indigo-50/40 p-3 lg:border-l lg:border-t-0">
-          <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-indigo-700">
-            <CalendarDays className="h-3.5 w-3.5" /> System agenda
-            {day !== null && day >= 0 && <span className="rounded bg-indigo-600 px-1.5 py-px font-mono text-[10px] normal-case tracking-normal text-white">Day {day + 1}</span>}
-          </p>
-          <p className="text-[12.5px] font-semibold leading-snug text-slate-900">
-            {sys.from || sys.to ? <>{sys.from ?? '—'} <ArrowRight className="mx-0.5 inline h-3 w-3 text-slate-400" /> {sys.to ?? '—'}</> : label}
-          </p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-            <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', KIND_TONE[sys.kind])}>
-              {sys.kind === 'PRIVATE' ? 'Private' : sys.kind === 'SIC' ? 'SIC' : 'Other'}
-            </span>
-            {sys.service && <span className="text-[10.5px] text-slate-500">{sys.service}</span>}
-            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1',
-              timeDiffers ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-white text-slate-700 ring-slate-200')}
-              title={timeDiffers ? `Sheet says ${l.sheet.time}` : 'Meeting time'}>
-              <Clock className="h-3 w-3" />{sys.meetingTime || 'no time'}{timeDiffers && <span className="font-normal"> · sheet {l.sheet.time}</span>}
-            </span>
-          </div>
-          {l.movementText && <p className="mt-1.5 line-clamp-2 text-[10.5px] text-slate-500" title={l.movementText}>{l.movementText}</p>}
-
-          {/* Driver: now → will be */}
-          <div className="mt-2.5 grid grid-cols-[auto_1fr] items-start gap-x-2 gap-y-1 rounded-xl bg-white/80 p-2 text-[11px] ring-1 ring-slate-200">
-            <span className="text-slate-400">Now</span>
-            <span className={cn(l.now.driverName ? 'font-medium text-violet-700' : 'italic text-slate-300')}>
-              {l.now.driverName ?? 'no driver'}{l.now.fromDirectory && <span className="ml-1 text-[10px] text-violet-500">(directory)</span>}
-            </span>
-            <span className="text-slate-400">Sheet</span>
-            <span className="min-w-0">
-              <span className="font-medium text-slate-800">{l.sheet.text || <span className="italic text-slate-300">empty</span>}</span>
-              {l.phones && <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-emerald-700"><Eye className="h-3 w-3" />Guests see <b>{guest.name}</b></span>}
-            </span>
-          </div>
-          {l.note && <p className="mt-1 text-[10px] text-slate-400">{l.note}</p>}
-
-          {/* Actions */}
-          {canEdit && (
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-              {canApply(l) && (
-                <button type="button" disabled={busy} onClick={() => onAct(l, 'apply')}
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50">
-                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  {l.status === 'KEPT_MANUAL' ? 'Replace driver' : 'Apply driver'}
+          {l.reason && !fixing && <p className="mt-2 text-[10px] leading-snug text-slate-400"><span className="font-semibold text-slate-500">Why: </span>{l.reason}</p>}
+          {/* Smart hints: a better pairing the scores can see. */}
+          {canEdit && !fixing && (hintLine || hintMove) && (
+            <div className="mt-2 space-y-1">
+              {hintLine && (
+                <button type="button" onClick={() => startFix({ line: hintLine.x.key })}
+                  className="flex w-full items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-left text-[10.5px] text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100">
+                  <Lightbulb className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <span className="min-w-0 flex-1 truncate">Line <b>#{hintLine.x.row}</b> fits this movement better — {Math.round(hintLine.f * 100)}% vs {Math.round(nowFit * 100)}%</span>
+                  <span className="shrink-0 font-semibold text-amber-700">Try it →</span>
                 </button>
               )}
-              {l.status === 'SUGGESTED' && !l.phones && (
-                <span className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-center text-[11px] text-slate-500">Add a phone number in the sheet to apply</span>
-              )}
-              {l.status === 'APPLIED' && (
-                <button type="button" disabled={busy} onClick={() => onAct(l, 'undo')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50 disabled:opacity-50">
-                  <Undo2 className="h-3.5 w-3.5" />Undo
-                </button>
-              )}
-              {l.status === 'IGNORED' ? (
-                <button type="button" disabled={busy} onClick={() => onAct(l, 'restore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
-                  <RotateCcw className="h-3.5 w-3.5" />Review again
-                </button>
-              ) : l.status !== 'APPLIED' && l.status !== 'IN_SYNC' && (
-                <button type="button" disabled={busy} onClick={() => onAct(l, 'ignore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
-                  <Ban className="h-3.5 w-3.5" />Ignore
+              {hintMove && (
+                <button type="button" onClick={() => startFix({ item: hintMove.m.id })}
+                  className="flex w-full items-center gap-1.5 rounded-lg bg-sky-50 px-2 py-1.5 text-left text-[10.5px] text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100">
+                  <Shuffle className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+                  <span className="min-w-0 flex-1 truncate">This line fits <b>{shortDay(hintMove.m.date)} · {hintMove.m.from} → {hintMove.m.to}</b> better ({Math.round(hintMove.f * 100)}%)</span>
+                  <span className="shrink-0 font-semibold text-sky-700">Move it →</span>
                 </button>
               )}
             </div>
           )}
         </section>
+
+        {/* Bridge */}
+        <div className="hidden items-center justify-center px-1 lg:flex">
+          <span className={cn('flex h-8 w-8 items-center justify-center rounded-full ring-1',
+            fixing ? 'bg-indigo-600 text-white ring-indigo-600' : l.confidence === 'HIGH' ? 'bg-emerald-50 text-emerald-600 ring-emerald-200' : 'bg-amber-50 text-amber-600 ring-amber-200')}>
+            {fixing ? <ArrowLeftRight className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
+          </span>
+        </div>
+
+        {/* Right — the system agenda */}
+        <section className="min-w-0 border-t border-slate-100 bg-gradient-to-br from-white to-indigo-50/40 p-3 lg:border-l lg:border-t-0">
+          {fixing ? (
+            <>
+              <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-indigo-700">
+                <CalendarDays className="h-3.5 w-3.5" /> Which system movement?
+                <span className="ml-auto normal-case tracking-normal">
+                  <Seg value={freeOnly ? 'free' : 'all'} onChange={v => setFreeOnly(v === 'free')} options={[['free', 'No driver yet'], ['all', 'All']]} />
+                </span>
+              </div>
+              {Object.keys(byDay).length === 0 ? (
+                <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] italic text-slate-400">
+                  {movements.length ? 'Every upcoming movement has a driver — switch to All' : 'No upcoming movements for this booking'}
+                </p>
+              ) : (
+                <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                  {Object.entries(byDay).map(([date, ms]) => {
+                    const d = dayDiff(date, l.arrivalDate)
+                    return (
+                      <div key={date}>
+                        <p className="sticky top-0 z-10 mb-0.5 flex items-center gap-1.5 bg-gradient-to-r from-indigo-50 to-transparent px-1 py-0.5 text-[10px] font-semibold text-indigo-800">
+                          {d !== null && d >= 0 && <span className="rounded bg-indigo-600 px-1 font-mono text-white">Day {d + 1}</span>}
+                          {fmtDate(date)}
+                          {curLine?.date === date && <span className="font-normal text-emerald-700">· sheet line&apos;s day</span>}
+                        </p>
+                        <ul className="space-y-0.5">
+                          {ms.map(m => (
+                            <MovementOption key={m.id} m={m} day={d} current={m.id === l.agendaItemId} picked={m.id === pickItem}
+                              fit={pickLine ? fits[pickLine]?.[m.id] : null} best={m.id === bestMoveId && m.id !== pickItem} onPick={() => setPickItem(m.id)} />
+                          ))}
+                        </ul>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="mb-1.5 flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-indigo-700">
+                <CalendarDays className="h-3.5 w-3.5" /> System agenda
+                {day !== null && day >= 0 && <span className="rounded bg-indigo-600 px-1.5 py-px font-mono text-[10px] normal-case tracking-normal text-white">Day {day + 1}</span>}
+              </p>
+              <p className="text-[12.5px] font-semibold leading-snug text-slate-900">
+                {sys.from || sys.to ? <>{sys.from ?? '—'} <ArrowRight className="mx-0.5 inline h-3 w-3 text-slate-400" /> {sys.to ?? '—'}</> : label}
+              </p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold ring-1', KIND_TONE[sys.kind])}>
+                  {sys.kind === 'PRIVATE' ? 'Private' : sys.kind === 'SIC' ? 'SIC' : 'Other'}
+                </span>
+                {sys.service && <span className="text-[10.5px] text-slate-500">{sys.service}</span>}
+                <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ring-1',
+                  timeDiffers ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-white text-slate-700 ring-slate-200')}
+                  title={timeDiffers ? `Sheet says ${l.sheet.time}` : 'Meeting time'}>
+                  <Clock className="h-3 w-3" />{sys.meetingTime || 'no time'}{timeDiffers && <span className="font-normal"> · sheet {l.sheet.time}</span>}
+                </span>
+              </div>
+              {l.movementText && <p className="mt-1.5 line-clamp-2 text-[10.5px] text-slate-500" title={l.movementText}>{l.movementText}</p>}
+
+              {/* Driver: now → will be */}
+              <div className="mt-2.5 grid grid-cols-[auto_1fr] items-start gap-x-2 gap-y-1 rounded-xl bg-white/80 p-2 text-[11px] ring-1 ring-slate-200">
+                <span className="text-slate-400">Now</span>
+                <span className={cn(l.now.driverName ? 'font-medium text-violet-700' : 'italic text-slate-300')}>
+                  {l.now.driverName ?? 'no driver'}{l.now.fromDirectory && <span className="ml-1 text-[10px] text-violet-500">(directory)</span>}
+                </span>
+                <span className="text-slate-400">Sheet</span>
+                <span className="min-w-0">
+                  <span className="font-medium text-slate-800">{l.sheet.text || <span className="italic text-slate-300">empty</span>}</span>
+                  {l.phones && <span className="mt-0.5 flex items-center gap-1 text-[10.5px] text-emerald-700"><Eye className="h-3 w-3" />Guests see <b>{guest.name}</b></span>}
+                </span>
+              </div>
+              {l.note && <p className="mt-1 text-[10px] text-slate-400">{l.note}</p>}
+
+              {/* Actions */}
+              {canEdit && (
+                <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                  {canApply(l) && (
+                    <button type="button" disabled={busy} onClick={() => onAct(l, 'apply')}
+                      className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50">
+                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                      {l.status === 'KEPT_MANUAL' ? 'Replace driver' : 'Apply driver'}
+                    </button>
+                  )}
+                  {l.status === 'SUGGESTED' && !l.phones && (
+                    <span className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-center text-[11px] text-slate-500">Add a phone number in the sheet to apply</span>
+                  )}
+                  {l.status !== 'IGNORED' && (
+                    <button type="button" disabled={busy} onClick={() => startFix()} title="Pick the right sheet line, or the right system movement, by hand"
+                      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-semibold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-50 disabled:opacity-50">
+                      <WandSparkles className="h-3.5 w-3.5" />Wrong match? Fix
+                    </button>
+                  )}
+                  {l.status === 'APPLIED' && (
+                    <button type="button" disabled={busy} onClick={() => onAct(l, 'undo')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50 disabled:opacity-50">
+                      <Undo2 className="h-3.5 w-3.5" />Undo
+                    </button>
+                  )}
+                  {l.status === 'IGNORED' ? (
+                    <button type="button" disabled={busy} onClick={() => onAct(l, 'restore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
+                      <RotateCcw className="h-3.5 w-3.5" />Review again
+                    </button>
+                  ) : l.status !== 'APPLIED' && l.status !== 'IN_SYNC' && (
+                    <button type="button" disabled={busy} onClick={() => onAct(l, 'ignore')} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-2 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50">
+                      <Ban className="h-3.5 w-3.5" />Ignore
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </section>
       </div>
+
+      {/* Fix mode — what will be written, before it is */}
+      {fixing && (
+        <footer className="border-t border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-emerald-50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+            <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1 ring-1 ring-emerald-200">
+              <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+              {curLine ? <><b className="font-mono">#{curLine.row}</b><span className="max-w-[220px] truncate text-slate-600">{curLine.text}</span></> : <span className="italic text-slate-400">no line</span>}
+            </span>
+            <ArrowRight className="h-4 w-4 text-indigo-400" />
+            <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2 py-1 ring-1 ring-indigo-200">
+              <CalendarDays className="h-3.5 w-3.5 text-indigo-600" />
+              {curMove ? <><b>{shortDay(curMove.date)}</b><span className="font-mono text-slate-500">{curMove.time?.slice(0, 5) || ''}</span><span className="max-w-[240px] truncate text-slate-700">{curMove.from} → {curMove.to}</span></> : <span className="italic text-slate-400">no movement</span>}
+            </span>
+            {curLine?.key && curMove && <FitPill f={fits[curLine.key]?.[curMove.id] ?? 0} big />}
+            {curMove && curLine?.phones && (
+              <span className="inline-flex items-center gap-1 text-[10.5px] text-slate-500">
+                Driver <span className={cn(curMove.driverName ? 'text-violet-700 line-through decoration-rose-400' : 'italic text-slate-300')}>{curMove.driverName ?? 'none'}</span>
+                <ArrowRight className="h-3 w-3" /><span className="font-semibold text-emerald-700">guests see {pickGuest?.name}</span>
+              </span>
+            )}
+          </div>
+          {warnings.length > 0 && (
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {warnings.map(w => (
+                <li key={w.text} className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] ring-1',
+                  w.tone === 'rose' ? 'bg-rose-50 text-rose-700 ring-rose-200' : w.tone === 'amber' ? 'bg-amber-50 text-amber-800 ring-amber-200' : 'bg-white text-slate-600 ring-slate-200')}>
+                  {w.tone !== 'slate' && <AlertTriangle className="h-3 w-3" />}{w.text}
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <button type="button" disabled={busy || Boolean(blocker)} onClick={save}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50">
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pin className="h-3.5 w-3.5" />}Pin &amp; apply
+            </button>
+            <button type="button" disabled={busy} onClick={() => setFixing(false)} className="rounded-lg px-3 py-2 text-[12px] text-slate-500 hover:bg-white">Cancel</button>
+            {changed && <button type="button" disabled={busy} onClick={() => startFix()} className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-[11px] text-slate-500 hover:bg-white"><RotateCcw className="h-3 w-3" />Back to the sync&apos;s guess</button>}
+            <span className="ml-auto text-[10.5px] text-slate-400">
+              {blocker ?? 'Pinned pairs stay put: later syncs keep this line here, follow it if the sheet edits it, and match the rest of the booking around it.'}
+            </span>
+          </div>
+        </footer>
+      )}
     </article>
   )
 }
@@ -398,6 +659,23 @@ export default function DriverSyncPage() {
       await load()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed')
+    } finally { setBusyId(null) }
+  }
+
+  /** Fix a match by hand: this sheet line onto that movement, pinned. */
+  async function pick(l: DriverSyncLinkInfo, lineKey: string, target: BookingMovement): Promise<boolean> {
+    const handTyped = Boolean(target.driverName) && !target.ours && !target.fromDirectory
+    if (handTyped && !window.confirm(`"${target.driverName}" was typed on that movement by hand.\n\nReplace it with the sheet line's driver?`)) return false
+    setBusyId(l.id)
+    try {
+      const { message } = await post('/api/vn-driver-sync/action', { action: 'pick', linkId: l.id, lineKey, itemId: target.id, replace: handTyped }) as { message: string }
+      toast.success(message, { duration: 8_000 })
+      await load()
+      return true
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed', { duration: 10_000 })
+      await load()
+      return false
     } finally { setBusyId(null) }
   }
 
@@ -696,7 +974,7 @@ export default function DriverSyncPage() {
                       <Seg value={f.conf} onChange={v => setFilter({ conf: v })} options={[['', 'Any'], ['HIGH', 'Sure'], ['MEDIUM', 'Likely'], ['NONE', 'No match']]} />
                     </label>
                     <label className="flex items-center gap-1.5">Matched by
-                      <Seg value={f.method} onChange={v => setFilter({ method: v })} options={[['', 'Any'], ['RULES', 'Rules'], ['AI', 'AI']]} />
+                      <Seg value={f.method} onChange={v => setFilter({ method: v })} options={[['', 'Any'], ['RULES', 'Rules'], ['AI', 'AI'], ['MANUAL', 'By hand']]} />
                     </label>
                     <label className="flex items-center gap-1.5">Phone on sheet
                       <Seg value={f.phones} onChange={v => setFilter({ phones: v })} options={[['', 'Any'], ['yes', 'Yes'], ['no', 'No']]} />
@@ -737,7 +1015,8 @@ export default function DriverSyncPage() {
                   })()}
                   {data!.links.map(l => (
                     <ReviewCard key={l.id} l={l} lines={data!.bookingSheets?.[l.bookingRef] ?? []} canEdit={data!.canEdit}
-                      busy={busyId === l.id || Boolean(bulk)} selected={selected.has(l.id)} onSelect={on => toggle(l.id, on)} onAct={act} />
+                      movements={data!.bookingMovements?.[l.bookingRef] ?? []} fits={data!.fits?.[l.bookingRef] ?? {}}
+                      busy={busyId === l.id || Boolean(bulk)} selected={selected.has(l.id)} onSelect={on => toggle(l.id, on)} onAct={act} onPick={pick} />
                   ))}
                 </div>
               )}

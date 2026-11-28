@@ -50,7 +50,10 @@ export const LINK_STATUS: Record<LinkStatus, { label: string; hint: string; dot:
 }
 
 export type EventAction = 'APPLIED' | 'UPDATED' | 'APPROVED' | 'SUGGESTED' | 'KEPT_MANUAL' | 'SHEET_DROPPED' | 'UNDONE' | 'IGNORED' | 'RESTORED'
-  | 'TIME_FILLED' | 'CONTACT_FILLED'
+  | 'TIME_FILLED' | 'CONTACT_FILLED' | 'PICKED'
+
+/** How a link was matched. MANUAL = a person paired the sheet line and the movement by hand (pinned). */
+export type MatchMethod = 'RULES' | 'AI' | 'MANUAL'
 
 export const EVENT_ACTION: Record<EventAction, { label: string; tone: string }> = {
   APPLIED:       { label: 'Applied',       tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
@@ -64,6 +67,20 @@ export const EVENT_ACTION: Record<EventAction, { label: string; tone: string }> 
   RESTORED:      { label: 'Restored',      tone: 'bg-slate-100 text-slate-600 ring-slate-200' },
   TIME_FILLED:   { label: 'Meeting time',  tone: 'bg-cyan-50 text-cyan-700 ring-cyan-200' },
   CONTACT_FILLED:{ label: 'Guest contact', tone: 'bg-pink-50 text-pink-700 ring-pink-200' },
+  PICKED:        { label: 'Picked by hand', tone: 'bg-indigo-50 text-indigo-700 ring-indigo-200' },
+}
+
+/**
+ * One sheet line's identity on the page and in the pick action: "<tab>!<row>~<content hash>".
+ * The row number alone is not enough: the VN team inserts rows, so an older link can hold
+ * "row 4006" with what is now a different line. The hash keeps two different lines apart.
+ */
+export function lineKeyOf(l: { tab: string | null | undefined; row: number | null | undefined; date: string | null; details: string | null; text: string | null }): string | null {
+  if (!l.tab || !l.row) return null
+  const src = [l.date ?? '', l.details ?? '', l.text ?? ''].join('|').toLowerCase().replace(/[^a-z0-9|]+/g, '')
+  let h = 5381
+  for (let i = 0; i < src.length; i++) h = ((h * 33) ^ src.charCodeAt(i)) >>> 0
+  return `${l.tab}!${l.row}~${h.toString(36)}`
 }
 
 export interface DriverSyncRunInfo {
@@ -121,9 +138,12 @@ export interface DriverSyncLinkInfo {
   phones: string | null
   score: number | null
   confidence: 'HIGH' | 'MEDIUM' | null
-  method: 'RULES' | 'AI' | null
+  method: MatchMethod | null
   reason: string | null
   status: LinkStatus
+  /** The sheet line this link holds ("tab!row"), and whether a person pinned the pairing. */
+  lineKey: string | null
+  pinned: boolean
   note: string | null
   /** What the movement holds right now. */
   now: { driverName: string | null; driverPhone: string | null; fromDirectory: boolean }
@@ -149,6 +169,34 @@ export interface BookingSheetLine {
   placedOn: string | null
   /** Why it was not placed, for unplaced lines. */
   why: string | null
+  /** "tab!row" — what the pick action sends back. */
+  key: string | null
+  /** Numbers in the line's driver / vendor text ("a / b"); null = nothing a guest could call. */
+  phones: string | null
+  /** Placed on a movement by a person (pinned). */
+  pinned: boolean
+}
+
+/** One upcoming system movement of a booking, for the "move to another movement" picker. */
+export interface BookingMovement {
+  id: string
+  date: string
+  from: string | null
+  to: string | null
+  time: string | null
+  service: string | null
+  kind: 'PRIVATE' | 'SIC' | 'OTHER'
+  /** No driver needed (leisure / hotel-only). */
+  noDriverNeeded: boolean
+  driverName: string | null
+  fromDirectory: boolean
+  /** The driver there was written by the sync / a pick and can be replaced safely. */
+  ours: boolean
+  /** The sync link on this movement, if any, and the sheet line it holds. */
+  linkId: string | null
+  linkStatus: LinkStatus | null
+  lineKey: string | null
+  pinned: boolean
 }
 
 export interface DriverSyncEventInfo {
@@ -191,6 +239,10 @@ export interface DriverSyncOverview {
   unmatched: UnmatchedRow[]
   /** Every known Movement Chart line for the bookings on this page, by booking ref. */
   bookingSheets: Record<string, BookingSheetLine[]>
+  /** Upcoming system movements of those bookings, by booking ref. */
+  bookingMovements: Record<string, BookingMovement[]>
+  /** How well each sheet line fits each movement (0–1, same score the sync uses): ref → lineKey → movement id → score. */
+  fits: Record<string, Record<string, Record<string, number>>>
 }
 
 export function timeAgo(iso: string | null | undefined): string {

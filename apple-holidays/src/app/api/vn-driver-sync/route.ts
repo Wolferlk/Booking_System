@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
       dateBy: pick(sp.get('dateBy'), ['movement', 'arrival'] as const),
       from: sp.get('from'), to: sp.get('to'), q: sp.get('q'),
       conf: pick(sp.get('conf'), ['HIGH', 'MEDIUM', 'NONE'] as const),
-      method: pick(sp.get('method'), ['RULES', 'AI'] as const),
+      method: pick(sp.get('method'), ['RULES', 'AI', 'MANUAL'] as const),
       driver: pick(sp.get('driver'), ['has', 'none'] as const),
       phones: pick(sp.get('phones'), ['yes', 'no'] as const),
       minScore: Math.min(100, Math.max(0, Number(sp.get('minScore')) || 0)),
