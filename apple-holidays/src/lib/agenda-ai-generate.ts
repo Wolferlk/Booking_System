@@ -20,7 +20,7 @@ import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { detectLeisureDay } from '@/lib/leisure-day'
 import { hasVehicleMovement, isLeisureTitle, isSharedTitle, hasSharedSignal, SHARED_SERVICE_RE, PRIVATE_SERVICE_RE } from '@/lib/agenda-service-type'
 import { isUntimedAirportTransfer, linkFlight, type LinkableAgendaItem, type LinkableFlight } from '@/lib/agenda-flight-link'
-import { durationWords } from '@/lib/flight-pickup-rules'
+import { airportExceptionText, durationWords } from '@/lib/flight-pickup-rules'
 import { loadFlightPickupRules } from '@/lib/flight-pickup-rules-server'
 import { fillConfirmationDescriptions } from '@/lib/agenda-confirmation-fill'
 import { splitRouteLabel } from '@/lib/b2c-booking-map'
@@ -189,8 +189,8 @@ export async function generateAgendaForBooking(
   - Departure transfer, international flight: meetingTime = depTime − ${durationWords(pickupRules.departureIntlMin)}
   - Departure transfer, domestic flight: meetingTime = depTime − ${durationWords(pickupRules.departureDomesticMin)}
   - Arrival transfer, international flight: meetingTime = arrTime + ${durationWords(pickupRules.arrivalIntlMin)}
-  - Arrival transfer, domestic flight: meetingTime = arrTime + ${durationWords(pickupRules.arrivalDomesticMin)}
-  Wherever a details example says "[departure buffer]", write the departure figure above.`
+  - Arrival transfer, domestic flight: meetingTime = arrTime + ${durationWords(pickupRules.arrivalDomesticMin)}${airportExceptionText(pickupRules)}
+  Wherever a details example says "[departure buffer]", write the departure figure above (or the airport exception's figure when one applies).`
 
   const systemPrompt = `You are a Vietnam/Asia tour operations expert for AppleHolidays (MMT).
 Generate a day-by-day movement chart from the booking data provided.

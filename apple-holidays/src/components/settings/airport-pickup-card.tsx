@@ -19,6 +19,7 @@ import {
   ARRIVAL_MIN_RANGE, DEFAULT_FLIGHT_PICKUP_RULES, DEPARTURE_MIN_RANGE, FLIGHT_PICKUP_KEY, ROUND_STEPS,
   durationLabel, parseFlightPickupRules, shiftClock, type FlightPickupRules,
 } from '@/lib/flight-pickup-rules'
+import AirportExceptions from './airport-exceptions'
 
 interface Props {
   settings: { flight_pickup_rules?: string }
@@ -34,7 +35,7 @@ const ARRIVAL_PRESETS = [0, 15, 30, 45, 60]
 const SAMPLE_DEP = '11:15'
 const SAMPLE_ARR = '12:40'
 
-type RuleKey = Exclude<keyof FlightPickupRules, 'roundToMin' | 'autoFillBlank' | 'retimeAutoFilled'>
+type RuleKey = Exclude<keyof FlightPickupRules, 'roundToMin' | 'autoFillBlank' | 'retimeAutoFilled' | 'airportOverrides'>
 
 function Stepper({
   value, onChange, range, presets, accent,
@@ -168,7 +169,9 @@ export default function AirportPickupCard({ settings, saving, onSave }: Props) {
   useEffect(() => setDraft(stored), [stored])
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(stored)
-  const isDefault = JSON.stringify(draft) === JSON.stringify(DEFAULT_FLIGHT_PICKUP_RULES)
+  // "Defaults" resets the general timings only — the airport exceptions are a
+  // list someone built up and are removed one by one, not by a reset.
+  const isDefault = JSON.stringify({ ...draft, airportOverrides: [] }) === JSON.stringify(DEFAULT_FLIGHT_PICKUP_RULES)
   const set = (k: RuleKey) => (n: number) => setDraft(d => ({ ...d, [k]: n }))
 
   const depIntl = shiftClock(SAMPLE_DEP, -draft.departureIntlMin, draft.roundToMin)
@@ -226,6 +229,9 @@ export default function AirportPickupCard({ settings, saving, onSave }: Props) {
             </div>
           </div>
         </div>
+
+        {/* Per city / airport timings — beat the international / domestic figures above */}
+        <AirportExceptions draft={draft} setDraft={setDraft} />
 
         <div>
           <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Round suggested times</p>
@@ -303,7 +309,8 @@ export default function AirportPickupCard({ settings, saving, onSave }: Props) {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setDraft(DEFAULT_FLIGHT_PICKUP_RULES)}
+              onClick={() => setDraft(d => ({ ...DEFAULT_FLIGHT_PICKUP_RULES, airportOverrides: d.airportOverrides }))}
+              title="Reset the general timings (city / airport exceptions are kept)"
               disabled={isDefault}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 disabled:opacity-40"
             >

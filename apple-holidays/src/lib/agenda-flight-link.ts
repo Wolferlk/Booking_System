@@ -17,7 +17,7 @@
 import { parse12h, to12h } from './clock-time'
 import { airport } from './ops-geo'
 import {
-  DEFAULT_FLIGHT_PICKUP_RULES, durationLabel, durationWords, shiftClock,
+  DEFAULT_FLIGHT_PICKUP_RULES, durationLabel, durationWords, findAirportOverride, shiftClock,
   type FlightPickupRules,
 } from './flight-pickup-rules'
 
@@ -68,6 +68,11 @@ export interface FlightLink {
   bufferLabel: string
   /** The sector crosses a border — drives the check-in and immigration wording. */
   international: boolean
+  /**
+   * "PQC Airport" when a city / airport exception on Settings → Airport Pickup
+   * Timings set `bufferMinutes`; null when the general rule did.
+   */
+  airportRule: string | null
 }
 
 /*
@@ -178,9 +183,19 @@ export function linkFlight(
 
   const build = (flight: LinkableFlight, role: FlightRole): FlightLink => {
     const international = isInternational(flight)
-    const bufferMinutes = role === 'arrival'
-      ? (international ? rules.arrivalIntlMin : rules.arrivalDomesticMin)
-      : (international ? rules.departureIntlMin : rules.departureDomesticMin)
+    // City / airport exception first: the flight's own airport column, then the
+    // row's airport point ("PQC Airport") for flights typed with a full name.
+    const special = role === 'sector' ? null : findAirportOverride(
+      rules, role, international,
+      role === 'departure'
+        ? [flight.fromApt, AIRPORT_POINT.test(to) ? to : null]
+        : [flight.toApt, AIRPORT_POINT.test(from) ? from : null],
+    )
+    const bufferMinutes = special
+      ? special.minutes
+      : role === 'arrival'
+        ? (international ? rules.arrivalIntlMin : rules.arrivalDomesticMin)
+        : (international ? rules.departureIntlMin : rules.departureDomesticMin)
     const suggestedPickup = role === 'departure'
       ? shiftClock(flightClock(flight.depTime), -bufferMinutes, rules.roundToMin)
       : role === 'arrival'
@@ -193,6 +208,7 @@ export function linkFlight(
       bufferMinutes,
       bufferLabel: durationLabel(bufferMinutes),
       international,
+      airportRule: special?.label ?? null,
     }
   }
 

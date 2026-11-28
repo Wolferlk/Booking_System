@@ -261,7 +261,8 @@ export function planFlightTimeFills(input: {
       flightNo: timed.flight.flightNo.trim(),
       flightTime: (timed.role === 'departure' ? flightClock(timed.flight.depTime) : flightClock(timed.flight.arrTime)) ?? '',
       bufferMinutes: timed.bufferMinutes,
-      bufferLabel: timed.bufferLabel,
+      // "1 hr (PQC Airport)" when a city exception set it, so the log says why.
+      bufferLabel: timed.airportRule ? `${timed.bufferLabel} (${timed.airportRule})` : timed.bufferLabel,
       international: timed.international,
       flightSig: flightSig(timed.flight),
       driverName: item.driverName?.trim() || null,

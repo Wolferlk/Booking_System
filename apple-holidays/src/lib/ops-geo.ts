@@ -358,6 +358,40 @@ export function airportByName(text: string | null | undefined): AirportRef | nul
   return null
 }
 
+/**
+ * Type-ahead over the gazetteer for a settings search box: "pq" → PQC,
+ * "phu" → Phu Quoc, "noi" → Noi Bai (HAN). Case and airport words are ignored
+ * ("sgn airport" is "sgn"). Best match first; ties keep the table's own
+ * relevance order, so our operating countries come before the rest.
+ */
+export function searchAirports(query: string | null | undefined, limit = 6): AirportRef[] {
+  const q = norm(String(query ?? '')).replace(/\b(international|intl|airport|airfield|aerodrome|apt|terminal)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim()
+  if (!q) return []
+  const best = new Map<string, number>()
+  const bump = (iata: string, score: number) => {
+    if (score > (best.get(iata) ?? 0)) best.set(iata, score)
+  }
+  for (const ref of Object.values(AIRPORTS)) {
+    const code = ref.iata.toLowerCase()
+    const city = norm(ref.city)
+    if (code === q) bump(ref.iata, 100)
+    else if (city === q) bump(ref.iata, 90)
+    else if (q.length <= 3 && code.startsWith(q)) bump(ref.iata, 80)
+    else if (city.startsWith(q)) bump(ref.iata, 70)
+    else if (q.length >= 3 && city.includes(q)) bump(ref.iata, 50)
+  }
+  for (const [alias, iata] of AIRPORT_NAMES) {
+    if (alias.startsWith(q)) bump(iata, 65)
+    else if (q.length >= 3 && alias.includes(q)) bump(iata, 45)
+  }
+  const order = Object.keys(AIRPORTS)
+  return Array.from(best.entries())
+    .sort((a, b) => b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]))
+    .slice(0, limit)
+    .map(([iata]) => AIRPORTS[iata])
+}
+
 // ─── Places we operate in ──────────────────────────────────────────────────
 //
 // Matched against free-typed movement-chart text, so the list carries the names

@@ -762,7 +762,11 @@ export default function ConfigPage() {
       const n = BRAND_CHANNELS.filter(c => b.hide[c]).length
       return n === 4 ? { label: 'Hidden', tone: 'on' } : n === 0 ? { label: 'Shown', tone: 'off' } : { label: `${n}/4`, tone: 'warn' }
     })(),
-    'airport-pickup': { label: durationLabel(parseFlightPickupRules(settings.flight_pickup_rules).departureIntlMin), tone: 'on' },
+    'airport-pickup': (() => {
+      const r = parseFlightPickupRules(settings.flight_pickup_rules)
+      const n = r.airportOverrides.length
+      return { label: `${durationLabel(r.departureIntlMin)}${n ? ` · ${n} airport${n === 1 ? '' : 's'}` : ''}`, tone: 'on' }
+    })(),
     'data-protection': { label: `${dataProtectionOn}/4`, tone: dataProtectionOn === 4 ? 'on' : dataProtectionOn === 0 ? 'off' : 'warn' },
     // Sealed cancellation is the louder fact, so it wins the pill when it is live.
     'cancel-recovery': cancelPolicy.fullEnabled

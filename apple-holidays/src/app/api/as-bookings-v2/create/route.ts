@@ -7,7 +7,7 @@ import { hasPermission } from '@/lib/rbac'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { getQuoteTemplate } from '@/lib/applesystem'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
-import { importMappedBooking, AlreadyImportedError } from '@/lib/as-booking-import'
+import { importMappedBooking, AlreadyImportedError, QuotationAlreadyInOpsError } from '@/lib/as-booking-import'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -96,6 +96,7 @@ export async function POST(req: NextRequest) {
         `Booking ${err.bookingRef} is already in the system.`,
       )
     }
+    if (err instanceof QuotationAlreadyInOpsError) return buildApiError(err.message, 409)
     console.error('[POST /api/as-bookings-v2/create]', err)
     const msg = err instanceof Error ? err.message : String(err)
     return buildApiError(`Failed to import booking: ${msg}`, 500)

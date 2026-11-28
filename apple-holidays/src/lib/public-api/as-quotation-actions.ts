@@ -13,7 +13,7 @@ import { getCancellationDeadline } from '@/lib/utils'
 import { getQuoteTemplate } from '@/lib/applesystem'
 import { mapQuoteToBooking, normalizeIsNumber, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
 import { saveAsExtras, quotationNoFromCntl, cntlCandidates } from '@/lib/as-booking-extras'
-import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-import'
+import { importMappedBooking, getAutomationUserId, QuotationAlreadyInOpsError } from '@/lib/as-booking-import'
 import { detectCountryFromRef, isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { sanitizeCancellationFees, totalCancellationFee, type CancellationFeeLine } from '@/lib/cancellation-fees'
 import { sendCancellationEmail } from '@/lib/send-cancellation-email'
@@ -245,6 +245,9 @@ export async function createQuotationBooking(input: CreateInput, caller: AuthedC
   const { booking, alreadyExists } = await importMappedBooking(mapped, operationCountry, {
     createdById: actorId,
     cancellationDeadline: getCancellationDeadline(mapped.arrivalDate),
+  }).catch((err: unknown) => {
+    if (err instanceof QuotationAlreadyInOpsError) throw new AsApiError(err.message, 409, 'QUOTATION_ALREADY_IN_OPS')
+    throw err
   })
 
   if (!alreadyExists) {

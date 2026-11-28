@@ -2579,6 +2579,14 @@ export default function AgendaPage() {
                                         ) : (
                                           <span>{link.bufferLabel} {link.role === 'arrival' ? 'after landing' : 'before departure'}</span>
                                         )}
+                                        {link.airportRule && (
+                                          <span
+                                            title="A city / airport exception on Settings → Airport Pickup Timings set this buffer"
+                                            className="inline-flex items-center gap-0.5 rounded-full px-1.5 bg-amber-100 text-amber-800 text-[10px] font-semibold"
+                                          >
+                                            <MapPin className="w-2.5 h-2.5" /> {link.airportRule} rule
+                                          </span>
+                                        )}
                                       </p>
                                     )}
                                   </div>

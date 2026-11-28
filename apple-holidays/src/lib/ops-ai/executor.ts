@@ -11,7 +11,7 @@ import {
 import { actorMaySee, countryWhere, loadBookingSnapshot, type OpsActor } from './context'
 import { searchBookings, getQuoteTemplate } from '@/lib/applesystem'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
-import { importMappedBooking, AlreadyImportedError } from '@/lib/as-booking-import'
+import { importMappedBooking, AlreadyImportedError, QuotationAlreadyInOpsError } from '@/lib/as-booking-import'
 import { getCancellationDeadline } from '@/lib/utils'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { runReadonlySql } from './sql'
@@ -819,6 +819,7 @@ async function runAsImportBooking(args: Record<string, unknown>, actor: OpsActor
         effect: { type: 'navigate', href: `/dashboard/bookings/${encodeURIComponent(err.bookingRef)}` },
       }
     }
+    if (err instanceof QuotationAlreadyInOpsError) throw new OpsError(err.message)
     throw err
   }
 }
