@@ -175,6 +175,24 @@ async function writeDriver(agendaItemId: string, expected: string | null, t: { n
   }
 }
 
+/**
+ * A chart save / agenda regenerate re-creates the items (new ids) and often rewrites the
+ * route, so the movement gets a new key and the old link is never visited again. Its
+ * agendaItemId then points at a deleted item and "Apply driver" can only fail. Drop such
+ * links — only ones the sync never wrote through (no appliedName, so no undo history) and
+ * only when the agenda item is really gone.
+ */
+const ORPHAN_DROPPABLE = new Set(['SUGGESTED', 'NO_NUMBER', 'IN_SYNC', 'KEPT_MANUAL'])
+async function dropOrphanLinks(unseen: VnDriverSyncLink[]): Promise<void> {
+  const cand = unseen.filter(l => l.agendaItemId && !l.appliedName && ORPHAN_DROPPABLE.has(l.status))
+  if (!cand.length) return
+  const alive = new Set((await prisma.agendaItem.findMany({
+    where: { id: { in: cand.map(l => l.agendaItemId!) } }, select: { id: true },
+  })).map(i => i.id))
+  const gone = cand.filter(l => !alive.has(l.agendaItemId!)).map(l => l.id)
+  if (gone.length) await prisma.vnDriverSyncLink.deleteMany({ where: { id: { in: gone }, appliedName: null } })
+}
+
 /** After an undo: drop an assignment row the sync created that now holds nothing. */
 async function dropIfEmpty(agendaItemId: string): Promise<void> {
   await prisma.assignment.deleteMany({
@@ -357,11 +375,13 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
       }
 
       const keyCount = new Map<string, number>()
+      const seenKeys = new Set<string>()
       for (const item of items) {
         const base = movementKeyOf(item)
         const n = (keyCount.get(base) ?? 0) + 1
         keyCount.set(base, n)
         const key = n > 1 ? `${base}#${n}` : base
+        seenKeys.add(key)
         counts.movements++
         const pick = result.picks.get(item.id) ?? null
         const row = pick ? rowById.get(pick.rowId) ?? null : null
@@ -384,6 +404,7 @@ async function doRun(opts: { trigger: DriverSyncTrigger; scope: string; triggere
           }
         }
       }
+      await dropOrphanLinks(bookingLinks.filter(l => !seenKeys.has(l.movementKey)))
     }
 
     for (let i = 0; i < events.length; i += 500) await prisma.vnDriverSyncEvent.createMany({ data: events.slice(i, i + 500) })
@@ -626,6 +647,13 @@ export async function applyLink(linkId: string, actor: string): Promise<string> 
   if (link.movementDate && link.movementDate < vnToday()) throw new Error('This movement is in the past')
   const t = targetOf({ text: link.sheetText, phones: (link.phones ?? '').split(' / ').filter(Boolean) })
   if (!t.name || !t.phone) throw new Error('The sheet gives no phone number for this movement — add one in the sheet first')
+  // The movement chart was rebuilt since this suggestion: the item it points at is gone.
+  const alive = await prisma.agendaItem.findUnique({ where: { id: link.agendaItemId }, select: { id: true } })
+  if (!alive) {
+    if (!link.appliedName) await prisma.vnDriverSyncLink.delete({ where: { id: link.id } }).catch(() => undefined)
+    await runDriverSync({ trigger: 'MANUAL', bookingRef: link.bookingRef, triggeredBy: actor }).catch(() => null)
+    throw new Error(`${link.bookingRef}'s movement chart was rebuilt since this suggestion — the booking was re-synced, reload and apply on the current movement`)
+  }
   const cur = await currentOf(link.agendaItemId)
   if (cur?.driverId || cur?.vendorId) throw new Error('A driver from the directory is assigned — change it in Assign Driver instead')
   const ok = await writeDriver(link.agendaItemId, cur?.driverName?.trim() ? cur.driverName : null, { name: t.name, phone: t.phone })
