@@ -23,6 +23,7 @@ import { syncAiCallsPhone, type AiCallSync } from '@/lib/contact-reach'
 import { autoEngageGuest, type EngageOutcome } from '@/lib/guest-automation'
 import { logBookingSave, snapshotChildren } from '@/lib/booking-logs-save'
 import { logBookingEvent } from '@/lib/booking-logs'
+import { syncHotelMealsToAgenda, type HotelMealChange } from '@/lib/agenda-hotel-meal-sync'
 
 export const dynamic = 'force-dynamic'
 export async function GET(
@@ -438,6 +439,17 @@ export async function PUT(
     }
   }
 
+  // Hotel meal plans as they were before this save — the movement chart keeps
+  // its own copy, which is brought in line after the writes below.
+  const touchesHotels = Array.isArray(accommodationUpdates) || Array.isArray(accommodationDeletes)
+    || (Array.isArray(accommodationAdds) && accommodationAdds.length > 0)
+  const hotelsBefore = touchesHotels
+    ? await prisma.accommodation.findMany({
+        where: { bookingId: booking.id },
+        select: { id: true, hotel: true, checkIn: true, checkOut: true, mealType: true },
+      })
+    : []
+
   // GT/BT/TE can update individual accommodation rooms (partial update by id)
   if (accommodationUpdates && Array.isArray(accommodationUpdates)) {
     for (const upd of accommodationUpdates as Record<string, unknown>[]) {
@@ -449,6 +461,7 @@ export async function PUT(
           ...(upd.roomType !== undefined && { roomType: upd.roomType as string }),
           ...(upd.address !== undefined && { address: upd.address as string }),
           ...(upd.contact !== undefined && { contact: upd.contact as string }),
+          ...(upd.mealType !== undefined && { mealType: String(upd.mealType ?? '').trim() || null }),
           // Who holds the reservation — drives whether pre-checking is required.
           ...(typeof upd.ownArrangement === 'boolean' && { ownArrangement: upd.ownArrangement }),
         },
@@ -483,6 +496,29 @@ export async function PUT(
         ownArrangement: a.ownArrangement === true,
       })),
     })
+  }
+
+  // A meal plan added, changed or removed on a hotel → the movement chart's
+  // meal plans for those stay days follow (see lib/agenda-hotel-meal-sync).
+  let agendaMealsSynced = 0
+  if (touchesHotels) {
+    const deleted = new Set(Array.isArray(accommodationDeletes) ? accommodationDeletes as string[] : [])
+    const beforeById = new Map(hotelsBefore.map(h => [h.id, h]))
+    const hotelsAfter = await prisma.accommodation.findMany({
+      where: { bookingId: booking.id },
+      select: { id: true, hotel: true, checkIn: true, checkOut: true, mealType: true },
+    })
+    const mealChanges: HotelMealChange[] = [
+      ...hotelsBefore.filter(h => deleted.has(h.id)).map(h => ({
+        hotel: h.hotel, checkIn: h.checkIn, checkOut: h.checkOut, before: h.mealType, after: null,
+      })),
+      ...hotelsAfter.map(h => ({
+        hotel: h.hotel, checkIn: h.checkIn, checkOut: h.checkOut,
+        before: beforeById.get(h.id)?.mealType ?? null, after: h.mealType,
+      })),
+    ]
+    agendaMealsSynced = await syncHotelMealsToAgenda(booking.id, params.ref, mealChanges,
+      { id: session.user.id, name: session.user.name || session.user.email || null })
   }
 
   // TE/BT/SUPER_ADMIN: update individual flights (reschedule, cancellation, missing flights)
@@ -572,7 +608,7 @@ export async function PUT(
     }
   }
 
-  return buildApiSuccess({ ...updated, aiCallsSync, guestEngage }, 'Booking updated')
+  return buildApiSuccess({ ...updated, aiCallsSync, guestEngage, agendaMealsSynced }, 'Booking updated')
 }
 
 export async function DELETE(

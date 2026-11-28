@@ -916,7 +916,7 @@ export default function BookingDetailPage() {
     if (extracted.length === 0) { toast.info('No hotels found'); return }
     const edits: Record<string, unknown> = {}
     accommodations.forEach((a) => {
-      edits[a.id as string] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', ownArrangement: isOwnArrangement(a) }
+      edits[a.id as string] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', mealType: a.mealType ?? '', ownArrangement: isOwnArrangement(a) }
     })
     setAccomEdits(edits)
     setDeletedAccomIds([])
@@ -1035,7 +1035,10 @@ export default function BookingDetailPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Accommodation updated')
+      const synced = Number(json.data?.agendaMealsSynced ?? 0)
+      toast.success(synced > 0
+        ? `Accommodation updated — meal plan updated on ${synced} agenda movement${synced !== 1 ? 's' : ''}`
+        : 'Accommodation updated')
       setEditAccomModal(false)
       setAccomEdits({})
       setDeletedAccomIds([])
@@ -3011,7 +3014,7 @@ Wishing you a wonderful trip! ✈️
                     const edits: Record<string, unknown> = {}
                     // Seeded from the same helper that renders the badge, so the
                     // toggle opens showing what the operator was just looking at.
-                    accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', ownArrangement: isOwnArrangement(a) } })
+                    accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', mealType: a.mealType ?? '', ownArrangement: isOwnArrangement(a) } })
                     setAccomEdits(edits)
                     setDeletedAccomIds([])
                     setNewAccoms([])
@@ -3044,6 +3047,7 @@ Wishing you a wonderful trip! ✈️
                   </div>
                   <p className="text-xs text-slate-500">{a.city as string} · {a.nights as number} nights</p>
                   {a.roomType && <p className="text-xs text-brand-600 font-medium">{a.roomType as string}</p>}
+                  {(a.mealType as string)?.trim() && <p className="text-xs text-amber-700 font-medium">🍽 {a.mealType as string}</p>}
                   <p className="text-xs text-slate-400">{formatDate(a.checkIn as string)} → {formatDate(a.checkOut as string)}</p>
                   {a.contact && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{a.contact as string}</p>}
                   {/* The address is what a guest hands to a taxi driver, so it is
@@ -3892,6 +3896,12 @@ Wishing you a wonderful trip! ✈️
                     onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], roomType: e.target.value } }))} />
                 </div>
                 <div>
+                  <label className="form-label">Meal Plan</label>
+                  <input className="form-input" placeholder="e.g. Bed & Breakfast"
+                    value={(accomEdits[a.id as string]?.mealType ?? a.mealType ?? '') as string}
+                    onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], mealType: e.target.value } }))} />
+                </div>
+                <div className="col-span-2">
                   <label className="form-label">Contact Number</label>
                   <input className="form-input" placeholder="+84 ..."
                     value={(accomEdits[a.id as string]?.contact ?? a.contact ?? '') as string}

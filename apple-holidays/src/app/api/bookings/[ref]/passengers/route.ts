@@ -30,6 +30,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
           passport: true, nationality: true, contact: true,
         },
       },
+      // Hotel meal plans are edited on the booking page too.
+      accommodations: {
+        orderBy: { checkIn: 'asc' },
+        select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true, roomType: true, mealType: true },
+      },
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
@@ -40,7 +45,11 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     return buildApiError('Forbidden', 403)
   }
 
-  return buildApiSuccess({ passengers: booking.passengers, notes: await loadPassengerNotes(params.ref) })
+  return buildApiSuccess({
+    passengers: booking.passengers,
+    accommodations: booking.accommodations,
+    notes: await loadPassengerNotes(params.ref),
+  })
 }
 
 // PATCH /api/bookings/[ref]/passengers

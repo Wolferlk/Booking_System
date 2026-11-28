@@ -791,6 +791,12 @@ export default function AgendaPage() {
   // without a manual reload. Read-only, and only the light passengers route.
   const [passengerNotes, setPassengerNotes] = useState<Record<string, { note: string; updatedByName: string | null; updatedAt: string }>>({})
   const lastPaxRefresh = useRef(0)
+  // Hotel meal plans as last seen ("id=mealType|…"). A change made on the
+  // booking page is carried onto the movements server-side, so when it moves
+  // the chart is re-read too — unless the desk is mid-edit here.
+  const hotelMealSig = useRef<string | null>(null)
+  const editModeRef = useRef(false)
+  editModeRef.current = editMode
   const refreshPassengers = useCallback(async () => {
     lastPaxRefresh.current = Date.now()
     try {
@@ -801,8 +807,16 @@ export default function AgendaPage() {
       if (Array.isArray(json.data.passengers)) {
         setBooking(b => b ? { ...b, passengers: json.data.passengers } : b)
       }
+      if (Array.isArray(json.data.accommodations)) {
+        const accs = json.data.accommodations as BookingDetails['accommodations']
+        setBooking(b => b ? { ...b, accommodations: accs } : b)
+        const sig = accs.map(a => `${a.id}=${a.mealType ?? ''}`).join('|')
+        const changed = hotelMealSig.current !== null && hotelMealSig.current !== sig
+        hotelMealSig.current = sig
+        if (changed && !editModeRef.current) void loadAgenda()
+      }
     } catch { /* non-fatal — the chart works without it */ }
-  }, [ref])
+  }, [ref, loadAgenda])
 
   useEffect(() => {
     void refreshPassengers()
