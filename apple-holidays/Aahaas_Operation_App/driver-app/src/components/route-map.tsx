@@ -1,8 +1,10 @@
 /**
  * Today's route, live, with the car on it (turned to the way it is driving).
- * iPhone: Apple Maps. Android: Google Maps when the build carries a Maps key
- * (GOOGLE_MAPS_ANDROID_API_KEY, see app.config.js) — without one a native map
- * would be blank, so it draws the route as an animated sketch instead.
+ * iPhone: Apple Maps. Android: the free OpenFreeMap / OpenStreetMap map
+ * (components/open-map.tsx) — no Google Maps key needed. A Google key in the
+ * build (GOOGLE_MAPS_ANDROID_API_KEY, see app.config.js) would switch Android to
+ * the native Google map instead. If the free map cannot load (no internet), the
+ * route is drawn as an animated sketch.
  *
  *   card mode   small, not draggable, "tap to expand"
  *   full mode   draggable; camera follows the car or shows the whole route
@@ -10,9 +12,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import MapView, { Marker, Polyline } from '@/components/map-view';
+import { OpenMap } from '@/components/open-map';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, G, Image as SvgImage, Path } from 'react-native-svg';
 import type { PathPoint } from '@/lib/location';
@@ -110,6 +113,7 @@ export function RouteMap({ path, height = 190, full, follow = true, onExpand, bo
   bottomInset?: number
 }) {
   const map = useRef<MapView>(null);
+  const [freeMapFailed, setFreeMapFailed] = useState(false);
   const coords = useMemo(() => path.map(p => ({ latitude: p.lat, longitude: p.lng })), [path]);
   const last = coords[coords.length - 1];
   const heading = path.length > 1 ? headingOf(path) : 0;
@@ -133,6 +137,32 @@ export function RouteMap({ path, height = 190, full, follow = true, onExpand, bo
       <Text style={styles.expandText}>Full map</Text>
     </Pressable>
   );
+
+  if (!nativeMapAvailable && !freeMapFailed) {
+    return (
+      <View style={[styles.mapWrap, style]}>
+        <OpenMap
+          style={StyleSheet.absoluteFill}
+          interactive={!!full}
+          onPress={!full ? onExpand : undefined}
+          onFail={() => setFreeMapFailed(true)}
+          state={{
+            line: path.length > 1 ? path.map(p => ({ lat: p.lat, lng: p.lng })) : [],
+            start: path.length > 1 ? { lat: path[0].lat, lng: path[0].lng } : null,
+            car: last ? { lat: last.latitude, lng: last.longitude, heading } : null,
+            camera: full && follow ? 'follow' : 'fit',
+            bottomInset,
+          }}
+        />
+        {!coords.length && (
+          <View style={styles.mapHint} pointerEvents="none">
+            <Text style={styles.mapHintText}>Waiting for the first GPS points…</Text>
+          </View>
+        )}
+        {expandBtn}
+      </View>
+    );
+  }
 
   if (!nativeMapAvailable) {
     return (

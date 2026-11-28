@@ -1,8 +1,10 @@
 /** Ops view: drivers on the road (map + list), who has not started, km today. */
 import { router } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Text, View } from 'react-native';
+import { Linking, Platform, Text, View } from 'react-native';
 import MapView, { Marker, Polyline } from '@/components/map-view';
+import { OpenMap } from '@/components/open-map';
+import { nativeMapAvailable } from '@/components/route-map';
 import { Card, ErrorBox, H1, IconButton, Ionicons, Label, Loading, P, Pill, Row, Screen, Stat } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api } from '@/lib/api';
@@ -61,6 +63,19 @@ export default function LiveBoard() {
           </Row>
 
           <View style={{ height: 300, borderRadius: R.md, overflow: 'hidden', borderWidth: 1, borderColor: C.line }}>
+            {/* Android without a Google key: the free OpenStreetMap map (no key, no cost). */}
+            {Platform.OS === 'android' && !nativeMapAvailable ? (
+              <OpenMap
+                style={{ flex: 1 }}
+                initial={{ lat: 7.87, lng: 80.77, zoom: 6.5 }}
+                onPinPress={setSelected}
+                state={{
+                  pins: pins.map(d => ({ id: d.dayId, lat: d.lastLat!, lng: d.lastLng!, color: d.silent ? '#F59E0B' : '#16A34A', label: `${d.driverName} · ${d.bookingRef} · ${d.km} km · ${ago(d.lastPingAt)}` })),
+                  line: track.map(p => ({ lat: p.latitude, lng: p.longitude })),
+                  camera: 'fit',
+                }}
+              />
+            ) : (
             <MapView ref={map} style={{ flex: 1 }} initialRegion={{ latitude: 7.87, longitude: 80.77, latitudeDelta: 4, longitudeDelta: 4 }} userInterfaceStyle="dark">
               {pins.map(d => (
                 <Marker key={d.dayId} coordinate={{ latitude: d.lastLat!, longitude: d.lastLng! }} pinColor={d.silent ? 'orange' : 'green'}
@@ -68,6 +83,7 @@ export default function LiveBoard() {
               ))}
               {track.length > 1 && <Polyline coordinates={track} strokeColor={C.red} strokeWidth={4} />}
             </MapView>
+            )}
           </View>
 
           <Label>On the road ({data.driving.length})</Label>
