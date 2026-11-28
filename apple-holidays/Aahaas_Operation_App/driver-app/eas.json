@@ -10,7 +10,7 @@
       "distribution": "internal",
       "android": { "buildType": "apk" }
     },
-    "production": { "autoIncrement": false }
+    "production": { "autoIncrement": true }
   },
   "submit": { "production": {} }
 }
