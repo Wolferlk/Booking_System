@@ -67,6 +67,18 @@ export default function FleetTrip() {
     } finally { setBusy(false); }
   }
 
+  // Taking the driver off is destructive — on a Sri Lanka tour it clears every movement.
+  const removing = !!job && !driverId && !!job.driver;
+  function confirmRemove() {
+    if (!job) return;
+    const n = job.legs.length;
+    Alert.alert(
+      `Remove ${job.driver?.name ?? 'the driver'}?`,
+      `${job.driver?.name ?? 'The driver'} comes off ${job.wholeBooking || n > 1 ? `all ${n} movement${n === 1 ? '' : 's'}` : 'this movement'} of ${job.fileNo}, and the trip goes back to "needs a driver".`,
+      [{ text: 'Keep driver', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: () => save() }],
+    );
+  }
+
   const loading = (upcoming.loading && !upcoming.data) || (past.loading && !past.data && !job);
   if (!job) {
     return (
@@ -184,9 +196,9 @@ export default function FleetTrip() {
           )}
 
           {error && <ErrorBox message={error} />}
-          <Button title={driverId ? `Give to ${pickedDriver?.name.split(' ')[0] ?? 'driver'}` : job.driver ? 'Remove driver' : 'Save'}
-            icon={driverId ? 'checkmark-circle' : 'person-remove'} kind={driverId ? 'primary' : 'secondary'}
-            onPress={() => save()} loading={busy} disabled={!changed} />
+          <Button title={driverId ? `Give to ${pickedDriver?.name.split(' ')[0] ?? 'driver'}` : removing ? 'Remove driver' : 'Save'}
+            icon={driverId ? 'checkmark-circle' : removing ? 'person-remove' : 'checkmark'} kind={driverId ? 'primary' : removing ? 'destructive' : 'secondary'}
+            onPress={() => (removing ? confirmRemove() : save())} loading={busy} disabled={!changed} />
           {job.wholeBooking && <Text style={{ color: C.dim, fontSize: 12, textAlign: 'center' }}>Sri Lanka tours: one driver for all {job.legs.length} movements.</Text>}
         </>
       )}

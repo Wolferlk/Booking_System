@@ -667,11 +667,15 @@ export async function assignJob(v: VendorCtx, assignmentId: string, input: Assig
 
 export async function vendorHome(v: VendorCtx) {
   const today = localTodayFor(v.country)
-  const [jobs, drivers, vehicles, pendingRequests] = await Promise.all([
-    vendorJobs(v, addDaysYmd(today, -1), addDaysYmd(today, 21)),
+  // Same window as the Trips tab (lib route vendor/trips, scope=upcoming), so
+  // "Trips needing a driver" here and "To do" there always agree. It used to
+  // stop at +21 days, so a fleet whose trips were further out saw 0 here.
+  const [jobs, drivers, vehicles, pendingRequests, unread] = await Promise.all([
+    vendorJobs(v, addDaysYmd(today, -45), addDaysYmd(today, 120)),
     listDrivers(v),
     listVehicles(v),
     prisma.driverTripClaim.count({ where: { partyType: 'VENDOR', partyId: v.vendorId, status: 'PENDING' } }).catch(() => 0),
+    prisma.mobileNotification.count({ where: { actorType: 'VENDOR', actorId: v.vendorId, readAt: null } }).catch(() => 0),
   ])
   const activeDrivers = drivers.filter(d => d.isActive)
   const activeVehicles = vehicles.filter(x => x.isActive)
@@ -701,5 +705,6 @@ export async function vendorHome(v: VendorCtx) {
     next: open.filter(j => j.startDate > today).slice(0, 5),
     attention,
     pendingRequests,
+    unread,
   }
 }

@@ -586,8 +586,16 @@ function Chip({ icon: Icon, children }: { icon?: React.ComponentType<{ className
 function RequestsInbox({ data, onChanged }: { data: Overview; onChanged: () => void }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
-  const pending = data.claims.filter(c => c.status === 'PENDING')
-  const history = data.claims.filter(c => c.status !== 'PENDING').slice(0, 30)
+  const [q, setQ] = useState('')
+  // Search: file no., booking ref, driver / vendor name or phone, route, dates.
+  const needle = q.trim().toLowerCase()
+  const matches = (c: ClaimView) => !needle || [
+    claimFileNo(c), c.bookingRef, c.partyName, c.partyPhone, c.snapshot?.title, c.snapshot?.route,
+    fmtTripDay(c.tripDate), c.tripDate, c.driverNote,
+  ].filter(Boolean).join(' ').toLowerCase().includes(needle)
+  const allPending = data.claims.filter(c => c.status === 'PENDING')
+  const pending = allPending.filter(matches)
+  const history = data.claims.filter(c => c.status !== 'PENDING').filter(matches).slice(0, 30)
 
   // Group requests by trip so competing drivers sit side by side.
   const byTrip = useMemo(() => {
@@ -621,14 +629,23 @@ function RequestsInbox({ data, onChanged }: { data: Overview; onChanged: () => v
         <div>
           <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
             <Inbox className="h-4 w-4 text-amber-500" /> Get Bookings
-            <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', pending.length ? 'bg-amber-400 text-amber-950' : 'bg-slate-100 text-slate-500')}>{pending.length}</span>
+            <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-bold', allPending.length ? 'bg-amber-400 text-amber-950' : 'bg-slate-100 text-slate-500')}>{needle ? `${pending.length} / ${allPending.length}` : allPending.length}</span>
           </h2>
           <p className="text-[11px] text-slate-500">Driver requests waiting for approval</p>
+        </div>
+        <div className="relative w-56">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search file, driver, vendor…"
+                 className="w-full rounded-lg border border-slate-200 py-1.5 pl-7 pr-6 text-xs outline-none focus:border-slate-400" />
+          {q && <button onClick={() => setQ('')} title="Clear" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
         </div>
       </header>
 
       <div className="max-h-[560px] space-y-3 overflow-y-auto p-3">
-        {byTrip.length === 0 && (
+        {byTrip.length === 0 && needle && allPending.length > 0 && (
+          <div className="py-8 text-center text-xs text-slate-400">No waiting request matches “{q.trim()}”.</div>
+        )}
+        {byTrip.length === 0 && !(needle && allPending.length > 0) && (
           <div className="py-8 text-center text-xs text-slate-400">
             {data.settings.countries[data.country].requireApproval
               ? 'No requests waiting. They appear here as drivers tap "Request".'
@@ -911,7 +928,7 @@ function PartiesTable({ data, country, onChanged }: { data: Overview; country: D
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-1.5 font-semibold text-slate-800">
                     <span className={cn('rounded px-1 py-px text-[9px] font-bold', p.type === 'DRIVER' ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700')}>{p.type === 'DRIVER' ? 'D' : 'V'}</span>
-                    {p.name}
+                    <span className="min-w-0 max-w-[260px] truncate" title={p.name}>{p.name}</span>
                   </div>
                 </td>
                 <td className="px-3 py-2 text-slate-500">{p.vehicle ?? '—'}{p.capacity ? <span className="ml-1 text-slate-400">({p.capacity} seats)</span> : null}</td>

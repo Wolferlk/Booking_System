@@ -10,7 +10,7 @@ import { carryMovementWhatsApp } from '@/lib/movement-whatsapp'
 import { normalisePhone } from '@/lib/whatsapp'
 import { parse12h } from '@/lib/clock-time'
 import {
-  syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef,
+  applySlAllocationToNewChart, syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef,
   syncHotelOnlyFromAgenda, syncHotelOnlyFromAgendaByRef,
 } from '@/lib/sl-driver-allocation-sync'
 import {
@@ -426,6 +426,9 @@ export async function POST(
   // Drivers set on the chart must also show on the Sri Lanka Driver Allocation
   // board, which reads the booking-level allocation row. Non-fatal.
   try {
+    // First save of a chart for a file that was allocated before it had one:
+    // carry that driver / vendor onto it (only when nobody is on the chart).
+    if (!chartBefore || chartBefore.length === 0) await applySlAllocationToNewChart(booking.id)
     await syncSlAllocationFromAgenda(booking.id)
     // A chart where every movement is Hotel Only is a hotel-only file, and the
     // board's vehicle type has to say so — otherwise it keeps reading as pending.

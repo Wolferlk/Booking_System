@@ -111,7 +111,8 @@ export async function openTripBoard(p: ResolvedParty) {
     ...t,
     legs: t.legs.map(l => {
       const i = itemById.get(l.agendaItemId)
-      return { ...l, details: i?.details?.trim().slice(0, 600) || null, mealPlan: i?.mealPlan ?? null, timeTo: i?.timeTo ?? null }
+      // The full description, as on the agenda — 600 chars cut most SL days mid-sentence (QA OD0035).
+      return { ...l, details: i?.details?.trim().slice(0, 4000) || null, mealPlan: i?.mealPlan ?? null, timeTo: i?.timeTo ?? null }
     }),
     stays: stays
       .filter(s => s.bookingId === t.bookingId)

@@ -38,12 +38,15 @@ export default function FleetHome() {
   return (
     <Screen refreshing={refreshing} onRefresh={reload}>
       <PageHeader title={name} sub={`${GREETING[greetingKey()]} · your fleet today`} icon="business" colors={['#0E1525', '#16213E', '#24345E']}
-        right={<IconButton icon="notifications-outline" color="#fff" onPress={() => router.push('/notifications')} />}>
+        right={<IconButton icon="notifications-outline" color="#fff" glass label="Notifications" badge={data?.unread} onPress={() => router.push('/notifications')} />}>
         {data && (
           <View style={{ gap: 8 }}>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <StatTile value={data.counts.liveNow} label="On the road now" icon="navigate" colors={['#EBF1FF', '#D6E4FF']} accent={C.blue} />
-              <StatTile value={data.counts.unassigned} label="Trips needing a driver" icon="person-add" colors={['#FFEDEF', '#FFD6DB']} accent={C.red} delay={60} />
+              {/* Opens the list behind the number — Trips → To do. */}
+              <Pressable style={{ flex: 1 }} accessibilityRole="button" onPress={() => router.push({ pathname: '/fleet-trips', params: { view: 'todo' } })}>
+                <StatTile value={data.counts.unassigned} label="Trips needing a driver ›" icon="person-add" colors={['#FFEDEF', '#FFD6DB']} accent={C.red} delay={60} />
+              </Pressable>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <StatTile value={data.counts.drivers} label={`Drivers · ${data.counts.onApp} on the app`} icon="people" colors={['#E5F7F0', '#CDEFE2']} accent={C.green} delay={120} />

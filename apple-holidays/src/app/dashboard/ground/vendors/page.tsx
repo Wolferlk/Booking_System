@@ -493,7 +493,8 @@ export default function VendorsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-slate-900">{vendor.name}</p>
+                      {/* A long name (or one with no spaces) wraps inside the card instead of pushing the row off-screen. */}
+                      <p className="font-semibold text-slate-900 min-w-0 max-w-full break-all line-clamp-2" title={vendor.name}>{vendor.name}</p>
                       {vendor.isRegistered ? (
                         <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 flex items-center gap-1">
                           <UserCheck className="w-2.5 h-2.5" /> Registered

@@ -51,6 +51,8 @@ export interface VendorHome {
   next: VendorJob[]
   attention: { kind: string; tone: 'red' | 'gold' | 'blue'; title: string; body: string }[]
   pendingRequests: number
+  /** unread notifications, for the bell (older servers leave it out) */
+  unread?: number
 }
 
 export const VEHICLE_LABEL: Record<string, string> = {

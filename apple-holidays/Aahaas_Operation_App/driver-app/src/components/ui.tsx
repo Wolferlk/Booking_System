@@ -54,16 +54,17 @@ export function Card({ children, style, onPress, tone }: { children: ReactNode; 
 }
 
 export function Button({ title, onPress, icon, kind = 'primary', loading, disabled, style }: {
-  title: string; onPress: () => void; icon?: IconName; kind?: 'primary' | 'secondary' | 'danger' | 'gold' | 'ghost'
+  title: string; onPress: () => void; icon?: IconName; kind?: 'primary' | 'secondary' | 'danger' | 'gold' | 'ghost' | 'destructive'
   loading?: boolean; disabled?: boolean; style?: ViewStyle
 }) {
-  const bg = { primary: C.red, secondary: C.cardHi, danger: C.redDeep, gold: C.gold, ghost: 'transparent' }[kind];
-  const fg = kind === 'secondary' || kind === 'ghost' ? C.text : C.onBrand;
+  // `destructive` = a removing action that is not the screen's main one: red on light red.
+  const bg = { primary: C.red, secondary: C.cardHi, danger: C.redDeep, gold: C.gold, ghost: 'transparent', destructive: C.redSoft }[kind];
+  const fg = kind === 'destructive' ? C.red : kind === 'secondary' || kind === 'ghost' ? C.text : C.onBrand;
   return (
     <Pressable
       disabled={disabled || loading}
       onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress(); }}
-      style={({ pressed }) => [styles.btn, { backgroundColor: bg, opacity: disabled ? 0.45 : pressed ? 0.85 : 1, borderWidth: kind === 'ghost' ? 1 : 0, borderColor: C.line }, style]}>
+      style={({ pressed }) => [styles.btn, { backgroundColor: bg, opacity: disabled ? 0.45 : pressed ? 0.85 : 1, borderWidth: kind === 'ghost' || kind === 'destructive' ? 1 : 0, borderColor: kind === 'destructive' ? '#FFC2C8' : C.line }, style]}>
       {loading ? <ActivityIndicator color={fg} /> : (
         <>
           {icon && <Ionicons name={icon} size={22} color={fg} />}
@@ -121,9 +122,11 @@ export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () =
   );
 }
 
-export function IconButton({ icon, onPress, badge, color = C.text }: { icon: IconName; onPress: () => void; badge?: number; color?: string }) {
+/** `glass` — for a dark header: a see-through circle, so a white icon is not lost on a white one. */
+export function IconButton({ icon, onPress, badge, color = C.text, glass, label }: { icon: IconName; onPress: () => void; badge?: number; color?: string; glass?: boolean; label?: string }) {
   return (
-    <Pressable onPress={() => { Haptics.selectionAsync(); onPress(); }} hitSlop={12} style={styles.iconBtn}>
+    <Pressable onPress={() => { Haptics.selectionAsync(); onPress(); }} hitSlop={12} accessibilityRole="button" accessibilityLabel={label}
+      style={[styles.iconBtn, glass && styles.iconGlass]}>
       <Ionicons name={icon} size={24} color={color} />
       {!!badge && <View style={styles.badge}><Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>{badge > 9 ? '9+' : badge}</Text></View>}
     </Pressable>
@@ -135,5 +138,6 @@ const styles = StyleSheet.create({
   btn: { minHeight: 58, borderRadius: R.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.sm, paddingHorizontal: S.lg },
   input: { flexDirection: 'row', alignItems: 'center', gap: S.sm, backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.line, paddingHorizontal: S.lg },
   iconBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: C.card, borderWidth: 1, borderColor: C.line, alignItems: 'center', justifyContent: 'center' },
+  iconGlass: { backgroundColor: 'rgba(255,255,255,0.16)', borderColor: 'rgba(255,255,255,0.35)' },
   badge: { position: 'absolute', top: -2, right: -2, minWidth: 20, height: 20, borderRadius: 10, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
 });

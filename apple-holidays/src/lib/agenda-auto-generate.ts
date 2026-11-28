@@ -17,7 +17,9 @@
  *    (`agenda_autogen:<ref>`), which also holds the run's status for the page.
  *  • Failures back off (2 → 10 → 30 min) and stop after MAX_ATTEMPTS, so a
  *    booking the AI cannot handle does not burn tokens every tick.
- *  • It does not notify drivers or touch assignments. A new chart has none.
+ *  • It does not notify drivers. A new chart has no assignments, except that a
+ *    Sri Lanka file already allocated (Driver-Auto approval, allocation board)
+ *    gets that driver / vendor copied onto it — applySlAllocationToNewChart.
  *  • The switch is Settings → AI Token Controls → "Auto-Generate Agenda"
  *    (`ai_auto_agenda_generate`, ON unless set to 'false'). Turning it off
  *    stops the sweep. The page still builds a chart on open, as it did before.
@@ -27,6 +29,7 @@ import { parse12h } from '@/lib/clock-time'
 import { normaliseServiceType } from '@/lib/service-types'
 import { logBookingEvent } from '@/lib/booking-logs'
 import { generateAgendaForBooking, type GeneratedAgendaItem } from '@/lib/agenda-ai-generate'
+import { applySlAllocationToNewChart } from '@/lib/sl-driver-allocation-sync'
 
 // ── Tunables (env overrides; defaults are what was asked for) ─────────────────
 const envNum = (name: string, fallback: number) => {
@@ -249,6 +252,15 @@ export async function autoGenerateAgenda(ref: string, trigger: AutoGenTrigger, o
     if (saved === null) {
       console.log(`[AgendaAutoGen] ${ref}: a chart was saved while the AI was working — left it alone`)
       return await finish(ref, { ...mine, state: 'exists' })
+    }
+
+    // Allocated before the chart existed? Put that driver / vendor on it, or they
+    // vanish from the chart and from their app. Non-fatal.
+    try {
+      const b = await prisma.booking.findUnique({ where: { bookingRef: ref }, select: { id: true } })
+      if (b) await applySlAllocationToNewChart(b.id)
+    } catch (err) {
+      console.error(`[AgendaAutoGen] ${ref}: carrying the allocation onto the new chart failed:`, err instanceof Error ? err.message : err)
     }
 
     const secs = Math.round((Date.now() - t0) / 1000)

@@ -228,11 +228,23 @@ export function OpenTripsBoard() {
     } finally { setBusy(null); }
   }
 
-  async function withdraw(id: string) {
-    setBusy(id);
-    try { await api(path, { body: { action: 'withdraw', claimId: id } }); silent(); }
-    catch (e) { Alert.alert('Could not withdraw', (e as ApiError).message); }
-    finally { setBusy(null); }
+  function withdraw(c: Claim) {
+    const label = c.snapshot?.fileNo ?? c.bookingRef;
+    Alert.alert('Withdraw this request?', `${label}${c.snapshot?.route ? ` · ${c.snapshot.route}` : ''}\n\nOperations will no longer see it. You can request it again while it is open.`, [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Withdraw', style: 'destructive', onPress: async () => {
+          setBusy(c.id);
+          try {
+            await api(path, { body: { action: 'withdraw', claimId: c.id } });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            Alert.alert('Request withdrawn', `${label} is no longer waiting for approval.`);
+            silent();
+          } catch (e) { Alert.alert('Could not withdraw', (e as ApiError).message); }
+          finally { setBusy(null); }
+        },
+      },
+    ]);
   }
 
   const pending = (data?.claims ?? []).filter(c => c.status === 'PENDING');
@@ -287,7 +299,7 @@ export function OpenTripsBoard() {
           {pending.map(c => (
             <View key={c.id} style={styles.pendingRow}>
               <Text style={{ color: C.text, flex: 1, fontWeight: '700' }} numberOfLines={1}>{c.snapshot?.fileNo ?? c.bookingRef}{c.snapshot?.route ? ` · ${c.snapshot.route}` : ''}</Text>
-              <Pressable onPress={() => withdraw(c.id)} disabled={busy === c.id} style={styles.withdraw}>
+              <Pressable onPress={() => withdraw(c)} disabled={busy === c.id} style={styles.withdraw}>
                 {busy === c.id ? <ActivityIndicator size="small" color={C.sub} /> : <Text style={{ color: C.sub, fontWeight: '800', fontSize: 12 }}>{t('withdraw')}</Text>}
               </Pressable>
             </View>
