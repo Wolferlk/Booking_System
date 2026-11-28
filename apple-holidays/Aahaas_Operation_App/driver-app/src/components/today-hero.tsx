@@ -27,9 +27,11 @@ export function partOfDay(): keyof typeof SCENES {
   return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening';
 }
 
-function GlassButton({ icon, onPress, badge, tint = '#fff' }: { icon: IconName; onPress: () => void; badge?: number; tint?: string }) {
+/** `dark` = the evening scene: a white icon needs a dark glass, or the button reads as an empty white circle. */
+function GlassButton({ icon, onPress, badge, tint = '#fff', dark, label }: { icon: IconName; onPress: () => void; badge?: number; tint?: string; dark?: boolean; label: string }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} style={({ pressed }) => [styles.glassBtn, pressed && { transform: [{ scale: 0.92 }] }]}>
+    <Pressable onPress={onPress} hitSlop={8} accessibilityRole="button" accessibilityLabel={label}
+      style={({ pressed }) => [styles.glassBtn, dark && styles.glassDark, pressed && { transform: [{ scale: 0.92 }] }]}>
       <Ionicons name={icon} size={22} color={tint} />
       {!!badge && <View style={styles.badge}><Text style={styles.badgeText}>{badge > 9 ? '9+' : badge}</Text></View>}
     </Pressable>
@@ -74,8 +76,8 @@ export function TodayHero({ greeting, name, photoUrl, unread, onBell, onHelp }: 
           </View>
         </View>
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <GlassButton icon="notifications" onPress={onBell} badge={unread} tint={dark ? '#fff' : '#0E1525'} />
-          <GlassButton icon="alert-circle" onPress={onHelp} tint={C.red} />
+          <GlassButton icon="notifications" onPress={onBell} badge={unread} tint={dark ? '#fff' : '#0E1525'} dark={dark} label="Notifications" />
+          <GlassButton icon="alert-circle" onPress={onHelp} tint={dark ? '#FF7A87' : C.red} dark={dark} label="Help" />
         </View>
       </View>
 
@@ -102,6 +104,7 @@ const styles = StyleSheet.create({
   avatar: { width: 54, height: 54, borderRadius: 18, overflow: 'hidden', backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
   initials: { color: '#fff', fontWeight: '900', fontSize: 18 },
   glassBtn: { width: 44, height: 44, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)' },
+  glassDark: { backgroundColor: 'rgba(10,22,64,0.55)', borderColor: 'rgba(255,255,255,0.35)' },
   badge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 2, borderColor: '#fff' },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '900' },
   greet: { fontSize: 15, fontWeight: '700' },

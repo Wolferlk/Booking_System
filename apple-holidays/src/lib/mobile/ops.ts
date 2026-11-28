@@ -39,7 +39,11 @@ async function driverMap(ids: string[]) {
   const rows = ids.length
     ? await prisma.driver.findMany({
         where: { id: { in: ids } },
-        select: { id: true, name: true, phone: true, country: true, photoUrl: true, vehicle: { select: { plateNo: true, type: true } } },
+        select: {
+          id: true, name: true, phone: true, email: true, licenseNo: true, country: true, photoUrl: true, isActive: true,
+          vehicle: { select: { plateNo: true, type: true, brand: true, model: true, capacity: true } },
+          vendorOwner: { select: { name: true } },
+        },
       })
     : []
   return new Map(rows.map(r => [r.id, r]))
@@ -183,12 +187,21 @@ export async function listRequests(viewer: OpsViewer, status: 'PENDING' | 'ALL' 
   return rows
     .map(r => {
       const d = drivers.get(r.driverId)
+      // `current` is the "was" column on the page. For a waiting change that is
+      // today's details; once answered, today's details already include the
+      // change, so show the values saved at approval time (`_before`) instead —
+      // or nothing, for changes answered before that was recorded.
+      const { _before, ...payload } = (r.payload ?? {}) as Record<string, unknown>
+      const before = _before && typeof _before === 'object' ? _before as Record<string, string | null> : null
       return {
         ...r,
+        payload: r.kind === 'PROFILE_CHANGE' ? payload : r.payload,
         driverName: d?.name ?? r.driverName,
         driverPhone: d?.phone ?? null,
         country: d?.country ?? null,
-        current: r.kind === 'PROFILE_CHANGE' ? currentById.get(r.driverId) ?? null : null,
+        current: r.kind !== 'PROFILE_CHANGE' ? null
+          : r.status === 'PENDING' ? currentById.get(r.driverId) ?? null
+          : before,
       }
     })
     .filter(r => !viewer.country || !r.country || r.country === viewer.country)
@@ -226,7 +239,17 @@ export async function decideRequest(id: string, decision: 'APPROVED' | 'REJECTED
       const payload = (r.payload ?? {}) as Record<string, unknown>
       const data: Record<string, string> = {}
       for (const k of PROFILE_FIELDS) if (typeof payload[k] === 'string') data[k] = payload[k] as string
-      if (Object.keys(data).length) await prisma.driver.update({ where: { id: r.driverId }, data })
+      if (Object.keys(data).length) {
+        // Keep what these fields said before, so the answered request still shows old → new.
+        const was = await prisma.driver.findUnique({ where: { id: r.driverId }, select: Object.fromEntries(Object.keys(data).map(k => [k, true])) as Prisma.DriverSelect })
+        await prisma.driver.update({ where: { id: r.driverId }, data })
+        if (was) {
+          await prisma.mobileDriverRequest.update({
+            where: { id },
+            data: { payload: { ...payload, _before: was } as Prisma.InputJsonValue },
+          })
+        }
+      }
     }
     if ((r.kind === 'HANDOVER' || r.kind === 'FEEDBACK_WAIVER') && r.bookingRef) {
       const s = await prisma.mobileTripSession.findFirst({ where: { driverId: r.driverId, bookingRef: r.bookingRef } })
@@ -253,7 +276,7 @@ export async function decideRequest(id: string, decision: 'APPROVED' | 'REJECTED
   await notify({
     actorType: 'DRIVER', actorId: r.driverId, kind: 'REQUEST_UPDATE',
     title: r.kind === 'HELP' ? 'Operations got your help call' : `Your ${label[r.kind] ?? 'request'} was ${decision === 'APPROVED' ? 'approved' : 'declined'}`,
-    body: note || (r.bookingRef ? `File ${r.bookingRef}` : 'Open the app for details.'),
+    body: note || (r.bookingRef ? `File ${r.bookingRef}` : 'Tap to see your requests.'),
     data: { requestId: r.id, bookingRef: r.bookingRef },
     dedupeKey: `req-decided:${r.id}`,
   }).catch(err => console.error('[mobile decideRequest notify]', err))
@@ -268,7 +291,19 @@ export async function listVehicleChecks(viewer: OpsViewer, status: 'SUBMITTED' |
   })
   const drivers = await driverMap(Array.from(new Set(rows.map(r => r.driverId))))
   return rows
-    .map(r => ({ ...r, driverName: drivers.get(r.driverId)?.name ?? 'Driver', country: drivers.get(r.driverId)?.country ?? null, vehicle: drivers.get(r.driverId)?.vehicle ?? null }))
+    .map(r => {
+      const d = drivers.get(r.driverId)
+      return {
+        ...r,
+        driverName: d?.name ?? 'Driver',
+        country: d?.country ?? null,
+        vehicle: d?.vehicle ?? null,
+        driver: d ? {
+          phone: d.phone, email: d.email, licenseNo: d.licenseNo, photoUrl: d.photoUrl, isActive: d.isActive,
+          vendorName: d.vendorOwner?.name ?? null,
+        } : null,
+      }
+    })
     .filter(r => !viewer.country || !r.country || r.country === viewer.country)
 }
 

@@ -1,9 +1,9 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RegisterBlock } from '@/components/signup-ui';
-import { Button, ErrorBox, H1, Input, IconButton, P } from '@/components/ui';
+import { Button, ErrorBox, H1, Input, IconButton, Ionicons, P } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
 import { useAuth, type Actor } from '@/lib/auth';
 import { APP_VERSION } from '@/lib/config';
@@ -47,7 +47,8 @@ export default function SignIn() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, padding: S.xl, gap: S.lg }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <IconButton icon="chevron-back" onPress={() => router.back()} />
         <View style={{ gap: S.sm }}>
           <Text style={{ color: C.red, fontWeight: '800', letterSpacing: 1 }}>DRIVER LOGIN</Text>
@@ -58,9 +59,9 @@ export default function SignIn() {
           autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="username" />
         <View>
           <Input icon="lock-closed-outline" placeholder="Password" value={password} onChangeText={setPassword}
-            secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} />
-          <Pressable onPress={() => setShow(s => !s)} style={{ position: 'absolute', right: 16, top: 18 }}>
-            <Text style={{ color: C.sub }}>{show ? 'Hide' : 'Show'}</Text>
+            secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} autoCapitalize="none" autoCorrect={false} style={{ paddingRight: 36 }} />
+          <Pressable onPress={() => setShow(s => !s)} hitSlop={10} style={{ position: 'absolute', right: 16, top: 18 }}>
+            <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={C.sub} />
           </Pressable>
         </View>
         {needCritical && <Input icon="shield-checkmark-outline" placeholder="Critical services password" value={critical} onChangeText={setCritical} secureTextEntry />}
@@ -76,6 +77,7 @@ export default function SignIn() {
         </View>
         <RegisterBlock icon="person-add" label="Register as a driver" onPress={() => router.push('/register-driver')}
           hint="For independent drivers. Driving for a vendor? Your vendor adds you." />
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

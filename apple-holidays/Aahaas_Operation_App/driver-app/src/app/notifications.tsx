@@ -2,12 +2,13 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { NAVY, PulseDot } from '@/components/live-day';
 import { ErrorBox, H1, IconButton, Ionicons, Loading, Screen, type IconName } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { ago } from '@/lib/format';
 import { C, S } from '@/lib/theme';
 
@@ -105,6 +106,7 @@ function PinnedCard({ p, i }: { p: Pinned; i: number }) {
 }
 
 export default function Notifications() {
+  const { actor } = useAuth();
   const { data, error, loading, refreshing, reload } = useLoad<{ items: N[]; pinned?: Pinned[] }>('/api/mobile/notifications');
   useEffect(() => { if (data?.items.some(i => !i.readAt)) api('/api/mobile/notifications', { body: {} }).catch(() => {}); }, [data]);
 
@@ -116,13 +118,19 @@ export default function Notifications() {
     return () => clearInterval(t);
   }, [live, reload]);
 
+  // Every card opens something: the screen it is about, or — when there is none — the full message.
+  const isDriver = actor?.kind === 'DRIVER';
   function open(n: N) {
     const d = n.data ?? {};
     if (d.screen === 'vendor-trip') router.push('/fleet-trips');
     else if (d.screen === 'vendor-market') router.push('/fleet-market');
     else if (d.screen === 'get-trips') router.push('/get-trips');
-    else if (d.screen === 'vehicle' || n.kind.startsWith('VEHICLE')) router.push('/vehicle-check');
-    else if (d.bookingRef && (d.screen === 'trip' || n.kind.startsWith('TRIP') || n.kind.startsWith('DAY'))) openTrip(d.bookingRef);
+    else if (d.screen === 'vehicle' || n.kind.startsWith('VEHICLE')) router.push(isDriver ? '/vehicle-check' : '/fleet');
+    else if (d.bookingRef && (d.screen === 'trip' || n.kind.startsWith('TRIP') || n.kind.startsWith('DAY') || n.kind.startsWith('TICKET'))) openTrip(d.bookingRef);
+    else if (isDriver && (d.requestId || n.kind === 'REQUEST_UPDATE')) router.push('/requests');
+    else if (isDriver && n.kind.startsWith('SIGNUP')) router.push('/me');
+    else if (isDriver && n.kind === 'TRIP_REMOVED') router.push('/trips');
+    else Alert.alert(n.title, n.body);
   }
 
   const pinned = data?.pinned ?? [];

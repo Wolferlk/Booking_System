@@ -71,7 +71,12 @@ export default function FleetAccount() {
         <Line icon="location" label="Address" value={actor.address} />
         <Line icon="card" label="Bank" value={actor.bank ? [actor.bank.bankName, actor.bank.accountNo].filter(Boolean).join(' · ') : null} />
       </View>
-      <Text style={{ color: C.dim, fontSize: 12, marginTop: -8 }}>To change company or bank details, use the web portal or ask operations.</Text>
+      <Pressable onPress={() => WebBrowser.openBrowserAsync(`${API_URL}/vendor/dashboard/profile`)}
+        style={({ pressed }) => [styles.edit, pressed && { opacity: 0.85 }]} accessibilityRole="button">
+        <Ionicons name="create" size={18} color="#fff" />
+        <Text style={{ color: '#fff', fontWeight: '900', fontSize: 15 }}>Edit company & bank details</Text>
+      </Pressable>
+      <Text style={{ color: C.dim, fontSize: 12, marginTop: -8, textAlign: 'center' }}>Opens your vendor portal profile — sign in with the same e-mail and password. Changes show here after saving.</Text>
 
       <View style={styles.card}>
         <MenuRow icon="notifications" color={C.red} bg={C.redSoft} title="Notifications" sub="Trip approvals and changes" onPress={() => router.push('/notifications')} />
@@ -95,6 +100,7 @@ const styles = StyleSheet.create({
   line: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10 },
   lineLabel: { color: C.dim, fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
   lineValue: { color: C.text, fontSize: 15, fontWeight: '700' },
+  edit: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: C.blue, borderRadius: 18, paddingVertical: 14 },
   menu: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 16 },
   menuTitle: { color: C.text, fontSize: 15, fontWeight: '800' },
   menuSub: { color: C.sub, fontSize: 12 },

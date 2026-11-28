@@ -68,7 +68,9 @@ interface RequestRow {
 }
 interface CheckRow {
   id: string; driverName: string; status: string; createdAt: string; odometer: number | null
-  photos: Record<string, string>; vehicle: { plateNo: string; type: string } | null
+  country: string | null
+  driver: { phone: string; email: string | null; licenseNo: string | null; photoUrl: string | null; isActive: boolean; vendorName: string | null } | null
+  photos: Record<string, string>; vehicle: { plateNo: string; type: string; brand: string | null; model: string | null; capacity: number } | null
   aiReview: { verdict: string; summary: string; issues: string[]; plateSeen: string | null; plateMatches: boolean | null; cleanliness: string | null } | null
   reviewNote: string | null; reviewedByName: string | null
 }
@@ -83,6 +85,10 @@ const KIND_LABEL: Record<string, { label: string; tone: string }> = {
   PROFILE_CHANGE: { label: 'Profile change', tone: 'bg-sky-100 text-sky-700' },
   FEEDBACK_WAIVER: { label: 'Feedback waiver', tone: 'bg-violet-100 text-violet-700' },
   ACCOUNT_DELETE: { label: 'Account deletion', tone: 'bg-rose-100 text-rose-800' },
+}
+
+const COUNTRY_LABEL: Record<string, string> = {
+  SRILANKA: 'Sri Lanka', VIETNAM: 'Vietnam', SINGAPORE: 'Singapore', MALAYSIA: 'Malaysia', SINGAPORE_MALAYSIA: 'Singapore / Malaysia',
 }
 
 function ago(iso: string | null): string {
@@ -158,8 +164,11 @@ export default function DriverAppPage() {
   async function decide(kind: 'requests' | 'vehicle-checks', id: string, decision: 'APPROVED' | 'REJECTED') {
     let note: string | null = null
     if (decision === 'REJECTED' || kind === 'requests') {
-      note = window.prompt(decision === 'REJECTED' ? 'Reason (sent to the driver):' : 'Note to the driver (optional):') ?? null
-      if (decision === 'REJECTED' && !note?.trim()) return
+      const answer = window.prompt(decision === 'REJECTED' ? 'Reason (sent to the driver):' : 'Note to the driver (optional) — press OK to confirm:')
+      // Cancel means "don't do it" — only OK (even with an empty note) goes ahead.
+      if (answer === null) return
+      note = answer.trim() || null
+      if (decision === 'REJECTED' && !note) { toast.error('Please give a reason for the driver.'); return }
     }
     setBusy(id)
     try {
@@ -290,6 +299,10 @@ export default function DriverAppPage() {
 
       {!loading && tab === 'requests' && (
         <div className="space-y-3">
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-800">
+            Trip requests from the app&apos;s <b>Get trips</b> tab are approved on{' '}
+            <a href="/dashboard/driver-auto" className="font-medium underline">Driver-Auto</a> (pick the country tab → <b>Get Bookings</b>). This list is help calls, driver changes, profile changes and feedback waivers.
+          </div>
           {requests.length === 0 && <Empty text="No requests waiting." />}
           {requests.map(r => {
             const meta = KIND_LABEL[r.kind] ?? { label: r.kind, tone: 'bg-slate-100 text-slate-700' }
@@ -316,7 +329,7 @@ export default function DriverAppPage() {
                       {Object.entries(payload).map(([k, v]) => (
                         <tr key={k}>
                           <td className="pr-4 text-slate-500">{k}</td>
-                          <td className="pr-4 text-slate-400 line-through">{r.current?.[k] ?? '—'}</td>
+                          <td className="pr-4 text-slate-400 line-through">{r.current ? (r.current[k] ?? '—') : ''}</td>
                           <td className="font-medium text-slate-800">{k === 'photoUrl' ? <a className="text-brand-600" href={String(v)} target="_blank" rel="noreferrer">new photo</a> : String(v)}</td>
                         </tr>
                       ))}
@@ -354,9 +367,30 @@ export default function DriverAppPage() {
           {checks.length === 0 && <Empty text="No vehicle photos waiting for review." />}
           {checks.map(c => (
             <div key={c.id} className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-slate-800">{c.driverName}</span>
-                <span className="text-xs text-slate-500">{c.vehicle ? `${c.vehicle.type} · ${c.vehicle.plateNo}` : 'no vehicle linked'}{c.odometer ? ` · odometer ${c.odometer.toLocaleString()} km` : ''}</span>
+              <div className="flex flex-wrap items-start gap-3">
+                {c.driver?.photoUrl
+                  // eslint-disable-next-line @next/next/no-img-element
+                  ? <img src={c.driver.photoUrl} alt="" className="h-10 w-10 rounded-full object-cover border border-slate-200" />
+                  : <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-sm font-semibold text-slate-500">{c.driverName.slice(0, 1).toUpperCase()}</div>}
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-slate-800">{c.driverName}</span>
+                    {c.country && <span className="text-xs rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{COUNTRY_LABEL[c.country] ?? c.country}</span>}
+                    <span className="text-xs rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{c.driver?.vendorName ? `Vendor · ${c.driver.vendorName}` : 'Independent driver'}</span>
+                    {c.driver && !c.driver.isActive && <span className="text-xs rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">inactive</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                    {c.driver?.phone && <a className="text-brand-600 inline-flex items-center gap-1" href={`tel:${c.driver.phone}`}><Phone className="h-3 w-3" />{c.driver.phone}</a>}
+                    {c.driver?.email && <span>{c.driver.email}</span>}
+                    {c.driver?.licenseNo && <span>Licence {c.driver.licenseNo}</span>}
+                  </div>
+                  <div className="text-xs text-slate-600 mt-0.5">
+                    {c.vehicle
+                      ? `${[c.vehicle.brand, c.vehicle.model].filter(Boolean).join(' ') || c.vehicle.type} · ${c.vehicle.type} · ${c.vehicle.plateNo} · ${c.vehicle.capacity} seats`
+                      : 'no vehicle linked'}
+                    {c.odometer ? ` · odometer ${c.odometer.toLocaleString()} km` : ''}
+                  </div>
+                </div>
                 <span className="text-xs text-slate-400 ml-auto">{ago(c.createdAt)}</span>
               </div>
               <div className="flex gap-2 mt-3 overflow-x-auto">

@@ -10,14 +10,14 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { Easing, FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 import { PageHeader } from '@/components/fancy';
 import { ErrorBox, Ionicons, Loading, Screen, type IconName } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtRange } from '@/lib/format';
+import { fmtDay, fmtRange } from '@/lib/format';
 import { useT } from '@/lib/i18n';
 import { openTripsPath, rememberTrips, type OpenTrip, type TripPicks } from '@/lib/open-trips';
 import { C } from '@/lib/theme';
@@ -241,6 +241,20 @@ export function OpenTripsBoard() {
   const next = useNextPicks(picks?.nextAt, silent);
   const onlyVehicle = picks?.vehicles.length === 1 ? picks.vehicles[0].toLowerCase() : null;
 
+  // The server deals the list best-match first; drivers read it by day. Keep the
+  // server's first one as the top pick, list the rest by start date and time.
+  const [day, setDay] = useState<string | null>(null);
+  const topKey = picks ? data?.trips[0]?.key ?? null : null;
+  const byDate = [...(data?.trips ?? [])].sort((a, b) =>
+    a.startDate.localeCompare(b.startDate) || (a.startTime ?? '99:99').localeCompare(b.startTime ?? '99:99'));
+  const days = Array.from(new Set(byDate.map(t => t.startDate)));
+  const activeDay = day && days.includes(day) ? day : null;
+  const shown = activeDay ? byDate.filter(t => t.startDate === activeDay) : byDate;
+  const dayLabel = (ymd: string) => {
+    const away = byDate.find(t => t.startDate === ymd)?.daysAway;
+    return away === 0 ? 'Today' : away === 1 ? 'Tomorrow' : fmtDay(ymd);
+  };
+
   return (
     <Screen refreshing={refreshing} onRefresh={reload}>
       <PageHeader title={fleet ? 'Get trips' : t('getTrips')} icon="add-circle" colors={['#7F1D1D', '#C81E2E', '#FF4D5E']}
@@ -288,8 +302,28 @@ export function OpenTripsBoard() {
           <Text style={{ color: C.sub, textAlign: 'center' }}>{next ? `Your new picks arrive in ${next}.` : 'Your new picks arrive at midnight.'}</Text>
         </Animated.View>
       )}
-      {data?.trips.map((trip, i) => (
-        <OpenTripCard key={trip.key} trip={trip} i={i} top={i === 0 && !!picks} busy={busy === trip.key} onRequest={() => request(trip)} fleet={fleet} />
+      {days.length > 1 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          {[null, ...days].map(d => {
+            const on = activeDay === d;
+            const n = d ? byDate.filter(t => t.startDate === d).length : byDate.length;
+            return (
+              <Pressable key={d ?? 'all'} onPress={() => { Haptics.selectionAsync().catch(() => {}); setDay(d); }}
+                style={[styles.dayChip, on && styles.dayChipOn]}>
+                <Text style={[styles.dayChipText, on && { color: '#fff' }]}>{d ? dayLabel(d) : 'All days'}</Text>
+                <View style={[styles.dayCount, on && { backgroundColor: 'rgba(255,255,255,0.25)' }]}><Text style={[styles.dayCountText, on && { color: '#fff' }]}>{n}</Text></View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      )}
+      {shown.map((trip, i) => (
+        <View key={trip.key} style={{ gap: 8 }}>
+          {!activeDay && days.length > 1 && (i === 0 || shown[i - 1].startDate !== trip.startDate) && (
+            <Text style={styles.dayHead}>{dayLabel(trip.startDate).toUpperCase()}{dayLabel(trip.startDate) !== fmtDay(trip.startDate) ? ` · ${fmtDay(trip.startDate)}` : ''}</Text>
+          )}
+          <OpenTripCard trip={trip} i={i} top={trip.key === topKey} busy={busy === trip.key} onRequest={() => request(trip)} fleet={fleet} />
+        </View>
       ))}
       {picks && count > 0 && <NextDrop next={next} more={picks.moreWaiting} />}
     </Screen>
@@ -297,6 +331,12 @@ export function OpenTripsBoard() {
 }
 
 const styles = StyleSheet.create({
+  dayChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, paddingLeft: 14, paddingRight: 6, paddingVertical: 6, backgroundColor: C.card, borderWidth: 1, borderColor: C.line },
+  dayChipOn: { backgroundColor: C.red, borderColor: C.red },
+  dayChipText: { color: C.text, fontWeight: '800', fontSize: 13 },
+  dayCount: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center', backgroundColor: C.cardHi },
+  dayCountText: { color: C.sub, fontWeight: '900', fontSize: 11 },
+  dayHead: { color: C.dim, fontWeight: '900', fontSize: 12, letterSpacing: 1.2, marginTop: 4 },
   card: { backgroundColor: C.card, borderRadius: 24, padding: 14, gap: 10, borderWidth: 1, borderColor: C.line },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   when: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },

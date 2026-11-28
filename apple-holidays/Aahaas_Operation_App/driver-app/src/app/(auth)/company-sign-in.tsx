@@ -5,7 +5,7 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, ErrorBox, IconButton, Input, Ionicons, P, Row } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -41,7 +41,8 @@ export default function CompanySignIn() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, padding: S.xl, gap: S.lg }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <Row style={{ justifyContent: 'space-between' }}>
           <IconButton icon="chevron-back" onPress={() => router.back()} />
           <Image alt="Aahaas" source={require('@/assets/images/aahaas-wordmark.png')} style={{ width: 110, height: 42 }} contentFit="contain" />
@@ -60,8 +61,8 @@ export default function CompanySignIn() {
           autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="username" />
         <View>
           <Input icon="lock-closed-outline" placeholder="Password" value={password} onChangeText={setPassword}
-            secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} />
-          <Pressable onPress={() => setShow(s => !s)} style={{ position: 'absolute', right: 16, top: 18 }}>
+            secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} autoCapitalize="none" autoCorrect={false} style={{ paddingRight: 36 }} />
+          <Pressable onPress={() => setShow(s => !s)} hitSlop={10} style={{ position: 'absolute', right: 16, top: 18 }}>
             <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={C.sub} />
           </Pressable>
         </View>
@@ -77,6 +78,7 @@ export default function CompanySignIn() {
           <Ionicons name="shield-checkmark" size={14} color={C.green} />
           <Text style={{ color: C.dim, fontSize: 12 }}>Every change made in the app is recorded in the activity log.</Text>
         </Row>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

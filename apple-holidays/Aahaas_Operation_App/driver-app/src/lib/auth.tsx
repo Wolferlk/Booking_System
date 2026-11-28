@@ -3,6 +3,7 @@ import { api, setUnauthorizedHandler } from './api';
 import { getToken, setToken } from './storage';
 import { registerForPush, unregisterPush } from './push';
 import { stopTracking } from './location';
+import { getPendingSignup, setPendingSignup } from './signup';
 import { LangContext, type Lang } from './i18n';
 
 export interface DriverActor {
@@ -93,6 +94,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (token: string, a: Actor) => {
     await setToken(token);
+    // Signed in as the driver / vendor who registered on this phone: the registration
+    // is done, so the welcome screen must stop saying "waiting for approval".
+    if (a.kind !== 'STAFF') {
+      const p = await getPendingSignup();
+      if (p && p.kind === a.kind) await setPendingSignup(null);
+    }
     setActor(a);
     registerForPush();
   }, []);

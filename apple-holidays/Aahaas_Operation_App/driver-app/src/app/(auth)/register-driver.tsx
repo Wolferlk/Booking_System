@@ -10,7 +10,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Switch, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CountryChips, PasswordFields, SignupHero } from '@/components/signup-ui';
 import { Button, Card, ErrorBox, IconButton, Input, Ionicons, Label, P, Row } from '@/components/ui';
@@ -64,7 +64,7 @@ export default function RegisterDriver() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
           <Row style={{ justifyContent: 'space-between' }}>
             <IconButton icon="chevron-back" onPress={() => router.back()} />

@@ -8,7 +8,7 @@
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, AppState, Linking, Pressable, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, KeyboardAvoidingView, Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, H1, IconButton, Ionicons, P, Row, type IconName } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -88,7 +88,9 @@ export default function Help() {
   const canSend = !locked && (kind === 'HELP' ? !!topic : reason.trim().length >= 3);
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg, padding: S.xl, gap: S.lg }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <Row style={{ justifyContent: 'space-between' }}>
         <H1 style={{ flex: 1 }}>{title}</H1>
         <IconButton icon="close" onPress={() => router.back()} />
@@ -121,6 +123,8 @@ export default function Help() {
         multiline style={{ color: C.text, fontSize: 17, minHeight: 90, backgroundColor: C.card, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: S.lg, textAlignVertical: 'top', opacity: locked ? 0.5 : 1 }} />
 
       <Button title={kind === 'HELP' ? 'Send help request' : 'Send to operations'} icon="send" onPress={send} loading={busy} disabled={!canSend} />
+      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

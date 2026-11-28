@@ -5,20 +5,24 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { Button, Card, ErrorBox, H1, IconButton, Input, Ionicons, Label, Loading, P, Pill, Row, Screen } from '@/components/ui';
 import { useLoad } from '@/hooks/use-load';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { API_URL } from '@/lib/config';
 import { fmtDay } from '@/lib/format';
 import { C, R, S } from '@/lib/theme';
 import { takeAndUpload } from '@/lib/upload';
 
 const SLOT_LABEL: Record<string, string> = { front: 'Front', back: 'Back', left: 'Left side', right: 'Right side', inside: 'Inside (seats)', odometer: 'Odometer' };
+const SLOT_ORDER = ['front', 'back', 'left', 'right', 'inside', 'odometer'];
+/** Sent photos are stored as server paths ("/api/uploads/…"). */
+const photoUri = (u: string) => (u.startsWith('http') ? u : `${API_URL}${u}`);
 
 interface State {
   state: { due: boolean; daysLeft: number; lastAt: string | null; lastStatus: string | null; rejectedNote: string | null }
-  history: { id: string; status: string; createdAt: string; aiReview: { verdict: string; summary: string } | null; reviewNote: string | null }[]
+  history: { id: string; status: string; createdAt: string; photos: Record<string, string> | null; odometer: number | null; aiReview: { verdict: string; summary: string } | null; reviewNote: string | null }[]
   vehicle: { type: string; plateNo: string } | null
   slots: string[]
   required: string[]
@@ -33,6 +37,7 @@ export default function VehicleCheck() {
   const [odo, setOdo] = useState('');
   const [sending, setSending] = useState(false);
   const [ai, setAi] = useState<Ai | null>(null);
+  const [viewing, setViewing] = useState<{ uri: string; label: string } | null>(null);
 
   async function shoot(slot: string) {
     setBusySlot(slot);
@@ -125,11 +130,29 @@ export default function VehicleCheck() {
                 <Text style={{ color: C.text, fontWeight: '700' }}>{fmtDay(h.createdAt.slice(0, 10))}</Text>
                 <Pill text={h.status === 'SUBMITTED' ? 'Waiting' : h.status === 'APPROVED' ? 'Approved' : 'Retake'} tone={h.status === 'APPROVED' ? 'green' : h.status === 'REJECTED' ? 'red' : 'gold'} />
               </Row>
+              {h.photos && Object.keys(h.photos).length > 0 && (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm, paddingVertical: 4 }}>
+                  {SLOT_ORDER.filter(s => h.photos?.[s]).map(s => (
+                    <Pressable key={s} onPress={() => setViewing({ uri: photoUri(h.photos![s]), label: SLOT_LABEL[s] ?? s })} style={{ alignItems: 'center', gap: 2 }}>
+                      <Image alt={SLOT_LABEL[s] ?? s} source={{ uri: photoUri(h.photos![s]) }} style={{ width: 96, height: 72, borderRadius: 10, backgroundColor: C.cardHi }} contentFit="cover" />
+                      <Text style={{ color: C.dim, fontSize: 11, fontWeight: '700' }}>{SLOT_LABEL[s] ?? s}</Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              )}
+              {h.odometer ? <Text style={{ color: C.sub, fontSize: 13 }}>Odometer {h.odometer.toLocaleString()} km</Text> : null}
               {h.reviewNote && <P>{h.reviewNote}</P>}
             </Card>
           ))}
         </>
       )}
+
+      <Modal visible={!!viewing} transparent animationType="fade" onRequestClose={() => setViewing(null)}>
+        <Pressable onPress={() => setViewing(null)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', padding: S.lg, gap: S.md }}>
+          {viewing && <Image alt={viewing.label} source={{ uri: viewing.uri }} style={{ width: '100%', aspectRatio: 0.75 }} contentFit="contain" />}
+          <Text style={{ color: '#fff', textAlign: 'center', fontWeight: '800' }}>{viewing?.label} · tap to close</Text>
+        </Pressable>
+      </Modal>
     </Screen>
   );
 }

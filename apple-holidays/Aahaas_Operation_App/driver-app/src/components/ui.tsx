@@ -2,7 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import * as Haptics from 'expo-haptics';
 import type { ComponentProps, ReactNode } from 'react';
 import {
-  ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, KeyboardAvoidingView, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View,
   type TextInputProps, type TextStyle, type ViewStyle,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -15,16 +15,20 @@ export function Screen({ children, refreshing, onRefresh, scroll = true, padded 
   children: ReactNode; refreshing?: boolean; onRefresh?: () => void; scroll?: boolean; padded?: boolean
 }) {
   const inner = padded ? { padding: S.lg, paddingBottom: 120, gap: S.lg } : undefined;
+  // Android is edge-to-edge, so the window no longer shrinks for the keyboard; the
+  // padding behaviour (on both platforms) keeps the scroll area above it.
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top']}>
-      {scroll ? (
-        <ScrollView
-          contentContainerStyle={inner}
-          refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={C.sub} /> : undefined}
-          keyboardShouldPersistTaps="handled">
-          {children}
-        </ScrollView>
-      ) : <View style={[{ flex: 1 }, inner]}>{children}</View>}
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        {scroll ? (
+          <ScrollView
+            contentContainerStyle={inner}
+            refreshControl={onRefresh ? <RefreshControl refreshing={!!refreshing} onRefresh={onRefresh} tintColor={C.sub} /> : undefined}
+            keyboardShouldPersistTaps="handled">
+            {children}
+          </ScrollView>
+        ) : <View style={[{ flex: 1 }, inner]}>{children}</View>}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

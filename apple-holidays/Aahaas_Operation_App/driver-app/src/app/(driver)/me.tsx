@@ -13,7 +13,12 @@ import { LANGS, useT } from '@/lib/i18n';
 import { C } from '@/lib/theme';
 
 const WORDMARK_WHITE = require('../../../assets/images/aahaas-wordmark-white.png');
-const FLAGS: Record<string, string> = { en: '🇬🇧', si: '🇱🇰', ta: '🇱🇰', vi: '🇻🇳' };
+/**
+ * Each language shows a letter of its own script, not a flag: Sinhala and Tamil are
+ * both Sri Lankan languages, so two Sri Lanka flags looked identical (and an India
+ * flag would be wrong for Sri Lankan Tamil drivers).
+ */
+const GLYPH: Record<string, string> = { en: 'En', si: 'සි', ta: 'த', vi: 'Vi' };
 
 function Line({ icon, color, bg, label, value }: { icon: IconName; color: string; bg: string; label: string; value: string | null | undefined }) {
   return (
@@ -58,7 +63,7 @@ export default function Me() {
           <View style={styles.circleA} />
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Image source={WORDMARK_WHITE} style={{ width: 74, height: 24 }} contentFit="contain" alt="Aahaas" />
-            <View style={styles.rolePill}><Ionicons name="car-sport" size={12} color="#fff" /><Text style={styles.roleText}>DRIVER</Text></View>
+            <View style={styles.rolePill}><Ionicons name="car-sport" size={12} color="#fff" /><Text style={styles.roleText}>{t('driverRole')}</Text></View>
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
             <LinearGradient colors={['#FF7A87', '#FF2638', '#FCD34D']} style={styles.ring}>
@@ -68,7 +73,7 @@ export default function Me() {
             </LinearGradient>
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={styles.name} numberOfLines={1}>{actor.name}</Text>
-              <Text style={styles.vendor} numberOfLines={1}>{actor.vendor ? actor.vendor : 'Aahaas driver'}</Text>
+              <Text style={styles.vendor} numberOfLines={1}>{actor.vendor ? actor.vendor : t('aahaasDriver')}</Text>
               <Text style={styles.version}>Aahaas CORE {APP_VERSION}</Text>
             </View>
           </View>
@@ -83,7 +88,7 @@ export default function Me() {
             {vc && (
               <View style={[styles.due, { backgroundColor: vc.due ? C.redSoft : C.greenSoft }]}>
                 <Ionicons name={vc.due ? 'camera' : 'checkmark-circle'} size={12} color={vc.due ? C.red : C.green} />
-                <Text style={{ color: vc.due ? C.red : C.green, fontWeight: '900', fontSize: 12 }}>{vc.due ? 'Photos due' : `${vc.daysLeft} days left`}</Text>
+                <Text style={{ color: vc.due ? C.red : C.green, fontWeight: '900', fontSize: 12 }}>{vc.due ? t('photosDue') : `${vc.daysLeft} ${t('daysLeft')}`}</Text>
               </View>
             )}
           </View>
@@ -92,10 +97,10 @@ export default function Me() {
               <Ionicons name="car-sport" size={34} color="#3730A3" />
             </LinearGradient>
             <View style={{ flex: 1, gap: 6 }}>
-              <Text style={styles.vehicle} numberOfLines={1}>{v ? `${v.brand ?? ''} ${v.model ?? v.type}`.trim() : 'No vehicle yet'}</Text>
+              <Text style={styles.vehicle} numberOfLines={1}>{v ? `${v.brand ?? ''} ${v.model ?? v.type}`.trim() : t('noVehicle')}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <View style={styles.plate}><Text style={styles.plateText}>{v?.plateNo || '— — —'}</Text></View>
-                {v && <View style={styles.seats}><Ionicons name="people" size={12} color={C.sub} /><Text style={styles.seatsText}>{v.capacity} seats</Text></View>}
+                {v && <View style={styles.seats}><Ionicons name="people" size={12} color={C.sub} /><Text style={styles.seatsText}>{v.capacity} {t('seats')}</Text></View>}
               </View>
             </View>
             <Ionicons name="chevron-forward" size={18} color={C.dim} />
@@ -106,18 +111,18 @@ export default function Me() {
       {/* details */}
       <Animated.View entering={FadeInDown.delay(140).springify().damping(18)} style={styles.card}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={styles.section}>MY DETAILS</Text>
+          <Text style={styles.section}>{t('myDetails').toUpperCase()}</Text>
           <Pressable onPress={() => router.push('/profile-edit')} style={styles.change} hitSlop={8}>
-            <Ionicons name="create" size={14} color="#B45309" /><Text style={{ color: '#B45309', fontWeight: '900', fontSize: 12 }}>Change</Text>
+            <Ionicons name="create" size={14} color="#B45309" /><Text style={{ color: '#B45309', fontWeight: '900', fontSize: 12 }}>{t('change')}</Text>
           </Pressable>
         </View>
-        <Line icon="call" color="#16A34A" bg="#ECFDF3" label="Phone" value={actor.phone} />
-        <Line icon="mail" color="#2563EB" bg="#EFF6FF" label="E-mail" value={actor.email} />
-        <Line icon="id-card" color="#7C3AED" bg="#F5F3FF" label="Licence" value={actor.licenseNo} />
-        <Line icon="business" color="#D97706" bg="#FFFBEB" label="Bank" value={actor.bank ? `${actor.bank.bankName ?? ''} ${actor.bank.accountNo ?? ''}`.trim() : null} />
+        <Line icon="call" color="#16A34A" bg="#ECFDF3" label={t('phone')} value={actor.phone} />
+        <Line icon="mail" color="#2563EB" bg="#EFF6FF" label={t('email')} value={actor.email} />
+        <Line icon="id-card" color="#7C3AED" bg="#F5F3FF" label={t('licence')} value={actor.licenseNo} />
+        <Line icon="business" color="#D97706" bg="#FFFBEB" label={t('bank')} value={actor.bank ? `${actor.bank.bankName ?? ''} ${actor.bank.accountNo ?? ''}`.trim() : null} />
         {!!actor.pendingProfileChanges && (
           <View style={[styles.due, { backgroundColor: C.goldSoft, alignSelf: 'flex-start' }]}>
-            <Ionicons name="hourglass" size={12} color={C.gold} /><Text style={{ color: C.gold, fontWeight: '900', fontSize: 12 }}>Change waiting for operations</Text>
+            <Ionicons name="hourglass" size={12} color={C.gold} /><Text style={{ color: C.gold, fontWeight: '900', fontSize: 12 }}>{t('changeWaiting')}</Text>
           </View>
         )}
       </Animated.View>
@@ -129,9 +134,9 @@ export default function Me() {
           {LANGS.map(l => {
             const on = actor.language === l.id;
             return (
-              <Pressable key={l.id} onPress={() => setLanguage(l.id).catch(e => Alert.alert('Could not change', e.message))}
+              <Pressable key={l.id} onPress={() => setLanguage(l.id).catch(e => Alert.alert(t('couldNotChange'), e.message))}
                 style={({ pressed }) => [styles.lang, on && styles.langOn, pressed && { transform: [{ scale: 0.96 }] }]}>
-                <Text style={{ fontSize: 18 }}>{FLAGS[l.id] ?? '🌐'}</Text>
+                <View style={[styles.glyph, on && styles.glyphOn]}><Text style={[styles.glyphText, on && { color: C.red }]}>{GLYPH[l.id] ?? '🌐'}</Text></View>
                 <Text style={[styles.langText, on && { color: '#fff' }]}>{l.label}</Text>
                 {on && <Ionicons name="checkmark-circle" size={16} color="#fff" />}
               </Pressable>
@@ -142,14 +147,14 @@ export default function Me() {
 
       {/* menu */}
       <Animated.View entering={FadeInDown.delay(260).springify().damping(18)} style={[styles.card, { padding: 6, gap: 0 }]}>
-        <MenuRow icon="notifications" color="#2563EB" bg="#EFF6FF" title={t('notifications')} sub="Trips, reminders and updates" onPress={() => router.push('/notifications')} />
-        <MenuRow icon="chatbox-ellipses" color="#7C3AED" bg="#F5F3FF" title="My requests to operations" sub="Hand-overs, help, profile changes" onPress={() => router.push('/requests')} />
-        <MenuRow icon="alert-circle" color={C.red} bg={C.redSoft} title={t('help')} sub="Call or message operations" onPress={() => router.push('/help')} />
-        <MenuRow icon="shield-checkmark" color="#0F766E" bg="#F0FDFA" title="Privacy policy" sub="What we collect and why" onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
+        <MenuRow icon="notifications" color="#2563EB" bg="#EFF6FF" title={t('notifications')} sub={t('notificationsSub')} onPress={() => router.push('/notifications')} />
+        <MenuRow icon="chatbox-ellipses" color="#7C3AED" bg="#F5F3FF" title={t('myRequests')} sub={t('myRequestsSub')} onPress={() => router.push('/requests')} />
+        <MenuRow icon="alert-circle" color={C.red} bg={C.redSoft} title={t('help')} sub={t('helpSub')} onPress={() => router.push('/help')} />
+        <MenuRow icon="shield-checkmark" color="#0F766E" bg="#F0FDFA" title={t('privacy')} sub={t('privacySub')} onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
       </Animated.View>
 
-      <Pressable onPress={() => Alert.alert(t('signOut'), 'Sign out of this phone?', [
-        { text: 'Cancel', style: 'cancel' }, { text: t('signOut'), style: 'destructive', onPress: () => { signOut(); router.replace('/welcome'); } },
+      <Pressable onPress={() => Alert.alert(t('signOut'), t('signOutAsk'), [
+        { text: t('cancel'), style: 'cancel' }, { text: t('signOut'), style: 'destructive', onPress: () => { signOut(); router.replace('/welcome'); } },
       ])} style={({ pressed }) => [styles.signOut, pressed && { backgroundColor: C.redSoft }]}>
         <Ionicons name="log-out-outline" size={18} color={C.red} />
         <Text style={{ color: C.red, fontWeight: '900', fontSize: 15 }}>{t('signOut')}</Text>
@@ -157,7 +162,7 @@ export default function Me() {
 
       <Pressable onPress={() => router.push('/delete-account')} style={({ pressed }) => [styles.deleteRow, pressed && { opacity: 0.6 }]} accessibilityRole="button">
         <Ionicons name="trash-outline" size={16} color={C.sub} />
-        <Text style={{ color: C.sub, fontWeight: '800', fontSize: 14 }}>Delete my account</Text>
+        <Text style={{ color: C.sub, fontWeight: '800', fontSize: 14 }}>{t('deleteAccount')}</Text>
       </Pressable>
     </Screen>
   );
@@ -190,6 +195,9 @@ const styles = StyleSheet.create({
   lang: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 14, borderRadius: 16, backgroundColor: C.cardHi },
   langOn: { backgroundColor: C.red },
   langText: { color: C.text, fontWeight: '800', fontSize: 15 },
+  glyph: { minWidth: 26, height: 26, borderRadius: 8, paddingHorizontal: 4, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  glyphOn: { backgroundColor: '#fff' },
+  glyphText: { color: C.sub, fontWeight: '900', fontSize: 13 },
   menu: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 10, borderRadius: 18 },
   menuTitle: { color: C.text, fontWeight: '800', fontSize: 15 },
   menuSub: { color: C.sub, fontSize: 12 },

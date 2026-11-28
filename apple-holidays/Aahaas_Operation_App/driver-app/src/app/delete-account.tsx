@@ -8,7 +8,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, H1, IconButton, Ionicons, P, Row, type IconName } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -71,7 +71,7 @@ export default function DeleteAccount() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
           <Row style={{ justifyContent: 'space-between' }}>
             <H1 style={{ flex: 1 }}>Delete my account</H1>

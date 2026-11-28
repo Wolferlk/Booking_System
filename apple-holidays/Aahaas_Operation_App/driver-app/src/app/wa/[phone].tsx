@@ -12,7 +12,7 @@ import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Share, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, FlatList, KeyboardAvoidingView, Linking, Modal, Pressable, ScrollView, Share, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Sheet } from '@/components/sheet';
 import { IconButton, Ionicons, Loading, Row, type IconName } from '@/components/ui';
@@ -318,7 +318,7 @@ export default function WaThread() {
         </View>
       )}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, backgroundColor: WALL }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: WALL }}>
         {!data ? <Loading /> : (
           <View style={{ flex: 1 }}>
             <FlatList

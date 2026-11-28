@@ -5,7 +5,7 @@
  */
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Alert, Pressable, Text, View } from 'react-native';
 import { Button, Card, H1, IconButton, Input, Ionicons, Label, P, Row, Screen } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -22,6 +22,8 @@ export default function ProfileEdit() {
   const set = (k: string) => (v: string) => setF(x => ({ ...x, [k]: v }));
 
   async function save() {
+    const mail = f.email?.trim();
+    if (mail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) { Alert.alert('E-mail', 'That e-mail address does not look right.'); return; }
     const changes = Object.fromEntries(Object.entries({ ...f, ...(photo ? { photoUrl: photo.url } : {}) }).filter(([, v]) => v.trim()));
     if (!Object.keys(changes).length) return router.back();
     setBusy(true);
@@ -48,9 +50,15 @@ export default function ProfileEdit() {
       </Pressable>
 
       <Label>Contact</Label>
-      <Input icon="call-outline" placeholder={`Phone (now ${actor.phone})`} keyboardType="phone-pad" value={f.phone ?? ''} onChangeText={set('phone')} />
-      <Input icon="mail-outline" placeholder={`E-mail (now ${actor.email ?? '—'})`} keyboardType="email-address" autoCapitalize="none" value={f.email ?? ''} onChangeText={set('email')} />
-      <Input icon="id-card-outline" placeholder={`Licence no. (now ${actor.licenseNo ?? '—'})`} autoCapitalize="characters" value={f.licenseNo ?? ''} onChangeText={set('licenseNo')} />
+      <Field now={actor.phone}>
+        <Input icon="call-outline" placeholder="New phone number" keyboardType="phone-pad" value={f.phone ?? ''} onChangeText={set('phone')} />
+      </Field>
+      <Field now={actor.email}>
+        <Input icon="mail-outline" placeholder="New e-mail, e.g. name@gmail.com" keyboardType="email-address" autoCapitalize="none" autoCorrect={false} value={f.email ?? ''} onChangeText={set('email')} />
+      </Field>
+      <Field now={actor.licenseNo}>
+        <Input icon="id-card-outline" placeholder="New licence no." autoCapitalize="characters" value={f.licenseNo ?? ''} onChangeText={set('licenseNo')} />
+      </Field>
 
       <Label>Bank account</Label>
       <Input icon="business-outline" placeholder="Bank name" value={f.bankName ?? ''} onChangeText={set('bankName')} />
@@ -60,5 +68,15 @@ export default function ProfileEdit() {
       <View style={{ height: S.sm }} />
       <Button title="Send for approval" icon="send" onPress={save} loading={busy} />
     </Screen>
+  );
+}
+
+/** The value on file, shown above the box — a long one no longer hides inside a grey placeholder. */
+function Field({ now, children }: { now: string | null | undefined; children: ReactNode }) {
+  return (
+    <View style={{ gap: 4 }}>
+      <Text style={{ color: C.sub, fontSize: 13 }} numberOfLines={2}>Now: <Text style={{ color: C.text, fontWeight: '700' }}>{now || '—'}</Text></Text>
+      {children}
+    </View>
   );
 }

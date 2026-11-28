@@ -19,11 +19,14 @@ export default function FleetTrips() {
   const params = useLocalSearchParams<{ view?: View_ }>();
   const [view, setView] = useState<View_>(params.view ?? 'upcoming');
   useEffect(() => { if (params.view) setView(params.view); }, [params.view]);
-  const { data, error, loading, refreshing, reload } = useLoad<{ today: string; jobs: VendorJob[] }>(
-    `/api/mobile/vendor/trips?scope=${view === 'past' ? 'past' : 'upcoming'}`,
-  );
+  // Upcoming always loads, so the "To do" count stays on the tab while Past is open.
+  const upcoming = useLoad<{ today: string; jobs: VendorJob[] }>('/api/mobile/vendor/trips?scope=upcoming');
+  const past = useLoad<{ today: string; jobs: VendorJob[] }>(view === 'past' ? '/api/mobile/vendor/trips?scope=past' : null);
+  const cur = view === 'past' ? past : upcoming;
+  const { data, error, loading, refreshing } = cur;
+  const reload = () => { upcoming.reload(); if (view === 'past') past.reload(); };
+  const todo = (upcoming.data?.jobs ?? []).filter(j => j.state === 'NEEDS_DRIVER' || j.state === 'NEEDS_VEHICLE');
   const all = data?.jobs ?? [];
-  const todo = all.filter(j => j.state === 'NEEDS_DRIVER' || j.state === 'NEEDS_VEHICLE');
   const list = view === 'todo' ? todo : all;
 
   // Group by month so a long season stays readable.
@@ -38,7 +41,7 @@ export default function FleetTrips() {
       <PageHeader title="Trips" icon="map" colors={['#0E1525', '#16213E', '#24345E']}
         sub={data ? `${all.length} ${view === 'past' ? 'done' : 'upcoming'}${view !== 'past' && todo.length ? ` · ${todo.length} need a driver` : ''}` : 'Loading…'} />
       <Segmented<View_> value={view} onChange={setView} options={[
-        { id: 'todo', label: 'To do', count: view === 'past' ? undefined : todo.length },
+        { id: 'todo', label: 'To do', count: upcoming.data ? todo.length : undefined },
         { id: 'upcoming', label: 'Upcoming' },
         { id: 'past', label: 'Past' },
       ]} />

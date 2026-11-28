@@ -82,7 +82,7 @@ export function PasswordFields({ password, setPassword, again, setAgain }: {
       <Label>Password</Label>
       <View>
         <Input icon="lock-closed-outline" placeholder="At least 6 characters" value={password} onChangeText={setPassword}
-          secureTextEntry={!show} textContentType="newPassword" autoCapitalize="none" autoCorrect={false} />
+          secureTextEntry={!show} textContentType="newPassword" autoCapitalize="none" autoCorrect={false} style={{ paddingRight: 36 }} />
         <Pressable onPress={() => setShow(s => !s)} hitSlop={8} style={{ position: 'absolute', right: 16, top: 18 }}>
           <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={C.sub} />
         </Pressable>

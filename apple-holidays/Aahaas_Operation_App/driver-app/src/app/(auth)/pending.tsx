@@ -31,36 +31,54 @@ const LOOK: Record<SignupStatus, { icon: IconName; colors: [string, string]; tit
 export default function Pending() {
   const [pending, setPending] = useState<PendingSignup | null | undefined>(undefined);
   const [state, setState] = useState<StatusReply | null>(null);
+  /** Only a tap on "Check again" shows the spinner — the quiet 30 s checks must not make the button blink. */
   const [checking, setChecking] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pushSent = useRef(false);
+  /**
+   * Ask for notification permission once per visit, whatever the answer. Asking on
+   * every check looped on Android: the permission dialog pauses the app, coming
+   * back counts as "active", which checked — and asked — again, so the screen
+   * flashed and the app eventually crashed.
+   */
+  const pushAsked = useRef(false);
+  const inFlight = useRef(false);
+  const lastCheck = useRef(0);
+  /** Off while the delete dialog / delete call is running, so no check races it. */
+  const polling = useRef(true);
 
   useEffect(() => { getPendingSignup().then(setPending); }, []);
 
-  const check = useCallback(async () => {
-    if (!pending) return;
-    setChecking(true);
+  const check = useCallback(async (manual = false) => {
+    if (!pending || inFlight.current || (!manual && !polling.current)) return;
+    inFlight.current = true;
+    lastCheck.current = Date.now();
+    if (manual) setChecking(true);
     try {
-      // Once is enough — the server keeps the token until the person signs in.
-      const pushToken = pushSent.current ? null : await expoPushToken();
+      let pushToken: string | null = null;
+      if (!pushAsked.current) { pushAsked.current = true; pushToken = await expoPushToken(); }
       const r = await api<StatusReply>('/api/mobile/auth/register/status', {
         auth: false, body: { token: pending.token, pushToken: pushToken ?? undefined, platform: Platform.OS },
       });
-      if (pushToken) pushSent.current = true;
       setState(r); setError(null);
     } catch (e) {
       const err = e as ApiError;
       if (err.code === 'expired') setState({ status: 'GONE', name: pending.name, note: null });
       else setError(err.message);
-    } finally { setChecking(false); }
+    } finally {
+      inFlight.current = false;
+      if (manual) setChecking(false);
+    }
   }, [pending]);
 
   useFocusEffect(useCallback(() => {
     if (!pending) return;
+    polling.current = true;
     check();
-    const t = setInterval(check, 30_000);
-    const sub = AppState.addEventListener('change', s => { if (s === 'active') check(); });
-    return () => { clearInterval(t); sub.remove(); };
+    const t = setInterval(() => check(), 30_000);
+    // Coming back to the app: check, but not again within a few seconds (dialogs bounce the app state).
+    const sub = AppState.addEventListener('change', s => { if (s === 'active' && Date.now() - lastCheck.current > 5_000) check(); });
+    return () => { polling.current = false; clearInterval(t); sub.remove(); };
   }, [pending, check]));
 
   useEffect(() => {
@@ -82,22 +100,40 @@ export default function Pending() {
   }
 
   function deleteRegistration() {
+    if (deleting) return;
+    polling.current = false;
     Alert.alert(
       'Delete your registration?',
       'Your details are deleted and the operations team will not review them. You can register again later.',
-      [{ text: 'Cancel', style: 'cancel' }, {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await api('/api/mobile/auth/register/cancel', { auth: false, body: { token: pending!.token } });
-            await setPendingSignup(null);
-            router.replace('/welcome');
-            Alert.alert('Deleted', 'Your registration and details have been deleted.');
-          } catch (e) {
-            Alert.alert('Could not delete', `${(e as ApiError).message}\n\nYou can also call operations on ${OPS_PHONE}.`);
-          }
-        },
+      [{ text: 'Cancel', style: 'cancel', onPress: () => { polling.current = true; } }, {
+        text: 'Delete', style: 'destructive', onPress: () => { void doDelete(); },
       }],
+      { cancelable: true, onDismiss: () => { polling.current = true; } },
     );
+  }
+
+  async function doDelete() {
+    setDeleting(true);
+    try {
+      await api('/api/mobile/auth/register/cancel', { auth: false, body: { token: pending!.token } });
+      await setPendingSignup(null);
+      router.replace('/welcome');
+      // Let the dialog close and the next screen settle before opening another one.
+      setTimeout(() => Alert.alert('Deleted', 'Your registration and details have been deleted.'), 400);
+    } catch (e) {
+      setDeleting(false);
+      polling.current = true;
+      Alert.alert('Could not delete', `${(e as ApiError).message}\n\nYou can also call operations on ${OPS_PHONE}.`);
+    }
+  }
+
+  function contactOps() {
+    const digits = OPS_PHONE.replace(/\D/g, '');
+    Alert.alert('Contact operations', OPS_PHONE, [
+      { text: 'WhatsApp', onPress: () => { Linking.openURL(`https://wa.me/${digits}`).catch(() => Alert.alert('WhatsApp', `WhatsApp is not available on this phone. Call ${OPS_PHONE}.`)); } },
+      { text: 'Call', onPress: () => { Linking.openURL(`tel:${OPS_PHONE}`).catch(() => {}); } },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   async function startOver() {
@@ -145,7 +181,7 @@ export default function Pending() {
         {status === 'APPROVED' && <Button title="Sign in now" icon="log-in-outline" onPress={signInNow} />}
         {status === 'PENDING' && (
           <>
-            <Button title={checking ? 'Checking…' : 'Check again'} icon="refresh" kind="secondary" onPress={check} loading={checking} />
+            <Button title={checking ? 'Checking…' : 'Check again'} icon="refresh" kind="secondary" onPress={() => check(true)} loading={checking} disabled={deleting} />
             <P dim style={{ textAlign: 'center', fontSize: 13 }}>
               {state ? 'Still waiting — this screen checks again by itself.' : 'Checking…'}
             </P>
@@ -153,12 +189,17 @@ export default function Pending() {
         )}
         {(status === 'REJECTED' || status === 'GONE') && <Button title="Start over" icon="arrow-undo" kind="secondary" onPress={startOver} />}
 
-        <Button title={`Call operations · ${OPS_PHONE}`} icon="call-outline" kind="ghost" onPress={() => Linking.openURL(`tel:${OPS_PHONE}`)} />
+        <Row gap={S.sm}>
+          <Button title="WhatsApp" icon="logo-whatsapp" kind="ghost" style={{ flex: 1 }}
+            onPress={() => Linking.openURL(`https://wa.me/${OPS_PHONE.replace(/\D/g, '')}`).catch(contactOps)} />
+          <Button title="Call" icon="call-outline" kind="ghost" style={{ flex: 1 }} onPress={() => Linking.openURL(`tel:${OPS_PHONE}`).catch(contactOps)} />
+        </Row>
+        <P dim style={{ textAlign: 'center', fontSize: 12, marginTop: -8 }}>Operations · {OPS_PHONE}</P>
         {status === 'PENDING' && (
           <Button title="Back to start" kind="ghost" onPress={() => router.replace('/welcome')} />
         )}
         {status !== 'GONE' && (
-          <Button title="Delete my registration" icon="trash-outline" kind="ghost" onPress={deleteRegistration} />
+          <Button title="Delete my registration" icon="trash-outline" kind="ghost" onPress={deleteRegistration} loading={deleting} />
         )}
         <Button title="Privacy policy" icon="shield-checkmark-outline" kind="ghost" onPress={() => WebBrowser.openBrowserAsync(PRIVACY_URL)} />
       </ScrollView>

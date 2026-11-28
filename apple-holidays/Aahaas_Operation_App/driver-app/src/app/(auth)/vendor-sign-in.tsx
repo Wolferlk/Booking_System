@@ -50,7 +50,7 @@ export default function VendorSignIn() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           <Row style={{ justifyContent: 'space-between' }}>
             <IconButton icon="chevron-back" onPress={() => router.back()} />
@@ -80,8 +80,8 @@ export default function VendorSignIn() {
             autoCapitalize="none" autoCorrect={false} keyboardType="email-address" textContentType="username" />
           <View>
             <Input icon="lock-closed-outline" placeholder="Password" value={password} onChangeText={setPassword}
-              secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} />
-            <Pressable onPress={() => setShow(s => !s)} style={{ position: 'absolute', right: 16, top: 18 }}>
+              secureTextEntry={!show} textContentType="password" onSubmitEditing={submit} autoCapitalize="none" autoCorrect={false} style={{ paddingRight: 36 }} />
+            <Pressable onPress={() => setShow(s => !s)} hitSlop={10} style={{ position: 'absolute', right: 16, top: 18 }}>
               <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={C.sub} />
             </Pressable>
           </View>

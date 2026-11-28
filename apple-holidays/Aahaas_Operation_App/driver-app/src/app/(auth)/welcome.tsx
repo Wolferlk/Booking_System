@@ -5,7 +5,8 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, type IconName } from '@/components/ui';
-import { getPendingSignup, type PendingSignup } from '@/lib/signup';
+import { api } from '@/lib/api';
+import { getPendingSignup, type PendingSignup, type SignupStatus } from '@/lib/signup';
 import { C, R, S, shadow } from '@/lib/theme';
 
 function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title: string; lines: string; onPress: () => void; tone: 'red' | 'ink' }) {
@@ -29,8 +30,29 @@ function RoleCard({ icon, title, lines, onPress, tone }: { icon: IconName; title
 
 export default function Welcome() {
   // A registration still waiting for ops — show where it stands. (Registering starts from each sign-in page.)
+  // The phone only remembers that a registration was sent; ask the server where it stands
+  // so an approved driver is not told they are still waiting.
   const [pending, setPending] = useState<PendingSignup | null>(null);
-  useFocusEffect(useCallback(() => { getPendingSignup().then(setPending); }, []));
+  const [status, setStatus] = useState<SignupStatus | null>(null);
+  useFocusEffect(useCallback(() => {
+    let live = true;
+    getPendingSignup().then(p => {
+      if (!live) return;
+      setPending(p); setStatus(null);
+      if (!p) return;
+      api<{ status: SignupStatus }>('/api/mobile/auth/register/status', { auth: false, body: { token: p.token } })
+        .then(r => { if (live) setStatus(r.status); })
+        .catch(e => { if (live && (e as { code?: string }).code === 'expired') setStatus('GONE'); });
+    });
+    return () => { live = false; };
+  }, []));
+  const banner = status === 'APPROVED'
+    ? { icon: 'checkmark-circle' as const, color: C.green, bg: C.greenSoft, pressed: '#CFF0E2', title: 'You’re approved!', sub: 'Tap to sign in' }
+    : status === 'REJECTED'
+      ? { icon: 'close-circle' as const, color: C.red, bg: C.redSoft, pressed: '#FFD9DD', title: 'Registration not approved', sub: 'Tap to see why' }
+      : status === 'GONE'
+        ? { icon: 'help-circle' as const, color: C.sub, bg: C.cardHi, pressed: C.line, title: 'Registration not found', sub: 'Tap for options' }
+        : { icon: 'hourglass' as const, color: C.amber, bg: C.goldSoft, pressed: '#FDECC8', title: 'registration sent', sub: 'Waiting for approval · tap to check' };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#FFFFFF' }}>
@@ -55,13 +77,13 @@ export default function Welcome() {
               onPress={() => router.push('/vendor-sign-in')} />
             {pending ? (
               <Pressable onPress={() => router.push('/pending')}
-                style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: S.md, borderRadius: R.md, borderWidth: 1.5, borderColor: C.amber, backgroundColor: pressed ? '#FDECC8' : C.goldSoft, padding: S.md }]}>
-                <Ionicons name="hourglass" size={22} color={C.amber} />
+                style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: S.md, borderRadius: R.md, borderWidth: 1.5, borderColor: banner.color, backgroundColor: pressed ? banner.pressed : banner.bg, padding: S.md }]}>
+                <Ionicons name={banner.icon} size={22} color={banner.color} />
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: C.text, fontWeight: '800' }}>{pending.kind === 'DRIVER' ? 'Driver' : 'Vendor'} registration sent</Text>
-                  <Text style={{ color: C.sub, fontSize: 13 }}>Waiting for approval · tap to check</Text>
+                  <Text style={{ color: C.text, fontWeight: '800' }}>{status && status !== 'PENDING' ? banner.title : `${pending.kind === 'DRIVER' ? 'Driver' : 'Vendor'} ${banner.title}`}</Text>
+                  <Text style={{ color: C.sub, fontSize: 13 }}>{banner.sub}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={20} color={C.amber} />
+                <Ionicons name="chevron-forward" size={20} color={banner.color} />
               </Pressable>
             ) : null}
             <Pressable onPress={() => router.push({ pathname: '/verify', params: { purpose: 'ACTIVATE' } })} style={{ alignItems: 'center' }}>

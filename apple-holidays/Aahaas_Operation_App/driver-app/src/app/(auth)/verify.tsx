@@ -9,7 +9,7 @@
  */
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import { KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Card, ErrorBox, H1, IconButton, Input, Ionicons, P, Row } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
@@ -37,6 +37,7 @@ export default function Verify() {
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [pending, setPending] = useState<{ token: string; resetToken: string | null; actor: Actor } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +107,8 @@ export default function Verify() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, padding: S.xl, gap: S.lg }}>
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ padding: S.xl, gap: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
         <IconButton icon="chevron-back" onPress={() => (step === 'code' ? setStep('who') : router.back())} />
 
         {step === 'who' && (
@@ -180,12 +182,20 @@ export default function Verify() {
               <H1>Choose a password</H1>
               <P>Next time you sign in with your phone number and this password.</P>
             </View>
-            <Input icon="lock-closed-outline" placeholder="New password (6+ characters)" value={password} onChangeText={setPassword} secureTextEntry textContentType="newPassword" />
-            <Input icon="lock-closed-outline" placeholder="Type it again" value={password2} onChangeText={setPassword2} secureTextEntry textContentType="newPassword" />
+            <View>
+              <Input icon="lock-closed-outline" placeholder="New password (6+ characters)" value={password} onChangeText={setPassword}
+                secureTextEntry={!showPw} textContentType="newPassword" autoCapitalize="none" autoCorrect={false} style={{ paddingRight: 36 }} />
+              <Pressable onPress={() => setShowPw(s => !s)} hitSlop={10} style={{ position: 'absolute', right: 16, top: 18 }} accessibilityLabel={showPw ? 'Hide password' : 'Show password'}>
+                <Ionicons name={showPw ? 'eye-off-outline' : 'eye-outline'} size={20} color={C.sub} />
+              </Pressable>
+            </View>
+            <Input icon="lock-closed-outline" placeholder="Type it again" value={password2} onChangeText={setPassword2}
+              secureTextEntry={!showPw} textContentType="newPassword" autoCapitalize="none" autoCorrect={false} />
             {error && <ErrorBox message={error} />}
             <Button title="Save and continue" icon="checkmark" onPress={savePassword} loading={busy} disabled={!password || !password2} />
           </>
         )}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
