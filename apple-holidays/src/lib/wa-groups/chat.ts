@@ -13,7 +13,7 @@
 import { prisma } from '@/lib/prisma'
 import { normalisePhone } from '@/lib/whatsapp'
 import { deliverToGuest } from '@/lib/customer-whatsapp-automation'
-import { syncDeliveryReceipts, syncInboundForPhones } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncDeliveryReceipts, syncInboundForPhones, dropDuplicateInbound } from '@/lib/whatsapp-shared-inbox-sync'
 import { createRealGroup, findRealGroupBySubject, getInviteLink, removeRealParticipant, sendRealGroupText } from './meta-groups'
 import {
   MAX_INBOX_PARTICIPANTS, MAX_REAL_PARTICIPANTS, isGroupKind,
@@ -74,10 +74,10 @@ export async function readTimeline(groupId: string, opts: { markRead?: boolean }
   let replies: { id: string; phone: string; body: string | null; createdAt: Date; mediaType: string | null; mediaUrl: string | null }[] = []
   if (!real && phones.length && group) {
     await syncInboundForPhones(phones).catch(() => 0)
-    replies = (await prisma.whatsAppMessage.findMany({
+    replies = dropDuplicateInbound(await prisma.whatsAppMessage.findMany({
       where:   { phone: { in: phones }, direction: 'inbound', createdAt: { gte: group.createdAt } },
       orderBy: { createdAt: 'desc' }, take: TIMELINE_LIMIT,
-      select:  { id: true, phone: true, body: true, createdAt: true, mediaType: true, mediaUrl: true },
+      select:  { id: true, phone: true, body: true, createdAt: true, mediaType: true, mediaUrl: true, direction: true, waMessageId: true },
     })).filter(m => (byPhone.get(m.phone)?.createdAt ?? m.createdAt) <= m.createdAt)
     if (opts.markRead && replies.length) {
       await prisma.whatsAppMessage.updateMany({ where: { id: { in: replies.map(r => r.id) }, read: false }, data: { read: true } })

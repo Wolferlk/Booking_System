@@ -10,7 +10,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { WHATSAPP_STAFF_ROLES, whatsappInboxCountry } from '@/lib/whatsapp'
-import { syncInboundRecent, syncDeliveryReceiptsRecent, businessNumbersForInbound } from '@/lib/whatsapp-shared-inbox-sync'
+import { syncInboundRecent, syncDeliveryReceiptsRecent, businessNumbersForInbound, dropDuplicateInbound } from '@/lib/whatsapp-shared-inbox-sync'
 import { businessKeyForId, type BusinessNumberKey } from '@/lib/whatsapp-business-numbers'
 import {
   FIELD_RANK, digitsOf, findBookingsForSearch, looksLikePhone, messageExcerpt, phoneKey,
@@ -91,14 +91,15 @@ export async function GET(req: NextRequest) {
 
   // Bounded scan, newest first — this is a support inbox, not a bulk-messaging
   // log, so a few thousand recent rows comfortably covers "every conversation".
-  const rows = await prisma.whatsAppMessage.findMany({
+  // A reply stored twice by overlapping syncs must not count as two unread.
+  const rows = dropDuplicateInbound(await prisma.whatsAppMessage.findMany({
     orderBy: { createdAt: 'desc' },
     take: 5000,
     select: {
       phone: true, bookingRef: true, direction: true, body: true, mediaType: true,
       senderName: true, read: true, status: true, createdAt: true, waMessageId: true, mediaUrl: true,
     },
-  })
+  }))
   const partners = await driverDirectory()
 
   // Which business number each reply came in on (OPS's own sends are always

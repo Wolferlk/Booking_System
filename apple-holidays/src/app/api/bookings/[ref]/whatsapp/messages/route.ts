@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { whatsappInboxCountry } from '@/lib/whatsapp'
+import { dropDuplicateInbound } from '@/lib/whatsapp-shared-inbox-sync'
 
 export const dynamic = 'force-dynamic'
 
@@ -27,10 +28,11 @@ export async function GET(
     if (booking?.operationCountry !== scopeCountry) return buildApiError('Forbidden', 403)
   }
 
-  const messages = await prisma.whatsAppMessage.findMany({
+  // Older data can hold the same reply twice (overlapping syncs) — show it once.
+  const messages = dropDuplicateInbound(await prisma.whatsAppMessage.findMany({
     where:   { bookingRef: params.ref },
     orderBy: { createdAt: 'asc' },
-  })
+  }))
 
   return buildApiSuccess(messages)
 }

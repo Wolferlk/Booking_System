@@ -172,6 +172,50 @@ function resolveMediaUrl(raw: string | null): string | null {
 }
 
 /**
+ * One customer message is one inbound row with its wamid. Duplicates are
+ * possible in older data (see syncInboundForPhones: overlapping syncs used to
+ * both import the same reply), so every chat view drops a repeated inbound
+ * wamid, keeping the first occurrence in the order given. Outbound rows and
+ * rows without a wamid are untouched.
+ */
+export function dropDuplicateInbound<T extends { direction: string; waMessageId: string | null }>(rows: T[]): T[] {
+  const seen = new Set<string>()
+  return rows.filter(r => {
+    if (r.direction !== 'inbound' || !r.waMessageId) return true
+    if (seen.has(r.waMessageId)) return false
+    seen.add(r.waMessageId)
+    return true
+  })
+}
+
+/**
+ * Per-phone lock for the import. The same phone is synced from several places
+ * at once — n8n's inbound signal, every open inbox thread (5 s poll), the
+ * conversation list (8 s poll), group chats — and the import is "read what we
+ * have, then insert the rest". Two overlapping runs both saw the new reply as
+ * missing and both inserted it, so the customer's message showed twice
+ * (VN40854, 2026-11-26). Runs touching a common phone now go one after the
+ * other; the later one finds the row already there.
+ *
+ * Each run only waits on locks registered before it, so this cannot deadlock.
+ */
+const phoneLocks = new Map<string, Promise<void>>()
+
+async function withPhoneLocks<T>(phones: string[], work: () => Promise<T>): Promise<T> {
+  const earlier = Array.from(new Set(phones.map(p => phoneLocks.get(p)).filter((p): p is Promise<void> => !!p)))
+  let release!: () => void
+  const mine = new Promise<void>(resolve => { release = resolve })
+  for (const p of phones) phoneLocks.set(p, mine)
+  try {
+    await Promise.all(earlier)
+    return await work()
+  } finally {
+    release()
+    for (const p of phones) if (phoneLocks.get(p) === mine) phoneLocks.delete(p)
+  }
+}
+
+/**
  * Import inbound rows from the shared store for the given phone numbers.
  * Dedupes on wa_message_id against our own table. Returns how many rows were
  * imported (0 when disabled, nothing new, or the shared DB is unreachable).
@@ -180,11 +224,18 @@ export async function syncInboundForPhones(
   phones: string[],
   opts: { sinceDays?: number } = {},
 ): Promise<number> {
-  const db = getPool()
-  if (!db) return 0
-
+  if (!getPool()) return 0
   const targets = Array.from(new Set(phones.map(normalisePhone).filter(Boolean)))
   if (targets.length === 0) return 0
+  return withPhoneLocks(targets, () => syncInboundLocked(targets, opts))
+}
+
+async function syncInboundLocked(
+  targets: string[],
+  opts: { sinceDays?: number },
+): Promise<number> {
+  const db = getPool()
+  if (!db) return 0
 
   const since = new Date(Date.now() - (opts.sinceDays ?? 14) * 86400000)
 
@@ -243,8 +294,14 @@ export async function syncInboundForPhones(
     // answers, captionless photos, reactions). describeInbound() gives each one
     // something to show. Skipping them used to leave the signal's
     // "[customer replied]" stand-in as the only trace of the reply.
-    const incoming = shared
-      .filter(r => r.wa_message_id && !have.has(r.wa_message_id))
+    // `have` also takes each wamid as it is queued, so a reply n8n stored twice
+    // is still imported once.
+    let incoming = shared
+      .filter(r => {
+        if (!r.wa_message_id || have.has(r.wa_message_id)) return false
+        have.add(r.wa_message_id)
+        return true
+      })
       .map(r => {
         const phone = normalisePhone(r.wa_id)
         const isMedia = MEDIA_TYPES.includes(r.message_type)
@@ -264,6 +321,18 @@ export async function syncInboundForPhones(
       })
 
     if (incoming.length === 0) return 0
+
+    // Last look just before writing. The phone lock covers this server process;
+    // this narrows the gap if another process (a second instance, the Meta
+    // webhook route) stored one of these replies since the check above.
+    const landed = new Set((await prisma.whatsAppMessage.findMany({
+      where:  { waMessageId: { in: incoming.map(r => r.waMessageId!) } },
+      select: { waMessageId: true },
+    })).map(e => e.waMessageId))
+    if (landed.size) {
+      incoming = incoming.filter(r => !landed.has(r.waMessageId))
+      if (incoming.length === 0) return 0
+    }
 
     // Replace "[customer replied]" stand-ins with the message they stood for
     // (nearest in time, same phone) instead of adding a second bubble beside them.
