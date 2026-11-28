@@ -54,8 +54,7 @@ export async function GET(req: NextRequest) {
   if (role === 'CLIENT') return buildApiError('Forbidden', 403)
 
   const userCountry = session.user.country as string | undefined
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const allCountries = canSeeAllCountries(role, userCountry as any) || !userCountry || userCountry === 'ALL'
+  const allCountries = canSeeAllCountries(role, userCountry as never) || !userCountry || userCountry === 'ALL'
   const inScope = (ref: string) => {
     if (allCountries) return true
     const c = detectCountryFromRef(ref)
